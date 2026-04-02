@@ -1,0 +1,13 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "secret-leak-claim"
+version = "0.1.0"
+description = "Secret-leak security claim for superred"
+requires-python = ">=3.11,<3.14"
+dependencies = ["superred", "simple-chat-target"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/secret_leak_claim"]
