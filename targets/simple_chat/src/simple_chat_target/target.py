@@ -12,6 +12,7 @@ from __future__ import annotations
 from litellm import ModelResponse, acompletion
 
 from superred.core.interfaces.target import EventHandler, Target
+from superred.core.types.trajectory import EmitFn
 from superred.core.types.controllable import Controllable, ControllableSpec
 from superred.core.types.event import ControllableInjection, ControllablePreCallEvent
 from superred.core.types.observable import Observable, ObservableValue
@@ -104,7 +105,7 @@ class SimpleChatTarget(Target):
 
     # -- Execution ------------------------------------------------------------
 
-    async def run(self, trajectory: Trajectory, send_event: EventHandler) -> None:
+    async def run(self, emit: EmitFn, send_event: EventHandler) -> None:
         # 1. Get user input from optimizer
         ctrl = Controllable(spec=ControllableSpec(
             name="user_input", security_domain=USER_INPUT_TAG,
@@ -114,7 +115,7 @@ class SimpleChatTarget(Target):
         )
         user_message = resp.value if isinstance(resp, ControllableInjection) else "Hello"
 
-        trajectory.emit(TrajectoryEntry(
+        emit(TrajectoryEntry(
             entry_type=MODEL_REQUEST, content=user_message,
             security_domain=USER_INPUT_TAG,
         ))
@@ -134,7 +135,7 @@ class SimpleChatTarget(Target):
         llm_response = response.choices[0].message.content or ""
         self._last_response = llm_response
 
-        trajectory.emit(TrajectoryEntry(
+        emit(TrajectoryEntry(
             entry_type=MODEL_RESPONSE, content=llm_response,
             security_domain=SYSTEM_TAG,
         ))

@@ -1,0 +1,13 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "all-keys-match-claim"
+version = "0.1.0"
+description = "Security claim that checks all controllables received correct keys"
+requires-python = ">=3.11,<3.14"
+dependencies = ["superred", "filter-test-target"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/all_keys_match_claim"]

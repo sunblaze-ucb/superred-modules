@@ -1,0 +1,13 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hint-following-optimizer"
+version = "0.1.0"
+description = "Optimizer that follows observable hints to inject correct values"
+requires-python = ">=3.11,<3.14"
+dependencies = ["superred"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hint_following_optimizer"]
