@@ -15,7 +15,11 @@ import json
 from superred.core.interfaces.target import Target
 from superred.core.types.controllable import Controllable
 from superred.core.types.event import EventHandler, EventResponseHandler
-from superred.core.types.events import ControllableInjection, ControllablePreCallEvent, LogEvent
+from superred.core.types.events import (
+    ControllableInjection,
+    ControllablePreCallEvent,
+    ObservableEvent,
+)
 from superred.core.types.observable import Observable, ObservableValue
 from superred.core.types.security_domain import SecurityDomain, SecurityDomainTag
 from superred.core.types.state import ConfigSpec, QuerySpec
@@ -149,10 +153,9 @@ class FilterTestTarget(Target):
             self._injected[ctrl_name] = value
 
             # Emit trajectory entry at the controllable's domain
-            emit(LogEvent(
+            emit(ObservableEvent(
+                observable=Observable(name=ctrl_name, security_domain=domain),
                 content=f"{ctrl_name}={value}",
-                label="model_request",
-                security_domain=domain,
             ))
 
     async def cleanup(self) -> None:

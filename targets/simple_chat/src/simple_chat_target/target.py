@@ -14,7 +14,11 @@ from litellm import ModelResponse, acompletion
 from superred.core.interfaces.target import Target
 from superred.core.types.controllable import Controllable
 from superred.core.types.event import EventHandler, EventResponseHandler
-from superred.core.types.events import ControllableInjection, ControllablePreCallEvent, LogEvent
+from superred.core.types.events import (
+    ControllableInjection,
+    ControllablePreCallEvent,
+    ObservableEvent,
+)
 from superred.core.types.observable import Observable, ObservableValue
 from superred.core.types.security_domain import SecurityDomain, SecurityDomainTag
 from superred.core.types.state import ConfigSpec, QuerySpec
@@ -109,9 +113,12 @@ class SimpleChatTarget(Target):
         )
         user_message = resp.value if isinstance(resp, ControllableInjection) else "Hello"
 
-        emit(LogEvent(
-            content=user_message, label="model_request",
-            security_domain=USER_INPUT_TAG,
+        emit(ObservableEvent(
+            observable=Observable(
+                name="model_request", security_domain=USER_INPUT_TAG,
+                description="User message sent to the LLM.",
+            ),
+            content=user_message,
         ))
 
         # 2. Call LLM
@@ -129,9 +136,12 @@ class SimpleChatTarget(Target):
         llm_response = response.choices[0].message.content or ""
         self._last_response = llm_response
 
-        emit(LogEvent(
-            content=llm_response, label="model_response",
-            security_domain=SYSTEM_TAG,
+        emit(ObservableEvent(
+            observable=Observable(
+                name="model_response", security_domain=SYSTEM_TAG,
+                description="LLM response.",
+            ),
+            content=llm_response,
         ))
 
     async def cleanup(self) -> None:
