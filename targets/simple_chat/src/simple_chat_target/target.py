@@ -11,19 +11,13 @@ from __future__ import annotations
 
 from litellm import ModelResponse, acompletion
 
-from superred.core.interfaces.target import EventHandler, Target
-from superred.core.types.trajectory import EmitFn
-from superred.core.types.controllable import Controllable, ControllableSpec
-from superred.core.types.event import ControllableInjection, ControllablePreCallEvent
+from superred.core.interfaces.target import Target
+from superred.core.types.controllable import Controllable
+from superred.core.types.event import EventHandler, EventResponseHandler
+from superred.core.types.events import ControllableInjection, ControllablePreCallEvent, LogEvent
 from superred.core.types.observable import Observable, ObservableValue
 from superred.core.types.security_domain import SecurityDomain, SecurityDomainTag
 from superred.core.types.state import ConfigSpec, QuerySpec
-from superred.core.types.trajectory import (
-    MODEL_REQUEST,
-    MODEL_RESPONSE,
-    Trajectory,
-    TrajectoryEntry,
-)
 
 # Security domain: system root with user_input child
 SYSTEM_TAG = SecurityDomainTag("system")
@@ -88,11 +82,11 @@ class SimpleChatTarget(Target):
 
     def get_controllables(self) -> list[Controllable]:
         return [
-            Controllable(spec=ControllableSpec(
+            Controllable(
                 name="user_input",
                 security_domain=USER_INPUT_TAG,
                 description="The user message sent to the LLM.",
-            )),
+            ),
         ]
 
     def get_observables(self) -> list[ObservableValue]:
@@ -105,18 +99,18 @@ class SimpleChatTarget(Target):
 
     # -- Execution ------------------------------------------------------------
 
-    async def run(self, emit: EmitFn, send_event: EventHandler) -> None:
+    async def run(self, emit: EventHandler, send_event: EventResponseHandler) -> None:
         # 1. Get user input from optimizer
-        ctrl = Controllable(spec=ControllableSpec(
+        ctrl = Controllable(
             name="user_input", security_domain=USER_INPUT_TAG,
-        ))
+        )
         resp = await send_event(
             ControllablePreCallEvent(controllable=ctrl, request="Enter user message:"),
         )
         user_message = resp.value if isinstance(resp, ControllableInjection) else "Hello"
 
-        emit(TrajectoryEntry(
-            entry_type=MODEL_REQUEST, content=user_message,
+        emit(LogEvent(
+            content=user_message, label="model_request",
             security_domain=USER_INPUT_TAG,
         ))
 
@@ -135,8 +129,8 @@ class SimpleChatTarget(Target):
         llm_response = response.choices[0].message.content or ""
         self._last_response = llm_response
 
-        emit(TrajectoryEntry(
-            entry_type=MODEL_RESPONSE, content=llm_response,
+        emit(LogEvent(
+            content=llm_response, label="model_response",
             security_domain=SYSTEM_TAG,
         ))
 

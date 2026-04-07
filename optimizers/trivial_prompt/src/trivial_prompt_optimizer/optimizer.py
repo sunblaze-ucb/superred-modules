@@ -9,11 +9,10 @@ from __future__ import annotations
 
 from superred.core.interfaces.optimizer import Optimizer
 from superred.core.types.controllable import Controllable
-from superred.core.types.event import (
+from superred.core.types.event import Event, EventResponse
+from superred.core.types.events import (
     ControllableInjection,
     ControllablePreCallEvent,
-    Event,
-    EventResponse,
     RunEndEvent,
     RunEndResponse,
     RunStartEvent,
@@ -61,7 +60,9 @@ class TrivialPromptOptimizer(Optimizer):
 
         if isinstance(event, ControllablePreCallEvent):
             prompt = self._prompts[self._prompt_index]
-            return ControllableInjection(event=event, value=prompt)
+            return ControllableInjection(
+                event=event, controllable=event.controllable, value=prompt,
+            )
 
         if isinstance(event, RunEndEvent):
             self._prompt_index += 1

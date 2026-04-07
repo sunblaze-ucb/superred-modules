@@ -14,11 +14,10 @@ import re
 
 from superred.core.interfaces.optimizer import Optimizer
 from superred.core.types.controllable import Controllable
-from superred.core.types.event import (
+from superred.core.types.event import Event, EventResponse
+from superred.core.types.events import (
     ControllableInjection,
     ControllablePreCallEvent,
-    Event,
-    EventResponse,
     RunEndEvent,
     RunEndResponse,
     RunStartEvent,
@@ -63,9 +62,11 @@ class HintFollowingOptimizer(Optimizer):
             return EventResponse(event=event)
 
         if isinstance(event, ControllablePreCallEvent):
-            name = event.controllable.spec.name
+            name = event.controllable.name
             value = self._injection_map.get(name, "")
-            return ControllableInjection(event=event, value=value)
+            return ControllableInjection(
+                event=event, controllable=event.controllable, value=value,
+            )
 
         if isinstance(event, RunEndEvent):
             return RunEndResponse(event=event, done=True)

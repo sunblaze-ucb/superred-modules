@@ -12,14 +12,13 @@ from __future__ import annotations
 
 import json
 
-from superred.core.interfaces.target import EventHandler, Target
-from superred.core.types.trajectory import EmitFn
-from superred.core.types.controllable import Controllable, ControllableSpec
-from superred.core.types.event import ControllableInjection, ControllablePreCallEvent
+from superred.core.interfaces.target import Target
+from superred.core.types.controllable import Controllable
+from superred.core.types.event import EventHandler, EventResponseHandler
+from superred.core.types.events import ControllableInjection, ControllablePreCallEvent, LogEvent
 from superred.core.types.observable import Observable, ObservableValue
 from superred.core.types.security_domain import SecurityDomain, SecurityDomainTag
 from superred.core.types.state import ConfigSpec, QuerySpec
-from superred.core.types.trajectory import MODEL_REQUEST, Trajectory, TrajectoryEntry
 
 # Security domain tree: root -> alpha, beta
 ROOT_TAG = SecurityDomainTag("root")
@@ -100,10 +99,10 @@ class FilterTestTarget(Target):
 
     def get_controllables(self) -> list[Controllable]:
         return [
-            Controllable(spec=ControllableSpec(
+            Controllable(
                 name=name, security_domain=domain,
                 description=f"Expects '{EXPECTED_KEYS[name]}'",
-            ))
+            )
             for name, domain in _CTRL_DOMAINS.items()
         ]
 
@@ -136,13 +135,13 @@ class FilterTestTarget(Target):
 
     # -- Execution ------------------------------------------------------------
 
-    async def run(self, emit: EmitFn, send_event: EventHandler) -> None:
+    async def run(self, emit: EventHandler, send_event: EventResponseHandler) -> None:
         self._injected.clear()
 
         for ctrl_name, domain in _CTRL_DOMAINS.items():
-            ctrl = Controllable(spec=ControllableSpec(
+            ctrl = Controllable(
                 name=ctrl_name, security_domain=domain,
-            ))
+            )
             resp = await send_event(
                 ControllablePreCallEvent(controllable=ctrl, request=f"key for {ctrl_name}"),
             )
@@ -150,9 +149,9 @@ class FilterTestTarget(Target):
             self._injected[ctrl_name] = value
 
             # Emit trajectory entry at the controllable's domain
-            emit(TrajectoryEntry(
-                entry_type=MODEL_REQUEST,
+            emit(LogEvent(
                 content=f"{ctrl_name}={value}",
+                label="model_request",
                 security_domain=domain,
             ))
 
