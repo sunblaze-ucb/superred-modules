@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from litellm import acompletion
+
+logger = logging.getLogger(__name__)
 
 from superred.core.interfaces.optimizer import Optimizer
 from superred.core.types.controllable import Controllable
@@ -100,7 +103,10 @@ class TapOptimizer(Optimizer):
         for depth in range(self._tree_depth):
             leaves = tree.get_leaves()
             if not leaves:
+                logger.info("TAP: all nodes pruned at depth %d", depth)
                 break
+
+            logger.info("TAP: depth %d, %d active leaves", depth, len(leaves))
 
             # 2a. BRANCH (skip depth 0 -- roots already exist)
             if depth > 0:
@@ -122,7 +128,8 @@ class TapOptimizer(Optimizer):
                         score=node.score if node.target_response else None,
                     )
                     node.prompt = prompt
-                except (ValueError, Exception):
+                except Exception:
+                    logger.warning("TAP: pruning node %s — attacker failed", node.node_id, exc_info=True)
                     node.pruned = True
 
             await asyncio.gather(*[_generate(node) for node in leaves])
@@ -134,10 +141,15 @@ class TapOptimizer(Optimizer):
 
             # 2c. PRUNE PHASE 1 -- on-topic check via evaluator (parallel)
             async def _check_on_topic(node: TapNode) -> None:
-                node.is_on_topic = await self._evaluator.is_on_topic(
-                    prompt=node.prompt,  # type: ignore[arg-type]
-                    goal=goal,
-                )
+                try:
+                    assert node.prompt is not None
+                    node.is_on_topic = await self._evaluator.is_on_topic(
+                        prompt=node.prompt,
+                        goal=goal,
+                    )
+                except Exception:
+                    logger.warning("TAP: on-topic check failed for %s", node.node_id, exc_info=True)
+                    node.is_on_topic = False
 
             await asyncio.gather(*[_check_on_topic(node) for node in leaves])
             tree.prune_off_topic()
@@ -148,32 +160,45 @@ class TapOptimizer(Optimizer):
 
             # 2d. QUERY INTERNAL TARGET via litellm (parallel)
             async def _query_target(node: TapNode) -> None:
-                messages: list[dict[str, str]] = []
-                if self._target_system_prompt:
-                    messages.append({"role": "system", "content": self._target_system_prompt})
-                messages.append({"role": "user", "content": node.prompt})  # type: ignore[arg-type]
-                response = await acompletion(
-                    model=self._target_model,
-                    messages=messages,
-                    temperature=self._target_temperature,
-                )
-                node.target_response = response.choices[0].message.content
+                try:
+                    assert node.prompt is not None
+                    messages: list[dict[str, str]] = []
+                    if self._target_system_prompt:
+                        messages.append({"role": "system", "content": self._target_system_prompt})
+                    messages.append({"role": "user", "content": node.prompt})
+                    response = await acompletion(
+                        model=self._target_model,
+                        messages=messages,
+                        temperature=self._target_temperature,
+                    )
+                    node.target_response = response.choices[0].message.content
+                except Exception:
+                    logger.warning("TAP: target query failed for %s", node.node_id, exc_info=True)
+                    node.pruned = True
 
             await asyncio.gather(*[_query_target(node) for node in leaves])
 
             # 2e. SCORE RESPONSES via evaluator (parallel)
-            async def _score(node: TapNode) -> None:
-                node.score = await self._evaluator.score_response(
-                    response=node.target_response,  # type: ignore[arg-type]
-                    goal=goal,
-                )
+            active_leaves = [n for n in leaves if not n.pruned]
 
-            await asyncio.gather(*[_score(node) for node in leaves])
+            async def _score(node: TapNode) -> None:
+                try:
+                    assert node.target_response is not None
+                    node.score = await self._evaluator.score_response(
+                        response=node.target_response,
+                        goal=goal,
+                    )
+                except Exception:
+                    logger.warning("TAP: scoring failed for %s", node.node_id, exc_info=True)
+                    node.score = 1.0
+
+            await asyncio.gather(*[_score(node) for node in active_leaves])
 
             # Check for early return: any score >= 10.0
-            for node in leaves:
-                if node.score >= 10.0:
-                    return node.prompt  # type: ignore[return-value]
+            for node in active_leaves:
+                if node.score >= 10.0 and node.prompt is not None:
+                    logger.info("TAP: jailbreak found at depth %d", depth)
+                    return node.prompt
 
             # 2f. PRUNE PHASE 2 -- prune to width
             tree.prune_to_width(self._tree_width)
