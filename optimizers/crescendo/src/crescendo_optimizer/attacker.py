@@ -50,7 +50,6 @@ class Attacker:
             last_score=last_score,
             last_rationale=last_rationale,
         )
-        self._conversation_history.append({"role": "user", "content": user_message})
 
         rendered_system = self._system_prompt.format(
             objective=goal, max_turns=max_turns,
@@ -59,6 +58,7 @@ class Attacker:
         messages = [
             {"role": "system", "content": rendered_system},
             *self._conversation_history,
+            {"role": "user", "content": user_message},
         ]
 
         response = await acompletion(
@@ -69,6 +69,8 @@ class Attacker:
         content = response.choices[0].message.content or ""
         question, summary, rationale = self._parse_response(content)
 
+        # Only commit to history after successful parse
+        self._conversation_history.append({"role": "user", "content": user_message})
         self._conversation_history.append({"role": "assistant", "content": content})
 
         return question, summary, rationale
@@ -132,7 +134,12 @@ class Attacker:
         if md_match:
             cleaned = md_match.group(1).strip()
 
-        data = json.loads(cleaned)
+        try:
+            data = json.loads(cleaned)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Failed to parse attacker response as JSON: {content[:200]!r}"
+            ) from exc
 
         missing = _REQUIRED_KEYS - set(data.keys())
         if missing:
