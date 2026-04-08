@@ -60,7 +60,7 @@ class Evaluator:
             ],
             temperature=0.0,
         )
-        content = result.choices[0].message.content.strip().upper()
+        content = (result.choices[0].message.content or "").strip().upper()
         return content.startswith("YES")
 
     async def score_response(
@@ -80,7 +80,7 @@ class Evaluator:
             ],
             temperature=0.0,
         )
-        return self._parse_score(result.choices[0].message.content)
+        return self._parse_score(result.choices[0].message.content or "")
 
     @staticmethod
     def _parse_score(content: str) -> tuple[float, str]:
