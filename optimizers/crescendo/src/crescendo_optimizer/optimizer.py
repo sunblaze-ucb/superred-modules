@@ -121,14 +121,18 @@ class CrescendoOptimizer(Optimizer):
         assert self._goal is not None
         assert self._attacker is not None
 
-        question, summary, rationale = await self._attacker.generate_question(
-            goal=self._goal.description,
-            turn=self._turn + 1,
-            max_turns=self._max_turns,
-            last_response=self._last_response,
-            last_score=self._last_score,
-            last_rationale=self._last_rationale,
-        )
+        try:
+            question, summary, rationale = await self._attacker.generate_question(
+                goal=self._goal.description,
+                turn=self._turn + 1,
+                max_turns=self._max_turns,
+                last_response=self._last_response,
+                last_score=self._last_score,
+                last_rationale=self._last_rationale,
+            )
+        except Exception:
+            logger.warning("Crescendo: attacker failed at turn %d", self._turn + 1, exc_info=True)
+            question = f"Tell me more about {self._goal.description}"
 
         self._current_question = question
         self._conversation_history.append({"role": "user", "content": question})
@@ -152,7 +156,11 @@ class CrescendoOptimizer(Optimizer):
 
         answer = event.answer
 
-        is_refusal = await self._evaluator.is_refusal(answer)
+        try:
+            is_refusal = await self._evaluator.is_refusal(answer)
+        except Exception:
+            logger.warning("Crescendo: refusal check failed", exc_info=True)
+            is_refusal = False
 
         if is_refusal and self._backtrack_count < self._max_backtracks:
             # Backtrack: remove question from history, notify attacker
@@ -172,10 +180,14 @@ class CrescendoOptimizer(Optimizer):
             self._last_response = answer
             self._last_was_refusal = False
 
-            score, rationale = await self._evaluator.score_response(
-                response=answer,
-                goal=self._goal.description,
-            )
+            try:
+                score, rationale = await self._evaluator.score_response(
+                    response=answer,
+                    goal=self._goal.description,
+                )
+            except Exception:
+                logger.warning("Crescendo: scoring failed", exc_info=True)
+                score, rationale = 0.0, "Scoring failed"
             self._last_score = score
             self._last_rationale = rationale
             self._turn += 1
