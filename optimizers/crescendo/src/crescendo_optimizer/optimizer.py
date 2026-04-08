@@ -147,6 +147,9 @@ class CrescendoOptimizer(Optimizer):
     async def _handle_post_call(
         self, event: ControllablePostCallEvent
     ) -> ControllableNoInjection:
+        assert self._goal is not None
+        assert self._attacker is not None
+
         answer = event.answer
 
         is_refusal = await self._evaluator.is_refusal(answer)
