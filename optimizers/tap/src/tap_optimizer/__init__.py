@@ -1,3 +1,5 @@
 """Tree of Attacks with Pruning (TAP) optimizer for superred."""
 
-__all__: list[str] = []
+from tap_optimizer.optimizer import TapOptimizer
+
+__all__ = ["TapOptimizer"]
