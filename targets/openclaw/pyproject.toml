@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "openclaw-target"
+version = "0.1.0"
+description = "OpenClaw agent target module for superred"
+requires-python = ">=3.11,<3.14"
+dependencies = ["superred", "websockets"]
+
+[project.optional-dependencies]
+injection = ["aiohttp"]
+proxy = ["aiohttp"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openclaw_target"]
