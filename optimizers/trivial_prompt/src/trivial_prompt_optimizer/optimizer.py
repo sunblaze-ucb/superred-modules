@@ -8,6 +8,7 @@ exhausted.
 from __future__ import annotations
 
 from superred.core.interfaces.optimizer import Optimizer
+from superred.core.llm import LLMClient
 from superred.core.types.controllable import Controllable
 from superred.core.types.event import Event, EventResponse
 from superred.core.types.events import (
@@ -50,7 +51,9 @@ class TrivialPromptOptimizer(Optimizer):
         goal: Goal,
         controllables: list[Controllable],
         observables: list[ObservableValue],
+        llm_client: LLMClient,
     ) -> None:
+        await super().initialize(goal, controllables, observables, llm_client)
         self._goal = goal
         self._prompt_index = 0
 

@@ -1,6 +1,6 @@
 # superred-modules
 
-Optimizer, target, and security claim implementations for the [superred](../super-red-teaming/) framework.
+Optimizer, target, and security claim implementations for the [superred](../superred/) framework.
 
 ## Structure
 
@@ -24,7 +24,7 @@ Requires Python 3.11-3.13 and the shared venv at the repo root.
 source ../.venv/bin/activate
 
 # Install the framework first (editable)
-pip install -e ../super-red-teaming
+pip install -e ../superred
 
 # Install individual modules (editable)
 pip install -e optimizers/trivial_prompt
