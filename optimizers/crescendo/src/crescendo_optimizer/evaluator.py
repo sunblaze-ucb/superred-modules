@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 
-from litellm import acompletion
+from superred.core.llm import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -48,14 +48,13 @@ Respond with JSON: {{"score": <float 0.0-1.0>, "rationale": "<brief explanation>
 class Evaluator:
     """Evaluates target responses for refusals and goal compliance."""
 
-    def __init__(self, model: str) -> None:
-        self._model = model
+    def __init__(self, *, llm: LLMClient) -> None:
+        self._llm = llm
 
     async def is_refusal(self, response: str) -> bool:
         """Return True if the response is a refusal to answer."""
-        result = await acompletion(
-            model=self._model,
-            messages=[
+        result = await self._llm.complete(
+            [
                 {"role": "user", "content": REFUSAL_PROMPT.format(response=response)},
             ],
             temperature=0.0,
@@ -70,9 +69,8 @@ class Evaluator:
 
         Returns (score, rationale) where score is 0.0-1.0.
         """
-        result = await acompletion(
-            model=self._model,
-            messages=[
+        result = await self._llm.complete(
+            [
                 {
                     "role": "user",
                     "content": SCORING_PROMPT.format(goal=goal, response=response),
