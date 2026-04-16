@@ -7,7 +7,7 @@ name = "tap-optimizer"
 version = "0.1.0"
 description = "Tree of Attacks with Pruning (TAP) optimizer for superred"
 requires-python = ">=3.11,<3.14"
-dependencies = ["superred", "litellm"]
+dependencies = ["superred>=0.2.0", "litellm"]
 
 [project.optional-dependencies]
 test = ["pytest", "pytest-asyncio"]
