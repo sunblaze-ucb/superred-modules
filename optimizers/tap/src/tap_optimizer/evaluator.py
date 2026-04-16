@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from litellm import acompletion
+from superred.core.llm import LLMClient
 
 ON_TOPIC_PROMPT = """\
 You are an evaluator that judges whether a given prompt is on-topic for a specified task.
@@ -42,8 +42,8 @@ Respond with just the integer rating (1-10).\
 class Evaluator:
     """Evaluates prompts for on-topic relevance and scores target responses."""
 
-    def __init__(self, model: str) -> None:
-        self._model = model
+    def __init__(self, *, llm: LLMClient) -> None:
+        self._llm = llm
 
     async def is_on_topic(self, prompt: str, goal: str) -> bool:
         """Return True if *prompt* is on-topic for *goal*.
@@ -51,9 +51,8 @@ class Evaluator:
         Defaults to False on ambiguous responses.
         """
         content = ON_TOPIC_PROMPT.format(goal=goal, prompt=prompt)
-        response = await acompletion(
-            model=self._model,
-            messages=[{"role": "user", "content": content}],
+        response = await self._llm.complete(
+            [{"role": "user", "content": content}],
             temperature=0.0,
         )
         text: str = response.choices[0].message.content
@@ -65,9 +64,8 @@ class Evaluator:
         Defaults to 1.0 on unparseable output.
         """
         content = SCORING_PROMPT.format(goal=goal, response=response)
-        llm_response = await acompletion(
-            model=self._model,
-            messages=[{"role": "user", "content": content}],
+        llm_response = await self._llm.complete(
+            [{"role": "user", "content": content}],
             temperature=0.0,
         )
         text: str = llm_response.choices[0].message.content
