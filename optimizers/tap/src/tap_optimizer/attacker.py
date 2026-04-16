@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 
-from litellm import acompletion
+from superred.core.llm import LLMClient
 
 # ── Prompt templates ─────────────────────────────────────────────────────────
 
@@ -61,8 +61,8 @@ and "prompt" keys.\
 class Attacker:
     """Generates adversarial jailbreak prompts via an attacker LLM."""
 
-    def __init__(self, model: str, temperature: float = 1.0) -> None:
-        self._model = model
+    def __init__(self, *, llm: LLMClient, temperature: float = 1.0) -> None:
+        self._llm = llm
         self._temperature = temperature
 
     async def generate_prompt(
@@ -101,9 +101,8 @@ class Attacker:
         messages = [system_msg, *conversation_history]
 
         # Call the LLM
-        response = await acompletion(
-            model=self._model,
-            messages=messages,
+        response = await self._llm.complete(
+            messages,
             temperature=self._temperature,
         )
 
