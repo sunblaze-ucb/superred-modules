@@ -63,6 +63,7 @@ class TapOptimizer(Optimizer):
         self._depth: int = 0
         self._best_candidate: TapNode | None = None
         self._done: bool = False
+        self._primary_controllable: Controllable | None = None
 
     async def initialize(
         self,
@@ -197,19 +198,29 @@ class TapOptimizer(Optimizer):
                 self._done = True
                 return EventResponse(event=event)
 
-        # 6. Width-prune, then select best candidate
+        # 6. Width-prune, then select best candidate from current leaves
         self._tree.prune_to_width(self._tree_width)
-        best = self._tree.best_node()
-        if best and best.prompt:
-            self._best_candidate = best
+        leaves = self._tree.get_leaves()
+        if leaves:
+            best_leaf = max(leaves, key=lambda n: n.score)
+            if best_leaf.prompt:
+                self._best_candidate = best_leaf
+            else:
+                self._done = True
         else:
             self._done = True
 
         return EventResponse(event=event)
 
-    def _handle_pre_call(self, event: ControllablePreCallEvent) -> ControllableInjection:
-        """Inject the best candidate's prompt into the real target."""
+    def _handle_pre_call(self, event: ControllablePreCallEvent) -> ControllableInjection | ControllableNoInjection:
+        """Inject the best candidate's prompt into the primary controllable."""
         assert self._goal is not None
+
+        # Track primary controllable; ignore others
+        if self._primary_controllable is None:
+            self._primary_controllable = event.controllable
+        elif event.controllable is not self._primary_controllable:
+            return ControllableNoInjection(event=event, controllable=event.controllable)
 
         if self._best_candidate and self._best_candidate.prompt:
             value = self._best_candidate.prompt
@@ -226,6 +237,10 @@ class TapOptimizer(Optimizer):
         """Score the real target's response and update the best candidate."""
         assert self._goal is not None
         assert self._evaluator is not None
+
+        # Only score responses from the primary controllable
+        if event.controllable is not self._primary_controllable:
+            return ControllableNoInjection(event=event, controllable=event.controllable)
 
         if self._best_candidate:
             self._best_candidate.target_response = event.answer

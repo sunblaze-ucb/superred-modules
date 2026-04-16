@@ -55,6 +55,7 @@ class CrescendoOptimizer(Optimizer):
         self._goal: Goal | None = None
         self._attacker: Attacker | None = None
         self._evaluator: Evaluator | None = None
+        self._primary_controllable: Controllable | None = None
 
         # Per-attempt state
         self._turn: int = 0
@@ -118,9 +119,15 @@ class CrescendoOptimizer(Optimizer):
 
     async def _handle_pre_call(
         self, event: ControllablePreCallEvent
-    ) -> ControllableInjection:
+    ) -> ControllableInjection | ControllableNoInjection:
         assert self._goal is not None
         assert self._attacker is not None
+
+        # Track primary controllable; ignore others
+        if self._primary_controllable is None:
+            self._primary_controllable = event.controllable
+        elif event.controllable is not self._primary_controllable:
+            return ControllableNoInjection(event=event, controllable=event.controllable)
 
         try:
             question, summary, rationale = await self._attacker.generate_question(
@@ -154,6 +161,10 @@ class CrescendoOptimizer(Optimizer):
     ) -> ControllableNoInjection:
         assert self._goal is not None
         assert self._attacker is not None
+
+        # Only process responses from the primary controllable
+        if event.controllable is not self._primary_controllable:
+            return ControllableNoInjection(event=event, controllable=event.controllable)
 
         answer = event.answer
 
