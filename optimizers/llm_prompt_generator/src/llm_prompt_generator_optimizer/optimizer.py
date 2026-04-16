@@ -18,7 +18,6 @@ from superred.core.types.event import Event, EventResponse
 from superred.core.types.events import (
     ControllableInjection,
     ControllablePreCallEvent,
-    FeedbackEvent,
     RunEndEvent,
     RunEndResponse,
     RunStartEvent,
@@ -73,16 +72,15 @@ class LLMPromptGeneratorOptimizer(Optimizer):
                 value=self._current_prompt,
             )
 
-        if isinstance(event, FeedbackEvent):
-            score = event.evaluation.primary_score.value
-            rationale = event.evaluation.rationale or ""
-            self._feedback_history.append(
-                f"Attempt {self._attempt}: score={score:.2f}, "
-                f"rationale={rationale[:200]}"
-            )
-            return EventResponse(event=event)
-
         if isinstance(event, RunEndEvent):
+            # Read feedback from the evaluation carried on RunEndEvent.
+            if event.evaluation is not None:
+                score = event.evaluation.primary_score.value
+                rationale = event.evaluation.rationale or ""
+                self._feedback_history.append(
+                    f"Attempt {self._attempt}: score={score:.2f}, "
+                    f"rationale={rationale[:200]}"
+                )
             done = self._attempt >= self._max_attempts
             return RunEndResponse(event=event, done=done)
 
