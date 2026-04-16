@@ -6,7 +6,7 @@ import json
 import logging
 import re
 
-from litellm import acompletion
+from superred.core.llm import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -19,11 +19,11 @@ class Attacker:
     def __init__(
         self,
         *,
-        model: str,
+        llm: LLMClient,
         temperature: float = 1.0,
         system_prompt: str,
     ) -> None:
-        self._model = model
+        self._llm = llm
         self._temperature = temperature
         self._system_prompt = system_prompt
         self._conversation_history: list[dict[str, str]] = []
@@ -61,9 +61,8 @@ class Attacker:
             {"role": "user", "content": user_message},
         ]
 
-        response = await acompletion(
-            model=self._model,
-            messages=messages,
+        response = await self._llm.complete(
+            messages,
             temperature=self._temperature,
         )
         content = response.choices[0].message.content or ""
