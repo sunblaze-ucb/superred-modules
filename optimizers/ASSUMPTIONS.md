@@ -2,17 +2,18 @@
 
 ## Single Controllable
 
-Both TAP and Crescendo assume a single controllable injection point
-(the user query). They inject into the first ControllablePreCallEvent
-they receive per run. Multiple controllables are not explicitly handled —
-additional ControllablePreCallEvents get a default EventResponse.
+TAP, Crescendo, and FlipAttack assume a single controllable injection
+point (the user query). They inject into the first ControllablePreCallEvent
+they receive per run and ignore additional controllables with
+ControllableNoInjection.
 
 ## Single LLM Model
 
-Both optimizers use the controller-provided LLM client (`self.llm`) for
-all internal roles (attacker, evaluator, and in TAP's case, internal
-target simulation). The model is chosen by the threat model configuration,
-not by the optimizer.
+All optimizers use the controller-provided LLM client (`self.llm`).
+TAP and Crescendo use it for attacker, evaluator, and internal target
+roles. FlipAttack uses it only for response scoring (the attack itself
+is a pure text transformation). The model is chosen by the threat model
+configuration, not by the optimizer.
 
 ## Staged Running Compatibility
 
@@ -33,3 +34,10 @@ between depth iterations.
 Note: TAP still does significant internal LLM work during RunStartEvent
 (querying all candidates against an internal simulated target). The real
 target only sees the best candidate per depth.
+
+### FlipAttack — Compatible
+
+Each strategy attempt maps to one superred run cycle. The optimizer
+rotates through flip modes (FWO, FCW, FCS, FMM) with one attempt
+per run. No LLM work during RunStartEvent — the flip transformation
+is a pure string operation. Fully compatible with staged running.
