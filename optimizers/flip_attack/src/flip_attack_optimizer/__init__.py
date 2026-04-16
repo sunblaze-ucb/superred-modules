@@ -1,8 +1,5 @@
 """FlipAttack single-turn jailbreak optimizer for superred."""
 
-try:
-    from flip_attack_optimizer.optimizer import FlipAttackOptimizer
-except ModuleNotFoundError:
-    FlipAttackOptimizer = None  # type: ignore[assignment,misc]
+from flip_attack_optimizer.optimizer import FlipAttackOptimizer
 
 __all__ = ["FlipAttackOptimizer"]
