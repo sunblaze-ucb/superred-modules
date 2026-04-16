@@ -1,4 +1,4 @@
-"""TrivialPromptOptimizer: tries a fixed list of prompts, one per run.
+"""BasicPromptListOptimizer: tries a fixed list of prompts, one per run.
 
 The simplest possible optimizer — no LLM calls, no learning, just
 iterates through a predefined prompt list and signals done when
@@ -30,14 +30,14 @@ DEFAULT_PROMPTS = [
 ]
 
 
-class TrivialPromptOptimizer(Optimizer):
+class BasicPromptListOptimizer(Optimizer):
     """Optimizer that tries each prompt from a fixed list.
 
     One prompt per run. Signals done after the last prompt.
 
     Args:
         prompts: List of prompts to try. Defaults to a small set of
-            trivial attack prompts.
+            basic attack prompts.
     """
 
     def __init__(self, prompts: list[str] | None = None) -> None:

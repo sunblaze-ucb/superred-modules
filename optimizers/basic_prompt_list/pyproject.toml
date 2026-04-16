@@ -3,11 +3,11 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "trivial-prompt-optimizer"
+name = "basic-prompt-list-optimizer"
 version = "0.1.0"
-description = "Trivial fixed-prompt-list optimizer for superred"
+description = "Basic fixed-prompt-list optimizer for superred"
 requires-python = ">=3.11,<3.14"
 dependencies = ["superred"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/trivial_prompt_optimizer"]
+packages = ["src/basic_prompt_list_optimizer"]

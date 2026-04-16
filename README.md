@@ -8,11 +8,14 @@ Each module is its own installable Python package inside one of three category f
 
 ```
 optimizers/
-  trivial_prompt/        # pip: trivial-prompt-optimizer
+  basic_prompt_list/     # pip: basic-prompt-list-optimizer
+  hint_following/        # pip: hint-following-optimizer
 targets/
-  simple_chat/           # pip: simple-chat-target
+  basic_llm_chat/        # pip: basic-llm-chat-target
+  filter_test/           # pip: filter-test-target
 security_claims/
-  secret_leak/           # pip: secret-leak-claim
+  basic_secret_leak/     # pip: basic-secret-leak-claim
+  all_keys_match/        # pip: all-keys-match-claim
 ```
 
 ## Setup
@@ -27,21 +30,21 @@ source ../.venv/bin/activate
 pip install -e ../superred
 
 # Install individual modules (editable)
-pip install -e optimizers/trivial_prompt
-pip install -e targets/simple_chat
-pip install -e security_claims/secret_leak
+pip install -e optimizers/basic_prompt_list
+pip install -e targets/basic_llm_chat
+pip install -e security_claims/basic_secret_leak
 ```
 
-Some modules have additional dependencies (e.g. `simple-chat-target` requires `litellm`). These are declared in each module's `pyproject.toml` and installed automatically by pip.
+Some modules have additional dependencies (e.g. `basic-llm-chat-target` requires `litellm`). These are declared in each module's `pyproject.toml` and installed automatically by pip.
 
 ## Usage
 
 After installation, import by package name:
 
 ```python
-from trivial_prompt_optimizer import TrivialPromptOptimizer
-from simple_chat_target import SimpleChatTarget, USER_INPUT_TAG
-from secret_leak_claim import secret_leak_claim
+from basic_prompt_list_optimizer import BasicPromptListOptimizer
+from basic_llm_chat_target import BasicLLMChatTarget, USER_INPUT_TAG
+from basic_secret_leak_claim import basic_secret_leak_claim
 ```
 
 ## Adding a new module
