@@ -126,7 +126,7 @@ class CrescendoOptimizer(Optimizer):
         # Track primary controllable; ignore others
         if self._primary_controllable is None:
             self._primary_controllable = event.controllable
-        elif event.controllable is not self._primary_controllable:
+        elif event.controllable != self._primary_controllable:
             return ControllableNoInjection(event=event, controllable=event.controllable)
 
         try:
@@ -163,7 +163,7 @@ class CrescendoOptimizer(Optimizer):
         assert self._attacker is not None
 
         # Only process responses from the primary controllable
-        if event.controllable is not self._primary_controllable:
+        if event.controllable != self._primary_controllable:
             return ControllableNoInjection(event=event, controllable=event.controllable)
 
         answer = event.answer

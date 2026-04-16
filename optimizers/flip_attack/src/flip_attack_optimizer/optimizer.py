@@ -112,7 +112,7 @@ class FlipAttackOptimizer(Optimizer):
         # Single-controllable gating
         if self._primary_controllable is None:
             self._primary_controllable = event.controllable
-        elif event.controllable is not self._primary_controllable:
+        elif event.controllable != self._primary_controllable:
             return ControllableNoInjection(event=event, controllable=event.controllable)
 
         return ControllableInjection(
@@ -124,7 +124,7 @@ class FlipAttackOptimizer(Optimizer):
     async def _handle_post_call(
         self, event: ControllablePostCallEvent
     ) -> ControllableNoInjection:
-        if event.controllable is not self._primary_controllable:
+        if event.controllable != self._primary_controllable:
             return ControllableNoInjection(event=event, controllable=event.controllable)
 
         assert self._goal is not None
