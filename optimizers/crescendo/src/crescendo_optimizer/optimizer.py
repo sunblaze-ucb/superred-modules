@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from superred.core.interfaces.optimizer import Optimizer
+from superred.core.llm import LLMClient
 from superred.core.types.controllable import Controllable
 from superred.core.types.event import Event, EventResponse
 from superred.core.types.events import (
@@ -37,8 +38,6 @@ class CrescendoOptimizer(Optimizer):
     def __init__(
         self,
         *,
-        attacker_model: str,
-        evaluator_model: str,
         max_turns: int = 10,
         max_backtracks: int = 10,
         success_threshold: float = 0.8,
@@ -46,9 +45,7 @@ class CrescendoOptimizer(Optimizer):
         attack_temperature: float = 1.0,
     ) -> None:
         super().__init__()
-        self._attacker_model = attacker_model
         self._attack_temperature = attack_temperature
-        self._evaluator = Evaluator(model=evaluator_model)
         self._max_turns = max_turns
         self._max_backtracks = max_backtracks
         self._success_threshold = success_threshold
@@ -57,6 +54,7 @@ class CrescendoOptimizer(Optimizer):
         # State — set during initialize / event handling
         self._goal: Goal | None = None
         self._attacker: Attacker | None = None
+        self._evaluator: Evaluator | None = None
 
         # Per-attempt state
         self._turn: int = 0
@@ -79,8 +77,11 @@ class CrescendoOptimizer(Optimizer):
         goal: Goal,
         controllables: list[Controllable],
         observables: list[ObservableValue],
+        llm_client: LLMClient,
     ) -> None:
+        await super().initialize(goal, controllables, observables, llm_client)
         self._goal = goal
+        self._evaluator = Evaluator(llm=self.llm)
         self._start_new_attempt()
 
     async def on_event(self, event: Event) -> EventResponse:
@@ -229,7 +230,7 @@ class CrescendoOptimizer(Optimizer):
         """Reset per-attempt state and create a new attacker with the current variant."""
         variant = get_variant(self._attempt)
         self._attacker = Attacker(
-            model=self._attacker_model,
+            llm=self.llm,
             temperature=self._attack_temperature,
             system_prompt=variant,
         )

@@ -31,8 +31,7 @@ def _make_run_start():
 
 
 def _make_run_end():
-    traj = MagicMock()
-    return RunEndEvent(trajectory=traj)
+    return RunEndEvent(evaluation=None)
 
 
 def _make_pre_call(ctrl):
@@ -45,8 +44,6 @@ def _make_post_call(ctrl, answer):
 
 async def _init_optimizer(**kwargs) -> CrescendoOptimizer:
     defaults = dict(
-        attacker_model="gpt-4",
-        evaluator_model="gpt-4",
         max_turns=3,
         max_backtracks=2,
         success_threshold=0.8,
@@ -54,10 +51,13 @@ async def _init_optimizer(**kwargs) -> CrescendoOptimizer:
     )
     defaults.update(kwargs)
     opt = CrescendoOptimizer(**defaults)
+
+    mock_llm = AsyncMock()
     await opt.initialize(
         goal=Goal(description="test objective"),
         controllables=[_make_controllable()],
         observables=[],
+        llm_client=mock_llm,
     )
     return opt
 
