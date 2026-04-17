@@ -1,0 +1,13 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tap-optimizer"
+version = "0.1.0"
+description = "TAP (Tree of Attacks with Pruning) jailbreak optimizer for superred"
+requires-python = ">=3.11,<3.14"
+dependencies = ["superred"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tap_optimizer"]
