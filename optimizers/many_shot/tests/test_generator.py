@@ -58,3 +58,14 @@ async def test_generate_gives_up_after_max_retries():
     gen = ExampleGenerator(llm=llm)
     examples = await gen.generate(goal="test goal", count=5)
     assert len(examples) < 5
+
+
+@pytest.mark.asyncio
+async def test_generate_handles_fenced_json():
+    llm = AsyncMock()
+    llm.complete.return_value = _mock_response(
+        '```json\n[{"user": "Q1", "assistant": "A1"}]\n```'
+    )
+    gen = ExampleGenerator(llm=llm)
+    examples = await gen.generate(goal="test", count=1)
+    assert len(examples) == 1

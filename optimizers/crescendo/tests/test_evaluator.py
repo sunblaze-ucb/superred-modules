@@ -85,3 +85,15 @@ async def test_score_response_handles_integer_score():
     score, rationale = await evaluator.score_response(response="x", goal="y")
     assert score == 1.0
     assert rationale == "Full match"
+
+
+@pytest.mark.asyncio
+async def test_score_response_handles_fenced_json():
+    mock_llm = AsyncMock()
+    mock_llm.complete.return_value = _mock_response(
+        '```json\n{"score": 0.8, "rationale": "Fenced"}\n```'
+    )
+    evaluator = Evaluator(llm=mock_llm)
+    score, rationale = await evaluator.score_response(response="x", goal="g")
+    assert score == 0.8
+    assert rationale == "Fenced"
