@@ -1,0 +1,13 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "single-turn-chatbot-target"
+version = "0.1.0"
+description = "Single-turn chatbot target for superred — wraps any LLM via litellm"
+requires-python = ">=3.11,<3.14"
+dependencies = ["superred", "litellm"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/single_turn_chatbot_target"]
