@@ -9,18 +9,22 @@ multi-turn (multiple injections) from the same target implementation.
 Security domain is a two-tree forest::
 
     Tree 1:  system
-               ├── system_prompt              (controllable — override prompt)
-               │     └── system_prompt_readable  (observable — read prompt)
-               └── response
+               ├── system_prompt              (controllable - override prompt)
+               │     └── system_prompt_readable  (observable - read prompt)
+               └── model                      (controllable - modify LLM response)
+                     └── response_readable    (observable - read response)
     Tree 2:  user
 
 Scope semantics:
-    {system_prompt_readable}        → can see the system prompt text, can't change it
-    {system_prompt}                 → can see AND override the system prompt
-    {system_prompt, user}           → can override prompt + send messages
-    {system_prompt_readable, user}  → can see prompt + send messages (but not override)
-    {user}                          → blind input (can send messages, see responses
+    {response_readable}             -> can observe responses (read-only)
+    {model}                         -> can modify LLM responses AND observe them
+    {system_prompt_readable}        -> can see the system prompt text, can't change it
+    {system_prompt}                 -> can see AND override the system prompt
+    {system_prompt, user}           -> can override prompt + send messages
+    {system_prompt_readable, user}  -> can see prompt + send messages (but not override)
+    {user}                          -> blind input (can send messages, see responses
                                       via ControllablePostCallEvent)
+    {model, user}                   -> can modify responses + send messages
 """
 
 from __future__ import annotations
@@ -42,17 +46,20 @@ from superred.core.types.state import ConfigSpec, QuerySpec
 
 # ---------------------------------------------------------------------------
 # Security domain: two-tree forest
-#   Tree 1: system -> (system_prompt -> system_prompt_readable), response
+#   Tree 1: system -> (system_prompt -> system_prompt_readable),
+#                      (model -> response_readable)
 #   Tree 2: user (independent root)
 # ---------------------------------------------------------------------------
 SYSTEM_TAG = SecurityDomainTag("system")
 SYSTEM_PROMPT_TAG = SecurityDomainTag("system_prompt", parent=SYSTEM_TAG)
 SYSTEM_PROMPT_READABLE_TAG = SecurityDomainTag("system_prompt_readable", parent=SYSTEM_PROMPT_TAG)
-RESPONSE_TAG = SecurityDomainTag("response", parent=SYSTEM_TAG)
+MODEL_TAG = SecurityDomainTag("model", parent=SYSTEM_TAG)
+RESPONSE_READABLE_TAG = SecurityDomainTag("response_readable", parent=MODEL_TAG)
 USER_TAG = SecurityDomainTag("user")
 
 _DOMAIN = SecurityDomain([
-    SYSTEM_TAG, SYSTEM_PROMPT_TAG, SYSTEM_PROMPT_READABLE_TAG, RESPONSE_TAG, USER_TAG,
+    SYSTEM_TAG, SYSTEM_PROMPT_TAG, SYSTEM_PROMPT_READABLE_TAG,
+    MODEL_TAG, RESPONSE_READABLE_TAG, USER_TAG,
 ])
 
 # ---------------------------------------------------------------------------
@@ -69,6 +76,12 @@ _SYSTEM_PROMPT_CTRL = Controllable(
     security_domain=SYSTEM_PROMPT_TAG,
     description="Override the system prompt for this run.",
     value_type="text",
+)
+
+_RESPONSE_CTRL = Controllable(
+    name="response",
+    security_domain=MODEL_TAG,
+    description="The LLM response. Injection overrides the response text.",
 )
 
 
@@ -158,7 +171,7 @@ class ChatbotTarget(Target):
     # -- Controllables / observables ------------------------------------------
 
     def get_controllables(self) -> list[Controllable]:
-        return [_SYSTEM_PROMPT_CTRL, _USER_MESSAGE_CTRL]
+        return [_SYSTEM_PROMPT_CTRL, _USER_MESSAGE_CTRL, _RESPONSE_CTRL]
 
     def get_observables(self) -> list[ObservableValue]:
         return [
@@ -231,25 +244,29 @@ class ChatbotTarget(Target):
             assert isinstance(response, ModelResponse)
             assistant_message: str = response.choices[0].message.content or ""
 
-            conversation.append({"role": "assistant", "content": assistant_message})
-            self._last_response = assistant_message
-            self._conversation_history = list(conversation)
-
-            # Report the response back via ControllablePostCallEvent.
-            await send_event(
+            # Report the response via ControllablePostCallEvent.  If the
+            # optimizer's scope includes MODEL_TAG it can inject a modified
+            # response that replaces the original LLM output.
+            post_resp = await send_event(
                 ControllablePostCallEvent(
-                    controllable=_USER_MESSAGE_CTRL,
+                    controllable=_RESPONSE_CTRL,
                     request=user_message,
                     answer=assistant_message,
                 ),
             )
+            if isinstance(post_resp, ControllableInjection):
+                assistant_message = post_resp.value
 
-            # Emit an observation of the response at the response domain tag.
+            conversation.append({"role": "assistant", "content": assistant_message})
+            self._last_response = assistant_message
+            self._conversation_history = list(conversation)
+
+            # Emit an observation of the (possibly modified) response.
             emit(
                 ObservableEvent(
                     observable=Observable(
                         name="response",
-                        security_domain=RESPONSE_TAG,
+                        security_domain=RESPONSE_READABLE_TAG,
                         description="The chatbot's response.",
                     ),
                     content=assistant_message,

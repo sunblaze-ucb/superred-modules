@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "single-turn-chatbot-target"
+name = "chatbot-target"
 version = "0.1.0"
-description = "Chatbot target for superred — wraps any LLM via litellm"
+description = "Chatbot target for superred -- wraps any LLM via litellm"
 requires-python = ">=3.11,<3.14"
 dependencies = ["superred", "litellm"]
 
@@ -17,11 +17,11 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/single_turn_chatbot_target"]
+packages = ["src/chatbot_target"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-addopts = "--cov=single_turn_chatbot_target --cov-branch --cov-report=term-missing --strict-markers"
+addopts = "--cov=chatbot_target --cov-branch --cov-report=term-missing --strict-markers"
 testpaths = ["tests"]
 
 [tool.coverage.report]

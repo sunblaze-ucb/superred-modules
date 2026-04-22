@@ -6,8 +6,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from single_turn_chatbot_target import (
-    RESPONSE_TAG,
+from chatbot_target import (
+    MODEL_TAG,
+    RESPONSE_READABLE_TAG,
     SYSTEM_PROMPT_READABLE_TAG,
     SYSTEM_PROMPT_TAG,
     SYSTEM_TAG,
