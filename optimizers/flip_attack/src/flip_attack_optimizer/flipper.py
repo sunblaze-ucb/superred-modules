@@ -6,6 +6,7 @@ All functions are pure — no state, no LLM calls.
 
 from __future__ import annotations
 
+import textwrap
 from typing import Callable
 
 
@@ -30,10 +31,15 @@ def flip_fool_model(text: str) -> str:
 
 
 def split_sentence_in_half(text: str) -> tuple[str, str]:
-    """Split text roughly in half at a word boundary (for few-shot demos)."""
-    words = text.split()
-    mid = len(words) // 2
-    return " ".join(words[:mid]), " ".join(words[mid:])
+    """Split text roughly in half at a word boundary (for few-shot demos).
+
+    Uses character midpoint (textwrap), matching the original FlipAttack.
+    """
+    mid = len(text) // 2
+    lines = textwrap.wrap(text, width=mid, break_long_words=False, break_on_hyphens=False)
+    if len(lines) >= 2:
+        return lines[0], " ".join(lines[1:])
+    return text, ""
 
 
 FLIP_MODES: dict[str, Callable[[str], str]] = {

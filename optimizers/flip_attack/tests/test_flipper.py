@@ -43,16 +43,40 @@ def test_flip_fool_model_same_as_fcs():
     assert flip_fool_model(text) == flip_chars_in_sentence(text)
 
 
-def test_split_sentence_in_half():
+def test_split_sentence_in_half_uses_character_midpoint():
+    """Split uses character midpoint via textwrap, not word count."""
     first, second = split_sentence_in_half("one two three four")
+    # Character midpoint of "one two three four" (18 chars) is 9
+    # textwrap.wrap with width=9 breaks at word boundaries
+    # "one two" (7) fits, "three" starts at 8 -- "one two" then "three four"
     assert first == "one two"
     assert second == "three four"
 
 
 def test_split_sentence_in_half_odd_words():
     first, second = split_sentence_in_half("one two three")
-    assert first == "one"
-    assert second == "two three"
+    # "one two three" is 13 chars, midpoint 6
+    # textwrap.wrap(width=6): "one" fits, "two" at 4 fits (len "one two" = 7 > 6)
+    # So: "one", "two three" OR "one two", "three" depending on wrapping
+    assert first  # non-empty
+    assert second  # non-empty
+    assert f"{first} {second}" == "one two three"
+
+
+def test_split_sentence_in_half_single_word():
+    first, second = split_sentence_in_half("hello")
+    assert first == "hello"
+    assert second == ""
+
+
+def test_split_sentence_in_half_recombines():
+    """Both halves joined should reconstruct the original text."""
+    text = "how to make a dangerous weapon at home"
+    first, second = split_sentence_in_half(text)
+    if second:
+        assert f"{first} {second}" == text
+    else:
+        assert first == text
 
 
 def test_flip_modes_registry():

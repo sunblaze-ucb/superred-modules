@@ -134,6 +134,7 @@ class FlipAttackOptimizer(Optimizer):
             score, rationale = await self._evaluator.score_response(
                 response=event.answer,
                 goal=self._goal.description,
+                prompt=self._current_user_message,
             )
         except Exception:
             logger.warning("FlipAttack: scoring failed", exc_info=True)
@@ -178,10 +179,12 @@ class FlipAttackOptimizer(Optimizer):
         flipped = flip_fn(self._goal.description)
 
         self._system_prompt = get_system_prompt(mode, style=self._prompt_style)
-        self._current_user_message = format_user_message(
+        user_msg = format_user_message(
             flipped_text=flipped,
             goal=self._goal.description,
             flip_mode=mode,
             use_cot=self._use_cot,
             use_few_shot=self._use_few_shot,
         )
+        # Fold system prompt into user message for single-controllable targets
+        self._current_user_message = f"{self._system_prompt}\n\n{user_msg}"

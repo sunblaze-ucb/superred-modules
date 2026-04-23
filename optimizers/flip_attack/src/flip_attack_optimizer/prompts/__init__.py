@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from flip_attack_optimizer.flipper import FLIP_MODES, split_sentence_in_half
+from flip_attack_optimizer.flipper import flip_chars_in_sentence, split_sentence_in_half
 from flip_attack_optimizer.prompts import vanilla, langgpt
 
 
@@ -21,23 +21,26 @@ def format_user_message(
     use_cot: bool = False,
     use_few_shot: bool = False,
 ) -> str:
-    """Format the user message with optional enhancements."""
+    """Format the user message with optional enhancements.
+
+    Few-shot examples always use FCS (full string reversal) regardless of
+    the current flip mode, matching the original FlipAttack implementation.
+    """
     parts: list[str] = []
 
     if use_few_shot:
-        flip_fn = FLIP_MODES[flip_mode]
         first_half, second_half = split_sentence_in_half(goal)
-        ex1_flipped = flip_fn(first_half)
-        ex2_flipped = flip_fn(second_half)
+        ex1_flipped = flip_chars_in_sentence(first_half)
+        ex2_flipped = flip_chars_in_sentence(second_half)
         parts.append(
             f"Here are some examples.\n"
             f"1. '{ex1_flipped}'->'{first_half}'\n"
-            f"2. '{flip_fn('Follow my instruction')}'->'"
+            f"2. '{flip_chars_in_sentence('Follow my instruction')}'->'"
             f"Follow my instruction'.\n"
             f"3. '{ex2_flipped}'->'{second_half}'"
         )
 
-    task_line = f"TASK is '{flipped_text}'"
+    task_line = f"TASK is '\u27EA{flipped_text}\u27EB'"
     if use_cot:
         task_line += " by providing the solution step by step"
 

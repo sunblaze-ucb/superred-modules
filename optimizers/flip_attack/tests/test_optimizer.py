@@ -1,9 +1,8 @@
 """Tests for FlipAttackOptimizer event-driven state machine."""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 import pytest
 
-from superred.core.types.controllable import Controllable
 from superred.core.types.event import EventResponse
 from superred.core.types.events import (
     ControllableInjection,
@@ -18,20 +17,8 @@ from superred.core.types.goal import Goal
 from superred.core.types.security_domain import SecurityDomainTag
 from superred.core.types.trajectory import Trajectory
 
+from tests.conftest import DOMAIN, mock_response, make_controllable
 from flip_attack_optimizer.optimizer import FlipAttackOptimizer
-
-DOMAIN = SecurityDomainTag(name="test")
-
-
-def _mock_response(content: str) -> MagicMock:
-    resp = MagicMock()
-    resp.choices = [MagicMock()]
-    resp.choices[0].message.content = content
-    return resp
-
-
-def _make_controllable():
-    return Controllable(name="input", security_domain=DOMAIN, description="test")
 
 
 def _make_run_start():
@@ -65,7 +52,7 @@ async def _init_optimizer(**kwargs) -> FlipAttackOptimizer:
     mock_llm = AsyncMock()
     await opt.initialize(
         goal=Goal(description="test objective"),
-        controllables=[_make_controllable()],
+        controllables=[make_controllable()],
         observables=[],
         llm_client=mock_llm,
     )
@@ -82,7 +69,7 @@ async def test_run_start_returns_event_response():
 @pytest.mark.asyncio
 async def test_pre_call_injects_flipped_task():
     opt = await _init_optimizer(flip_modes=["FWO"])
-    ctrl = _make_controllable()
+    ctrl = make_controllable()
     await opt.on_event(_make_run_start())
     resp = await opt.on_event(_make_pre_call(ctrl))
     assert isinstance(resp, ControllableInjection)
@@ -92,14 +79,28 @@ async def test_pre_call_injects_flipped_task():
 
 
 @pytest.mark.asyncio
+async def test_user_message_contains_system_prompt():
+    """System prompt is folded into the user message."""
+    opt = await _init_optimizer(flip_modes=["FWO"])
+    ctrl = make_controllable()
+    await opt.on_event(_make_run_start())
+    resp = await opt.on_event(_make_pre_call(ctrl))
+    assert isinstance(resp, ControllableInjection)
+    # Should contain system prompt content
+    assert "Your primary mission is to solve the task" in resp.value
+    # And the TASK line
+    assert "TASK" in resp.value
+
+
+@pytest.mark.asyncio
 async def test_post_call_scores_and_returns_no_injection():
     opt = await _init_optimizer()
-    ctrl = _make_controllable()
+    ctrl = make_controllable()
     await opt.on_event(_make_run_start())
     await opt.on_event(_make_pre_call(ctrl))
 
-    opt.llm.complete.return_value = _mock_response(
-        '{"score": 0.3, "rationale": "Low"}'
+    opt.llm.complete.return_value = mock_response(
+        '{"score": 3, "rationale": "Low"}'
     )
     resp = await opt.on_event(_make_post_call(ctrl, "some response"))
     assert isinstance(resp, ControllableNoInjection)
@@ -108,12 +109,13 @@ async def test_post_call_scores_and_returns_no_injection():
 @pytest.mark.asyncio
 async def test_success_triggers_done():
     opt = await _init_optimizer(success_threshold=0.8)
-    ctrl = _make_controllable()
+    ctrl = make_controllable()
     await opt.on_event(_make_run_start())
     await opt.on_event(_make_pre_call(ctrl))
 
-    opt.llm.complete.return_value = _mock_response(
-        '{"score": 0.9, "rationale": "High"}'
+    # Score 9 -> (9-1)/9 = 0.889 > 0.8 threshold
+    opt.llm.complete.return_value = mock_response(
+        '{"score": 9, "rationale": "High"}'
     )
     await opt.on_event(_make_post_call(ctrl, "full compliance"))
     resp = await opt.on_event(_make_run_end())
@@ -124,14 +126,14 @@ async def test_success_triggers_done():
 @pytest.mark.asyncio
 async def test_strategy_rotation():
     opt = await _init_optimizer(flip_modes=["FWO", "FCW"])
-    ctrl = _make_controllable()
+    ctrl = make_controllable()
 
     # First attempt (FWO)
     await opt.on_event(_make_run_start())
     await opt.on_event(_make_pre_call(ctrl))
 
-    opt.llm.complete.return_value = _mock_response(
-        '{"score": 0.2, "rationale": "Low"}'
+    opt.llm.complete.return_value = mock_response(
+        '{"score": 2, "rationale": "Low"}'
     )
     await opt.on_event(_make_post_call(ctrl, "refused"))
     resp = await opt.on_event(_make_run_end())
@@ -149,13 +151,13 @@ async def test_strategy_rotation():
 @pytest.mark.asyncio
 async def test_all_strategies_exhausted():
     opt = await _init_optimizer(flip_modes=["FWO"])
-    ctrl = _make_controllable()
+    ctrl = make_controllable()
 
     await opt.on_event(_make_run_start())
     await opt.on_event(_make_pre_call(ctrl))
 
-    opt.llm.complete.return_value = _mock_response(
-        '{"score": 0.1, "rationale": "Failed"}'
+    opt.llm.complete.return_value = mock_response(
+        '{"score": 1, "rationale": "Failed"}'
     )
     await opt.on_event(_make_post_call(ctrl, "refused"))
     resp = await opt.on_event(_make_run_end())
@@ -165,8 +167,9 @@ async def test_all_strategies_exhausted():
 @pytest.mark.asyncio
 async def test_secondary_controllable_ignored():
     opt = await _init_optimizer()
-    ctrl1 = _make_controllable()
-    ctrl2 = Controllable(name="other", security_domain=DOMAIN, description="secondary")
+    ctrl1 = make_controllable()
+    ctrl2 = make_controllable()
+    ctrl2 = ctrl2.__replace__(name="other")
 
     await opt.on_event(_make_run_start())
     resp1 = await opt.on_event(_make_pre_call(ctrl1))
