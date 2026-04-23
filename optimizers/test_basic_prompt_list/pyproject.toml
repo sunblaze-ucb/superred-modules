@@ -1,0 +1,13 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "basic-prompt-list-optimizer"
+version = "0.1.0"
+description = "Basic fixed-prompt-list optimizer for superred"
+requires-python = ">=3.11,<3.14"
+dependencies = ["superred"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/basic_prompt_list_optimizer"]
