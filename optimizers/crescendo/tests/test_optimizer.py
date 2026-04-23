@@ -298,3 +298,19 @@ async def test_secondary_controllable_ignored():
 
     resp2 = await opt.on_event(_make_pre_call(ctrl2))
     assert isinstance(resp2, ControllableNoInjection)
+
+
+@pytest.mark.asyncio
+async def test_attacker_failure_uses_benign_fallback_question():
+    opt = await _init_optimizer()
+    ctrl = _make_controllable()
+
+    await opt.on_event(_make_run_start())
+
+    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen:
+        mock_gen.side_effect = RuntimeError("attacker unavailable")
+        resp = await opt.on_event(_make_pre_call(ctrl))
+
+    assert isinstance(resp, ControllableInjection)
+    assert "test objective" not in resp.value.lower()
+    assert "high-level" in resp.value.lower()

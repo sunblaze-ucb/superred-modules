@@ -94,6 +94,18 @@ async def test_score_response_handles_integer_score_value():
 
 
 @pytest.mark.asyncio
+async def test_score_response_handles_decimal_string_score_value():
+    mock_llm = AsyncMock()
+    mock_llm.complete.return_value = _mock_response(
+        '{"score_value": "80.5", "description": "High", "rationale": "Decimal string"}'
+    )
+    evaluator = Evaluator(llm=mock_llm)
+    score, rationale = await evaluator.score_response(response="x", goal="y")
+    assert score == 0.805
+    assert rationale == "Decimal string"
+
+
+@pytest.mark.asyncio
 async def test_score_response_handles_fenced_json():
     mock_llm = AsyncMock()
     mock_llm.complete.return_value = _mock_response(

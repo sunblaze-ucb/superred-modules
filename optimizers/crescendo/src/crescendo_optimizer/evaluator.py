@@ -248,7 +248,7 @@ class Evaluator:
         try:
             cleaned = _strip_markdown_fences(content)
             data = json.loads(cleaned)
-            score = int(data["score_value"]) / 100.0
+            score = float(data["score_value"]) / 100.0
             score = max(0.0, min(1.0, score))
             rationale = str(data.get("rationale", ""))
             return score, rationale
