@@ -60,11 +60,13 @@ class CrescendoOptimizer(Optimizer):
         self._attacker: Attacker | None = None
         self._evaluator: Evaluator | None = None
         self._primary_controllable: Controllable | None = None
+        self._primary_post_controllable: Controllable | None = None
 
         # Per-attempt state (reset each run via _start_new_attempt)
         self._turn: int = 0
         self._backtrack_count: int = 0
         self._current_question: str | None = None
+        self._awaiting_post_call: bool = False
         self._last_response: str | None = None
         self._last_score: float | None = None
         self._last_rationale: str | None = None
@@ -143,6 +145,7 @@ class CrescendoOptimizer(Optimizer):
             question = self._build_fallback_question()
 
         self._current_question = question
+        self._awaiting_post_call = True
 
         logger.info(
             "Crescendo: attempt %d, turn %d — injecting question",
@@ -160,11 +163,20 @@ class CrescendoOptimizer(Optimizer):
     ) -> ControllableNoInjection:
         assert self._goal is not None
         assert self._attacker is not None
+        assert self._evaluator is not None
 
-        # Only process responses from the primary controllable
-        if event.controllable != self._primary_controllable:
+        # Only process post-call events after this optimizer injected a question.
+        if not self._awaiting_post_call:
             return ControllableNoInjection(event=event, controllable=event.controllable)
 
+        # Some targets use a dedicated controllable for post-call responses.
+        # Track this channel separately from the pre-call injection controllable.
+        if self._primary_post_controllable is None:
+            self._primary_post_controllable = event.controllable
+        elif event.controllable != self._primary_post_controllable:
+            return ControllableNoInjection(event=event, controllable=event.controllable)
+
+        self._awaiting_post_call = False
         answer = event.answer
 
         try:
@@ -245,6 +257,8 @@ class CrescendoOptimizer(Optimizer):
         self._last_rationale = None
         self._attempt_done = False
         self._primary_controllable = None
+        self._primary_post_controllable = None
+        self._awaiting_post_call = False
 
     def _build_fallback_question(self) -> str:
         """Return a conservative prompt when attacker generation fails."""

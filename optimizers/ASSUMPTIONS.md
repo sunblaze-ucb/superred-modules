@@ -1,10 +1,17 @@
 # Optimizer Assumptions
 
-## Single Controllable
+## Single Pre-Call Controllable
 
 Crescendo assumes a single controllable injection point (the user query).
 It injects into the first ControllablePreCallEvent it receives per run
 and ignores additional controllables with ControllableNoInjection.
+
+## Post-Call Controllable Mapping
+
+Crescendo can process PostCall events from a dedicated response
+controllable that differs from the PreCall injection controllable. It
+locks onto the first PostCall controllable seen after an injected turn
+and ignores unrelated PostCall controllables for that attempt.
 
 ## Single LLM Model
 

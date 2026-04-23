@@ -21,8 +21,8 @@ from superred.core.types.security_domain import SecurityDomainTag
 from crescendo_optimizer.optimizer import CrescendoOptimizer
 
 
-def _make_controllable():
-    return Controllable(name="input", security_domain=SecurityDomainTag(name="user"))
+def _make_controllable(name: str = "input", tag: str = "user"):
+    return Controllable(name=name, security_domain=SecurityDomainTag(name=tag))
 
 
 def _make_run_start():
@@ -104,6 +104,31 @@ async def test_post_call_evaluates_and_returns_no_injection():
         resp = await opt.on_event(_make_post_call(ctrl, "Here is some info about X"))
 
     assert isinstance(resp, ControllableNoInjection)
+
+
+@pytest.mark.asyncio
+async def test_post_call_with_different_controllable_is_processed():
+    """PostCall should still be processed when target uses a separate response controllable."""
+    opt = await _init_optimizer()
+    pre_ctrl = _make_controllable(name="user_message", tag="user")
+    post_ctrl = _make_controllable(name="response", tag="assistant")
+
+    await opt.on_event(_make_run_start())
+
+    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen:
+        mock_gen.return_value = ("Q?", "", "reason")
+        pre_resp = await opt.on_event(_make_pre_call(pre_ctrl))
+    assert isinstance(pre_resp, ControllableInjection)
+
+    with patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref, \
+         patch.object(opt._evaluator, "score_response", new_callable=AsyncMock) as mock_score:
+        mock_ref.return_value = False
+        mock_score.return_value = (0.4, "Progress")
+        post_resp = await opt.on_event(_make_post_call(post_ctrl, "Answer text"))
+
+    assert isinstance(post_resp, ControllableNoInjection)
+    assert opt._turn == 1
+    assert opt._last_response == "Answer text"
 
 
 @pytest.mark.asyncio
