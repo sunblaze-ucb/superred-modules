@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock, patch, MagicMock
 import pytest
 
+from superred.core.interfaces.target import Target
 from superred.core.types.controllable import Controllable
 from superred.core.types.event import Event, EventResponse
 from superred.core.types.events import (
@@ -10,13 +11,15 @@ from superred.core.types.events import (
     ControllableNoInjection,
     ControllablePreCallEvent,
     ControllablePostCallEvent,
+    ObservableEvent,
     RunEndEvent,
     RunEndResponse,
     RunStartEvent,
 )
 from superred.core.types.goal import Goal
-from superred.core.types.observable import ObservableValue
-from superred.core.types.security_domain import SecurityDomainTag
+from superred.core.types.observable import Observable, ObservableValue
+from superred.core.types.security_domain import SecurityDomain, SecurityDomainTag
+from superred.core.types.state import ConfigSpec, QuerySpec
 
 from crescendo_optimizer.optimizer import CrescendoOptimizer
 
@@ -40,6 +43,14 @@ def _make_pre_call(ctrl):
 
 def _make_post_call(ctrl, answer):
     return ControllablePostCallEvent(controllable=ctrl, request="user input", answer=answer)
+
+
+def _make_pre_call_with_request(ctrl, request):
+    return ControllablePreCallEvent(controllable=ctrl, request=request)
+
+
+def _make_post_call_with_request(ctrl, answer, request):
+    return ControllablePostCallEvent(controllable=ctrl, request=request, answer=answer)
 
 
 async def _init_optimizer(**kwargs) -> CrescendoOptimizer:
@@ -130,6 +141,197 @@ async def test_post_call_with_different_controllable_is_processed():
     assert opt._turn == 1
     assert opt._last_response == "Answer text"
 
+
+@pytest.mark.asyncio
+async def test_noisy_post_call_before_real_post_call_is_ignored():
+    """Out-of-band PostCall events should not hijack the active turn."""
+    opt = await _init_optimizer()
+    pre_ctrl = _make_controllable(name="user_message", tag="user")
+    noisy_ctrl = _make_controllable(name="telemetry", tag="system")
+    real_post_ctrl = _make_controllable(name="response", tag="assistant")
+
+    await opt.on_event(_make_run_start())
+
+    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen:
+        mock_gen.return_value = ("Q?", "", "reason")
+        pre_resp = await opt.on_event(_make_pre_call_with_request(pre_ctrl, "turn-1"))
+    assert isinstance(pre_resp, ControllableInjection)
+
+    # First PostCall is noise (wrong controllable + unrelated request) and should be ignored.
+    noise_resp = await opt.on_event(
+        _make_post_call_with_request(noisy_ctrl, "noise", "metrics-update"),
+    )
+    assert isinstance(noise_resp, ControllableNoInjection)
+    assert opt._turn == 0
+
+    # Real PostCall arrives next and should be processed.
+    with patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref, \
+         patch.object(opt._evaluator, "score_response", new_callable=AsyncMock) as mock_score:
+        mock_ref.return_value = False
+        mock_score.return_value = (0.5, "Mid progress")
+        real_resp = await opt.on_event(
+            _make_post_call_with_request(real_post_ctrl, "real answer", "turn-1"),
+        )
+    assert isinstance(real_resp, ControllableNoInjection)
+    assert opt._turn == 1
+    assert opt._last_response == "real answer"
+
+
+@pytest.mark.asyncio
+async def test_missing_post_call_advances_turn_and_terminates():
+    """If target omits PostCall, optimizer should still advance turns and stop at max_turns."""
+    opt = await _init_optimizer(max_turns=2, success_threshold=0.99)
+    ctrl = _make_controllable()
+
+    await opt.on_event(_make_run_start())
+
+    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen:
+        mock_gen.side_effect = [
+            ("Q1?", "", "r1"),
+            ("Q2?", "", "r2"),
+            ("Q3?", "", "r3"),
+        ]
+
+        # Turn 1 injection, but no PostCall follows.
+        resp1 = await opt.on_event(_make_pre_call(ctrl))
+        assert isinstance(resp1, ControllableInjection)
+        assert opt._turn == 0
+
+        # Next PreCall should synthesize an unsuccessful turn and continue.
+        resp2 = await opt.on_event(_make_pre_call(ctrl))
+        assert isinstance(resp2, ControllableInjection)
+        assert opt._turn == 1
+
+        # Another missing PostCall should consume final turn and terminate.
+        resp3 = await opt.on_event(_make_pre_call(ctrl))
+        assert isinstance(resp3, ControllableNoInjection)
+        assert opt._turn == 2
+        assert opt._attempt_done is True
+        assert mock_gen.call_count == 2
+
+
+class _SplitPostCallTarget(Target):
+    """A minimal multi-turn target with separate pre/post controllables."""
+
+    def __init__(self, max_turns: int = 3) -> None:
+        self._max_turns = max_turns
+        self._last_response = ""
+        self.injected_messages: list[str] = []
+
+    @property
+    def config_specs(self) -> list[ConfigSpec]:
+        return []
+
+    def set_config(self, name: str, value: str) -> None:
+        return None
+
+    @property
+    def query_specs(self) -> list[QuerySpec]:
+        return [QuerySpec(name="last_response", description="Last response text")]
+
+    def query(self, name: str, **params: str) -> str:
+        if name == "last_response":
+            return self._last_response
+        return ""
+
+    @property
+    def security_domain(self) -> SecurityDomain:
+        root = SecurityDomainTag("root")
+        user = SecurityDomainTag("user", parent=root)
+        assistant = SecurityDomainTag("assistant", parent=root)
+        return SecurityDomain([root, user, assistant])
+
+    def get_controllables(self) -> list[Controllable]:
+        return [
+            _make_controllable(name="user_message", tag="user"),
+            _make_controllable(name="response", tag="assistant"),
+        ]
+
+    def get_observables(self) -> list[ObservableValue]:
+        return [
+            ObservableValue(
+                observable=Observable(
+                    name="target_type",
+                    security_domain=SecurityDomainTag("root"),
+                ),
+                content="split-post-target",
+            )
+        ]
+
+    async def run(self, emit, send_event) -> None:
+        user_ctrl = _make_controllable(name="user_message", tag="user")
+        response_ctrl = _make_controllable(name="response", tag="assistant")
+
+        for turn in range(self._max_turns):
+            request = f"turn-{turn + 1}"
+            pre = await send_event(
+                ControllablePreCallEvent(controllable=user_ctrl, request=request),
+            )
+            if not isinstance(pre, ControllableInjection):
+                break
+
+            self.injected_messages.append(pre.value)
+            answer = f"assistant-answer-{turn + 1}"
+            self._last_response = answer
+            emit(ObservableEvent(
+                observable=Observable(
+                    name="assistant_answer",
+                    security_domain=SecurityDomainTag("assistant"),
+                ),
+                content=answer,
+            ))
+            await send_event(
+                ControllablePostCallEvent(
+                    controllable=response_ctrl,
+                    request=request,
+                    answer=answer,
+                ),
+            )
+
+    async def cleanup(self) -> None:
+        self._last_response = ""
+        self.injected_messages = []
+
+    async def teardown(self) -> None:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_split_post_call_target_run_end_to_end():
+    """Target.run with split pre/post controllables should drive Crescendo turns correctly."""
+    opt = await _init_optimizer(max_turns=2, success_threshold=0.99)
+    target = _SplitPostCallTarget(max_turns=4)
+
+    await opt.on_event(_make_run_start())
+
+    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen, \
+         patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref, \
+         patch.object(opt._evaluator, "score_response", new_callable=AsyncMock) as mock_score:
+        mock_gen.side_effect = [
+            ("Q1?", "", "r1"),
+            ("Q2?", "", "r2"),
+        ]
+        mock_ref.return_value = False
+        mock_score.side_effect = [
+            (0.2, "low"),
+            (0.3, "low"),
+        ]
+
+        async def send_event(event):
+            return await opt.on_event(event)
+
+        target_events = []
+
+        def emit(event):
+            target_events.append(event)
+
+        await target.run(emit, send_event)
+
+    # Optimizer should stop the target after max_turns.
+    assert opt._turn == 2
+    assert opt._attempt_done is True
+    assert target.injected_messages == ["Q1?", "Q2?"]
+    assert len(target_events) == 2
 
 @pytest.mark.asyncio
 async def test_multi_turn_within_single_run():

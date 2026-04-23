@@ -66,6 +66,7 @@ class CrescendoOptimizer(Optimizer):
         self._turn: int = 0
         self._backtrack_count: int = 0
         self._current_question: str | None = None
+        self._current_pre_request: str | None = None
         self._awaiting_post_call: bool = False
         self._last_response: str | None = None
         self._last_score: float | None = None
@@ -131,6 +132,23 @@ class CrescendoOptimizer(Optimizer):
         if self._attempt_done:
             return ControllableNoInjection(event=event, controllable=event.controllable)
 
+        # Some targets do not emit PostCall events. Treat a missing PostCall
+        # as an unsuccessful completed turn so turn budget still advances.
+        if self._awaiting_post_call:
+            self._turn += 1
+            self._last_response = None
+            self._last_score = 0.0
+            self._last_rationale = "No post-call feedback from target response."
+            self._awaiting_post_call = False
+            self._current_pre_request = None
+            logger.warning(
+                "Crescendo: missing post-call feedback, advancing turn (%d/%d)",
+                self._turn, self._max_turns,
+            )
+            if self._turn >= self._max_turns:
+                self._attempt_done = True
+                return ControllableNoInjection(event=event, controllable=event.controllable)
+
         try:
             question, summary, rationale = await self._attacker.generate_question(
                 goal=self._goal.description,
@@ -145,6 +163,7 @@ class CrescendoOptimizer(Optimizer):
             question = self._build_fallback_question()
 
         self._current_question = question
+        self._current_pre_request = event.request
         self._awaiting_post_call = True
 
         logger.info(
@@ -172,11 +191,21 @@ class CrescendoOptimizer(Optimizer):
         # Some targets use a dedicated controllable for post-call responses.
         # Track this channel separately from the pre-call injection controllable.
         if self._primary_post_controllable is None:
+            # Accept first post-call only if it plausibly pairs with current turn.
+            # This guards against noisy out-of-band PostCall events.
+            is_same_controllable = event.controllable == self._primary_controllable
+            request_matches = (
+                self._current_pre_request is not None
+                and event.request == self._current_pre_request
+            )
+            if not (is_same_controllable or request_matches):
+                return ControllableNoInjection(event=event, controllable=event.controllable)
             self._primary_post_controllable = event.controllable
         elif event.controllable != self._primary_post_controllable:
             return ControllableNoInjection(event=event, controllable=event.controllable)
 
         self._awaiting_post_call = False
+        self._current_pre_request = None
         answer = event.answer
 
         try:
@@ -252,6 +281,7 @@ class CrescendoOptimizer(Optimizer):
         self._turn = 0
         self._backtrack_count = 0
         self._current_question = None
+        self._current_pre_request = None
         self._last_response = None
         self._last_score = None
         self._last_rationale = None

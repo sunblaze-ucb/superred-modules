@@ -13,6 +13,15 @@ controllable that differs from the PreCall injection controllable. It
 locks onto the first PostCall controllable seen after an injected turn
 and ignores unrelated PostCall controllables for that attempt.
 
+If noisy PostCall events arrive before a valid response, Crescendo only
+binds the post-call channel when the event plausibly matches the active
+turn (same controllable as pre-call, or same per-turn request marker).
+Unmatched PostCall events are ignored.
+
+If a target omits PostCall events entirely, Crescendo advances turn
+budget on the next PreCall and treats the missing feedback as an
+unsuccessful turn, ensuring attempts still terminate at `max_turns`.
+
 ## Single LLM Model
 
 Crescendo uses the controller-provided LLM client (`self.llm`) for
