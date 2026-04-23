@@ -27,3 +27,23 @@ prompt variants across attempts. PyRIT selects a single variant at
 construction time with no rotation. Here, each "attempt" is a fully
 independent attack with reset state and a different variant prompt,
 cycling through all available variants before exhaustion.
+
+## Crescendo Scoring Format
+
+Crescendo's evaluator expects the judge output field `score_value` on a
+0-100 scale and accepts either integer or decimal representations
+(string or numeric). The optimizer normalizes this to 0.0-1.0 and clamps
+out-of-range values.
+
+## Crescendo Fallback Prompting
+
+If attacker generation fails, Crescendo falls back to a conservative
+high-level, neutral prompt (instead of restating the adversarial goal
+directly) to reduce abrupt escalation and refusal risk.
+
+## Crescendo Backtracking Limitation
+
+**Departure from paper/PyRIT:** On refusal, this implementation can
+notify the attacker and retry, but cannot remove the refused turn from
+the already-sent target conversation state. Paper Algorithm 1 and PyRIT's
+memory-backed flow model an explicit target-history pop/backtrack step.
