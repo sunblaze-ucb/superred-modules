@@ -15,7 +15,9 @@ and ignores unrelated PostCall controllables for that attempt.
 
 If noisy PostCall events arrive before a valid response, Crescendo only
 binds the post-call channel when the event plausibly matches the active
-turn (same controllable as pre-call, or same per-turn request marker).
+turn (same controllable as pre-call, same pre-call request marker, or
+same injected value marker used by targets that echo injected text as
+the PostCall request).
 Unmatched PostCall events are ignored.
 
 If a target omits PostCall events entirely, Crescendo advances turn

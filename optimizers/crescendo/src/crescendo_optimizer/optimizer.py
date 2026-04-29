@@ -67,6 +67,7 @@ class CrescendoOptimizer(Optimizer):
         self._backtrack_count: int = 0
         self._current_question: str | None = None
         self._current_pre_request: str | None = None
+        self._current_injected_value: str | None = None
         self._awaiting_post_call: bool = False
         self._last_response: str | None = None
         self._last_score: float | None = None
@@ -141,6 +142,7 @@ class CrescendoOptimizer(Optimizer):
             self._last_rationale = "No post-call feedback from target response."
             self._awaiting_post_call = False
             self._current_pre_request = None
+            self._current_injected_value = None
             logger.warning(
                 "Crescendo: missing post-call feedback, advancing turn (%d/%d)",
                 self._turn, self._max_turns,
@@ -164,6 +166,7 @@ class CrescendoOptimizer(Optimizer):
 
         self._current_question = question
         self._current_pre_request = event.request
+        self._current_injected_value = question
         self._awaiting_post_call = True
 
         logger.info(
@@ -194,11 +197,15 @@ class CrescendoOptimizer(Optimizer):
             # Accept first post-call only if it plausibly pairs with current turn.
             # This guards against noisy out-of-band PostCall events.
             is_same_controllable = event.controllable == self._primary_controllable
-            request_matches = (
+            request_matches_pre = (
                 self._current_pre_request is not None
                 and event.request == self._current_pre_request
             )
-            if not (is_same_controllable or request_matches):
+            request_matches_injected = (
+                self._current_injected_value is not None
+                and event.request == self._current_injected_value
+            )
+            if not (is_same_controllable or request_matches_pre or request_matches_injected):
                 return ControllableNoInjection(event=event, controllable=event.controllable)
             self._primary_post_controllable = event.controllable
         elif event.controllable != self._primary_post_controllable:
@@ -206,6 +213,7 @@ class CrescendoOptimizer(Optimizer):
 
         self._awaiting_post_call = False
         self._current_pre_request = None
+        self._current_injected_value = None
         answer = event.answer
 
         try:
@@ -282,6 +290,7 @@ class CrescendoOptimizer(Optimizer):
         self._backtrack_count = 0
         self._current_question = None
         self._current_pre_request = None
+        self._current_injected_value = None
         self._last_response = None
         self._last_score = None
         self._last_rationale = None

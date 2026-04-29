@@ -143,6 +143,35 @@ async def test_post_call_with_different_controllable_is_processed():
 
 
 @pytest.mark.asyncio
+async def test_post_call_pairs_on_injected_value_when_requests_differ():
+    """First PostCall can pair using the injected value as request marker."""
+    opt = await _init_optimizer()
+    pre_ctrl = _make_controllable(name="user_message", tag="user")
+    post_ctrl = _make_controllable(name="response", tag="assistant")
+
+    await opt.on_event(_make_run_start())
+
+    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen:
+        mock_gen.return_value = ("Q-turn-1", "", "reason")
+        pre_resp = await opt.on_event(_make_pre_call_with_request(pre_ctrl, "user message"))
+    assert isinstance(pre_resp, ControllableInjection)
+
+    # ChatbotTarget-style shape: PostCall.request carries the injected text,
+    # not the original PreCall.request.
+    with patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref, \
+         patch.object(opt._evaluator, "score_response", new_callable=AsyncMock) as mock_score:
+        mock_ref.return_value = False
+        mock_score.return_value = (0.4, "Progress")
+        post_resp = await opt.on_event(
+            _make_post_call_with_request(post_ctrl, "Answer text", "Q-turn-1"),
+        )
+
+    assert isinstance(post_resp, ControllableNoInjection)
+    assert opt._turn == 1
+    assert opt._last_response == "Answer text"
+
+
+@pytest.mark.asyncio
 async def test_noisy_post_call_before_real_post_call_is_ignored():
     """Out-of-band PostCall events should not hijack the active turn."""
     opt = await _init_optimizer()
