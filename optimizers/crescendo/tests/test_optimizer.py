@@ -53,6 +53,22 @@ def _make_post_call_with_request(ctrl, answer, request):
     return ControllablePostCallEvent(controllable=ctrl, request=request, answer=answer)
 
 
+class _FakeReadableTrajectory:
+    def __init__(self) -> None:
+        self._items: list[object] = []
+
+    def push(self, item: object) -> None:
+        self._items.append(item)
+
+    def snapshot(self) -> list[object]:
+        return list(self._items)
+
+    def drain(self) -> list[object]:
+        items = list(self._items)
+        self._items = []
+        return items
+
+
 async def _init_optimizer(**kwargs) -> CrescendoOptimizer:
     defaults = dict(
         max_turns=3,
@@ -237,6 +253,47 @@ async def test_missing_post_call_advances_turn_and_terminates():
         assert opt._turn == 2
         assert opt._attempt_done is True
         assert mock_gen.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_missing_post_call_recovers_from_trajectory_response_observable():
+    """If PostCall is filtered, Crescendo can recover answer from trajectory observables."""
+    opt = await _init_optimizer(max_turns=3, success_threshold=0.99)
+    ctrl = _make_controllable(name="user_message", tag="user")
+    response_tag = SecurityDomainTag(name="response_readable")
+    traj = _FakeReadableTrajectory()
+
+    await opt.on_event(RunStartEvent(trajectory=traj))
+
+    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen, \
+         patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref, \
+         patch.object(opt._evaluator, "score_response", new_callable=AsyncMock) as mock_score:
+        mock_gen.side_effect = [
+            ("Q1?", "", "r1"),
+            ("Q2?", "", "r2"),
+        ]
+        mock_ref.return_value = False
+        mock_score.return_value = (0.4, "Recovered from trajectory")
+
+        # Turn 1 injection; target never sends PostCall.
+        resp1 = await opt.on_event(_make_pre_call(ctrl))
+        assert isinstance(resp1, ControllableInjection)
+        assert opt._turn == 0
+
+        # Target emitted response observable to trajectory (in-scope).
+        traj.push(ObservableEvent(
+            observable=Observable(name="response", security_domain=response_tag),
+            content="Recovered answer",
+        ))
+
+        # Next PreCall should consume trajectory response and continue.
+        resp2 = await opt.on_event(_make_pre_call(ctrl))
+        assert isinstance(resp2, ControllableInjection)
+        assert opt._turn == 1
+        assert opt._last_response == "Recovered answer"
+        assert opt._last_rationale == "Recovered from trajectory"
+        mock_ref.assert_called_once_with("Recovered answer")
+        mock_score.assert_called_once()
 
 
 class _SplitPostCallTarget(Target):

@@ -24,6 +24,12 @@ If a target omits PostCall events entirely, Crescendo advances turn
 budget on the next PreCall and treats the missing feedback as an
 unsuccessful turn, ensuring attempts still terminate at `max_turns`.
 
+When PostCall is filtered but response observables are in scope,
+Crescendo can recover the previous turn's answer from the filtered
+trajectory and score/refusal-check that response instead of blindly
+advancing. This uses common response observable names:
+`response`, `model_response`, `assistant_response`.
+
 ## Single LLM Model
 
 Crescendo uses the controller-provided LLM client (`self.llm`) for

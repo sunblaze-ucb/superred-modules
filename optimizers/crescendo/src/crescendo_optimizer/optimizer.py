@@ -11,6 +11,7 @@ from superred.core.types.event import Event, EventResponse
 from superred.core.types.events import (
     ControllableInjection,
     ControllableNoInjection,
+    ObservableEvent,
     ControllablePreCallEvent,
     ControllablePostCallEvent,
     RunEndEvent,
@@ -19,6 +20,7 @@ from superred.core.types.events import (
 )
 from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
+from superred.core.types.trajectory import ReadableTrajectory
 
 from crescendo_optimizer.attacker import Attacker
 from crescendo_optimizer.evaluator import Evaluator
@@ -61,6 +63,7 @@ class CrescendoOptimizer(Optimizer):
         self._evaluator: Evaluator | None = None
         self._primary_controllable: Controllable | None = None
         self._primary_post_controllable: Controllable | None = None
+        self._trajectory: ReadableTrajectory | None = None
 
         # Per-attempt state (reset each run via _start_new_attempt)
         self._turn: int = 0
@@ -114,6 +117,7 @@ class CrescendoOptimizer(Optimizer):
         """Prepare a new attempt. Each run = one full multi-turn attempt."""
         if self._attempt > 0:
             self._start_new_attempt()
+        self._trajectory = event.trajectory
         return EventResponse(event=event)
 
     async def _handle_pre_call(
@@ -136,17 +140,27 @@ class CrescendoOptimizer(Optimizer):
         # Some targets do not emit PostCall events. Treat a missing PostCall
         # as an unsuccessful completed turn so turn budget still advances.
         if self._awaiting_post_call:
-            self._turn += 1
-            self._last_response = None
-            self._last_score = 0.0
-            self._last_rationale = "No post-call feedback from target response."
+            recovered = self._get_response_from_trajectory()
+            if recovered is not None:
+                await self._process_answer(recovered)
+            else:
+                self._turn += 1
+                self._last_response = None
+                self._last_score = 0.0
+                self._last_rationale = "No post-call feedback from target response."
             self._awaiting_post_call = False
             self._current_pre_request = None
             self._current_injected_value = None
-            logger.warning(
-                "Crescendo: missing post-call feedback, advancing turn (%d/%d)",
-                self._turn, self._max_turns,
-            )
+            if recovered is None:
+                logger.warning(
+                    "Crescendo: missing post-call feedback, advancing turn (%d/%d)",
+                    self._turn, self._max_turns,
+                )
+            else:
+                logger.info(
+                    "Crescendo: recovered feedback from trajectory (%d/%d)",
+                    self._turn, self._max_turns,
+                )
             if self._turn >= self._max_turns:
                 self._attempt_done = True
                 return ControllableNoInjection(event=event, controllable=event.controllable)
@@ -214,50 +228,7 @@ class CrescendoOptimizer(Optimizer):
         self._awaiting_post_call = False
         self._current_pre_request = None
         self._current_injected_value = None
-        answer = event.answer
-
-        try:
-            is_refusal = await self._evaluator.is_refusal(answer)
-        except Exception:
-            logger.warning("Crescendo: refusal check failed", exc_info=True)
-            is_refusal = False
-
-        if is_refusal and self._backtrack_count < self._max_backtracks:
-            # Backtrack: notify attacker of the refused question
-            if self._current_question:
-                self._attacker.notify_refusal(self._current_question)
-            self._backtrack_count += 1
-            logger.info(
-                "Crescendo: refusal detected, backtracking (%d/%d)",
-                self._backtrack_count, self._max_backtracks,
-            )
-        else:
-            # Normal response — score it
-            self._last_response = answer
-
-            try:
-                score, rationale = await self._evaluator.score_response(
-                    response=answer,
-                    goal=self._goal.description,
-                )
-            except Exception:
-                logger.warning("Crescendo: scoring failed", exc_info=True)
-                score, rationale = 0.0, "Scoring failed"
-            self._last_score = score
-            self._last_rationale = rationale
-            self._turn += 1
-
-            logger.info(
-                "Crescendo: turn %d scored %.2f", self._turn, score,
-            )
-
-            if score >= self._success_threshold:
-                self._succeeded = True
-                self._attempt_done = True
-                logger.info("Crescendo: success at turn %d (score %.2f)", self._turn, score)
-
-            if self._turn >= self._max_turns:
-                self._attempt_done = True
+        await self._process_answer(event.answer)
 
         return ControllableNoInjection(
             event=event,
@@ -298,6 +269,7 @@ class CrescendoOptimizer(Optimizer):
         self._primary_controllable = None
         self._primary_post_controllable = None
         self._awaiting_post_call = False
+        self._trajectory = None
 
     def _build_fallback_question(self) -> str:
         """Return a conservative prompt when attacker generation fails."""
@@ -309,3 +281,69 @@ class CrescendoOptimizer(Optimizer):
         return (
             "Could you provide a high-level, neutral background overview of this topic?"
         )
+
+    def _get_response_from_trajectory(self) -> str | None:
+        """Best-effort recovery of assistant response from filtered trajectory."""
+        if self._trajectory is None:
+            return None
+
+        recovered: str | None = None
+        for item in self._trajectory.drain():
+            if not isinstance(item, ObservableEvent):
+                continue
+            # Common observable names used for assistant/model responses.
+            if item.observable.name not in {"response", "model_response", "assistant_response"}:
+                continue
+            if isinstance(item.content, str):
+                recovered = item.content
+        return recovered
+
+    async def _process_answer(self, answer: str) -> None:
+        """Evaluate one completed assistant turn response."""
+        assert self._goal is not None
+        assert self._attacker is not None
+        assert self._evaluator is not None
+
+        try:
+            is_refusal = await self._evaluator.is_refusal(answer)
+        except Exception:
+            logger.warning("Crescendo: refusal check failed", exc_info=True)
+            is_refusal = False
+
+        if is_refusal and self._backtrack_count < self._max_backtracks:
+            # Backtrack: notify attacker of the refused question
+            if self._current_question:
+                self._attacker.notify_refusal(self._current_question)
+            self._backtrack_count += 1
+            logger.info(
+                "Crescendo: refusal detected, backtracking (%d/%d)",
+                self._backtrack_count, self._max_backtracks,
+            )
+            return
+
+        # Normal response — score it
+        self._last_response = answer
+
+        try:
+            score, rationale = await self._evaluator.score_response(
+                response=answer,
+                goal=self._goal.description,
+            )
+        except Exception:
+            logger.warning("Crescendo: scoring failed", exc_info=True)
+            score, rationale = 0.0, "Scoring failed"
+        self._last_score = score
+        self._last_rationale = rationale
+        self._turn += 1
+
+        logger.info(
+            "Crescendo: turn %d scored %.2f", self._turn, score,
+        )
+
+        if score >= self._success_threshold:
+            self._succeeded = True
+            self._attempt_done = True
+            logger.info("Crescendo: success at turn %d (score %.2f)", self._turn, score)
+
+        if self._turn >= self._max_turns:
+            self._attempt_done = True
