@@ -20,15 +20,13 @@ same injected value marker used by targets that echo injected text as
 the PostCall request).
 Unmatched PostCall events are ignored.
 
-If a target omits PostCall events entirely, Crescendo advances turn
-budget on the next PreCall and treats the missing feedback as an
-unsuccessful turn, ensuring attempts still terminate at `max_turns`.
-
-When PostCall is filtered but response observables are in scope,
-Crescendo can recover the previous turn's answer from the filtered
-trajectory and score/refusal-check that response instead of blindly
-advancing. This uses common response observable names:
-`response`, `model_response`, `assistant_response`.
+Turn evaluation is deferred to the next PreCall after injection:
+Crescendo first tries to recover the final response from filtered
+trajectory observables (`response`, `model_response`,
+`assistant_response`). If none are visible, it falls back to the paired
+PostCall answer; if neither is available, it advances the turn as an
+unsuccessful no-feedback turn. This keeps behavior consistent whether
+PostCall is visible or filtered while preserving scope gating.
 
 ## Single LLM Model
 

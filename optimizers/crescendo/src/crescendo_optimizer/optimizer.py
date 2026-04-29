@@ -71,6 +71,7 @@ class CrescendoOptimizer(Optimizer):
         self._current_question: str | None = None
         self._current_pre_request: str | None = None
         self._current_injected_value: str | None = None
+        self._pending_post_answer: str | None = None
         self._awaiting_post_call: bool = False
         self._last_response: str | None = None
         self._last_score: float | None = None
@@ -143,25 +144,31 @@ class CrescendoOptimizer(Optimizer):
             recovered = self._get_response_from_trajectory()
             if recovered is not None:
                 await self._process_answer(recovered)
+                source = "trajectory"
+            elif self._pending_post_answer is not None:
+                await self._process_answer(self._pending_post_answer)
+                source = "post-call"
             else:
                 self._turn += 1
                 self._last_response = None
                 self._last_score = 0.0
                 self._last_rationale = "No post-call feedback from target response."
+                source = "none"
             self._awaiting_post_call = False
             self._current_pre_request = None
             self._current_injected_value = None
-            if recovered is None:
+            self._pending_post_answer = None
+            if source == "none":
                 logger.warning(
                     "Crescendo: missing post-call feedback, advancing turn (%d/%d)",
                     self._turn, self._max_turns,
                 )
             else:
                 logger.info(
-                    "Crescendo: recovered feedback from trajectory (%d/%d)",
-                    self._turn, self._max_turns,
+                    "Crescendo: recovered feedback via %s (%d/%d)",
+                    source, self._turn, self._max_turns,
                 )
-            if self._turn >= self._max_turns:
+            if self._attempt_done or self._turn >= self._max_turns:
                 self._attempt_done = True
                 return ControllableNoInjection(event=event, controllable=event.controllable)
 
@@ -181,6 +188,7 @@ class CrescendoOptimizer(Optimizer):
         self._current_question = question
         self._current_pre_request = event.request
         self._current_injected_value = question
+        self._pending_post_answer = None
         self._awaiting_post_call = True
 
         logger.info(
@@ -225,10 +233,9 @@ class CrescendoOptimizer(Optimizer):
         elif event.controllable != self._primary_post_controllable:
             return ControllableNoInjection(event=event, controllable=event.controllable)
 
-        self._awaiting_post_call = False
-        self._current_pre_request = None
-        self._current_injected_value = None
-        await self._process_answer(event.answer)
+        # Defer turn evaluation to next PreCall so we can prefer trajectory
+        # observables (final in-scope response) when available.
+        self._pending_post_answer = event.answer
 
         return ControllableNoInjection(
             event=event,
@@ -262,6 +269,7 @@ class CrescendoOptimizer(Optimizer):
         self._current_question = None
         self._current_pre_request = None
         self._current_injected_value = None
+        self._pending_post_answer = None
         self._last_response = None
         self._last_score = None
         self._last_rationale = None

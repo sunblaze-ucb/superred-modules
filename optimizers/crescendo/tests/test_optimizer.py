@@ -147,13 +147,20 @@ async def test_post_call_with_different_controllable_is_processed():
         pre_resp = await opt.on_event(_make_pre_call(pre_ctrl))
     assert isinstance(pre_resp, ControllableInjection)
 
-    with patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref, \
-         patch.object(opt._evaluator, "score_response", new_callable=AsyncMock) as mock_score:
-        mock_ref.return_value = False
-        mock_score.return_value = (0.4, "Progress")
-        post_resp = await opt.on_event(_make_post_call(post_ctrl, "Answer text"))
+    post_resp = await opt.on_event(_make_post_call(post_ctrl, "Answer text"))
 
     assert isinstance(post_resp, ControllableNoInjection)
+    assert opt._turn == 0
+
+    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen, \
+         patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref, \
+         patch.object(opt._evaluator, "score_response", new_callable=AsyncMock) as mock_score:
+        mock_gen.return_value = ("Q2?", "", "reason")
+        mock_ref.return_value = False
+        mock_score.return_value = (0.4, "Progress")
+        next_resp = await opt.on_event(_make_pre_call(pre_ctrl))
+
+    assert isinstance(next_resp, ControllableInjection)
     assert opt._turn == 1
     assert opt._last_response == "Answer text"
 
@@ -174,15 +181,22 @@ async def test_post_call_pairs_on_injected_value_when_requests_differ():
 
     # ChatbotTarget-style shape: PostCall.request carries the injected text,
     # not the original PreCall.request.
-    with patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref, \
-         patch.object(opt._evaluator, "score_response", new_callable=AsyncMock) as mock_score:
-        mock_ref.return_value = False
-        mock_score.return_value = (0.4, "Progress")
-        post_resp = await opt.on_event(
-            _make_post_call_with_request(post_ctrl, "Answer text", "Q-turn-1"),
-        )
+    post_resp = await opt.on_event(
+        _make_post_call_with_request(post_ctrl, "Answer text", "Q-turn-1"),
+    )
 
     assert isinstance(post_resp, ControllableNoInjection)
+    assert opt._turn == 0
+
+    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen, \
+         patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref, \
+         patch.object(opt._evaluator, "score_response", new_callable=AsyncMock) as mock_score:
+        mock_gen.return_value = ("Q-turn-2", "", "reason")
+        mock_ref.return_value = False
+        mock_score.return_value = (0.4, "Progress")
+        next_resp = await opt.on_event(_make_pre_call_with_request(pre_ctrl, "user message"))
+
+    assert isinstance(next_resp, ControllableInjection)
     assert opt._turn == 1
     assert opt._last_response == "Answer text"
 
@@ -209,15 +223,21 @@ async def test_noisy_post_call_before_real_post_call_is_ignored():
     assert isinstance(noise_resp, ControllableNoInjection)
     assert opt._turn == 0
 
-    # Real PostCall arrives next and should be processed.
-    with patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref, \
+    # Real PostCall arrives next and should be accepted.
+    real_resp = await opt.on_event(
+        _make_post_call_with_request(real_post_ctrl, "real answer", "turn-1"),
+    )
+    assert isinstance(real_resp, ControllableNoInjection)
+    assert opt._turn == 0
+
+    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen, \
+         patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref, \
          patch.object(opt._evaluator, "score_response", new_callable=AsyncMock) as mock_score:
+        mock_gen.return_value = ("Q2?", "", "reason")
         mock_ref.return_value = False
         mock_score.return_value = (0.5, "Mid progress")
-        real_resp = await opt.on_event(
-            _make_post_call_with_request(real_post_ctrl, "real answer", "turn-1"),
-        )
-    assert isinstance(real_resp, ControllableNoInjection)
+        next_resp = await opt.on_event(_make_pre_call_with_request(pre_ctrl, "turn-2"))
+    assert isinstance(next_resp, ControllableInjection)
     assert opt._turn == 1
     assert opt._last_response == "real answer"
 
@@ -294,6 +314,44 @@ async def test_missing_post_call_recovers_from_trajectory_response_observable():
         assert opt._last_rationale == "Recovered from trajectory"
         mock_ref.assert_called_once_with("Recovered answer")
         mock_score.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_when_post_call_and_trajectory_both_available_trajectory_wins():
+    """Trajectory response should be preferred over post-call answer."""
+    opt = await _init_optimizer(max_turns=3, success_threshold=0.99)
+    pre_ctrl = _make_controllable(name="user_message", tag="user")
+    post_ctrl = _make_controllable(name="response", tag="assistant")
+    response_tag = SecurityDomainTag(name="response_readable")
+    traj = _FakeReadableTrajectory()
+
+    await opt.on_event(RunStartEvent(trajectory=traj))
+
+    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen:
+        mock_gen.return_value = ("Q1?", "", "r1")
+        first = await opt.on_event(_make_pre_call(pre_ctrl))
+    assert isinstance(first, ControllableInjection)
+
+    post = await opt.on_event(_make_post_call_with_request(post_ctrl, "from-postcall", "Q1?"))
+    assert isinstance(post, ControllableNoInjection)
+
+    traj.push(ObservableEvent(
+        observable=Observable(name="response", security_domain=response_tag),
+        content="from-trajectory",
+    ))
+
+    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen, \
+         patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref, \
+         patch.object(opt._evaluator, "score_response", new_callable=AsyncMock) as mock_score:
+        mock_gen.return_value = ("Q2?", "", "r2")
+        mock_ref.return_value = False
+        mock_score.return_value = (0.6, "Trajectory preferred")
+        second = await opt.on_event(_make_pre_call_with_request(pre_ctrl, "turn-2"))
+
+    assert isinstance(second, ControllableInjection)
+    assert opt._turn == 1
+    assert opt._last_response == "from-trajectory"
+    assert opt._last_rationale == "Trajectory preferred"
 
 
 class _SplitPostCallTarget(Target):
@@ -428,23 +486,29 @@ async def test_multi_turn_within_single_run():
     await opt.on_event(_make_run_start())
 
     for turn in range(3):
-        with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen:
+        with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen, \
+             patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref, \
+             patch.object(opt._evaluator, "score_response", new_callable=AsyncMock) as mock_score:
             mock_gen.return_value = (f"Q{turn + 1}?", "", "r")
+            mock_ref.return_value = False
+            mock_score.return_value = (0.2 * max(1, turn), "Progress")
             resp = await opt.on_event(_make_pre_call(ctrl))
         assert isinstance(resp, ControllableInjection)
         assert resp.value == f"Q{turn + 1}?"
 
-        with patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref, \
-             patch.object(opt._evaluator, "score_response", new_callable=AsyncMock) as mock_score:
-            mock_ref.return_value = False
-            mock_score.return_value = (0.2 * (turn + 1), "Progress")
-            await opt.on_event(_make_post_call(ctrl, f"Answer {turn + 1}"))
+        await opt.on_event(_make_post_call(ctrl, f"Answer {turn + 1}"))
 
-    assert opt._turn == 3
+    # Last turn response is pending until the next PreCall.
+    assert opt._turn == 2
 
     # After max_turns, next PreCall should get NoInjection
-    resp = await opt.on_event(_make_pre_call(ctrl))
+    with patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref, \
+         patch.object(opt._evaluator, "score_response", new_callable=AsyncMock) as mock_score:
+        mock_ref.return_value = False
+        mock_score.return_value = (0.6, "Progress")
+        resp = await opt.on_event(_make_pre_call(ctrl))
     assert isinstance(resp, ControllableNoInjection)
+    assert opt._turn == 3
 
 
 @pytest.mark.asyncio
@@ -459,27 +523,27 @@ async def test_success_mid_conversation_stops_injection():
     with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen:
         mock_gen.return_value = ("Q1?", "", "r")
         await opt.on_event(_make_pre_call(ctrl))
-    with patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref, \
+    await opt.on_event(_make_post_call(ctrl, "partial"))
+
+    # Turn 2 generation happens while processing turn 1 feedback.
+    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen, \
+         patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref, \
          patch.object(opt._evaluator, "score_response", new_callable=AsyncMock) as mock_score:
+        mock_gen.return_value = ("Q2?", "", "r")
         mock_ref.return_value = False
         mock_score.return_value = (0.3, "Low")
-        await opt.on_event(_make_post_call(ctrl, "partial"))
-
-    # Turn 2: high score — success
-    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen:
-        mock_gen.return_value = ("Q2?", "", "r")
         await opt.on_event(_make_pre_call(ctrl))
+    await opt.on_event(_make_post_call(ctrl, "harmful"))
+
+    # Success from turn 2 is applied at the next PreCall.
     with patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref, \
          patch.object(opt._evaluator, "score_response", new_callable=AsyncMock) as mock_score:
         mock_ref.return_value = False
         mock_score.return_value = (0.9, "High")
-        await opt.on_event(_make_post_call(ctrl, "harmful"))
+        resp = await opt.on_event(_make_pre_call(ctrl))
 
-    assert opt._succeeded is True
-
-    # Next PreCall should get NoInjection
-    resp = await opt.on_event(_make_pre_call(ctrl))
     assert isinstance(resp, ControllableNoInjection)
+    assert opt._succeeded is True
 
     # RunEnd should signal done
     resp = await opt.on_event(_make_run_end())
@@ -498,12 +562,17 @@ async def test_backtracking_on_refusal():
         mock_gen.return_value = ("Direct harmful Q?", "", "r")
         await opt.on_event(_make_pre_call(ctrl))
 
+    await opt.on_event(_make_post_call(ctrl, "I can't help with that"))
+
     with patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref, \
+         patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen2, \
          patch.object(opt._attacker, "notify_refusal") as mock_notify:
         mock_ref.return_value = True
-        await opt.on_event(_make_post_call(ctrl, "I can't help with that"))
+        mock_gen2.return_value = ("Retry question?", "", "r")
+        resp = await opt.on_event(_make_pre_call(ctrl))
         mock_notify.assert_called_once_with("Direct harmful Q?")
 
+    assert isinstance(resp, ControllableInjection)
     # Turn should not have incremented, attempt not done
     assert opt._turn == 0
     assert opt._attempt_done is False
@@ -521,22 +590,27 @@ async def test_max_backtracks_stops_backtracking():
     with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen:
         mock_gen.return_value = ("Q1?", "", "r")
         await opt.on_event(_make_pre_call(ctrl))
+    await opt.on_event(_make_post_call(ctrl, "I can't"))
     with patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref, \
-         patch.object(opt._attacker, "notify_refusal"):
+         patch.object(opt._attacker, "notify_refusal"), \
+         patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen2:
         mock_ref.return_value = True
-        await opt.on_event(_make_post_call(ctrl, "I can't"))
+        mock_gen2.return_value = ("Q2?", "", "r")
+        resp = await opt.on_event(_make_pre_call(ctrl))
+    assert isinstance(resp, ControllableInjection)
     assert opt._backtrack_count == 1
     assert opt._turn == 0
 
     # Second refusal — backtracking exhausted, treat as normal response
-    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen:
-        mock_gen.return_value = ("Q2?", "", "r")
-        await opt.on_event(_make_pre_call(ctrl))
-    with patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref, \
+    await opt.on_event(_make_post_call(ctrl, "I can't again"))
+    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen3, \
+         patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref, \
          patch.object(opt._evaluator, "score_response", new_callable=AsyncMock) as mock_score:
+        mock_gen3.return_value = ("Q3?", "", "r")
         mock_ref.return_value = True
         mock_score.return_value = (0.0, "Refusal")
-        await opt.on_event(_make_post_call(ctrl, "I can't again"))
+        resp2 = await opt.on_event(_make_pre_call(ctrl))
+    assert isinstance(resp2, ControllableInjection)
 
     assert opt._turn == 1
     assert opt._backtrack_count == 1  # didn't increase
@@ -553,13 +627,13 @@ async def test_variant_rotation_across_runs():
     with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen:
         mock_gen.return_value = ("Q?", "", "r")
         await opt.on_event(_make_pre_call(ctrl))
+    await opt.on_event(_make_post_call(ctrl, "response"))
+    # NoInjection to terminate target loop
     with patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref, \
          patch.object(opt._evaluator, "score_response", new_callable=AsyncMock) as mock_score:
         mock_ref.return_value = False
         mock_score.return_value = (0.2, "Low")
-        await opt.on_event(_make_post_call(ctrl, "response"))
-    # NoInjection to terminate target loop
-    resp = await opt.on_event(_make_pre_call(ctrl))
+        resp = await opt.on_event(_make_pre_call(ctrl))
     assert isinstance(resp, ControllableNoInjection)
 
     resp = await opt.on_event(_make_run_end())
@@ -581,14 +655,14 @@ async def test_all_attempts_exhausted():
     with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen:
         mock_gen.return_value = ("Q?", "", "r")
         await opt.on_event(_make_pre_call(ctrl))
+    await opt.on_event(_make_post_call(ctrl, "response"))
+
+    # Terminate target loop
     with patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref, \
          patch.object(opt._evaluator, "score_response", new_callable=AsyncMock) as mock_score:
         mock_ref.return_value = False
         mock_score.return_value = (0.3, "Low")
-        await opt.on_event(_make_post_call(ctrl, "response"))
-
-    # Terminate target loop
-    resp = await opt.on_event(_make_pre_call(ctrl))
+        resp = await opt.on_event(_make_pre_call(ctrl))
     assert isinstance(resp, ControllableNoInjection)
 
     resp = await opt.on_event(_make_run_end())
