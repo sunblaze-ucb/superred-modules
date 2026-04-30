@@ -45,6 +45,7 @@ class FlipAttackOptimizer(Optimizer):
         use_few_shot: bool = True,
         prompt_style: str = "vanilla",
         success_threshold: float = 0.8,
+        evaluator_method: str = "asr_gpt",
     ) -> None:
         super().__init__()
         self._flip_modes = flip_modes if flip_modes is not None else list(_DEFAULT_MODES)
@@ -52,18 +53,24 @@ class FlipAttackOptimizer(Optimizer):
         self._use_few_shot = use_few_shot
         self._prompt_style = prompt_style
         self._success_threshold = success_threshold
+        self._evaluator_method = evaluator_method
 
         # State set in initialize()
         self._goal: Goal | None = None
         self._evaluator: Evaluator | None = None
         self._primary_controllable: Controllable | None = None
+        self._primary_post_controllable: Controllable | None = None
 
         # Per-run state
         self._attempt: int = 0
         self._succeeded: bool = False
         self._best_score: float = 0.0
         self._current_user_message: str = ""
+        self._plain_user_message: str = ""
         self._system_prompt: str = ""
+        self._injected_user_message: bool = False
+        self._awaiting_post_call: bool = False
+        self._saw_system_prompt_event: bool = False
 
     @property
     def system_prompt(self) -> str:
@@ -79,7 +86,7 @@ class FlipAttackOptimizer(Optimizer):
     ) -> None:
         await super().initialize(goal, controllables, observables, llm_client)
         self._goal = goal
-        self._evaluator = Evaluator(llm=self.llm)
+        self._evaluator = Evaluator(llm=self.llm, method=self._evaluator_method)
         self._attempt = 0
         self._succeeded = False
         self._best_score = 0.0
@@ -104,17 +111,49 @@ class FlipAttackOptimizer(Optimizer):
     def _handle_run_start(self, event: RunStartEvent) -> EventResponse:
         if self._attempt > 0 and not self._succeeded:
             self._prepare_attempt()
+        self._reset_run_state()
         return EventResponse(event=event)
 
     def _handle_pre_call(
         self, event: ControllablePreCallEvent
     ) -> ControllableInjection | ControllableNoInjection:
-        # Single-controllable gating
+        # Targets like ChatbotTarget expose system_prompt and user_message as
+        # separate controllables. Support both explicitly.
+        if event.controllable.name == "system_prompt":
+            self._saw_system_prompt_event = True
+            return ControllableInjection(
+                event=event,
+                controllable=event.controllable,
+                value=self._system_prompt,
+            )
+
+        if event.controllable.name == "user_message":
+            if self._injected_user_message:
+                return ControllableNoInjection(event=event, controllable=event.controllable)
+
+            # If system_prompt channel is visible this run, send only the
+            # transformed TASK here. Otherwise fold the system prompt into the
+            # user message for single-channel/thin-scope runs.
+            value = self._plain_user_message if self._saw_system_prompt_event else self._current_user_message
+            self._current_user_message = value
+            self._injected_user_message = True
+            self._awaiting_post_call = True
+            return ControllableInjection(
+                event=event,
+                controllable=event.controllable,
+                value=value,
+            )
+
+        # Generic single-controllable fallback for simple targets.
         if self._primary_controllable is None:
             self._primary_controllable = event.controllable
         elif event.controllable != self._primary_controllable:
             return ControllableNoInjection(event=event, controllable=event.controllable)
+        if self._injected_user_message:
+            return ControllableNoInjection(event=event, controllable=event.controllable)
 
+        self._injected_user_message = True
+        self._awaiting_post_call = True
         return ControllableInjection(
             event=event,
             controllable=event.controllable,
@@ -124,7 +163,20 @@ class FlipAttackOptimizer(Optimizer):
     async def _handle_post_call(
         self, event: ControllablePostCallEvent
     ) -> ControllableNoInjection:
-        if event.controllable != self._primary_controllable:
+        if not self._awaiting_post_call:
+            return ControllableNoInjection(event=event, controllable=event.controllable)
+
+        # Accept first plausible post-call for this run, then lock onto that
+        # controllable to ignore noise.
+        if self._primary_post_controllable is None:
+            matches_primary = (
+                self._primary_controllable is not None
+                and event.controllable == self._primary_controllable
+            )
+            if not matches_primary and event.request != self._current_user_message:
+                return ControllableNoInjection(event=event, controllable=event.controllable)
+            self._primary_post_controllable = event.controllable
+        elif event.controllable != self._primary_post_controllable:
             return ControllableNoInjection(event=event, controllable=event.controllable)
 
         assert self._goal is not None
@@ -151,6 +203,7 @@ class FlipAttackOptimizer(Optimizer):
             logger.info("FlipAttack: success with %s (score %.2f)",
                          self._current_mode(), score)
 
+        self._awaiting_post_call = False
         return ControllableNoInjection(event=event, controllable=event.controllable)
 
     def _handle_run_end(self, event: RunEndEvent) -> RunEndResponse:
@@ -186,5 +239,14 @@ class FlipAttackOptimizer(Optimizer):
             use_cot=self._use_cot,
             use_few_shot=self._use_few_shot,
         )
+        self._plain_user_message = user_msg
         # Fold system prompt into user message for single-controllable targets
         self._current_user_message = f"{self._system_prompt}\n\n{user_msg}"
+
+    def _reset_run_state(self) -> None:
+        """Reset per-run channel state."""
+        self._primary_controllable = None
+        self._primary_post_controllable = None
+        self._injected_user_message = False
+        self._awaiting_post_call = False
+        self._saw_system_prompt_event = False

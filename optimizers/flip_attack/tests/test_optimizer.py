@@ -93,6 +93,54 @@ async def test_user_message_contains_system_prompt():
 
 
 @pytest.mark.asyncio
+async def test_dual_controllable_flow_system_prompt_then_user_message():
+    """ChatbotTarget-style flow: inject system prompt, then one user turn."""
+    opt = await _init_optimizer(flip_modes=["FWO"])
+    system_ctrl = make_controllable(name="system_prompt")
+    user_ctrl = make_controllable(name="user_message")
+
+    await opt.on_event(_make_run_start())
+
+    sp_resp = await opt.on_event(_make_pre_call(system_ctrl))
+    assert isinstance(sp_resp, ControllableInjection)
+    assert "Step 1." in sp_resp.value
+
+    user_resp = await opt.on_event(_make_pre_call(user_ctrl))
+    assert isinstance(user_resp, ControllableInjection)
+    assert "TASK is" in user_resp.value
+    assert "Step 1." not in user_resp.value  # user payload should not fold system prompt
+
+    # Single-turn optimizer: second user_message should stop.
+    user_resp2 = await opt.on_event(_make_pre_call(user_ctrl))
+    assert isinstance(user_resp2, ControllableNoInjection)
+
+
+@pytest.mark.asyncio
+async def test_dual_controllable_post_call_scored_on_response_channel():
+    """PostCall can be accepted from response controllable after user_message injection."""
+    opt = await _init_optimizer(flip_modes=["FWO"])
+    system_ctrl = make_controllable(name="system_prompt")
+    user_ctrl = make_controllable(name="user_message")
+    response_ctrl = make_controllable(name="response")
+
+    await opt.on_event(_make_run_start())
+    await opt.on_event(_make_pre_call(system_ctrl))
+    injected = await opt.on_event(_make_pre_call(user_ctrl))
+    assert isinstance(injected, ControllableInjection)
+
+    opt.llm.complete.return_value = mock_response('{"score": 8, "rationale": "Strong"}')
+    post = await opt.on_event(
+        ControllablePostCallEvent(
+            controllable=response_ctrl,
+            request=injected.value,
+            answer="model answer",
+        )
+    )
+    assert isinstance(post, ControllableNoInjection)
+    assert opt._best_score > 0.0
+
+
+@pytest.mark.asyncio
 async def test_post_call_scores_and_returns_no_injection():
     opt = await _init_optimizer()
     ctrl = make_controllable()
@@ -168,8 +216,7 @@ async def test_all_strategies_exhausted():
 async def test_secondary_controllable_ignored():
     opt = await _init_optimizer()
     ctrl1 = make_controllable()
-    ctrl2 = make_controllable()
-    ctrl2 = ctrl2.__replace__(name="other")
+    ctrl2 = make_controllable(name="other")
 
     await opt.on_event(_make_run_start())
     resp1 = await opt.on_event(_make_pre_call(ctrl1))

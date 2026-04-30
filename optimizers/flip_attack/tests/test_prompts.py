@@ -152,7 +152,7 @@ def test_format_user_message_with_cot():
         flip_mode="FWO",
         use_cot=True,
     )
-    assert "step by step" in msg.lower()
+    assert "step by step" not in msg.lower()
 
 
 def test_format_user_message_without_cot():

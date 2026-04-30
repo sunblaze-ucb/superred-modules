@@ -16,6 +16,11 @@ def mock_response(content):
     return resp
 
 
-def make_controllable():
+def make_controllable(*, name: str = "input", tag: SecurityDomainTag | None = None):
     """Create a test controllable."""
-    return Controllable(name="input", security_domain=DOMAIN, description="test", value_type="text")
+    return Controllable(
+        name=name,
+        security_domain=tag if tag is not None else DOMAIN,
+        description="test",
+        value_type="text",
+    )
