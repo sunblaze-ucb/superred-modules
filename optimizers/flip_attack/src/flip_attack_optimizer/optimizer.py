@@ -11,6 +11,7 @@ from superred.core.types.event import Event, EventResponse
 from superred.core.types.events import (
     ControllableInjection,
     ControllableNoInjection,
+    ObservableEvent,
     ControllablePreCallEvent,
     ControllablePostCallEvent,
     RunEndEvent,
@@ -19,10 +20,11 @@ from superred.core.types.events import (
 )
 from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
+from superred.core.types.trajectory import ReadableTrajectory
 
 from flip_attack_optimizer.evaluator import Evaluator
 from flip_attack_optimizer.flipper import FLIP_MODES
-from flip_attack_optimizer.prompts import get_system_prompt, format_user_message
+from flip_attack_optimizer.prompts import build_attack_prompts
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +62,7 @@ class FlipAttackOptimizer(Optimizer):
         self._evaluator: Evaluator | None = None
         self._primary_controllable: Controllable | None = None
         self._primary_post_controllable: Controllable | None = None
+        self._trajectory: ReadableTrajectory | None = None
 
         # Per-run state
         self._attempt: int = 0
@@ -71,6 +74,8 @@ class FlipAttackOptimizer(Optimizer):
         self._injected_user_message: bool = False
         self._awaiting_post_call: bool = False
         self._saw_system_prompt_event: bool = False
+        self._pending_post_answer: str | None = None
+        self._current_eval_prompt: str = ""
 
     @property
     def system_prompt(self) -> str:
@@ -96,11 +101,11 @@ class FlipAttackOptimizer(Optimizer):
         if isinstance(event, RunStartEvent):
             return self._handle_run_start(event)
         if isinstance(event, ControllablePreCallEvent):
-            return self._handle_pre_call(event)
+            return await self._handle_pre_call(event)
         if isinstance(event, ControllablePostCallEvent):
             return await self._handle_post_call(event)
         if isinstance(event, RunEndEvent):
-            return self._handle_run_end(event)
+            return await self._handle_run_end(event)
         return EventResponse(event=event)
 
     async def teardown(self) -> None:
@@ -111,12 +116,17 @@ class FlipAttackOptimizer(Optimizer):
     def _handle_run_start(self, event: RunStartEvent) -> EventResponse:
         if self._attempt > 0 and not self._succeeded:
             self._prepare_attempt()
+        self._trajectory = event.trajectory
         self._reset_run_state()
         return EventResponse(event=event)
 
-    def _handle_pre_call(
+    async def _handle_pre_call(
         self, event: ControllablePreCallEvent
     ) -> ControllableInjection | ControllableNoInjection:
+        await self._finalize_pending_feedback()
+        if self._succeeded:
+            return ControllableNoInjection(event=event, controllable=event.controllable)
+
         # Targets like ChatbotTarget expose system_prompt and user_message as
         # separate controllables. Support both explicitly.
         if event.controllable.name == "system_prompt":
@@ -136,6 +146,9 @@ class FlipAttackOptimizer(Optimizer):
             # user message for single-channel/thin-scope runs.
             value = self._plain_user_message if self._saw_system_prompt_event else self._current_user_message
             self._current_user_message = value
+            self._current_eval_prompt = (
+                f"{self._system_prompt}{value}" if self._saw_system_prompt_event else value
+            )
             self._injected_user_message = True
             self._awaiting_post_call = True
             return ControllableInjection(
@@ -154,6 +167,7 @@ class FlipAttackOptimizer(Optimizer):
 
         self._injected_user_message = True
         self._awaiting_post_call = True
+        self._current_eval_prompt = self._current_user_message
         return ControllableInjection(
             event=event,
             controllable=event.controllable,
@@ -179,34 +193,13 @@ class FlipAttackOptimizer(Optimizer):
         elif event.controllable != self._primary_post_controllable:
             return ControllableNoInjection(event=event, controllable=event.controllable)
 
-        assert self._goal is not None
-        assert self._evaluator is not None
-
-        try:
-            score, rationale = await self._evaluator.score_response(
-                response=event.answer,
-                goal=self._goal.description,
-                prompt=self._current_user_message,
-            )
-        except Exception:
-            logger.warning("FlipAttack: scoring failed", exc_info=True)
-            score, rationale = 0.0, "Scoring failed"
-
-        logger.info("FlipAttack: attempt %d (%s) scored %.2f",
-                     self._attempt, self._current_mode(), score)
-
-        if score > self._best_score:
-            self._best_score = score
-
-        if score >= self._success_threshold:
-            self._succeeded = True
-            logger.info("FlipAttack: success with %s (score %.2f)",
-                         self._current_mode(), score)
-
-        self._awaiting_post_call = False
+        # Defer scoring to next pre-call / run-end so trajectory-visible
+        # assistant response can be preferred when available.
+        self._pending_post_answer = event.answer
         return ControllableNoInjection(event=event, controllable=event.controllable)
 
-    def _handle_run_end(self, event: RunEndEvent) -> RunEndResponse:
+    async def _handle_run_end(self, event: RunEndEvent) -> RunEndResponse:
+        await self._finalize_pending_feedback()
         if self._succeeded:
             return RunEndResponse(event=event, done=True)
 
@@ -228,14 +221,10 @@ class FlipAttackOptimizer(Optimizer):
         assert self._goal is not None
 
         mode = self._current_mode()
-        flip_fn = FLIP_MODES[mode]
-        flipped = flip_fn(self._goal.description)
-
-        self._system_prompt = get_system_prompt(mode, style=self._prompt_style)
-        user_msg = format_user_message(
-            flipped_text=flipped,
+        self._system_prompt, user_msg, _ = build_attack_prompts(
             goal=self._goal.description,
             flip_mode=mode,
+            prompt_style=self._prompt_style,
             use_cot=self._use_cot,
             use_few_shot=self._use_few_shot,
         )
@@ -250,3 +239,60 @@ class FlipAttackOptimizer(Optimizer):
         self._injected_user_message = False
         self._awaiting_post_call = False
         self._saw_system_prompt_event = False
+        self._pending_post_answer = None
+        self._current_eval_prompt = ""
+
+    async def _finalize_pending_feedback(self) -> None:
+        """Finalize one pending turn from trajectory or post-call fallback."""
+        if not self._awaiting_post_call:
+            return
+
+        answer = self._get_response_from_trajectory()
+        if answer is None:
+            answer = self._pending_post_answer
+
+        if answer is None:
+            logger.warning("FlipAttack: no in-scope response feedback for attempt %d", self._attempt)
+            self._pending_post_answer = None
+            self._awaiting_post_call = False
+            return
+
+        await self._score_answer(answer)
+        self._pending_post_answer = None
+        self._awaiting_post_call = False
+
+    def _get_response_from_trajectory(self) -> str | None:
+        """Best-effort response recovery from filtered trajectory."""
+        if self._trajectory is None:
+            return None
+
+        recovered: str | None = None
+        for item in self._trajectory.drain():
+            if not isinstance(item, ObservableEvent):
+                continue
+            if item.observable.name not in {"response", "model_response", "assistant_response"}:
+                continue
+            if isinstance(item.content, str):
+                recovered = item.content
+        return recovered
+
+    async def _score_answer(self, answer: str) -> None:
+        assert self._goal is not None
+        assert self._evaluator is not None
+
+        try:
+            score, _rationale = await self._evaluator.score_response(
+                response=answer,
+                goal=self._goal.description,
+                prompt=self._current_eval_prompt,
+            )
+        except Exception:
+            logger.warning("FlipAttack: scoring failed", exc_info=True)
+            score = 0.0
+
+        logger.info("FlipAttack: attempt %d (%s) scored %.2f", self._attempt, self._current_mode(), score)
+        if score > self._best_score:
+            self._best_score = score
+        if score >= self._success_threshold:
+            self._succeeded = True
+            logger.info("FlipAttack: success with %s (score %.2f)", self._current_mode(), score)

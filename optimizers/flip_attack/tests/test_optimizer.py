@@ -9,11 +9,13 @@ from superred.core.types.events import (
     ControllableNoInjection,
     ControllablePreCallEvent,
     ControllablePostCallEvent,
+    ObservableEvent,
     RunEndEvent,
     RunEndResponse,
     RunStartEvent,
 )
 from superred.core.types.goal import Goal
+from superred.core.types.observable import Observable
 from superred.core.types.security_domain import SecurityDomainTag
 from superred.core.types.trajectory import Trajectory
 
@@ -128,7 +130,7 @@ async def test_dual_controllable_post_call_scored_on_response_channel():
     injected = await opt.on_event(_make_pre_call(user_ctrl))
     assert isinstance(injected, ControllableInjection)
 
-    opt.llm.complete.return_value = mock_response('{"score": 8, "rationale": "Strong"}')
+    opt.llm.complete.return_value = mock_response("Rating: [[8]]")
     post = await opt.on_event(
         ControllablePostCallEvent(
             controllable=response_ctrl,
@@ -137,6 +139,8 @@ async def test_dual_controllable_post_call_scored_on_response_channel():
         )
     )
     assert isinstance(post, ControllableNoInjection)
+    assert opt._best_score == 0.0
+    await opt.on_event(_make_run_end())
     assert opt._best_score > 0.0
 
 
@@ -147,11 +151,12 @@ async def test_post_call_scores_and_returns_no_injection():
     await opt.on_event(_make_run_start())
     await opt.on_event(_make_pre_call(ctrl))
 
-    opt.llm.complete.return_value = mock_response(
-        '{"score": 3, "rationale": "Low"}'
-    )
+    opt.llm.complete.return_value = mock_response("Rating: [[3]]")
     resp = await opt.on_event(_make_post_call(ctrl, "some response"))
     assert isinstance(resp, ControllableNoInjection)
+    assert opt._best_score == 0.0
+    await opt.on_event(_make_run_end())
+    assert opt._best_score > 0.0
 
 
 @pytest.mark.asyncio
@@ -162,9 +167,7 @@ async def test_success_triggers_done():
     await opt.on_event(_make_pre_call(ctrl))
 
     # Score 9 -> (9-1)/9 = 0.889 > 0.8 threshold
-    opt.llm.complete.return_value = mock_response(
-        '{"score": 9, "rationale": "High"}'
-    )
+    opt.llm.complete.return_value = mock_response("Rating: [[9]]")
     await opt.on_event(_make_post_call(ctrl, "full compliance"))
     resp = await opt.on_event(_make_run_end())
     assert isinstance(resp, RunEndResponse)
@@ -180,9 +183,7 @@ async def test_strategy_rotation():
     await opt.on_event(_make_run_start())
     await opt.on_event(_make_pre_call(ctrl))
 
-    opt.llm.complete.return_value = mock_response(
-        '{"score": 2, "rationale": "Low"}'
-    )
+    opt.llm.complete.return_value = mock_response("Rating: [[2]]")
     await opt.on_event(_make_post_call(ctrl, "refused"))
     resp = await opt.on_event(_make_run_end())
     assert resp.done is False
@@ -204,12 +205,42 @@ async def test_all_strategies_exhausted():
     await opt.on_event(_make_run_start())
     await opt.on_event(_make_pre_call(ctrl))
 
-    opt.llm.complete.return_value = mock_response(
-        '{"score": 1, "rationale": "Failed"}'
-    )
+    opt.llm.complete.return_value = mock_response("Rating: [[1]]")
     await opt.on_event(_make_post_call(ctrl, "refused"))
     resp = await opt.on_event(_make_run_end())
     assert resp.done is True
+
+
+@pytest.mark.asyncio
+async def test_trajectory_response_preferred_over_postcall_answer():
+    opt = await _init_optimizer(flip_modes=["FWO"])
+    ctrl = make_controllable()
+    run_start = _make_run_start()
+    await opt.on_event(run_start)
+    await opt.on_event(_make_pre_call(ctrl))
+    await opt.on_event(_make_post_call(ctrl, "post-call answer"))
+
+    observable = Observable(name="response", security_domain=DOMAIN, description="response")
+    run_start.trajectory.emit(
+        ObservableEvent(observable=observable, content="trajectory answer")
+    )
+
+    opt._score_answer = AsyncMock()  # type: ignore[method-assign]
+    await opt.on_event(_make_run_end())
+    opt._score_answer.assert_awaited_once_with("trajectory answer")
+
+
+@pytest.mark.asyncio
+async def test_postcall_answer_used_when_no_trajectory_response():
+    opt = await _init_optimizer(flip_modes=["FWO"])
+    ctrl = make_controllable()
+    await opt.on_event(_make_run_start())
+    await opt.on_event(_make_pre_call(ctrl))
+    await opt.on_event(_make_post_call(ctrl, "post-call answer"))
+
+    opt._score_answer = AsyncMock()  # type: ignore[method-assign]
+    await opt.on_event(_make_run_end())
+    opt._score_answer.assert_awaited_once_with("post-call answer")
 
 
 @pytest.mark.asyncio
