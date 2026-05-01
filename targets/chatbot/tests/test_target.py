@@ -704,6 +704,69 @@ class TestApiBase:
 
 
 # ======================================================================
+# Run: temperature is fixed at 0
+# ======================================================================
+
+
+class TestTemperature:
+    async def test_temperature_zero_passed_to_acompletion(
+        self, target: ChatbotTarget,
+    ) -> None:
+        captured_kwargs: list[dict] = []
+        user_calls = 0
+
+        async def mock_send_event(event):
+            nonlocal user_calls
+            if isinstance(event, ControllablePreCallEvent):
+                if event.controllable.name == "system_prompt":
+                    return ControllableNoInjection(event=event, controllable=event.controllable)
+                user_calls += 1
+                if user_calls == 1:
+                    return ControllableInjection(
+                        event=event, controllable=event.controllable, value="hi",
+                    )
+                return ControllableNoInjection(event=event, controllable=event.controllable)
+            return ControllableNoInjection(event=event, controllable=event.controllable)
+
+        async def mock_acompletion(**kwargs):
+            captured_kwargs.append(kwargs)
+            return make_litellm_response("ok")
+
+        with patch("chatbot_target.target.acompletion", side_effect=mock_acompletion):
+            await target.run(lambda e: None, mock_send_event)
+
+        assert captured_kwargs[0]["temperature"] == 0
+
+    async def test_temperature_zero_with_api_base(
+        self, target_with_base: ChatbotTarget,
+    ) -> None:
+        captured_kwargs: list[dict] = []
+        user_calls = 0
+
+        async def mock_send_event(event):
+            nonlocal user_calls
+            if isinstance(event, ControllablePreCallEvent):
+                if event.controllable.name == "system_prompt":
+                    return ControllableNoInjection(event=event, controllable=event.controllable)
+                user_calls += 1
+                if user_calls == 1:
+                    return ControllableInjection(
+                        event=event, controllable=event.controllable, value="hi",
+                    )
+                return ControllableNoInjection(event=event, controllable=event.controllable)
+            return ControllableNoInjection(event=event, controllable=event.controllable)
+
+        async def mock_acompletion(**kwargs):
+            captured_kwargs.append(kwargs)
+            return make_litellm_response("ok")
+
+        with patch("chatbot_target.target.acompletion", side_effect=mock_acompletion):
+            await target_with_base.run(lambda e: None, mock_send_event)
+
+        assert captured_kwargs[0]["temperature"] == 0
+
+
+# ======================================================================
 # Run: LLM response with None content
 # ======================================================================
 

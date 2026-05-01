@@ -232,10 +232,13 @@ class ChatbotTarget(Target):
             user_message = pre_resp.value
             conversation.append({"role": "user", "content": user_message})
 
-            # Call the LLM.
-            kwargs: dict[str, str | None] = {
+            # Call the LLM. Temperature is fixed at 0 for reproducibility:
+            # red-team experiments need deterministic target behavior so that
+            # repeated runs with the same inputs produce comparable outputs.
+            kwargs: dict[str, str | int | None] = {
                 "model": self._model,
                 "api_key": self._api_key,
+                "temperature": 0,
             }
             if self._api_base is not None:
                 kwargs["api_base"] = self._api_base
