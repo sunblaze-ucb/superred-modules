@@ -107,6 +107,7 @@ class Evaluator:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.0,
+            max_tokens=10,
         )
         raw = result.choices[0].message.content or ""
         rating = self._parse_rating(raw)

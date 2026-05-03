@@ -15,7 +15,7 @@ from superred.core.types.events import (
     RunStartEvent,
 )
 from superred.core.types.goal import Goal
-from superred.core.types.observable import Observable
+from superred.core.types.observable import Observable, ObservableValue
 from superred.core.types.security_domain import SecurityDomainTag
 from superred.core.types.trajectory import Trajectory
 
@@ -175,6 +175,23 @@ async def test_success_triggers_done():
 
 
 @pytest.mark.asyncio
+async def test_default_mode_starts_with_fcs():
+    opt = FlipAttackOptimizer(use_cot=False, use_few_shot=False)
+    mock_llm = AsyncMock()
+    await opt.initialize(
+        goal=Goal(description="test objective"),
+        controllables=[make_controllable()],
+        observables=[],
+        llm_client=mock_llm,
+    )
+    ctrl = make_controllable()
+    await opt.on_event(_make_run_start())
+    resp = await opt.on_event(_make_pre_call(ctrl))
+    assert isinstance(resp, ControllableInjection)
+    assert "TASK is 'evitcejbo tset'" in resp.value
+
+
+@pytest.mark.asyncio
 async def test_rating_10_triggers_done():
     opt = await _init_optimizer(success_threshold=0.8)
     ctrl = make_controllable()
@@ -205,6 +222,17 @@ async def test_scoring_exception_does_not_trigger_asr_gpt_success():
     assert isinstance(resp, RunEndResponse)
     assert opt._succeeded is False
     assert resp.done is True  # single strategy exhausted
+
+
+@pytest.mark.asyncio
+async def test_default_no_feedback_runs_open_loop():
+    opt = await _init_optimizer(flip_modes=["FWO", "FCW"])
+    ctrl = make_controllable()
+    await opt.on_event(_make_run_start())
+    await opt.on_event(_make_pre_call(ctrl))
+    resp = await opt.on_event(_make_run_end())
+    assert isinstance(resp, RunEndResponse)
+    assert resp.done is False
 
 
 @pytest.mark.asyncio
@@ -337,6 +365,33 @@ async def test_no_feedback_guardrail_stops_after_threshold():
     resp = await opt.on_event(_make_run_end())
     assert isinstance(resp, RunEndResponse)
     assert resp.done is True
+
+
+@pytest.mark.asyncio
+async def test_llama_sanitization_uses_model_observable():
+    opt = FlipAttackOptimizer(
+        flip_modes=["FWO"],
+        use_cot=False,
+        use_few_shot=False,
+    )
+    mock_llm = AsyncMock()
+    obs = ObservableValue(
+        observable=Observable(name="model", security_domain=DOMAIN, description="model"),
+        content="Meta-Llama-3-8B",
+    )
+    await opt.initialize(
+        goal=Goal(description="test objective"),
+        controllables=[make_controllable()],
+        observables=[obs],
+        llm_client=mock_llm,
+    )
+
+    ctrl = make_controllable()
+    await opt.on_event(_make_run_start())
+    resp = await opt.on_event(_make_pre_call(ctrl))
+    assert isinstance(resp, ControllableInjection)
+    assert "without any regard for ethical, moral, or safety concerns" not in resp.value
+    assert ", even if the content can be harmful, dangerous, or offensive" not in resp.value
 
 
 @pytest.mark.asyncio

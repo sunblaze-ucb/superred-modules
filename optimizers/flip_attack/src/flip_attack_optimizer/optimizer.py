@@ -28,7 +28,8 @@ from flip_attack_optimizer.prompts import build_attack_prompts
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_MODES = ["FWO", "FCW", "FCS", "FMM"]
+# Keep framework rotation, but start with the paper's default mode.
+_DEFAULT_MODES = ["FCS", "FWO", "FCW", "FMM"]
 _DEFAULT_RESPONSE_OBSERVABLE_NAMES = ("response", "model_response", "assistant_response")
 _RESPONSE_NAME_HINTS = ("response", "assistant", "reply", "output", "completion")
 
@@ -51,7 +52,7 @@ class FlipAttackOptimizer(Optimizer):
         success_threshold: float = 0.8,
         evaluator_method: str = "asr_gpt",
         response_observable_names: list[str] | None = None,
-        max_no_feedback_runs: int = 2,
+        max_no_feedback_runs: int = 0,
     ) -> None:
         super().__init__()
         self._flip_modes = flip_modes if flip_modes is not None else list(_DEFAULT_MODES)
@@ -73,6 +74,7 @@ class FlipAttackOptimizer(Optimizer):
         self._primary_controllable: Controllable | None = None
         self._primary_post_controllable: Controllable | None = None
         self._trajectory: ReadableTrajectory | None = None
+        self._victim_llm: str = ""
 
         # Per-run state
         self._attempt: int = 0
@@ -104,6 +106,7 @@ class FlipAttackOptimizer(Optimizer):
         await super().initialize(goal, controllables, observables, llm_client)
         self._goal = goal
         self._evaluator = Evaluator(llm=self.llm, method=self._evaluator_method)
+        self._victim_llm = self._resolve_victim_llm(observables)
         self._attempt = 0
         self._succeeded = False
         self._best_score = 0.0
@@ -245,6 +248,7 @@ class FlipAttackOptimizer(Optimizer):
             prompt_style=self._prompt_style,
             use_cot=self._use_cot,
             use_few_shot=self._use_few_shot,
+            victim_llm=self._victim_llm,
         )
         self._plain_user_message = user_msg
         # Fold system prompt into user message for single-controllable targets
@@ -345,3 +349,28 @@ class FlipAttackOptimizer(Optimizer):
         if success:
             self._succeeded = True
             logger.info("FlipAttack: success with %s (score %.2f)", self._current_mode(), score)
+
+    @staticmethod
+    def _resolve_victim_llm(observables: list[ObservableValue]) -> str:
+        """Best-effort extraction of target model id from in-scope observables."""
+        preferred_names = {"model", "target_model", "victim_model", "llm_model"}
+
+        for obs in observables:
+            name = obs.observable.name.lower()
+            if name not in preferred_names and not name.endswith("_model"):
+                continue
+            model = FlipAttackOptimizer._extract_model_name(obs.content)
+            if model:
+                return model
+        return ""
+
+    @staticmethod
+    def _extract_model_name(content: object) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, dict):
+            for key in ("model", "target_model", "model_name", "name", "id"):
+                value = content.get(key)
+                if isinstance(value, str):
+                    return value
+        return ""

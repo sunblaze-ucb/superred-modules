@@ -106,6 +106,7 @@ async def test_score_response_accepts_prompt_parameter():
     call_args = mock_llm.complete.call_args
     messages = call_args[0][0]
     assert "the prompt" in messages[1]["content"]
+    assert call_args.kwargs["max_tokens"] == 10
 
 
 @pytest.mark.asyncio
