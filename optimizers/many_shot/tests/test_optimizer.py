@@ -1,6 +1,7 @@
 """Tests for ManyShotOptimizer event-driven state machine."""
 
 import json
+import random
 from unittest.mock import AsyncMock
 import pytest
 
@@ -52,6 +53,10 @@ def _make_post_call(ctrl, answer):
 FAKE_EXAMPLES = [{"user": f"Q{i}", "assistant": f"A{i}"} for i in range(50)]
 
 
+def _example_text(index: int) -> str:
+    return f"User: Q{index} Assistant: A{index}"
+
+
 async def _init_optimizer(**kwargs) -> ManyShotOptimizer:
     defaults = dict(
         example_counts=[5, 10],
@@ -97,6 +102,42 @@ async def test_prompt_contains_correct_example_count():
     resp = await opt.on_event(_make_pre_call(ctrl))
     assert isinstance(resp, ControllableInjection)
     assert resp.value.count("Assistant:") == 5
+
+
+@pytest.mark.asyncio
+async def test_examples_preserve_source_order_by_default():
+    opt = await _init_optimizer(example_counts=[4])
+    ctrl = make_controllable()
+
+    await opt.on_event(_make_run_start())
+    resp = await opt.on_event(_make_pre_call(ctrl))
+
+    assert isinstance(resp, ControllableInjection)
+    positions = [resp.value.index(_example_text(index)) for index in range(4)]
+    assert positions == sorted(positions)
+
+
+@pytest.mark.asyncio
+async def test_shuffle_examples_is_opt_in_and_seeded():
+    seed = 7
+    opt = await _init_optimizer(
+        example_counts=[4], shuffle_examples=True, random_seed=seed
+    )
+    ctrl = make_controllable()
+
+    expected = list(FAKE_EXAMPLES)
+    random.Random(seed).shuffle(expected)
+    expected = expected[:4]
+
+    await opt.on_event(_make_run_start())
+    resp = await opt.on_event(_make_pre_call(ctrl))
+
+    assert isinstance(resp, ControllableInjection)
+    positions = [
+        resp.value.index(f"User: {example['user']} Assistant: {example['assistant']}")
+        for example in expected
+    ]
+    assert positions == sorted(positions)
 
 
 @pytest.mark.asyncio

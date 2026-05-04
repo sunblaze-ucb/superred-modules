@@ -10,6 +10,11 @@ Bundled examples come from `data/examples.json`. The optimizer preserves the
 basic prompt shape: preamble, repeated `User:` / `Assistant:` examples, then
 the target objective.
 
+Examples are used in their source order by default. This matches the common
+reference implementation pattern of taking the first N examples from the
+dataset. If you want a closer PyRIT-style single attempt, configure one count,
+for example `example_counts=[100]`.
+
 ## Intentional Differences
 
 The original work studies attack success as the number of examples increases.
@@ -21,6 +26,10 @@ This module maps that idea onto SuperRed staged runs:
 
 This staged schedule is a framework feature. For a single paper-style attempt,
 configure one count explicitly, for example `example_counts=[256]`.
+
+The optimizer also has an optional `shuffle_examples=True` setting. This is off
+by default because the reference path is deterministic first-N selection. If
+enabled, `random_seed` can make the shuffled order repeatable.
 
 ## Extra Example Generation
 

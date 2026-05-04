@@ -69,12 +69,16 @@ class ManyShotOptimizer(Optimizer):
         success_threshold: float = 0.8,
         custom_examples: list[dict[str, str]] | None = None,
         generate_extra: bool = True,
+        shuffle_examples: bool = False,
+        random_seed: int | None = None,
     ) -> None:
         super().__init__()
         self._example_counts = example_counts if example_counts is not None else list(_DEFAULT_COUNTS)
         self._success_threshold = success_threshold
         self._custom_examples = custom_examples
         self._generate_extra = generate_extra
+        self._shuffle_examples = shuffle_examples
+        self._random_seed = random_seed
 
         # State set in initialize()
         self._goal: Goal | None = None
@@ -111,7 +115,8 @@ class ManyShotOptimizer(Optimizer):
 
         base = self._custom_examples if self._custom_examples is not None else _load_bundled_examples()
         self._examples = list(base)
-        random.shuffle(self._examples)
+        if self._shuffle_examples:
+            random.Random(self._random_seed).shuffle(self._examples)
 
     async def on_event(self, event: Event) -> EventResponse:
         if isinstance(event, RunStartEvent):
@@ -195,12 +200,12 @@ class ManyShotOptimizer(Optimizer):
         assert self._goal is not None
         assert self._evaluator is not None
         try:
-            score, rationale = await self._evaluator.score_response(
+            score, _ = await self._evaluator.score_response(
                 response=event.answer, goal=self._goal.description,
             )
         except Exception:
             logger.warning("ManyShot: scoring failed", exc_info=True)
-            score, rationale = 0.0, "Scoring failed"
+            score = 0.0
         logger.info("ManyShot: attempt %d scored %.2f", self._attempt, score)
         if score > self._best_score:
             self._best_score = score
