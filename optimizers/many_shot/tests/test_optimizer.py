@@ -76,6 +76,7 @@ async def _init_optimizer(**kwargs) -> ManyShotOptimizer:
         success_threshold=0.8,
         custom_examples=FAKE_EXAMPLES,
         generate_extra=False,
+        shuffle_examples=False,
     )
     defaults.update(kwargs)
     opt = ManyShotOptimizer(**defaults)
@@ -118,21 +119,35 @@ async def test_prompt_contains_correct_example_count():
 
 
 @pytest.mark.asyncio
-async def test_default_example_count_is_100():
-    examples = [{"user": f"Q{i}", "assistant": f"A{i}"} for i in range(150)]
-    opt = await _init_optimizer(example_counts=None, custom_examples=examples)
+async def test_defaults_use_256_shots_and_shuffle_examples():
+    seed = 7
+    examples = [{"user": f"Q{i}", "assistant": f"A{i}"} for i in range(300)]
+    opt = await _init_optimizer(
+        example_counts=None,
+        custom_examples=examples,
+        random_seed=seed,
+        shuffle_examples=True,
+    )
     ctrl = make_controllable()
+    expected = list(examples)
+    random.Random(seed).shuffle(expected)
+    expected = expected[:4]
 
     await opt.on_event(_make_run_start())
     resp = await opt.on_event(_make_pre_call(ctrl))
 
     assert isinstance(resp, ControllableInjection)
-    assert resp.value.count("Assistant:") == 100
+    assert resp.value.count("Assistant:") == 256
+    positions = [
+        resp.value.index(f"User: {example['user']} Assistant: {example['assistant']}")
+        for example in expected
+    ]
+    assert positions == sorted(positions)
 
 
 @pytest.mark.asyncio
-async def test_examples_preserve_source_order_by_default():
-    opt = await _init_optimizer(example_counts=[4])
+async def test_examples_preserve_source_order_when_shuffle_disabled():
+    opt = await _init_optimizer(example_counts=[4], shuffle_examples=False)
     ctrl = make_controllable()
 
     await opt.on_event(_make_run_start())

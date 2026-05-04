@@ -32,7 +32,7 @@ from many_shot_optimizer.prompt_builder import build_prompt
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_COUNTS = [100]
+_DEFAULT_COUNTS = [256]
 _DEFAULT_RESPONSE_OBSERVABLE_NAMES = ("response", "model_response", "assistant_response")
 _RESPONSE_NAME_HINTS = ("response", "assistant", "reply", "output", "completion")
 
@@ -73,7 +73,7 @@ class ManyShotOptimizer(Optimizer):
         success_threshold: float = 0.8,
         custom_examples: list[dict[str, str]] | None = None,
         generate_extra: bool = False,
-        shuffle_examples: bool = False,
+        shuffle_examples: bool = True,
         random_seed: int | None = None,
         response_observable_names: list[str] | None = None,
     ) -> None:

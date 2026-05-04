@@ -11,14 +11,15 @@ basic prompt shape: preamble, repeated `User:` / `Assistant:` examples, then
 the target objective. If the dataset includes extra metadata fields such as
 `category`, the prompt uses only `user` and `assistant`.
 
-Examples are used in their source order by default. The default is one run with
-`example_counts=[100]`.
+The default is one run with `example_counts=[256]`. This uses hundreds of
+examples by default, matching the paper's main many-shot setup more closely
+than a short few-shot prompt.
 
 The paper says the attack strings were randomized before formatting. This
-module defaults to deterministic first-N example selection for reproducibility.
-To run closer to the paper's ordering description, set
-`shuffle_examples=True`; use `random_seed` when you need the shuffle to be
-repeatable.
+module randomizes example order by default with `shuffle_examples=True`.
+Set `random_seed` when you need the shuffle to be repeatable. Set
+`shuffle_examples=False` only when you intentionally want deterministic
+source-order selection.
 
 ## Intentional Differences
 
