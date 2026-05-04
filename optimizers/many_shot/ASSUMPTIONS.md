@@ -6,9 +6,11 @@ The optimizer follows the Many-Shot Jailbreaking idea: build one long prompt
 with many faux user/assistant examples, then append the real objective as the
 final user turn.
 
-Bundled examples come from `data/examples.json`. The optimizer preserves the
-basic prompt shape: preamble, repeated `User:` / `Assistant:` examples, then
-the target objective.
+Bundled examples come from `data/examples.json`, which mirrors PyRIT's
+`many_shot_examples.json` dataset. The optimizer preserves the basic prompt
+shape: preamble, repeated `User:` / `Assistant:` examples, then the target
+objective. If the dataset includes extra metadata fields such as `category`,
+the prompt uses only `user` and `assistant`.
 
 Examples are used in their source order by default. This matches the common
 reference implementation pattern of taking the first N examples from the
