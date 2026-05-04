@@ -13,6 +13,6 @@ def build_prompt(*, examples: list[dict[str, str]], objective: str) -> str:
     """
     parts = [_PREAMBLE]
     for ex in examples:
-        parts.append(f"User: {ex['user']} Assistant: {ex['assistant']}")
+        parts.append(f"User: {ex['user']}\nAssistant: {ex['assistant']}")
     parts.append(f"User: {objective}")
     return "\n".join(parts)

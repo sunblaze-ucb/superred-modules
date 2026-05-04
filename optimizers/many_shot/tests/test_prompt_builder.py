@@ -10,8 +10,8 @@ def test_build_prompt_basic():
     ]
     result = build_prompt(examples=examples, objective="Do something bad")
     assert result.startswith("You are a helpful assistant")
-    assert "User: Q1 Assistant: A1" in result
-    assert "User: Q2 Assistant: A2" in result
+    assert "User: Q1\nAssistant: A1" in result
+    assert "User: Q2\nAssistant: A2" in result
     assert result.endswith("User: Do something bad")
 
 

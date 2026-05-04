@@ -60,13 +60,16 @@ ManyShot can use two feedback paths:
 1. Filtered trajectory response observables: when the response is visible on
    the trajectory, ManyShot reads that response first and scores it with its
    own evaluator.
-2. `ControllablePostCallEvent`: if no response observable is visible, ManyShot
-   falls back to the post-call answer when that event is in scope.
-3. `RunEndEvent.evaluation`: when the task evaluator provides framework
+2. `RunEndEvent.evaluation`: when the task evaluator provides framework
    feedback, ManyShot uses `evaluation.success` and `primary_score` to decide
    whether to stop.
 
-The framework evaluation path is important for scopes where post-call response
+`ControllablePostCallEvent` is not used as a model-response source. This keeps
+the optimizer aligned with SuperRed's adversarial settings: writable user input
+comes from `ControllablePreCallEvent`, model responses come from the filtered
+trajectory when in scope, and task success feedback comes from `RunEndEvent`.
+
+The framework evaluation path is important for scopes where trajectory response
 events are not visible to the optimizer.
 
 ## Controllable Mapping
@@ -76,7 +79,9 @@ visible user-like controllable and injects only once per run.
 
 For chatbot-style split channels, ManyShot does not inject into
 `system_prompt`. It waits for `user_message` and injects the long prompt there.
-This avoids turning the many-shot user prompt into a system prompt.
+This avoids turning the many-shot user prompt into a system prompt. The attack
+described by the paper is a user prompt made of demonstrations plus a final
+user query, not a system-prompt override.
 
 ## Scoring
 

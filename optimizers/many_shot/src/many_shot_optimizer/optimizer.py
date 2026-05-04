@@ -104,7 +104,6 @@ class ManyShotOptimizer(Optimizer):
         self._evaluator: Evaluator | None = None
         self._generator: ExampleGenerator | None = None
         self._primary_controllable: Controllable | None = None
-        self._primary_post_controllable: Controllable | None = None
         self._trajectory: ReadableTrajectory | None = None
         self._examples: list[dict[str, str]] = []
         self._generated_examples: list[dict[str, str]] = []
@@ -117,7 +116,6 @@ class ManyShotOptimizer(Optimizer):
         self._injected_prompt: bool = False
         self._saw_system_prompt_event: bool = False
         self._awaiting_feedback: bool = False
-        self._pending_post_answer: str | None = None
 
     async def initialize(
         self,
@@ -146,7 +144,7 @@ class ManyShotOptimizer(Optimizer):
         if isinstance(event, ControllablePreCallEvent):
             return self._handle_pre_call(event)
         if isinstance(event, ControllablePostCallEvent):
-            return await self._handle_post_call(event)
+            return self._handle_post_call(event)
         if isinstance(event, RunEndEvent):
             return await self._handle_run_end(event)
         return EventResponse(event=event)
@@ -205,26 +203,9 @@ class ManyShotOptimizer(Optimizer):
             value=self._current_prompt,
         )
 
-    async def _handle_post_call(
+    def _handle_post_call(
         self, event: ControllablePostCallEvent,
     ) -> ControllableNoInjection:
-        if not self._injected_prompt:
-            return ControllableNoInjection(event=event, controllable=event.controllable)
-
-        if self._primary_post_controllable is None:
-            matches_primary = (
-                self._primary_controllable is not None
-                and event.controllable == self._primary_controllable
-            )
-            if not matches_primary and event.request != self._current_prompt:
-                return ControllableNoInjection(event=event, controllable=event.controllable)
-            self._primary_post_controllable = event.controllable
-        elif event.controllable != self._primary_post_controllable:
-            return ControllableNoInjection(event=event, controllable=event.controllable)
-
-        # Defer scoring until run-end so trajectory-visible response
-        # observables can be preferred over post-call fallback text.
-        self._pending_post_answer = event.answer
         return ControllableNoInjection(event=event, controllable=event.controllable)
 
     async def _handle_run_end(self, event: RunEndEvent) -> RunEndResponse:
@@ -277,35 +258,26 @@ class ManyShotOptimizer(Optimizer):
 
     def _reset_run_state(self) -> None:
         self._primary_controllable = None
-        self._primary_post_controllable = None
         self._injected_prompt = False
         self._saw_system_prompt_event = False
         self._awaiting_feedback = False
-        self._pending_post_answer = None
 
     async def _finalize_pending_feedback(self) -> None:
-        """Score one pending response, preferring trajectory observables."""
+        """Score one pending response from trajectory observables."""
         if not self._awaiting_feedback:
             return
 
         answer = self._get_response_from_trajectory()
-        source = "trajectory"
-        if answer is None:
-            answer = self._pending_post_answer
-            source = "post-call"
-
         if answer is None:
             logger.warning(
                 "ManyShot: no in-scope response feedback for attempt %d",
                 self._attempt,
             )
             self._awaiting_feedback = False
-            self._pending_post_answer = None
             return
 
-        await self._score_answer(answer, source=source)
+        await self._score_answer(answer, source="trajectory")
         self._awaiting_feedback = False
-        self._pending_post_answer = None
 
     def _get_response_from_trajectory(self) -> str | None:
         """Best-effort response recovery from filtered trajectory."""

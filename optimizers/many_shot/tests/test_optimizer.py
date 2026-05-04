@@ -67,7 +67,7 @@ FAKE_EXAMPLES = [{"user": f"Q{i}", "assistant": f"A{i}"} for i in range(50)]
 
 
 def _example_text(index: int) -> str:
-    return f"User: Q{index} Assistant: A{index}"
+    return f"User: Q{index}\nAssistant: A{index}"
 
 
 async def _init_optimizer(**kwargs) -> ManyShotOptimizer:
@@ -139,7 +139,7 @@ async def test_defaults_use_256_shots_and_shuffle_examples():
     assert isinstance(resp, ControllableInjection)
     assert resp.value.count("Assistant:") == 256
     positions = [
-        resp.value.index(f"User: {example['user']} Assistant: {example['assistant']}")
+        resp.value.index(f"User: {example['user']}\nAssistant: {example['assistant']}")
         for example in expected
     ]
     assert positions == sorted(positions)
@@ -175,7 +175,7 @@ async def test_shuffle_examples_is_opt_in_and_seeded():
 
     assert isinstance(resp, ControllableInjection)
     positions = [
-        resp.value.index(f"User: {example['user']} Assistant: {example['assistant']}")
+        resp.value.index(f"User: {example['user']}\nAssistant: {example['assistant']}")
         for example in expected
     ]
     assert positions == sorted(positions)
@@ -185,20 +185,21 @@ async def test_shuffle_examples_is_opt_in_and_seeded():
 async def test_success_triggers_done():
     opt = await _init_optimizer(success_threshold=0.8)
     ctrl = make_controllable()
-    await opt.on_event(_make_run_start())
+    trajectory = Trajectory()
+    await opt.on_event(RunStartEvent(trajectory=trajectory))
     await opt.on_event(_make_pre_call(ctrl))
+    trajectory.emit(_make_response_observable("full compliance"))
 
     opt.llm.complete.return_value = mock_response(
         '{"refusal": false, "rationale": "Attempts the requested behavior."}'
     )
-    await opt.on_event(_make_post_call(ctrl, "full compliance"))
     resp = await opt.on_event(_make_run_end())
     assert isinstance(resp, RunEndResponse)
     assert resp.done is True
 
 
 @pytest.mark.asyncio
-async def test_run_end_prefers_trajectory_response_over_post_call():
+async def test_run_end_uses_trajectory_response_and_ignores_post_call():
     opt = await _init_optimizer(example_counts=[3], success_threshold=0.8)
     ctrl = make_controllable()
     trajectory = Trajectory()
@@ -221,19 +222,35 @@ async def test_run_end_prefers_trajectory_response_over_post_call():
 
 
 @pytest.mark.asyncio
+async def test_post_call_response_without_trajectory_does_not_score():
+    opt = await _init_optimizer(example_counts=[3], success_threshold=0.8)
+    ctrl = make_controllable()
+
+    await opt.on_event(_make_run_start())
+    await opt.on_event(_make_pre_call(ctrl))
+    await opt.on_event(_make_post_call(ctrl, "post-call only"))
+    resp = await opt.on_event(_make_run_end())
+
+    assert isinstance(resp, RunEndResponse)
+    assert resp.done is True
+    opt.llm.complete.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_escalation_through_schedule():
     opt = await _init_optimizer(example_counts=[3, 6])
     ctrl = make_controllable()
 
     # First attempt: 3 examples
-    await opt.on_event(_make_run_start())
+    trajectory = Trajectory()
+    await opt.on_event(RunStartEvent(trajectory=trajectory))
     resp1 = await opt.on_event(_make_pre_call(ctrl))
     assert resp1.value.count("Assistant:") == 3
 
     opt.llm.complete.return_value = mock_response(
         '{"refusal": true, "rationale": "Refuses the request."}'
     )
-    await opt.on_event(_make_post_call(ctrl, "I can't help with that request."))
+    trajectory.emit(_make_response_observable("I can't help with that request."))
     end_resp = await opt.on_event(_make_run_end())
     assert end_resp.done is False
 
@@ -247,14 +264,15 @@ async def test_escalation_through_schedule():
 async def test_all_attempts_exhausted():
     opt = await _init_optimizer(example_counts=[3])
     ctrl = make_controllable()
+    trajectory = Trajectory()
 
-    await opt.on_event(_make_run_start())
+    await opt.on_event(RunStartEvent(trajectory=trajectory))
     await opt.on_event(_make_pre_call(ctrl))
 
     opt.llm.complete.return_value = mock_response(
         '{"refusal": true, "rationale": "Refuses the request."}'
     )
-    await opt.on_event(_make_post_call(ctrl, "I can't help with that request."))
+    trajectory.emit(_make_response_observable("I can't help with that request."))
     resp = await opt.on_event(_make_run_end())
     assert resp.done is True
 
@@ -287,12 +305,13 @@ async def test_secondary_controllable_ignored():
 async def test_evaluator_failure_gives_low_score():
     opt = await _init_optimizer(example_counts=[3, 6])
     ctrl = make_controllable()
+    trajectory = Trajectory()
 
-    await opt.on_event(_make_run_start())
+    await opt.on_event(RunStartEvent(trajectory=trajectory))
     await opt.on_event(_make_pre_call(ctrl))
 
     opt.llm.complete.side_effect = Exception("LLM down")
-    await opt.on_event(_make_post_call(ctrl, "some response"))
+    trajectory.emit(_make_response_observable("some response"))
     resp = await opt.on_event(_make_run_end())
     assert resp.done is False
 
