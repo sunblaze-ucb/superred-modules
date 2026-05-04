@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 
 from superred.core.llm import LLMClient
+
+from many_shot_optimizer.json_utils import strip_markdown_fences
 
 logger = logging.getLogger(__name__)
 
@@ -27,14 +28,6 @@ Response to evaluate:
 
 Respond with JSON: {{"score": <float 0.0-1.0>, "rationale": "<brief explanation>"}}\
 """
-
-
-def _strip_markdown_fences(text: str) -> str:
-    """Remove optional markdown code fences wrapping JSON."""
-    text = text.strip()
-    text = re.sub(r"^```(?:json)?\s*\n?", "", text)
-    text = re.sub(r"\n?\s*```$", "", text)
-    return text.strip()
 
 
 class Evaluator:
@@ -59,7 +52,7 @@ class Evaluator:
     def _parse_score(content: str) -> tuple[float, str]:
         """Parse a JSON score response. Returns (score, rationale)."""
         try:
-            cleaned = _strip_markdown_fences(content)
+            cleaned = strip_markdown_fences(content)
             data = json.loads(cleaned)
             score = float(data["score"])
             score = max(0.0, min(1.0, score))

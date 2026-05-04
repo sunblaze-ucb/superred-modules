@@ -1,11 +1,11 @@
 """Tests for ManyShotOptimizer event-driven state machine."""
 
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 import pytest
 
-from superred.core.types.controllable import Controllable
 from superred.core.types.event import EventResponse
+from superred.core.types.evaluation import EvaluationResult, Score
 from superred.core.types.events import (
     ControllableInjection,
     ControllableNoInjection,
@@ -16,23 +16,10 @@ from superred.core.types.events import (
     RunStartEvent,
 )
 from superred.core.types.goal import Goal
-from superred.core.types.security_domain import SecurityDomainTag
 from superred.core.types.trajectory import Trajectory
 
+from tests.conftest import mock_response, make_controllable, DOMAIN
 from many_shot_optimizer.optimizer import ManyShotOptimizer
-
-DOMAIN = SecurityDomainTag(name="test")
-
-
-def _mock_response(content):
-    resp = MagicMock()
-    resp.choices = [MagicMock()]
-    resp.choices[0].message.content = content
-    return resp
-
-
-def _make_controllable():
-    return Controllable(name="input", security_domain=DOMAIN, description="test")
 
 
 def _make_run_start():
@@ -41,6 +28,15 @@ def _make_run_start():
 
 def _make_run_end():
     return RunEndEvent(evaluation=None)
+
+
+def _make_run_end_with_eval(*, success: bool, score: float):
+    return RunEndEvent(
+        evaluation=EvaluationResult(
+            success=success,
+            primary_score=Score(value=score, security_domain=DOMAIN),
+        )
+    )
 
 
 def _make_pre_call(ctrl):
@@ -68,7 +64,7 @@ async def _init_optimizer(**kwargs) -> ManyShotOptimizer:
     mock_llm = AsyncMock()
     await opt.initialize(
         goal=Goal(description="test objective"),
-        controllables=[_make_controllable()],
+        controllables=[make_controllable()],
         observables=[],
         llm_client=mock_llm,
     )
@@ -85,7 +81,7 @@ async def test_run_start_returns_event_response():
 @pytest.mark.asyncio
 async def test_pre_call_injects_many_shot_prompt():
     opt = await _init_optimizer(example_counts=[3])
-    ctrl = _make_controllable()
+    ctrl = make_controllable()
     await opt.on_event(_make_run_start())
     resp = await opt.on_event(_make_pre_call(ctrl))
     assert isinstance(resp, ControllableInjection)
@@ -96,7 +92,7 @@ async def test_pre_call_injects_many_shot_prompt():
 @pytest.mark.asyncio
 async def test_prompt_contains_correct_example_count():
     opt = await _init_optimizer(example_counts=[5])
-    ctrl = _make_controllable()
+    ctrl = make_controllable()
     await opt.on_event(_make_run_start())
     resp = await opt.on_event(_make_pre_call(ctrl))
     assert isinstance(resp, ControllableInjection)
@@ -106,11 +102,11 @@ async def test_prompt_contains_correct_example_count():
 @pytest.mark.asyncio
 async def test_success_triggers_done():
     opt = await _init_optimizer(success_threshold=0.8)
-    ctrl = _make_controllable()
+    ctrl = make_controllable()
     await opt.on_event(_make_run_start())
     await opt.on_event(_make_pre_call(ctrl))
 
-    opt.llm.complete.return_value = _mock_response(
+    opt.llm.complete.return_value = mock_response(
         '{"score": 0.9, "rationale": "High"}'
     )
     await opt.on_event(_make_post_call(ctrl, "full compliance"))
@@ -122,14 +118,14 @@ async def test_success_triggers_done():
 @pytest.mark.asyncio
 async def test_escalation_through_schedule():
     opt = await _init_optimizer(example_counts=[3, 6])
-    ctrl = _make_controllable()
+    ctrl = make_controllable()
 
     # First attempt: 3 examples
     await opt.on_event(_make_run_start())
     resp1 = await opt.on_event(_make_pre_call(ctrl))
     assert resp1.value.count("Assistant:") == 3
 
-    opt.llm.complete.return_value = _mock_response(
+    opt.llm.complete.return_value = mock_response(
         '{"score": 0.2, "rationale": "Low"}'
     )
     await opt.on_event(_make_post_call(ctrl, "refused"))
@@ -145,12 +141,12 @@ async def test_escalation_through_schedule():
 @pytest.mark.asyncio
 async def test_all_attempts_exhausted():
     opt = await _init_optimizer(example_counts=[3])
-    ctrl = _make_controllable()
+    ctrl = make_controllable()
 
     await opt.on_event(_make_run_start())
     await opt.on_event(_make_pre_call(ctrl))
 
-    opt.llm.complete.return_value = _mock_response(
+    opt.llm.complete.return_value = mock_response(
         '{"score": 0.1, "rationale": "Failed"}'
     )
     await opt.on_event(_make_post_call(ctrl, "refused"))
@@ -161,7 +157,7 @@ async def test_all_attempts_exhausted():
 @pytest.mark.asyncio
 async def test_custom_example_counts():
     opt = await _init_optimizer(example_counts=[7, 14, 21])
-    ctrl = _make_controllable()
+    ctrl = make_controllable()
 
     await opt.on_event(_make_run_start())
     resp = await opt.on_event(_make_pre_call(ctrl))
@@ -171,8 +167,8 @@ async def test_custom_example_counts():
 @pytest.mark.asyncio
 async def test_secondary_controllable_ignored():
     opt = await _init_optimizer()
-    ctrl1 = _make_controllable()
-    ctrl2 = Controllable(name="other", security_domain=DOMAIN, description="secondary")
+    ctrl1 = make_controllable()
+    ctrl2 = make_controllable(name="other")
 
     await opt.on_event(_make_run_start())
     resp1 = await opt.on_event(_make_pre_call(ctrl1))
@@ -185,7 +181,7 @@ async def test_secondary_controllable_ignored():
 @pytest.mark.asyncio
 async def test_evaluator_failure_gives_low_score():
     opt = await _init_optimizer(example_counts=[3, 6])
-    ctrl = _make_controllable()
+    ctrl = make_controllable()
 
     await opt.on_event(_make_run_start())
     await opt.on_event(_make_pre_call(ctrl))
@@ -204,13 +200,66 @@ async def test_llm_generation_triggered_when_count_exceeds_bundled():
         custom_examples=small_examples,
         generate_extra=True,
     )
-    ctrl = _make_controllable()
+    ctrl = make_controllable()
 
     # Mock LLM for generator (returns 5 generated examples)
     generated = [{"user": f"GQ{i}", "assistant": f"GA{i}"} for i in range(5)]
-    opt.llm.complete.return_value = _mock_response(json.dumps(generated))
+    opt.llm.complete.return_value = mock_response(json.dumps(generated))
 
     await opt.on_event(_make_run_start())
     resp = await opt.on_event(_make_pre_call(ctrl))
     assert isinstance(resp, ControllableInjection)
     assert resp.value.count("Assistant:") == 10
+
+
+@pytest.mark.asyncio
+async def test_run_end_evaluation_can_mark_success_without_post_call():
+    opt = await _init_optimizer(example_counts=[3, 6])
+    ctrl = make_controllable()
+    await opt.on_event(_make_run_start())
+    await opt.on_event(_make_pre_call(ctrl))
+
+    resp = await opt.on_event(_make_run_end_with_eval(success=True, score=0.1))
+    assert isinstance(resp, RunEndResponse)
+    assert resp.done is True
+    assert opt._best_score == 0.1
+
+
+@pytest.mark.asyncio
+async def test_run_end_evaluation_score_can_mark_success():
+    opt = await _init_optimizer(example_counts=[3, 6], success_threshold=0.8)
+    ctrl = make_controllable()
+    await opt.on_event(_make_run_start())
+    await opt.on_event(_make_pre_call(ctrl))
+
+    resp = await opt.on_event(_make_run_end_with_eval(success=False, score=0.85))
+    assert isinstance(resp, RunEndResponse)
+    assert resp.done is True
+    assert opt._best_score == 0.85
+
+
+@pytest.mark.asyncio
+async def test_split_chatbot_flow_ignores_system_prompt_then_injects_user_message():
+    opt = await _init_optimizer(example_counts=[3])
+    system_ctrl = make_controllable(name="system_prompt")
+    user_ctrl = make_controllable(name="user_message")
+    await opt.on_event(_make_run_start())
+
+    system_resp = await opt.on_event(_make_pre_call(system_ctrl))
+    assert isinstance(system_resp, ControllableNoInjection)
+
+    user_resp = await opt.on_event(_make_pre_call(user_ctrl))
+    assert isinstance(user_resp, ControllableInjection)
+    assert "test objective" in user_resp.value
+
+
+@pytest.mark.asyncio
+async def test_injects_only_once_per_run():
+    opt = await _init_optimizer(example_counts=[3])
+    ctrl = make_controllable()
+    await opt.on_event(_make_run_start())
+
+    first = await opt.on_event(_make_pre_call(ctrl))
+    second = await opt.on_event(_make_pre_call(ctrl))
+    assert isinstance(first, ControllableInjection)
+    assert isinstance(second, ControllableNoInjection)

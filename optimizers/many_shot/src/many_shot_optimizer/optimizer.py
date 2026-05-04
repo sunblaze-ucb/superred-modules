@@ -20,6 +20,7 @@ from superred.core.types.events import (
     RunEndResponse,
     RunStartEvent,
 )
+from superred.core.types.evaluation import EvaluationResult
 from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
 
@@ -37,7 +38,19 @@ def _load_bundled_examples() -> list[dict[str, str]]:
     ref = resources.files("many_shot_optimizer") / "data" / "examples.json"
     with resources.as_file(ref) as path:
         with open(path, encoding="utf-8") as f:
-            return json.load(f)
+            data: object = json.load(f)
+    if not isinstance(data, list):
+        raise ValueError("ManyShot examples.json must contain a list")
+    examples: list[dict[str, str]] = []
+    for item in data:
+        if not isinstance(item, dict):
+            raise ValueError("ManyShot examples must be objects")
+        user = item.get("user")
+        assistant = item.get("assistant")
+        if not isinstance(user, str) or not isinstance(assistant, str):
+            raise ValueError("ManyShot examples must contain string user/assistant fields")
+        examples.append({"user": user, "assistant": assistant})
+    return examples
 
 
 class ManyShotOptimizer(Optimizer):
@@ -68,6 +81,7 @@ class ManyShotOptimizer(Optimizer):
         self._evaluator: Evaluator | None = None
         self._generator: ExampleGenerator | None = None
         self._primary_controllable: Controllable | None = None
+        self._primary_post_controllable: Controllable | None = None
         self._examples: list[dict[str, str]] = []
         self._generated_examples: list[dict[str, str]] = []
 
@@ -76,6 +90,8 @@ class ManyShotOptimizer(Optimizer):
         self._succeeded: bool = False
         self._best_score: float = 0.0
         self._current_prompt: str = ""
+        self._injected_prompt: bool = False
+        self._saw_system_prompt_event: bool = False
 
     async def initialize(
         self,
@@ -118,16 +134,41 @@ class ManyShotOptimizer(Optimizer):
         self._current_prompt = build_prompt(
             examples=examples, objective=self._goal.description,
         )
+        self._reset_run_state()
         logger.info("ManyShot: attempt %d, %d examples", self._attempt, len(examples))
         return EventResponse(event=event)
 
     def _handle_pre_call(
         self, event: ControllablePreCallEvent,
     ) -> ControllableInjection | ControllableNoInjection:
+        if self._succeeded:
+            return ControllableNoInjection(event=event, controllable=event.controllable)
+
+        if event.controllable.name == "system_prompt":
+            self._saw_system_prompt_event = True
+            return ControllableNoInjection(event=event, controllable=event.controllable)
+
+        if event.controllable.name == "user_message":
+            if self._injected_prompt:
+                return ControllableNoInjection(event=event, controllable=event.controllable)
+            self._primary_controllable = event.controllable
+            self._injected_prompt = True
+            return ControllableInjection(
+                event=event,
+                controllable=event.controllable,
+                value=self._current_prompt,
+            )
+
+        if self._saw_system_prompt_event:
+            return ControllableNoInjection(event=event, controllable=event.controllable)
+
         if self._primary_controllable is None:
             self._primary_controllable = event.controllable
         elif event.controllable != self._primary_controllable:
             return ControllableNoInjection(event=event, controllable=event.controllable)
+        if self._injected_prompt:
+            return ControllableNoInjection(event=event, controllable=event.controllable)
+        self._injected_prompt = True
         return ControllableInjection(
             event=event,
             controllable=event.controllable,
@@ -137,8 +178,20 @@ class ManyShotOptimizer(Optimizer):
     async def _handle_post_call(
         self, event: ControllablePostCallEvent,
     ) -> ControllableNoInjection:
-        if event.controllable != self._primary_controllable:
+        if not self._injected_prompt:
             return ControllableNoInjection(event=event, controllable=event.controllable)
+
+        if self._primary_post_controllable is None:
+            matches_primary = (
+                self._primary_controllable is not None
+                and event.controllable == self._primary_controllable
+            )
+            if not matches_primary and event.request != self._current_prompt:
+                return ControllableNoInjection(event=event, controllable=event.controllable)
+            self._primary_post_controllable = event.controllable
+        elif event.controllable != self._primary_post_controllable:
+            return ControllableNoInjection(event=event, controllable=event.controllable)
+
         assert self._goal is not None
         assert self._evaluator is not None
         try:
@@ -157,6 +210,8 @@ class ManyShotOptimizer(Optimizer):
         return ControllableNoInjection(event=event, controllable=event.controllable)
 
     def _handle_run_end(self, event: RunEndEvent) -> RunEndResponse:
+        if event.evaluation is not None:
+            self._apply_evaluation(event.evaluation)
         if self._succeeded:
             return RunEndResponse(event=event, done=True)
         self._attempt += 1
@@ -186,3 +241,17 @@ class ManyShotOptimizer(Optimizer):
             self._generated_examples.extend(new_examples)
         all_examples = self._examples + self._generated_examples
         return all_examples[:count]
+
+    def _reset_run_state(self) -> None:
+        self._primary_controllable = None
+        self._primary_post_controllable = None
+        self._injected_prompt = False
+        self._saw_system_prompt_event = False
+
+    def _apply_evaluation(self, evaluation: EvaluationResult) -> None:
+        score = float(evaluation.primary_score.value)
+        if score > self._best_score:
+            self._best_score = score
+        if evaluation.success or score >= self._success_threshold:
+            self._succeeded = True
+            logger.info("ManyShot: success from task evaluation at attempt %d", self._attempt)

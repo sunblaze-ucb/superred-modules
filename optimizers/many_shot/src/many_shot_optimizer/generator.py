@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 
 from superred.core.llm import LLMClient
+
+from many_shot_optimizer.json_utils import strip_markdown_fences
 
 logger = logging.getLogger(__name__)
 
@@ -24,14 +25,6 @@ Return a JSON array of objects, each with "user" and "assistant" fields:
 
 Return ONLY the JSON array, no other text.\
 """
-
-
-def _strip_markdown_fences(text: str) -> str:
-    """Remove optional markdown code fences wrapping JSON."""
-    text = text.strip()
-    text = re.sub(r"^```(?:json)?\s*\n?", "", text)
-    text = re.sub(r"\n?\s*```$", "", text)
-    return text.strip()
 
 
 class ExampleGenerator:
@@ -79,7 +72,7 @@ class ExampleGenerator:
     def _parse_examples(content: str) -> list[dict[str, str]]:
         """Parse a JSON array of {user, assistant} objects."""
         try:
-            cleaned = _strip_markdown_fences(content)
+            cleaned = strip_markdown_fences(content)
             data = json.loads(cleaned)
             if not isinstance(data, list):
                 return []
