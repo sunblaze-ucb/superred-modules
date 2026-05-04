@@ -23,6 +23,7 @@ from superred.core.types.events import (
 from superred.core.types.security_domain import SecurityDomainTag, scope_includes
 
 from chatbot_target import (
+    MODEL_IDENTITY_TAG,
     MODEL_TAG,
     RESPONSE_READABLE_TAG,
     SYSTEM_PROMPT_READABLE_TAG,
@@ -60,16 +61,22 @@ class TestSecurityDomain:
     def test_response_readable_parent_is_model(self) -> None:
         assert RESPONSE_READABLE_TAG.parent is MODEL_TAG
 
+    def test_model_identity_parent_is_system(self) -> None:
+        assert MODEL_IDENTITY_TAG.parent is SYSTEM_TAG
+
     def test_user_is_independent_root(self) -> None:
         assert USER_TAG.parent is None
 
-    def test_domain_has_six_tags(self, target: ChatbotTarget) -> None:
+    def test_distinct_combinations_count(self, target: ChatbotTarget) -> None:
         combos = target.security_domain.distinct_combinations()
-        # 2-tree forest: system tree has 5 tags, user tree has 1 tag
-        # System antichains: 10 (empty + 9 non-empty subsets respecting hierarchy)
-        # User antichains: 2 ({}, {user})
-        # Total: 10 * 2 = 20
-        assert len(combos) == 20
+        # 2-tree forest: system tree has 6 tags, user tree has 1 tag.
+        # Antichains of subtree at system_prompt: 3 ({}, {system_prompt_readable}, {system_prompt}).
+        # Antichains of subtree at model: 3 ({}, {response_readable}, {model}).
+        # Antichains of subtree at model_identity: 2 ({}, {model_identity}).
+        # System antichains: 3 * 3 * 2 + 1 (the {system} element itself) = 19.
+        # User antichains: 2 ({}, {user}).
+        # Total: 19 * 2 = 38.
+        assert len(combos) == 38
 
     def test_system_prompt_includes_readable(self) -> None:
         assert scope_includes(frozenset({SYSTEM_PROMPT_TAG}), SYSTEM_PROMPT_READABLE_TAG)
@@ -82,6 +89,7 @@ class TestSecurityDomain:
         assert scope_includes(frozenset({SYSTEM_TAG}), SYSTEM_PROMPT_READABLE_TAG)
         assert scope_includes(frozenset({SYSTEM_TAG}), MODEL_TAG)
         assert scope_includes(frozenset({SYSTEM_TAG}), RESPONSE_READABLE_TAG)
+        assert scope_includes(frozenset({SYSTEM_TAG}), MODEL_IDENTITY_TAG)
 
     def test_model_includes_response_readable(self) -> None:
         assert scope_includes(frozenset({MODEL_TAG}), RESPONSE_READABLE_TAG)
@@ -89,11 +97,19 @@ class TestSecurityDomain:
     def test_response_readable_does_not_include_model(self) -> None:
         assert not scope_includes(frozenset({RESPONSE_READABLE_TAG}), MODEL_TAG)
 
+    def test_model_identity_is_independent_of_model(self) -> None:
+        # model_identity is a sibling of model, not a descendant.
+        assert not scope_includes(frozenset({MODEL_TAG}), MODEL_IDENTITY_TAG)
+        assert not scope_includes(frozenset({MODEL_IDENTITY_TAG}), MODEL_TAG)
+        assert not scope_includes(frozenset({MODEL_IDENTITY_TAG}), RESPONSE_READABLE_TAG)
+        assert not scope_includes(frozenset({MODEL_IDENTITY_TAG}), SYSTEM_PROMPT_TAG)
+
     def test_user_does_not_include_system_children(self) -> None:
         assert not scope_includes(frozenset({USER_TAG}), SYSTEM_PROMPT_TAG)
         assert not scope_includes(frozenset({USER_TAG}), MODEL_TAG)
         assert not scope_includes(frozenset({USER_TAG}), RESPONSE_READABLE_TAG)
         assert not scope_includes(frozenset({USER_TAG}), SYSTEM_PROMPT_READABLE_TAG)
+        assert not scope_includes(frozenset({USER_TAG}), MODEL_IDENTITY_TAG)
 
 
 # ======================================================================
@@ -184,9 +200,9 @@ class TestControllables:
 
 
 class TestObservables:
-    def test_model_observable_at_system_tag(self, target: ChatbotTarget) -> None:
+    def test_model_observable_at_model_identity_tag(self, target: ChatbotTarget) -> None:
         obs = {o.observable.name: o for o in target.get_observables()}
-        assert obs["model"].observable.security_domain is SYSTEM_TAG
+        assert obs["model"].observable.security_domain is MODEL_IDENTITY_TAG
         assert obs["model"].content == "test-model"
 
     def test_system_prompt_observable_at_readable_tag(self, target: ChatbotTarget) -> None:

@@ -11,8 +11,9 @@ Security domain is a two-tree forest::
     Tree 1:  system
                ├── system_prompt              (controllable - override prompt)
                │     └── system_prompt_readable  (observable - read prompt)
-               └── model                      (controllable - modify LLM response)
-                     └── response_readable    (observable - read response)
+               ├── model                      (controllable - modify LLM response)
+               │     └── response_readable    (observable - read response)
+               └── model_identity             (observable - read which model is in use)
     Tree 2:  user
 
 Scope semantics:
@@ -22,9 +23,19 @@ Scope semantics:
     {system_prompt}                 -> can see AND override the system prompt
     {system_prompt, user}           -> can override prompt + send messages
     {system_prompt_readable, user}  -> can see prompt + send messages (but not override)
+    {model_identity}                -> can read which model is in use; nothing else
+    {model_identity, user}          -> knows the victim model + can send messages
     {user}                          -> blind input (can send messages, see responses
                                       via ControllablePostCallEvent)
     {model, user}                   -> can modify responses + send messages
+
+The ``model_identity`` tag isolates "knowledge of the victim model" from the
+other system-tree capabilities. Earlier versions placed the ``model``
+observable at ``SYSTEM_TAG`` (the root), which made model-fingerprint knowledge
+inseparable from full system control. With ``model_identity`` as a sibling of
+``system_prompt`` and ``model``, an attacker can be modeled as "knows which
+model is being attacked" without simultaneously having system prompt override
+or response modification capabilities.
 """
 
 from __future__ import annotations
@@ -47,7 +58,8 @@ from superred.core.types.state import ConfigSpec, QuerySpec
 # ---------------------------------------------------------------------------
 # Security domain: two-tree forest
 #   Tree 1: system -> (system_prompt -> system_prompt_readable),
-#                      (model -> response_readable)
+#                      (model -> response_readable),
+#                      (model_identity)
 #   Tree 2: user (independent root)
 # ---------------------------------------------------------------------------
 SYSTEM_TAG = SecurityDomainTag("system")
@@ -55,11 +67,12 @@ SYSTEM_PROMPT_TAG = SecurityDomainTag("system_prompt", parent=SYSTEM_TAG)
 SYSTEM_PROMPT_READABLE_TAG = SecurityDomainTag("system_prompt_readable", parent=SYSTEM_PROMPT_TAG)
 MODEL_TAG = SecurityDomainTag("model", parent=SYSTEM_TAG)
 RESPONSE_READABLE_TAG = SecurityDomainTag("response_readable", parent=MODEL_TAG)
+MODEL_IDENTITY_TAG = SecurityDomainTag("model_identity", parent=SYSTEM_TAG)
 USER_TAG = SecurityDomainTag("user")
 
 _DOMAIN = SecurityDomain([
     SYSTEM_TAG, SYSTEM_PROMPT_TAG, SYSTEM_PROMPT_READABLE_TAG,
-    MODEL_TAG, RESPONSE_READABLE_TAG, USER_TAG,
+    MODEL_TAG, RESPONSE_READABLE_TAG, MODEL_IDENTITY_TAG, USER_TAG,
 ])
 
 # ---------------------------------------------------------------------------
@@ -178,7 +191,7 @@ class ChatbotTarget(Target):
             ObservableValue(
                 observable=Observable(
                     name="model",
-                    security_domain=SYSTEM_TAG,
+                    security_domain=MODEL_IDENTITY_TAG,
                     description="The LLM model identifier.",
                 ),
                 content=self._model,
