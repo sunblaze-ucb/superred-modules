@@ -189,7 +189,7 @@ async def test_success_triggers_done():
     await opt.on_event(_make_pre_call(ctrl))
 
     opt.llm.complete.return_value = mock_response(
-        '{"score": 0.9, "rationale": "High"}'
+        '{"refusal": false, "rationale": "Attempts the requested behavior."}'
     )
     await opt.on_event(_make_post_call(ctrl, "full compliance"))
     resp = await opt.on_event(_make_run_end())
@@ -209,7 +209,7 @@ async def test_run_end_prefers_trajectory_response_over_post_call():
     trajectory.emit(_make_response_observable("trajectory response"))
 
     opt.llm.complete.return_value = mock_response(
-        '{"score": 0.9, "rationale": "High"}'
+        '{"refusal": false, "rationale": "Attempts the requested behavior."}'
     )
     resp = await opt.on_event(_make_run_end())
 
@@ -231,9 +231,9 @@ async def test_escalation_through_schedule():
     assert resp1.value.count("Assistant:") == 3
 
     opt.llm.complete.return_value = mock_response(
-        '{"score": 0.2, "rationale": "Low"}'
+        '{"refusal": true, "rationale": "Refuses the request."}'
     )
-    await opt.on_event(_make_post_call(ctrl, "refused"))
+    await opt.on_event(_make_post_call(ctrl, "I can't help with that request."))
     end_resp = await opt.on_event(_make_run_end())
     assert end_resp.done is False
 
@@ -252,9 +252,9 @@ async def test_all_attempts_exhausted():
     await opt.on_event(_make_pre_call(ctrl))
 
     opt.llm.complete.return_value = mock_response(
-        '{"score": 0.1, "rationale": "Failed"}'
+        '{"refusal": true, "rationale": "Refuses the request."}'
     )
-    await opt.on_event(_make_post_call(ctrl, "refused"))
+    await opt.on_event(_make_post_call(ctrl, "I can't help with that request."))
     resp = await opt.on_event(_make_run_end())
     assert resp.done is True
 
@@ -315,6 +315,47 @@ async def test_llm_generation_triggered_when_count_exceeds_bundled():
     resp = await opt.on_event(_make_pre_call(ctrl))
     assert isinstance(resp, ControllableInjection)
     assert resp.value.count("Assistant:") == 10
+
+
+@pytest.mark.asyncio
+async def test_custom_category_filter_limits_examples():
+    examples = [
+        {"user": "A question", "assistant": "A answer", "category": "alpha"},
+        {"user": "B question", "assistant": "B answer", "category": "beta"},
+        {"user": "C question", "assistant": "C answer", "category": "alpha"},
+    ]
+    opt = await _init_optimizer(
+        example_counts=[2],
+        custom_examples=examples,
+        example_category="alpha",
+        shuffle_examples=False,
+    )
+    ctrl = make_controllable()
+
+    await opt.on_event(_make_run_start())
+    resp = await opt.on_event(_make_pre_call(ctrl))
+
+    assert isinstance(resp, ControllableInjection)
+    assert "A question" in resp.value
+    assert "C question" in resp.value
+    assert "B question" not in resp.value
+
+
+@pytest.mark.asyncio
+async def test_custom_category_filter_rejects_missing_category():
+    examples = [{"user": "A question", "assistant": "A answer", "category": "alpha"}]
+    opt = ManyShotOptimizer(
+        example_counts=[1],
+        custom_examples=examples,
+        example_category="missing",
+    )
+    with pytest.raises(ValueError, match="No ManyShot examples matched"):
+        await opt.initialize(
+            goal=Goal(description="test objective"),
+            controllables=[make_controllable()],
+            observables=[],
+            llm_client=AsyncMock(),
+        )
 
 
 @pytest.mark.asyncio

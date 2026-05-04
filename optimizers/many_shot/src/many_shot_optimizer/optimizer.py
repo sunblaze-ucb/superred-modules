@@ -53,7 +53,12 @@ def _load_bundled_examples() -> list[dict[str, str]]:
         assistant = item.get("assistant")
         if not isinstance(user, str) or not isinstance(assistant, str):
             raise ValueError("ManyShot examples must contain string user/assistant fields")
-        examples.append({"user": user, "assistant": assistant})
+        example = {
+            str(key): value
+            for key, value in item.items()
+            if isinstance(key, str) and isinstance(value, str)
+        }
+        examples.append(example)
     return examples
 
 
@@ -72,18 +77,22 @@ class ManyShotOptimizer(Optimizer):
         example_counts: list[int] | None = None,
         success_threshold: float = 0.8,
         custom_examples: list[dict[str, str]] | None = None,
+        example_category: str | None = None,
         generate_extra: bool = False,
         shuffle_examples: bool = True,
         random_seed: int | None = None,
+        evaluator_method: str = "refusal_classifier",
         response_observable_names: list[str] | None = None,
     ) -> None:
         super().__init__()
         self._example_counts = example_counts if example_counts is not None else list(_DEFAULT_COUNTS)
         self._success_threshold = success_threshold
         self._custom_examples = custom_examples
+        self._example_category = example_category
         self._generate_extra = generate_extra
         self._shuffle_examples = shuffle_examples
         self._random_seed = random_seed
+        self._evaluator_method = evaluator_method
         self._response_observable_names = set(
             response_observable_names
             if response_observable_names is not None
@@ -119,7 +128,7 @@ class ManyShotOptimizer(Optimizer):
     ) -> None:
         await super().initialize(goal, controllables, observables, llm_client)
         self._goal = goal
-        self._evaluator = Evaluator(llm=self.llm)
+        self._evaluator = Evaluator(llm=self.llm, method=self._evaluator_method)
         self._generator = ExampleGenerator(llm=self.llm)
         self._attempt = 0
         self._succeeded = False
@@ -127,7 +136,7 @@ class ManyShotOptimizer(Optimizer):
         self._generated_examples = []
 
         base = self._custom_examples if self._custom_examples is not None else _load_bundled_examples()
-        self._examples = list(base)
+        self._examples = self._filter_examples(list(base))
         if self._shuffle_examples:
             random.Random(self._random_seed).shuffle(self._examples)
 
@@ -251,6 +260,20 @@ class ManyShotOptimizer(Optimizer):
             self._generated_examples.extend(new_examples)
         all_examples = self._examples + self._generated_examples
         return all_examples[:count]
+
+    def _filter_examples(self, examples: list[dict[str, str]]) -> list[dict[str, str]]:
+        """Apply optional metadata filters for custom datasets."""
+        if self._example_category is None:
+            return examples
+        filtered = [
+            example for example in examples
+            if example.get("category") == self._example_category
+        ]
+        if not filtered:
+            raise ValueError(
+                f"No ManyShot examples matched category {self._example_category!r}"
+            )
+        return filtered
 
     def _reset_run_state(self) -> None:
         self._primary_controllable = None
