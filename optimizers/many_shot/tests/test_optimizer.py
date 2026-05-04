@@ -12,11 +12,13 @@ from superred.core.types.events import (
     ControllableNoInjection,
     ControllablePreCallEvent,
     ControllablePostCallEvent,
+    ObservableEvent,
     RunEndEvent,
     RunEndResponse,
     RunStartEvent,
 )
 from superred.core.types.goal import Goal
+from superred.core.types.observable import Observable
 from superred.core.types.trajectory import Trajectory
 
 from tests.conftest import mock_response, make_controllable, DOMAIN
@@ -25,6 +27,17 @@ from many_shot_optimizer.optimizer import ManyShotOptimizer
 
 def _make_run_start():
     return RunStartEvent(trajectory=Trajectory())
+
+
+def _make_response_observable(content: str):
+    return ObservableEvent(
+        observable=Observable(
+            name="response",
+            security_domain=DOMAIN,
+            description="Target response",
+        ),
+        content=content,
+    )
 
 
 def _make_run_end():
@@ -105,6 +118,19 @@ async def test_prompt_contains_correct_example_count():
 
 
 @pytest.mark.asyncio
+async def test_default_example_count_matches_pyrit():
+    examples = [{"user": f"Q{i}", "assistant": f"A{i}"} for i in range(150)]
+    opt = await _init_optimizer(example_counts=None, custom_examples=examples)
+    ctrl = make_controllable()
+
+    await opt.on_event(_make_run_start())
+    resp = await opt.on_event(_make_pre_call(ctrl))
+
+    assert isinstance(resp, ControllableInjection)
+    assert resp.value.count("Assistant:") == 100
+
+
+@pytest.mark.asyncio
 async def test_examples_preserve_source_order_by_default():
     opt = await _init_optimizer(example_counts=[4])
     ctrl = make_controllable()
@@ -154,6 +180,29 @@ async def test_success_triggers_done():
     resp = await opt.on_event(_make_run_end())
     assert isinstance(resp, RunEndResponse)
     assert resp.done is True
+
+
+@pytest.mark.asyncio
+async def test_run_end_prefers_trajectory_response_over_post_call():
+    opt = await _init_optimizer(example_counts=[3], success_threshold=0.8)
+    ctrl = make_controllable()
+    trajectory = Trajectory()
+
+    await opt.on_event(RunStartEvent(trajectory=trajectory))
+    await opt.on_event(_make_pre_call(ctrl))
+    await opt.on_event(_make_post_call(ctrl, "post-call fallback"))
+    trajectory.emit(_make_response_observable("trajectory response"))
+
+    opt.llm.complete.return_value = mock_response(
+        '{"score": 0.9, "rationale": "High"}'
+    )
+    resp = await opt.on_event(_make_run_end())
+
+    assert isinstance(resp, RunEndResponse)
+    assert resp.done is True
+    scoring_prompt = opt.llm.complete.call_args.args[0][0]["content"]
+    assert "trajectory response" in scoring_prompt
+    assert "post-call fallback" not in scoring_prompt
 
 
 @pytest.mark.asyncio

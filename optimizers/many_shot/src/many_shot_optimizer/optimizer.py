@@ -14,6 +14,7 @@ from superred.core.types.event import Event, EventResponse
 from superred.core.types.events import (
     ControllableInjection,
     ControllableNoInjection,
+    ObservableEvent,
     ControllablePreCallEvent,
     ControllablePostCallEvent,
     RunEndEvent,
@@ -23,6 +24,7 @@ from superred.core.types.events import (
 from superred.core.types.evaluation import EvaluationResult
 from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
+from superred.core.types.trajectory import ReadableTrajectory
 
 from many_shot_optimizer.evaluator import Evaluator
 from many_shot_optimizer.generator import ExampleGenerator
@@ -30,7 +32,9 @@ from many_shot_optimizer.prompt_builder import build_prompt
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_COUNTS = [32, 64, 128, 256, 400, 512]
+_DEFAULT_COUNTS = [100]
+_DEFAULT_RESPONSE_OBSERVABLE_NAMES = ("response", "model_response", "assistant_response")
+_RESPONSE_NAME_HINTS = ("response", "assistant", "reply", "output", "completion")
 
 
 def _load_bundled_examples() -> list[dict[str, str]]:
@@ -68,9 +72,10 @@ class ManyShotOptimizer(Optimizer):
         example_counts: list[int] | None = None,
         success_threshold: float = 0.8,
         custom_examples: list[dict[str, str]] | None = None,
-        generate_extra: bool = True,
+        generate_extra: bool = False,
         shuffle_examples: bool = False,
         random_seed: int | None = None,
+        response_observable_names: list[str] | None = None,
     ) -> None:
         super().__init__()
         self._example_counts = example_counts if example_counts is not None else list(_DEFAULT_COUNTS)
@@ -79,6 +84,11 @@ class ManyShotOptimizer(Optimizer):
         self._generate_extra = generate_extra
         self._shuffle_examples = shuffle_examples
         self._random_seed = random_seed
+        self._response_observable_names = set(
+            response_observable_names
+            if response_observable_names is not None
+            else _DEFAULT_RESPONSE_OBSERVABLE_NAMES
+        )
 
         # State set in initialize()
         self._goal: Goal | None = None
@@ -86,6 +96,7 @@ class ManyShotOptimizer(Optimizer):
         self._generator: ExampleGenerator | None = None
         self._primary_controllable: Controllable | None = None
         self._primary_post_controllable: Controllable | None = None
+        self._trajectory: ReadableTrajectory | None = None
         self._examples: list[dict[str, str]] = []
         self._generated_examples: list[dict[str, str]] = []
 
@@ -96,6 +107,8 @@ class ManyShotOptimizer(Optimizer):
         self._current_prompt: str = ""
         self._injected_prompt: bool = False
         self._saw_system_prompt_event: bool = False
+        self._awaiting_feedback: bool = False
+        self._pending_post_answer: str | None = None
 
     async def initialize(
         self,
@@ -126,7 +139,7 @@ class ManyShotOptimizer(Optimizer):
         if isinstance(event, ControllablePostCallEvent):
             return await self._handle_post_call(event)
         if isinstance(event, RunEndEvent):
-            return self._handle_run_end(event)
+            return await self._handle_run_end(event)
         return EventResponse(event=event)
 
     async def teardown(self) -> None:
@@ -139,6 +152,7 @@ class ManyShotOptimizer(Optimizer):
         self._current_prompt = build_prompt(
             examples=examples, objective=self._goal.description,
         )
+        self._trajectory = event.trajectory
         self._reset_run_state()
         logger.info("ManyShot: attempt %d, %d examples", self._attempt, len(examples))
         return EventResponse(event=event)
@@ -158,6 +172,7 @@ class ManyShotOptimizer(Optimizer):
                 return ControllableNoInjection(event=event, controllable=event.controllable)
             self._primary_controllable = event.controllable
             self._injected_prompt = True
+            self._awaiting_feedback = True
             return ControllableInjection(
                 event=event,
                 controllable=event.controllable,
@@ -174,6 +189,7 @@ class ManyShotOptimizer(Optimizer):
         if self._injected_prompt:
             return ControllableNoInjection(event=event, controllable=event.controllable)
         self._injected_prompt = True
+        self._awaiting_feedback = True
         return ControllableInjection(
             event=event,
             controllable=event.controllable,
@@ -197,24 +213,13 @@ class ManyShotOptimizer(Optimizer):
         elif event.controllable != self._primary_post_controllable:
             return ControllableNoInjection(event=event, controllable=event.controllable)
 
-        assert self._goal is not None
-        assert self._evaluator is not None
-        try:
-            score, _ = await self._evaluator.score_response(
-                response=event.answer, goal=self._goal.description,
-            )
-        except Exception:
-            logger.warning("ManyShot: scoring failed", exc_info=True)
-            score = 0.0
-        logger.info("ManyShot: attempt %d scored %.2f", self._attempt, score)
-        if score > self._best_score:
-            self._best_score = score
-        if score >= self._success_threshold:
-            self._succeeded = True
-            logger.info("ManyShot: success at attempt %d (score %.2f)", self._attempt, score)
+        # Defer scoring until run-end so trajectory-visible response
+        # observables can be preferred over post-call fallback text.
+        self._pending_post_answer = event.answer
         return ControllableNoInjection(event=event, controllable=event.controllable)
 
-    def _handle_run_end(self, event: RunEndEvent) -> RunEndResponse:
+    async def _handle_run_end(self, event: RunEndEvent) -> RunEndResponse:
+        await self._finalize_pending_feedback()
         if event.evaluation is not None:
             self._apply_evaluation(event.evaluation)
         if self._succeeded:
@@ -252,6 +257,77 @@ class ManyShotOptimizer(Optimizer):
         self._primary_post_controllable = None
         self._injected_prompt = False
         self._saw_system_prompt_event = False
+        self._awaiting_feedback = False
+        self._pending_post_answer = None
+
+    async def _finalize_pending_feedback(self) -> None:
+        """Score one pending response, preferring trajectory observables."""
+        if not self._awaiting_feedback:
+            return
+
+        answer = self._get_response_from_trajectory()
+        source = "trajectory"
+        if answer is None:
+            answer = self._pending_post_answer
+            source = "post-call"
+
+        if answer is None:
+            logger.warning(
+                "ManyShot: no in-scope response feedback for attempt %d",
+                self._attempt,
+            )
+            self._awaiting_feedback = False
+            self._pending_post_answer = None
+            return
+
+        await self._score_answer(answer, source=source)
+        self._awaiting_feedback = False
+        self._pending_post_answer = None
+
+    def _get_response_from_trajectory(self) -> str | None:
+        """Best-effort response recovery from filtered trajectory."""
+        if self._trajectory is None:
+            return None
+
+        recovered: str | None = None
+        for item in self._trajectory.drain():
+            if not isinstance(item, ObservableEvent):
+                continue
+            name = item.observable.name
+            normalized = name.lower()
+            is_match = (
+                name in self._response_observable_names
+                or normalized in self._response_observable_names
+                or any(hint in normalized for hint in _RESPONSE_NAME_HINTS)
+            )
+            if not is_match:
+                continue
+            if isinstance(item.content, str):
+                recovered = item.content
+        return recovered
+
+    async def _score_answer(self, answer: str, *, source: str) -> None:
+        assert self._goal is not None
+        assert self._evaluator is not None
+
+        try:
+            score, _ = await self._evaluator.score_response(
+                response=answer, goal=self._goal.description,
+            )
+        except Exception:
+            logger.warning("ManyShot: scoring failed", exc_info=True)
+            score = 0.0
+        logger.info(
+            "ManyShot: attempt %d scored %.2f via %s",
+            self._attempt,
+            score,
+            source,
+        )
+        if score > self._best_score:
+            self._best_score = score
+        if score >= self._success_threshold:
+            self._succeeded = True
+            logger.info("ManyShot: success at attempt %d (score %.2f)", self._attempt, score)
 
     def _apply_evaluation(self, evaluation: EvaluationResult) -> None:
         score = float(evaluation.primary_score.value)

@@ -14,24 +14,27 @@ the prompt uses only `user` and `assistant`.
 
 Examples are used in their source order by default. This matches the common
 reference implementation pattern of taking the first N examples from the
-dataset. If you want a closer PyRIT-style single attempt, configure one count,
-for example `example_counts=[100]`.
+dataset. The default is one run with `example_counts=[100]`, matching PyRIT's
+default `example_count=100`.
+
+The paper says the attack strings were randomized before formatting. PyRIT's
+implementation instead takes the first N examples from the dataset. This module
+defaults to the PyRIT behavior for reproducibility. To run closer to the paper's
+ordering description, set `shuffle_examples=True`; use `random_seed` when you
+need the shuffle to be repeatable.
 
 ## Intentional Differences
 
 The original work studies attack success as the number of examples increases.
-This module maps that idea onto SuperRed staged runs:
+This module can map that idea onto SuperRed staged runs if configured with a
+count schedule:
 
 1. Each run uses one configured example count.
 2. Later runs can use larger example counts.
-3. The default schedule is `[32, 64, 128, 256, 400, 512]`.
+3. A useful sweep schedule is `[32, 64, 128, 256, 400, 512]`.
 
-This staged schedule is a framework feature. For a single paper-style attempt,
-configure one count explicitly, for example `example_counts=[256]`.
-
-The optimizer also has an optional `shuffle_examples=True` setting. This is off
-by default because the reference path is deterministic first-N selection. If
-enabled, `random_seed` can make the shuffled order repeatable.
+This staged schedule is a framework feature, not the default. For a single
+paper-style 256-shot attempt, configure `example_counts=[256]`.
 
 ## Extra Example Generation
 
@@ -44,13 +47,20 @@ sanitize, or produce weak examples. For stronger reproduction of the original
 many-shot setup, prefer a large curated example set or a generation model that
 is suitable for red-team data generation.
 
+Extra generation is off by default. This keeps the default path close to PyRIT,
+which uses the provided dataset rather than generating more examples inside the
+attack.
+
 ## SuperRed Feedback
 
 ManyShot can use two feedback paths:
 
-1. `ControllablePostCallEvent`: when the response is visible to the optimizer,
-   ManyShot scores the target response with its own evaluator.
-2. `RunEndEvent.evaluation`: when the task evaluator provides framework
+1. Filtered trajectory response observables: when the response is visible on
+   the trajectory, ManyShot reads that response first and scores it with its
+   own evaluator.
+2. `ControllablePostCallEvent`: if no response observable is visible, ManyShot
+   falls back to the post-call answer when that event is in scope.
+3. `RunEndEvent.evaluation`: when the task evaluator provides framework
    feedback, ManyShot uses `evaluation.success` and `primary_score` to decide
    whether to stop.
 
