@@ -118,7 +118,7 @@ async def test_prompt_contains_correct_example_count():
 
 
 @pytest.mark.asyncio
-async def test_default_example_count_matches_pyrit():
+async def test_default_example_count_is_100():
     examples = [{"user": f"Q{i}", "assistant": f"A{i}"} for i in range(150)]
     opt = await _init_optimizer(example_counts=None, custom_examples=examples)
     ctrl = make_controllable()

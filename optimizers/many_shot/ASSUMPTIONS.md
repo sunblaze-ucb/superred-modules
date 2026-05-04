@@ -6,22 +6,19 @@ The optimizer follows the Many-Shot Jailbreaking idea: build one long prompt
 with many faux user/assistant examples, then append the real objective as the
 final user turn.
 
-Bundled examples come from `data/examples.json`, which mirrors PyRIT's
-`many_shot_examples.json` dataset. The optimizer preserves the basic prompt
-shape: preamble, repeated `User:` / `Assistant:` examples, then the target
-objective. If the dataset includes extra metadata fields such as `category`,
-the prompt uses only `user` and `assistant`.
+Bundled examples come from `data/examples.json`. The optimizer preserves the
+basic prompt shape: preamble, repeated `User:` / `Assistant:` examples, then
+the target objective. If the dataset includes extra metadata fields such as
+`category`, the prompt uses only `user` and `assistant`.
 
-Examples are used in their source order by default. This matches the common
-reference implementation pattern of taking the first N examples from the
-dataset. The default is one run with `example_counts=[100]`, matching PyRIT's
-default `example_count=100`.
+Examples are used in their source order by default. The default is one run with
+`example_counts=[100]`.
 
-The paper says the attack strings were randomized before formatting. PyRIT's
-implementation instead takes the first N examples from the dataset. This module
-defaults to the PyRIT behavior for reproducibility. To run closer to the paper's
-ordering description, set `shuffle_examples=True`; use `random_seed` when you
-need the shuffle to be repeatable.
+The paper says the attack strings were randomized before formatting. This
+module defaults to deterministic first-N example selection for reproducibility.
+To run closer to the paper's ordering description, set
+`shuffle_examples=True`; use `random_seed` when you need the shuffle to be
+repeatable.
 
 ## Intentional Differences
 
@@ -47,9 +44,8 @@ sanitize, or produce weak examples. For stronger reproduction of the original
 many-shot setup, prefer a large curated example set or a generation model that
 is suitable for red-team data generation.
 
-Extra generation is off by default. This keeps the default path close to PyRIT,
-which uses the provided dataset rather than generating more examples inside the
-attack.
+Extra generation is off by default. This keeps the default path limited to the
+provided dataset rather than generating more examples inside the attack.
 
 ## SuperRed Feedback
 
