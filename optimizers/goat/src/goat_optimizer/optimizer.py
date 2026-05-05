@@ -146,7 +146,6 @@ class GOATOptimizer(Optimizer):
         self._attempt_done: bool = False
         self._primary_pre_controllable: Controllable | None = None
         self._primary_post_controllable: Controllable | None = None
-        self._last_response_text: str = ""
         self._last_injected_value: str | None = None
         self._last_pre_request: str | None = None
         self._pending_post_answer: str | None = None
@@ -368,7 +367,6 @@ class GOATOptimizer(Optimizer):
         self._attempt_done = False
         self._primary_pre_controllable = None
         self._primary_post_controllable = None
-        self._last_response_text = ""
         self._last_injected_value = None
         self._last_pre_request = None
         self._pending_post_answer = None
