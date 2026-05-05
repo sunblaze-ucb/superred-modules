@@ -210,6 +210,46 @@ async def test_all_surviving_candidates_are_sent_to_real_target_across_runs() ->
 
 
 @pytest.mark.asyncio
+async def test_success_does_not_skip_remaining_candidates_at_same_depth() -> None:
+    opt = await _init_optimizer(root_nodes=2, tree_width=2, tree_depth=2)
+    attacker_json_1 = json.dumps({"improvement": "one", "prompt": "prompt one"})
+    attacker_json_2 = json.dumps({"improvement": "two", "prompt": "prompt two"})
+    _setup_llm_mock(opt, [
+        attacker_json_1,
+        attacker_json_2,
+        "Response: [[YES]]",
+        "Response: [[YES]]",
+        "Rating: [[10]]",
+        "Rating: [[4]]",
+    ])
+    ctrl = _make_controllable()
+
+    trajectory_1 = Trajectory()
+    await opt.on_event(_make_run_start(trajectory_1))
+    first = await opt.on_event(_make_pre_call(ctrl))
+    assert isinstance(first, ControllableInjection)
+    assert first.value == "prompt one"
+    trajectory_1.emit(_make_response_observable("successful target response"))
+    first_end = await opt.on_event(_make_run_end())
+    assert isinstance(first_end, RunEndResponse)
+    assert first_end.done is False
+
+    trajectory_2 = Trajectory()
+    await opt.on_event(_make_run_start(trajectory_2))
+    second = await opt.on_event(_make_pre_call(ctrl))
+    assert isinstance(second, ControllableInjection)
+    assert second.value == "prompt two"
+    trajectory_2.emit(_make_response_observable("second target response"))
+    second_end = await opt.on_event(_make_run_end())
+
+    assert isinstance(second_end, RunEndResponse)
+    assert second_end.done is True
+    assert opt._best_candidate is not None
+    assert opt._best_candidate.prompt == "prompt one"
+    assert opt._best_candidate.score == 10.0
+
+
+@pytest.mark.asyncio
 async def test_run_end_scores_trajectory_response_and_ignores_post_call() -> None:
     opt = await _init_optimizer(tree_depth=2)
     attacker_json = json.dumps({"improvement": "Try this", "prompt": "attack prompt"})

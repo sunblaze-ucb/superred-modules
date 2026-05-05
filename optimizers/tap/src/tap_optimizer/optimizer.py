@@ -97,6 +97,7 @@ class TapOptimizer(Optimizer):
         self._current_candidate: TapNode | None = None
         self._pending_candidates: list[TapNode] = []
         self._done: bool = False
+        self._success_found: bool = False
         self._primary_controllable: Controllable | None = None
         self._saw_system_prompt_event: bool = False
         self._injected_this_run: bool = False
@@ -131,6 +132,7 @@ class TapOptimizer(Optimizer):
         self._current_candidate = None
         self._pending_candidates = []
         self._done = False
+        self._success_found = False
         self._primary_controllable = None
         self._saw_system_prompt_event = False
         self._injected_this_run = False
@@ -331,10 +333,15 @@ class TapOptimizer(Optimizer):
             self._best_candidate = candidate
         if candidate.score >= 10.0:
             logger.info("TAP: jailbreak found at depth %d", self._depth)
-            self._done = True
+            self._success_found = True
+            if not self._pending_candidates:
+                self._done = True
 
     def _finish_depth(self) -> None:
         assert self._tree is not None
+        if self._success_found:
+            self._done = True
+            return
         self._tree.prune_to_width(self._tree_width)
         if self._best_candidate is not None and self._best_candidate.score >= 10.0:
             self._done = True
