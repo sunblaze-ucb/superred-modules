@@ -419,6 +419,42 @@ async def test_split_chatbot_flow_ignores_system_prompt_then_injects_user_messag
 
 
 @pytest.mark.asyncio
+async def test_system_prompt_variant_splits_demos_and_final_user_query():
+    opt = await _init_optimizer(
+        example_counts=[3],
+        use_system_prompt_when_available=True,
+    )
+    system_ctrl = make_controllable(name="system_prompt")
+    user_ctrl = make_controllable(name="user_message")
+    await opt.on_event(_make_run_start())
+
+    system_resp = await opt.on_event(_make_pre_call(system_ctrl))
+    assert isinstance(system_resp, ControllableInjection)
+    assert system_resp.value.count("Assistant:") == 3
+    assert "test objective" not in system_resp.value
+
+    user_resp = await opt.on_event(_make_pre_call(user_ctrl))
+    assert isinstance(user_resp, ControllableInjection)
+    assert user_resp.value == "User: test objective"
+    assert "Assistant:" not in user_resp.value
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_variant_falls_back_to_user_prompt_without_system_scope():
+    opt = await _init_optimizer(
+        example_counts=[3],
+        use_system_prompt_when_available=True,
+    )
+    user_ctrl = make_controllable(name="user_message")
+    await opt.on_event(_make_run_start())
+
+    user_resp = await opt.on_event(_make_pre_call(user_ctrl))
+    assert isinstance(user_resp, ControllableInjection)
+    assert user_resp.value.count("Assistant:") == 3
+    assert user_resp.value.endswith("User: test objective")
+
+
+@pytest.mark.asyncio
 async def test_injects_only_once_per_run():
     opt = await _init_optimizer(example_counts=[3])
     ctrl = make_controllable()

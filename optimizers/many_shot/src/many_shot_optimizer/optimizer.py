@@ -28,7 +28,11 @@ from superred.core.types.trajectory import ReadableTrajectory
 
 from many_shot_optimizer.evaluator import Evaluator
 from many_shot_optimizer.generator import ExampleGenerator
-from many_shot_optimizer.prompt_builder import build_prompt
+from many_shot_optimizer.prompt_builder import (
+    build_final_user_prompt,
+    build_prompt,
+    build_system_demonstrations_prompt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +87,7 @@ class ManyShotOptimizer(Optimizer):
         random_seed: int | None = None,
         evaluator_method: str = "refusal_classifier",
         response_observable_names: list[str] | None = None,
+        use_system_prompt_when_available: bool = False,
     ) -> None:
         super().__init__()
         self._example_counts = example_counts if example_counts is not None else list(_DEFAULT_COUNTS)
@@ -93,6 +98,7 @@ class ManyShotOptimizer(Optimizer):
         self._shuffle_examples = shuffle_examples
         self._random_seed = random_seed
         self._evaluator_method = evaluator_method
+        self._use_system_prompt_when_available = use_system_prompt_when_available
         self._response_observable_names = set(
             response_observable_names
             if response_observable_names is not None
@@ -113,8 +119,11 @@ class ManyShotOptimizer(Optimizer):
         self._succeeded: bool = False
         self._best_score: float = 0.0
         self._current_prompt: str = ""
+        self._current_system_prompt: str = ""
+        self._current_user_prompt: str = ""
         self._injected_prompt: bool = False
         self._saw_system_prompt_event: bool = False
+        self._used_system_prompt_channel: bool = False
         self._awaiting_feedback: bool = False
 
     async def initialize(
@@ -159,6 +168,12 @@ class ManyShotOptimizer(Optimizer):
         self._current_prompt = build_prompt(
             examples=examples, objective=self._goal.description,
         )
+        self._current_system_prompt = build_system_demonstrations_prompt(
+            examples=examples,
+        )
+        self._current_user_prompt = build_final_user_prompt(
+            objective=self._goal.description,
+        )
         self._trajectory = event.trajectory
         self._reset_run_state()
         logger.info("ManyShot: attempt %d, %d examples", self._attempt, len(examples))
@@ -172,9 +187,27 @@ class ManyShotOptimizer(Optimizer):
 
         if event.controllable.name == "system_prompt":
             self._saw_system_prompt_event = True
+            if self._use_system_prompt_when_available and not self._injected_prompt:
+                self._primary_controllable = event.controllable
+                self._injected_prompt = True
+                self._used_system_prompt_channel = True
+                return ControllableInjection(
+                    event=event,
+                    controllable=event.controllable,
+                    value=self._current_system_prompt,
+                )
             return ControllableNoInjection(event=event, controllable=event.controllable)
 
         if event.controllable.name == "user_message":
+            if self._used_system_prompt_channel:
+                if self._awaiting_feedback:
+                    return ControllableNoInjection(event=event, controllable=event.controllable)
+                self._awaiting_feedback = True
+                return ControllableInjection(
+                    event=event,
+                    controllable=event.controllable,
+                    value=self._current_user_prompt,
+                )
             if self._injected_prompt:
                 return ControllableNoInjection(event=event, controllable=event.controllable)
             self._primary_controllable = event.controllable
@@ -260,6 +293,7 @@ class ManyShotOptimizer(Optimizer):
         self._primary_controllable = None
         self._injected_prompt = False
         self._saw_system_prompt_event = False
+        self._used_system_prompt_channel = False
         self._awaiting_feedback = False
 
     async def _finalize_pending_feedback(self) -> None:

@@ -1,6 +1,10 @@
 """Tests for many-shot prompt assembly."""
 
-from many_shot_optimizer.prompt_builder import build_prompt
+from many_shot_optimizer.prompt_builder import (
+    build_final_user_prompt,
+    build_prompt,
+    build_system_demonstrations_prompt,
+)
 
 
 def test_build_prompt_basic():
@@ -35,3 +39,23 @@ def test_build_prompt_example_count():
     examples = [{"user": f"Q{i}", "assistant": f"A{i}"} for i in range(10)]
     result = build_prompt(examples=examples, objective="X")
     assert result.count("Assistant:") == 10
+
+
+def test_build_system_demonstrations_prompt_excludes_objective():
+    examples = [
+        {"user": "Q1", "assistant": "A1"},
+        {"user": "Q2", "assistant": "A2"},
+    ]
+    objective = "Do something bad"
+    result = build_system_demonstrations_prompt(examples=examples)
+
+    assert result.startswith("You are a helpful assistant")
+    assert "User: Q1\nAssistant: A1" in result
+    assert "User: Q2\nAssistant: A2" in result
+    assert objective not in result
+    assert result.count("Assistant:") == 2
+
+
+def test_build_final_user_prompt_contains_only_objective_turn():
+    result = build_final_user_prompt(objective="Do something bad")
+    assert result == "User: Do something bad"

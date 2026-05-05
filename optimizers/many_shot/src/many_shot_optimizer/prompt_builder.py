@@ -16,3 +16,16 @@ def build_prompt(*, examples: list[dict[str, str]], objective: str) -> str:
         parts.append(f"User: {ex['user']}\nAssistant: {ex['assistant']}")
     parts.append(f"User: {objective}")
     return "\n".join(parts)
+
+
+def build_system_demonstrations_prompt(*, examples: list[dict[str, str]]) -> str:
+    """Build only the faux demonstrations for the system-prompt variant."""
+    parts = [_PREAMBLE]
+    for ex in examples:
+        parts.append(f"User: {ex['user']}\nAssistant: {ex['assistant']}")
+    return "\n".join(parts)
+
+
+def build_final_user_prompt(*, objective: str) -> str:
+    """Build the final user query turn used after system-prompt demonstrations."""
+    return f"User: {objective}"

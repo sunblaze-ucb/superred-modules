@@ -83,6 +83,17 @@ This avoids turning the many-shot user prompt into a system prompt. The attack
 described by the paper is a user prompt made of demonstrations plus a final
 user query, not a system-prompt override.
 
+Set `use_system_prompt_when_available=True` only when you want to test a
+stronger SuperRed threat model where the attacker can edit the system prompt.
+In that mode, if `system_prompt` is visible, the optimizer puts the preamble
+and faux examples there, then puts the final objective into `user_message`.
+If `system_prompt` is not visible, it falls back to the normal paper-style
+single user prompt.
+
+This split-channel mode is an intentional framework variant, not the paper
+default. It is useful when you want two scopes with different attacker
+capabilities to behave differently during experiments.
+
 ## Scoring
 
 The default local evaluator is a refusal classifier, matching the paper's
