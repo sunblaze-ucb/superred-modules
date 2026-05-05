@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import copy
+import random
 import uuid
 from dataclasses import dataclass, field
+from typing import Callable
 
 
 @dataclass
@@ -16,6 +18,7 @@ class TapNode:
     conversation_history: list[dict[str, str]]
     node_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     prompt: str | None = None
+    improvement: str | None = None
     target_response: str | None = None
     score: float = 0.0
     is_on_topic: bool = True
@@ -25,10 +28,9 @@ class TapNode:
 class TapTree:
     """Manages the TAP search tree."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, rng: random.Random | None = None) -> None:
         self._nodes: list[TapNode] = []
-
-    # ── public API ─────────────────────────────────────────────────────
+        self._rng = rng if rng is not None else random.Random()
 
     def create_root_nodes(self, width: int) -> list[TapNode]:
         """Create *width* root nodes with empty conversation history."""
@@ -40,28 +42,22 @@ class TapTree:
         return roots
 
     def branch(self, parent: TapNode, branching_factor: int) -> list[TapNode]:
-        """Create *branching_factor* children from *parent*.
-
-        Each child gets a deep copy of the parent's conversation_history so
-        that branches evolve independently.
-        """
+        """Create *branching_factor* children from *parent*."""
         children: list[TapNode] = []
         for _ in range(branching_factor):
             child = TapNode(
                 depth=parent.depth + 1,
                 parent_id=parent.node_id,
                 conversation_history=copy.deepcopy(parent.conversation_history),
+                target_response=parent.target_response,
+                score=parent.score,
             )
             self._nodes.append(child)
             children.append(child)
         return children
 
     def get_leaves(self) -> list[TapNode]:
-        """Return all non-pruned leaf nodes.
-
-        A leaf is a non-pruned node that has no non-pruned children.
-        """
-        # Collect parent_ids of all non-pruned nodes
+        """Return all non-pruned leaf nodes."""
         parent_ids_with_children: set[str | None] = set()
         for node in self._nodes:
             if not node.pruned and node.parent_id is not None:
@@ -73,33 +69,47 @@ class TapTree:
             if not node.pruned and node.node_id not in parent_ids_with_children
         ]
 
-    def prune_off_topic(self) -> None:
-        """Mark off-topic leaf nodes as pruned."""
-        for leaf in self.get_leaves():
-            if not leaf.is_on_topic:
-                leaf.pruned = True
+    def prune_off_topic(self, *, width: int) -> None:
+        """Prune off-topic leaves with TAP's minimum-retention fallback."""
+        leaves = self.get_leaves()
+        self._prune_by_score(leaves, width=width, score=lambda node: float(node.is_on_topic))
 
     def prune_to_width(self, width: int) -> None:
-        """Keep only the top-*width* scoring leaves; prune the rest."""
+        """Keep top scoring leaves with stochastic tie-breaking and fallback."""
         leaves = self.get_leaves()
-        if len(leaves) <= width:
-            return
-        # Sort descending by score
-        leaves.sort(key=lambda n: n.score, reverse=True)
-        for leaf in leaves[width:]:
-            leaf.pruned = True
+        self._prune_by_score(leaves, width=width, score=lambda node: node.score)
 
     def best_node(self) -> TapNode | None:
-        """Return the highest-scoring non-pruned node that has a prompt set.
-
-        Searches the entire tree, not just leaves.  Returns ``None`` when no
-        eligible node exists.
-        """
+        """Return the highest-scoring non-pruned node that has a prompt set."""
         candidates = [
-            node
-            for node in self._nodes
-            if not node.pruned and node.prompt is not None
+            node for node in self._nodes if not node.pruned and node.prompt is not None
         ]
         if not candidates:
             return None
         return max(candidates, key=lambda n: n.score)
+
+    def _prune_by_score(
+        self,
+        leaves: list[TapNode],
+        *,
+        width: int,
+        score: Callable[[TapNode], float],
+    ) -> None:
+        if not leaves or len(leaves) <= width and any(score(node) > 0 for node in leaves):
+            return
+
+        shuffled = list(leaves)
+        self._rng.shuffle(shuffled)
+        shuffled.sort(key=score, reverse=True)
+
+        positive = [node for node in shuffled if score(node) > 0]
+        if positive:
+            keep_count = min(width, len(positive))
+            keep_ids = {node.node_id for node in positive[:keep_count]}
+        else:
+            fallback_count = min(len(shuffled), max(1, min(width, 2)))
+            keep_ids = {node.node_id for node in shuffled[:fallback_count]}
+
+        for leaf in leaves:
+            if leaf.node_id not in keep_ids:
+                leaf.pruned = True

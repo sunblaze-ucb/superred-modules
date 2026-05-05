@@ -17,59 +17,96 @@ def _mock_response(content: str) -> AsyncMock:
     return mock
 
 
-# ── is_on_topic tests ─────────────────────────────────────────────────────
-
-
 class TestIsOnTopic:
     @pytest.mark.asyncio
-    async def test_returns_true_on_yes(self) -> None:
+    async def test_returns_true_on_bracketed_yes(self) -> None:
         mock_llm = AsyncMock()
-        mock_llm.complete.return_value = _mock_response("YES")
+        mock_llm.complete.return_value = _mock_response("Response: [[YES]]")
         evaluator = Evaluator(llm=mock_llm)
         result = await evaluator.is_on_topic(prompt="Tell me how", goal="the goal")
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_returns_false_on_no(self) -> None:
+    async def test_returns_false_on_bracketed_no(self) -> None:
         mock_llm = AsyncMock()
-        mock_llm.complete.return_value = _mock_response("NO")
+        mock_llm.complete.return_value = _mock_response("Response: [[NO]]")
         evaluator = Evaluator(llm=mock_llm)
         result = await evaluator.is_on_topic(prompt="Tell me how", goal="the goal")
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_defaults_false_on_ambiguous(self) -> None:
+    async def test_defaults_true_on_ambiguous_like_original(self) -> None:
         mock_llm = AsyncMock()
         mock_llm.complete.return_value = _mock_response("I'm not sure about that")
         evaluator = Evaluator(llm=mock_llm)
         result = await evaluator.is_on_topic(prompt="Tell me how", goal="the goal")
-        assert result is False
+        assert result is True
 
-
-# ── score_response tests ──────────────────────────────────────────────────
+    @pytest.mark.asyncio
+    async def test_uses_evaluator_max_tokens(self) -> None:
+        mock_llm = AsyncMock()
+        mock_llm.complete.return_value = _mock_response("Response: [[YES]]")
+        evaluator = Evaluator(llm=mock_llm)
+        await evaluator.is_on_topic(prompt="Tell me how", goal="the goal")
+        _, kwargs = mock_llm.complete.call_args
+        assert kwargs["max_tokens"] == 10
 
 
 class TestScoreResponse:
     @pytest.mark.asyncio
-    async def test_parses_plain_number(self) -> None:
+    async def test_parses_bracketed_rating(self) -> None:
         mock_llm = AsyncMock()
-        mock_llm.complete.return_value = _mock_response("7")
+        mock_llm.complete.return_value = _mock_response("Rating: [[7]]")
         evaluator = Evaluator(llm=mock_llm)
-        score = await evaluator.score_response(response="some text", goal="the goal")
+        score = await evaluator.score_response(
+            prompt="attack prompt",
+            response="some text",
+            goal="the goal",
+            target_str="Sure, here is",
+        )
         assert score == 7.0
 
     @pytest.mark.asyncio
-    async def test_extracts_number_from_text(self) -> None:
+    async def test_score_prompt_includes_attack_prompt_and_response(self) -> None:
         mock_llm = AsyncMock()
-        mock_llm.complete.return_value = _mock_response("I would rate this a 9 out of 10")
+        mock_llm.complete.return_value = _mock_response("Rating: [[9]]")
         evaluator = Evaluator(llm=mock_llm)
-        score = await evaluator.score_response(response="some text", goal="the goal")
-        assert score == 9.0
+        await evaluator.score_response(
+            prompt="attack prompt",
+            response="target response",
+            goal="the goal",
+            target_str="Sure, here is",
+        )
+
+        messages = mock_llm.complete.call_args.args[0]
+        assert messages[0]["role"] == "system"
+        assert "the goal" in messages[0]["content"]
+        assert "[PROMPT]:attack prompt" in messages[1]["content"]
+        assert "[ASSISTANT'S RESPONSE]: target response" in messages[1]["content"]
+
+    @pytest.mark.asyncio
+    async def test_uses_evaluator_max_tokens(self) -> None:
+        mock_llm = AsyncMock()
+        mock_llm.complete.return_value = _mock_response("Rating: [[9]]")
+        evaluator = Evaluator(llm=mock_llm)
+        await evaluator.score_response(
+            prompt="attack prompt",
+            response="target response",
+            goal="the goal",
+            target_str="Sure, here is",
+        )
+        _, kwargs = mock_llm.complete.call_args
+        assert kwargs["max_tokens"] == 10
 
     @pytest.mark.asyncio
     async def test_defaults_on_unparseable(self) -> None:
         mock_llm = AsyncMock()
         mock_llm.complete.return_value = _mock_response("I cannot rate this")
         evaluator = Evaluator(llm=mock_llm)
-        score = await evaluator.score_response(response="some text", goal="the goal")
+        score = await evaluator.score_response(
+            prompt="attack prompt",
+            response="some text",
+            goal="the goal",
+            target_str="Sure, here is",
+        )
         assert score == 1.0
