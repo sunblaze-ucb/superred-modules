@@ -117,6 +117,16 @@ class TestTapTree:
 
         assert len(tree.get_leaves()) == 2
 
+    def test_prune_to_width_minimum_fallback_can_exceed_width_one(self) -> None:
+        tree = TapTree(rng=random.Random(0))
+        roots = tree.create_root_nodes(width=4)
+        for node in roots:
+            node.score = 0.0
+
+        tree.prune_to_width(width=1)
+
+        assert len(tree.get_leaves()) == 2
+
     def test_best_node_returns_highest_scorer(self) -> None:
         tree = TapTree()
         roots = tree.create_root_nodes(width=3)

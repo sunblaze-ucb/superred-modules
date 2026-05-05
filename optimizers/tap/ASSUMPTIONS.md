@@ -17,10 +17,12 @@ The defaults stay close to the original implementation:
 2. `root_nodes=1`
 3. `tree_width=10`
 4. `tree_depth=10`
-5. `attacker_max_tokens=500`
-6. `evaluator_max_tokens=10`
-7. `max_attack_attempts=5`
-8. `keep_last_n=3`
+5. `attack_top_p=0.9`
+6. `attacker_max_tokens=500`
+7. `evaluator_temperature=0.0`
+8. `evaluator_max_tokens=10`
+9. `max_attack_attempts=5`
+10. `keep_last_n=3`
 
 The attacker prompt, initial message, feedback format, on-topic judge, and
 jailbreak judge are written to match the original TAP flow closely while still

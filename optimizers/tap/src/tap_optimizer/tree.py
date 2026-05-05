@@ -107,7 +107,7 @@ class TapTree:
             keep_count = min(width, len(positive))
             keep_ids = {node.node_id for node in positive[:keep_count]}
         else:
-            fallback_count = min(len(shuffled), max(1, min(width, 2)))
+            fallback_count = min(len(shuffled), 2)
             keep_ids = {node.node_id for node in shuffled[:fallback_count]}
 
         for leaf in leaves:

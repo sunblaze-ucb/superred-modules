@@ -125,7 +125,9 @@ async def test_defaults_match_original_tap_shape() -> None:
     assert opt._root_nodes == 1
     assert opt._tree_width == 10
     assert opt._tree_depth == 10
+    assert opt._attack_top_p == 0.9
     assert opt._attacker_max_tokens == 500
+    assert opt._evaluator_temperature == 0.0
     assert opt._evaluator_max_tokens == 10
     assert opt._max_attack_attempts == 5
     assert opt._keep_last_n == 3
@@ -233,6 +235,53 @@ async def test_run_end_scores_trajectory_response_and_ignores_post_call() -> Non
     assert "[PROMPT]:attack prompt" in scoring_messages[1]["content"]
     assert "trajectory response" in scoring_messages[1]["content"]
     assert "post-call response" not in scoring_messages[1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_trajectory_response_takes_priority_over_run_end_score() -> None:
+    opt = await _init_optimizer(tree_depth=2)
+    attacker_json = json.dumps({"improvement": "Try this", "prompt": "attack prompt"})
+    _setup_llm_mock(opt, [
+        attacker_json,
+        "Response: [[YES]]",
+        "Rating: [[7]]",
+    ])
+    ctrl = _make_controllable()
+    trajectory = Trajectory()
+
+    await opt.on_event(_make_run_start(trajectory))
+    await opt.on_event(_make_pre_call(ctrl))
+    trajectory.emit(_make_response_observable("visible target response"))
+    result = await opt.on_event(_make_run_end_with_eval(success=False, score=0.1))
+
+    assert isinstance(result, RunEndResponse)
+    assert opt._best_candidate is not None
+    assert opt._best_candidate.target_response == "visible target response"
+    assert opt._best_candidate.score == 7.0
+    scoring_messages = opt.llm.complete.call_args.args[0]
+    assert "visible target response" in scoring_messages[1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_post_call_only_does_not_score_without_trajectory_or_feedback() -> None:
+    opt = await _init_optimizer(tree_depth=2)
+    attacker_json = json.dumps({"improvement": "Try this", "prompt": "attack prompt"})
+    _setup_llm_mock(opt, [
+        attacker_json,
+        "Response: [[YES]]",
+    ])
+    ctrl = _make_controllable()
+
+    await opt.on_event(_make_run_start(Trajectory()))
+    await opt.on_event(_make_pre_call(ctrl))
+    await opt.on_event(_make_post_call(ctrl, "post-call only response"))
+    result = await opt.on_event(_make_run_end())
+
+    assert isinstance(result, RunEndResponse)
+    assert opt._best_candidate is not None
+    assert opt._best_candidate.score == 1.0
+    assert "No in-scope target response" in (opt._best_candidate.target_response or "")
+    assert opt.llm.complete.await_count == 2
 
 
 @pytest.mark.asyncio
