@@ -7,7 +7,7 @@ name = "llm-prompt-generator-optimizer"
 version = "0.1.0"
 description = "LLM-powered optimizer that generates attack prompts via the LLM proxy"
 requires-python = ">=3.11,<3.14"
-dependencies = ["superred"]
+dependencies = ["superred>=0.1.0"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/llm_prompt_generator_optimizer"]
