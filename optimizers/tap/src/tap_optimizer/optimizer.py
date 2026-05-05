@@ -23,7 +23,6 @@ from superred.core.types.events import (
 from superred.core.types.evaluation import EvaluationResult
 from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
-from superred.core.types.trajectory import ReadableTrajectory
 
 from tap_optimizer.attacker import Attacker
 from tap_optimizer.evaluator import Evaluator
@@ -61,8 +60,6 @@ class TapOptimizer(Optimizer):
         target_str: str = "Sure, here is",
         random_seed: int | None = None,
         response_observable_names: list[str] | None = None,
-        target_temperature: float = 0.0,
-        target_system_prompt: str | None = None,
     ) -> None:
         super().__init__()
         self._branching_factor = branching_factor
@@ -83,11 +80,6 @@ class TapOptimizer(Optimizer):
             if response_observable_names is not None
             else _RESPONSE_OBSERVABLE_NAMES
         )
-        # Kept for backwards-compatible construction; SuperRed target calls are
-        # driven through PreCall/trajectory rather than internal target calls.
-        self._target_temperature = target_temperature
-        self._target_system_prompt = target_system_prompt
-
         self._goal: Goal | None = None
         self._attacker: Attacker | None = None
         self._evaluator: Evaluator | None = None
@@ -101,7 +93,7 @@ class TapOptimizer(Optimizer):
         self._primary_controllable: Controllable | None = None
         self._saw_system_prompt_event: bool = False
         self._injected_this_run: bool = False
-        self._trajectory: ReadableTrajectory | None = None
+        self._manually_tracking_trajectory: bool = False
 
     async def initialize(
         self,
@@ -136,7 +128,7 @@ class TapOptimizer(Optimizer):
         self._primary_controllable = None
         self._saw_system_prompt_event = False
         self._injected_this_run = False
-        self._trajectory = None
+        self._manually_tracking_trajectory = False
 
     async def on_event(self, event: Event) -> EventResponse:
         if isinstance(event, RunStartEvent):
@@ -154,7 +146,9 @@ class TapOptimizer(Optimizer):
 
     async def _handle_run_start(self, event: RunStartEvent) -> EventResponse:
         assert self._tree is not None
-        self._trajectory = event.trajectory
+        if self.current_trajectory is None:
+            self._current_trajectory = event.trajectory
+            self._manually_tracking_trajectory = True
         self._current_candidate = None
         self._injected_this_run = False
         self._saw_system_prompt_event = False
@@ -279,6 +273,7 @@ class TapOptimizer(Optimizer):
 
     async def _handle_run_end(self, event: RunEndEvent) -> RunEndResponse:
         if self._done:
+            self._clear_manual_trajectory()
             return RunEndResponse(event=event, done=True)
 
         if self._current_candidate is not None:
@@ -286,14 +281,18 @@ class TapOptimizer(Optimizer):
             self._current_candidate = None
 
         if self._done:
+            self._clear_manual_trajectory()
             return RunEndResponse(event=event, done=True)
 
         if self._pending_candidates:
+            self._clear_manual_trajectory()
             return RunEndResponse(event=event, done=False)
 
         self._finish_depth()
         if self._done:
+            self._clear_manual_trajectory()
             return RunEndResponse(event=event, done=True)
+        self._clear_manual_trajectory()
         return RunEndResponse(event=event, done=False)
 
     async def _finalize_current_candidate(
@@ -356,11 +355,12 @@ class TapOptimizer(Optimizer):
             self._done = True
 
     def _get_response_from_trajectory(self) -> str | None:
-        if self._trajectory is None:
+        trajectory = self.current_trajectory
+        if trajectory is None:
             return None
 
         recovered: str | None = None
-        for item in self._trajectory.drain():
+        for item in trajectory.drain():
             if not isinstance(item, ObservableEvent):
                 continue
             name = item.observable.name
@@ -373,6 +373,11 @@ class TapOptimizer(Optimizer):
             if is_match and isinstance(item.content, str):
                 recovered = item.content
         return recovered
+
+    def _clear_manual_trajectory(self) -> None:
+        if self._manually_tracking_trajectory:
+            self._current_trajectory = None
+            self._manually_tracking_trajectory = False
 
     @staticmethod
     def _score_from_evaluation(evaluation: EvaluationResult) -> float:
