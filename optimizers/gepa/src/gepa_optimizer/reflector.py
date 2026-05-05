@@ -30,7 +30,6 @@ from typing import Any
 from superred.core.llm import LLMClient
 
 from gepa_optimizer.prompts import (
-    META_PROMPT_TEMPLATE,
     format_reflective_dataset,
     render_meta_prompt,
 )
@@ -175,7 +174,6 @@ def _extract_fenced_block(text: str) -> str:
 
 
 __all__ = [
-    "META_PROMPT_TEMPLATE",
     "ReflectionResult",
     "Reflector",
     "RolloutRecord",

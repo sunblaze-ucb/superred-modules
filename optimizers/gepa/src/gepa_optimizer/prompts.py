@@ -47,9 +47,6 @@ Read all the assistant responses and the corresponding feedback. Identify all ni
 Provide the new instructions within ``` blocks."""
 
 
-_REQUIRED_PLACEHOLDERS = ("<curr_param>", "<side_info>")
-
-
 def render_meta_prompt(*, current_instruction: str, side_info: str) -> str:
     """Substitute the two placeholders in the meta-prompt.
 

@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from superred.core.interfaces.optimizer import Optimizer
 from superred.core.llm import LLMClient
