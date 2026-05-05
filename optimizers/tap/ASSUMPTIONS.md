@@ -1,17 +1,13 @@
 # TAP Optimizer Assumptions
 
-## Original Attack Shape
+## Paper-Aligned Defaults
 
-This module follows Tree of Attacks with Pruning (TAP):
+This module follows Tree of Attacks with Pruning (TAP): generate candidate
+jailbreak prompts, prune off-topic prompts, test every surviving candidate
+against the real target, judge each prompt/response pair on a 1-10 scale, prune
+to the best branches, and repeat until score 10 or max depth.
 
-1. Start from one root attack stream.
-2. Ask an attacker LLM to propose jailbreak prompts.
-3. Prune prompts that are off topic.
-4. Send every surviving prompt to the real target.
-5. Judge each prompt and target response together on a 1-10 scale.
-6. Keep the best branches and repeat until a score of 10 or max depth.
-
-The defaults stay close to the original implementation:
+Defaults match the original implementation where they map cleanly to SuperRed:
 
 1. `branching_factor=1`
 2. `root_nodes=1`
@@ -24,73 +20,46 @@ The defaults stay close to the original implementation:
 9. `max_attack_attempts=5`
 10. `keep_last_n=3`
 
-The attacker prompt, initial message, feedback format, on-topic judge, and
-jailbreak judge are written to match the original TAP flow closely while still
-living inside the SuperRed optimizer interface.
+The attacker prompt, seed message, feedback message, on-topic judge, jailbreak
+judge, JSON retry behavior, history truncation, and pruning fallback are kept
+close to the original TAP code.
 
 ## SuperRed Mapping
 
-The original TAP code can send a batch of candidate prompts directly to a target
-model. SuperRed targets are event-driven instead: the optimizer gets a
-`ControllablePreCallEvent`, injects one user query, then receives any visible
-model response on the trajectory and any task feedback on `RunEndEvent`.
+Original TAP sends a batch of candidate prompts directly to the target. SuperRed
+targets are event-driven, so this module maps that batch to a queue:
 
-Because of that, this module maps TAP's target batch onto a queue:
+1. Generate and on-topic-prune candidates for the current depth.
+2. Inject each surviving candidate into `user_message` in its own target run.
+3. After all candidates at that depth have run, judge-prune and move deeper.
 
-1. At a tree depth, TAP generates and on-topic-prunes candidates.
-2. Each surviving candidate is tested in its own SuperRed run.
-3. After all candidates from that depth have been tested, TAP judge-prunes the
-   tree and moves to the next depth.
-
-This is intentional. It lets every surviving candidate hit the real SuperRed
-target without turning a chatbot target into one long multi-turn conversation
-where later candidates see earlier candidate responses.
+This is the main intentional framework adaptation. It lets every surviving TAP
+candidate hit the real target without making a chatbot target treat separate
+candidate tests as one continuous conversation.
 
 ## Feedback Sources
 
-TAP handles the four common SuperRed adversarial settings like this:
+TAP reads target responses from the filtered trajectory first. If no response is
+visible, it uses `RunEndEvent.evaluation` when available. If neither response nor
+feedback is visible, the candidate is scored as 1.
 
-1. User query only, no model response, no task feedback: inject candidates, but
-   score them as 1 because no target evidence is visible.
-2. User query plus task feedback, no model response: use `RunEndEvent.evaluation`
-   to stop on success and to rank candidates when possible.
-3. User query plus model response, no task feedback: read the response from the
-   filtered trajectory and score the prompt/response pair with TAP's judge.
-4. User query plus task feedback and model response: use framework success as a
-   hard success signal, and use the trajectory response for TAP judge scoring
-   when success is not already true.
+`ControllablePostCallEvent` is not used as a response source and always returns
+`ControllableNoInjection`. This preserves SuperRed's scope model: model responses
+are available only through in-scope trajectory observables.
 
-`ControllablePostCallEvent` is not used for scoring. It always returns
-`ControllableNoInjection`. This keeps response reading aligned with SuperRed's
-scope model: model responses come from trajectory observables when they are in
-scope.
+Framework success feedback is treated as a hard success signal. Otherwise, when
+a trajectory response is visible, TAP uses the TAP judge on the prompt and
+response together.
 
 ## Prompt Placement
 
-TAP is a user-prompt attack. For chatbot-style targets with separate
-`system_prompt` and `user_message` controllables, this optimizer does not inject
-into `system_prompt`. It waits for `user_message` and injects the TAP candidate
-there.
+TAP is a user-prompt attack. For chatbot-style targets with both `system_prompt`
+and `user_message`, the optimizer leaves `system_prompt` unchanged and injects
+TAP candidates into `user_message`.
 
 ## Target String
 
-The original TAP prompts include a target opening string, such as "Sure, here is
-...". SuperRed goals usually provide only a goal description, so this module
-defaults `target_str` to `"Sure, here is"`.
-
-For closer reproduction of a specific TAP experiment, configure `target_str` to
-match that experiment's desired target opening.
-
-## Intentional Differences
-
-The main intentional difference is the queued target testing described above.
-It is a framework adaptation, not a change to TAP's search idea.
-
-The optimizer also uses the controller-provided LLM client for attacker and
-judge calls. It does not directly call the SuperRed target model from inside the
-optimizer; real target access happens through PreCall injection and trajectory
-feedback.
-
-The framework feedback fallback is also a SuperRed addition. It lets TAP make
-progress in scopes where the target response is not visible but task feedback is
-visible.
+Original TAP includes a desired target opening string. SuperRed goals usually
+only provide a goal description, so this module defaults `target_str` to
+`"Sure, here is"`. Configure `target_str` for closer reproduction of a specific
+TAP experiment.
