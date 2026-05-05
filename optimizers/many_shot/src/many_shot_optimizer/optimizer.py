@@ -87,7 +87,7 @@ class ManyShotOptimizer(Optimizer):
         random_seed: int | None = None,
         evaluator_method: str = "refusal_classifier",
         response_observable_names: list[str] | None = None,
-        use_system_prompt_when_available: bool = False,
+        use_system_prompt_when_available: bool = True,
     ) -> None:
         super().__init__()
         self._example_counts = example_counts if example_counts is not None else list(_DEFAULT_COUNTS)

@@ -77,22 +77,23 @@ events are not visible to the optimizer.
 For single-channel targets, ManyShot injects the long prompt into the first
 visible user-like controllable and injects only once per run.
 
-For chatbot-style split channels, ManyShot does not inject into
-`system_prompt`. It waits for `user_message` and injects the long prompt there.
-This avoids turning the many-shot user prompt into a system prompt. The attack
-described by the paper is a user prompt made of demonstrations plus a final
-user query, not a system-prompt override.
+For chatbot-style split channels, ManyShot's default behavior is
+capability-aware: when `system_prompt` is visible in the active threat
+model, the optimizer puts the preamble and faux examples there and puts
+the final objective into `user_message`. When `system_prompt` is not
+visible, it falls back to the paper-style single user prompt that contains
+the preamble, demonstrations, and the final objective in `user_message`.
 
-Set `use_system_prompt_when_available=True` only when you want to test a
-stronger SuperRed threat model where the attacker can edit the system prompt.
-In that mode, if `system_prompt` is visible, the optimizer puts the preamble
-and faux examples there, then puts the final objective into `user_message`.
-If `system_prompt` is not visible, it falls back to the normal paper-style
-single user prompt.
+This split-channel default makes scopes with different attacker capabilities
+produce different prompts, which is the property SuperRed is designed to
+expose across threat models. The paper's exact attack (a single user prompt
+containing demonstrations plus the final user query) is preserved when
+`system_prompt` is out of scope.
 
-This split-channel mode is an intentional framework variant, not the paper
-default. It is useful when you want two scopes with different attacker
-capabilities to behave differently during experiments.
+Set `use_system_prompt_when_available=False` to force the paper-faithful
+single-user-prompt path regardless of scope. Use this only when you need a
+strict paper reproduction in which the same prompt is delivered regardless
+of whether `system_prompt` is in scope.
 
 ## Scoring
 

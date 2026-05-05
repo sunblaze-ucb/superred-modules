@@ -404,8 +404,11 @@ async def test_run_end_evaluation_score_can_mark_success():
 
 
 @pytest.mark.asyncio
-async def test_split_chatbot_flow_ignores_system_prompt_then_injects_user_message():
-    opt = await _init_optimizer(example_counts=[3])
+async def test_paper_faithful_opt_out_ignores_system_prompt_then_injects_user_message():
+    opt = await _init_optimizer(
+        example_counts=[3],
+        use_system_prompt_when_available=False,
+    )
     system_ctrl = make_controllable(name="system_prompt")
     user_ctrl = make_controllable(name="user_message")
     await opt.on_event(_make_run_start())
