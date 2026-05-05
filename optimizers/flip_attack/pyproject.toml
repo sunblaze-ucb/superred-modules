@@ -7,7 +7,7 @@ name = "flip-attack-optimizer"
 version = "0.1.0"
 description = "FlipAttack single-turn jailbreak optimizer for superred"
 requires-python = ">=3.11,<3.14"
-dependencies = ["superred>=0.2.0"]
+dependencies = ["superred>=0.1.0"]
 
 [project.optional-dependencies]
 test = ["pytest", "pytest-asyncio"]

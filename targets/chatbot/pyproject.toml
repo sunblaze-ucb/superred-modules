@@ -7,7 +7,7 @@ name = "chatbot-target"
 version = "0.1.0"
 description = "Chatbot target for superred -- wraps any LLM via litellm"
 requires-python = ">=3.11,<3.14"
-dependencies = ["superred", "litellm"]
+dependencies = ["superred>=0.1.0", "litellm"]
 
 [project.optional-dependencies]
 dev = [

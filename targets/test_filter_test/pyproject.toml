@@ -7,7 +7,7 @@ name = "filter-test-target"
 version = "0.1.0"
 description = "Deterministic multi-domain target for validating security domain filters"
 requires-python = ">=3.11,<3.14"
-dependencies = ["superred"]
+dependencies = ["superred>=0.1.0"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/filter_test_target"]

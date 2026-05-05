@@ -7,7 +7,7 @@ name = "hint-following-optimizer"
 version = "0.1.0"
 description = "Optimizer that follows observable hints to inject correct values"
 requires-python = ">=3.11,<3.14"
-dependencies = ["superred"]
+dependencies = ["superred>=0.1.0"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/hint_following_optimizer"]
