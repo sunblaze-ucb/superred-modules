@@ -57,6 +57,12 @@ TAP is a user-prompt attack. For chatbot-style targets with both `system_prompt`
 and `user_message`, the optimizer leaves `system_prompt` unchanged and injects
 TAP candidates into `user_message`.
 
+Set `attack_system_prompt=True` only when you want a SuperRed extension that
+uses an in-scope `system_prompt` controllable. In that mode, the attacker may
+return both `system_prompt` and `prompt`: the optimizer injects the first into
+`system_prompt` and still injects the second into `user_message`. The default is
+`False`, so normal TAP remains paper-faithful.
+
 ## Target String
 
 Original TAP includes a desired target opening string. SuperRed goals usually

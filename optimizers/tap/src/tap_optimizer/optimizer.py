@@ -58,6 +58,7 @@ class TapOptimizer(Optimizer):
         max_attack_attempts: int = 5,
         keep_last_n: int = 3,
         target_str: str = "Sure, here is",
+        attack_system_prompt: bool = False,
         random_seed: int | None = None,
         response_observable_names: list[str] | None = None,
     ) -> None:
@@ -74,6 +75,7 @@ class TapOptimizer(Optimizer):
         self._max_attack_attempts = max_attack_attempts
         self._keep_last_n = keep_last_n
         self._target_str = target_str
+        self._attack_system_prompt = attack_system_prompt
         self._random_seed = random_seed
         self._response_observable_names = set(
             response_observable_names
@@ -93,6 +95,7 @@ class TapOptimizer(Optimizer):
         self._primary_controllable: Controllable | None = None
         self._saw_system_prompt_event: bool = False
         self._injected_this_run: bool = False
+        self._injected_system_prompt_this_run: bool = False
         self._manually_tracking_trajectory: bool = False
 
     async def initialize(
@@ -128,6 +131,7 @@ class TapOptimizer(Optimizer):
         self._primary_controllable = None
         self._saw_system_prompt_event = False
         self._injected_this_run = False
+        self._injected_system_prompt_this_run = False
         self._manually_tracking_trajectory = False
 
     async def on_event(self, event: Event) -> EventResponse:
@@ -151,6 +155,7 @@ class TapOptimizer(Optimizer):
             self._manually_tracking_trajectory = True
         self._current_candidate = None
         self._injected_this_run = False
+        self._injected_system_prompt_this_run = False
         self._saw_system_prompt_event = False
 
         if self._done:
@@ -189,15 +194,17 @@ class TapOptimizer(Optimizer):
 
         async def generate(node: TapNode) -> None:
             try:
-                improvement, prompt = await attacker.generate_prompt(
+                proposal = await attacker.generate_prompt(
                     goal=goal,
                     target_str=self._target_str,
                     conversation_history=node.conversation_history,
                     target_response=node.target_response,
                     score=node.score if node.target_response is not None else None,
+                    include_system_prompt=self._attack_system_prompt,
                 )
-                node.improvement = improvement
-                node.prompt = prompt
+                node.improvement = proposal.improvement
+                node.prompt = proposal.prompt
+                node.system_prompt = proposal.system_prompt
             except Exception:
                 logger.warning("TAP: pruning node %s -- attacker failed", node.node_id, exc_info=True)
                 node.pruned = True
@@ -236,6 +243,18 @@ class TapOptimizer(Optimizer):
 
         if event.controllable.name == "system_prompt":
             self._saw_system_prompt_event = True
+            system_prompt = self._current_candidate.system_prompt
+            if (
+                self._attack_system_prompt
+                and system_prompt is not None
+                and not self._injected_system_prompt_this_run
+            ):
+                self._injected_system_prompt_this_run = True
+                return ControllableInjection(
+                    event=event,
+                    controllable=event.controllable,
+                    value=system_prompt,
+                )
             return ControllableNoInjection(event=event, controllable=event.controllable)
 
         if event.controllable.name == "user_message":

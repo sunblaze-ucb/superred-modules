@@ -18,6 +18,7 @@ class TapNode:
     conversation_history: list[dict[str, str]]
     node_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     prompt: str | None = None
+    system_prompt: str | None = None
     improvement: str | None = None
     target_response: str | None = None
     score: float = 0.0
