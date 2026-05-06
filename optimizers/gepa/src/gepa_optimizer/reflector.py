@@ -39,13 +39,19 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class RolloutRecord:
-    """A single past rollout used to build the reflective dataset."""
+    """A single past rollout used to build the reflective dataset.
+
+    ``target_system_prompt`` is filled when the optimizer's scope grants
+    a readable system-prompt observable, so the reflection LM can take
+    the target's framing into account when proposing the next mutation.
+    """
 
     goal: str
     prompt: str
     response: str | None = None
     score: float | None = None
     rationale: str = ""
+    target_system_prompt: str | None = None
 
     def to_sample(self) -> dict[str, Any]:
         """Convert to the markdown-renderable sample dict.
@@ -56,6 +62,8 @@ class RolloutRecord:
             "task_input": self.goal,
             "candidate_instruction": self.prompt,
         }
+        if self.target_system_prompt is not None:
+            sample["target_system_prompt"] = self.target_system_prompt
         if self.response is not None:
             sample["assistant_response"] = self.response
         feedback = _format_feedback(score=self.score, rationale=self.rationale)
@@ -144,33 +152,41 @@ def _format_feedback(*, score: float | None, rationale: str) -> str:
     return "\n".join(parts)
 
 
-_FENCE_RE = re.compile(r"```\S*\n?(.*?)\n?\s*```", re.DOTALL)
-
-
 def _extract_fenced_block(text: str) -> str:
     """Extract the new instruction from the LM output.
 
-    Mirrors the upstream ``output_extractor``: take the content between
-    the first and last triple-backticks, stripping optional language
-    specifier; tolerate missing closing fence by trimming the leading
-    fence.
+    Verbatim port of the upstream ``output_extractor`` in
+    ``gepa-ai/gepa`` ``src/gepa/strategies/instruction_proposal.py``:
+    take the content between the *first* opening triple-backtick and
+    the *last* closing triple-backtick, strip an optional language
+    specifier on the first line; tolerate incomplete blocks by trimming
+    a leading or trailing fence.
+
+    Preserves any internal triple-backticks, which a reflection LM may
+    emit when its proposed instruction contains nested fenced examples.
     """
     if not text or not text.strip():
         return ""
 
-    matches = list(_FENCE_RE.finditer(text))
-    if matches:
-        return matches[-1].group(1).strip()
+    start = text.find("```") + 3
+    end = text.rfind("```")
 
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        match = re.match(r"^```\S*\n?", stripped)
-        if match:
-            return stripped[match.end():].strip().rstrip("`").strip()
-    if stripped.endswith("```"):
-        return stripped[:-3].strip()
+    if start >= end:
+        # Incomplete block: only one fence, or none at all.
+        stripped = text.strip()
+        if stripped.startswith("```"):
+            match = re.match(r"^```\S*\n?", text.lstrip())
+            if match:
+                return text.lstrip()[match.end():].strip()
+        if stripped.endswith("```"):
+            return stripped[:-3].strip()
+        return ""
 
-    return ""
+    content = text[start:end]
+    match = re.match(r"^\S*\n", content)
+    if match:
+        content = content[match.end():]
+    return content.strip()
 
 
 __all__ = [

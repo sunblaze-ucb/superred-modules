@@ -40,10 +40,16 @@ to evaluate.
 ``prompts.py`` reproduces the meta-prompt verbatim from the upstream
 ``InstructionProposalSignature.default_prompt_template`` (also
 Appendix B of the paper), including the two required placeholders
-``<curr_param>`` and ``<side_info>``. The ``output_extractor``
-behaviour (extract the new instruction from a fenced code block,
-tolerate optional language tag, tolerate missing closing fence) is
-mirrored in ``reflector.py``.
+``<curr_param>`` and ``<side_info>``.
+
+``_extract_fenced_block`` in ``reflector.py`` is a verbatim port of
+the upstream ``output_extractor``: take the content between the
+*first opening* and the *last closing* triple-backtick, stripping an
+optional language tag on the first line; tolerate incomplete blocks
+by trimming a leading or trailing fence; return empty for output with
+no fence at all. This preserves any internal triple-backticks the
+reflection LM may emit when its proposed instruction itself contains
+nested fenced examples.
 
 ## Adversarial Information-Access Settings
 
@@ -62,6 +68,16 @@ The reflective dataset only includes fields that are non-``None`` /
 non-empty (see ``RolloutRecord.to_sample`` and
 ``format_reflective_dataset``). Settings that strip a surface produce
 a smaller side-info block rather than a noisier one.
+
+Independently, when the controller's scope grants a *readable*
+system-prompt observable (default name ``system_prompt`` —
+configurable via ``system_prompt_observable_names``), its content is
+captured at ``initialize`` and surfaced on every rollout sample as
+``target_system_prompt``. This lets the reflection LM take the
+target's framing into account when proposing the next mutation,
+matching the paper's principle that the reflection signal includes
+"all the relevant context the system has access to." When the
+observable is out of scope, the field is simply omitted.
 
 ``max_no_signal_runs`` (default ``0``, disabled) bounds the
 user-query-only setting's cost: if positive, terminate after that many
@@ -93,21 +109,44 @@ stochastic target and a single-instance trainset, this isn't possible
 rolled-out candidate to the pool unconditionally, and let
 best-scoring selection decide which to mutate from next.
 
-### Minibatch size 1
+### Minibatch size 1, with a per-candidate rollout history
 
-The paper default is 3. With a single-instance trainset, running the
-same candidate against the same goal multiple times only produces
-N noisy samples of the same task. We use minibatch size 1 (each
-rollout is its own data point); the running pool effectively serves
-as the cross-candidate score history.
+The paper default minibatch size is 3. With a single-instance
+trainset, running the same candidate against the same goal multiple
+times only produces N noisy samples of the same task, so each
+*rollout* is its own data point (effective minibatch size 1).
 
-### One component
+To still feed the reflection LM the multi-rollout signal the paper
+relies on, each candidate keeps a bounded ring buffer of its most
+recent rollouts (``rollout_history_size``, default 3 — same number
+as the paper's minibatch). When the same parent is re-rolled (e.g.
+because the previous reflection failed to produce a parseable
+mutation, or because no fresh proposal beat it in the pool), the new
+rollout *appends* to that history; when the buffer is full the oldest
+entry is dropped. ``Reflector.propose`` then receives every entry in
+the buffer as the side-info dataset, so the meta-prompt sees as much
+signal as we've already paid for.
+
+The buffer also drives ``effective_score``: it is the mean of all
+buffered rollout scores (or 0.0 if no scores are visible), which both
+smooths stochastic noise and matches the paper's intent of selecting
+on aggregated minibatch performance.
+
+### One component, with a configurable target channel
 
 The paper supports multi-component systems (e.g. multi-hop QA with
-several modules). We optimize a single component — the user-message
-channel — which is the right shape for one-prompt jailbreak
-optimization. Multi-component support is a future extension, not a
-current requirement.
+several modules). We optimize a single component per session.
+
+By default that component is the user-message channel — the right
+shape for one-prompt jailbreak optimization. The
+``target_controllable_name`` knob (default ``None``) overrides this:
+when set, the optimizer locks injection onto exactly the named
+controllable and ignores all others (including the otherwise-skipped
+``system_prompt`` PreCall). Set it to ``"system_prompt"`` to attack
+the system-prompt channel directly when the controller's scope grants
+write access; set it to any other in-scope name to attack a custom
+channel. Multi-component (simultaneous multi-channel) support is a
+future extension, not a current requirement.
 
 ### No merge / crossover proposer
 
@@ -120,15 +159,18 @@ match the paper default and Crescendo's minimalism.
 GEPA mirrors the integration shape established by Crescendo, FlipAttack,
 and GOAT:
 
-* Same ``Optimizer`` ABC, same ``on_event`` dispatch, same five-knob
+* Same ``Optimizer`` ABC, same ``on_event`` dispatch, same minimal
   ctor surface (``max_attempts``, ``reflection_temperature``,
-  ``response_observable_names``, ``max_no_signal_runs``, plus a single
-  ``__init__`` for setup).
+  ``response_observable_names``, ``max_no_signal_runs``,
+  ``rollout_history_size``, ``system_prompt_observable_names``, and
+  ``target_controllable_name`` for explicit-channel attacks).
 * Same primary-controllable locking on the first non-``system_prompt``
-  ``ControllablePreCallEvent``.
-* Same hardcoded ``system_prompt`` skip rule (matches GOAT and
-  FlipAttack — the paper's optimization target is the user-message
-  channel).
+  ``ControllablePreCallEvent`` *in the default mode*; explicit-target
+  mode (``target_controllable_name`` set) locks onto exactly that name.
+* Same default ``system_prompt`` skip rule (matches GOAT and
+  FlipAttack — the paper's default optimization target is the
+  user-message channel); the skip is bypassed when
+  ``target_controllable_name="system_prompt"``.
 * Same trajectory-first response recovery over
   ``{response, model_response, assistant_response}``.
 * Same 3-way PostCall pairing (same controllable, request matches the

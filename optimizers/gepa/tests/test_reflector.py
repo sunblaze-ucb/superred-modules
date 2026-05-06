@@ -80,6 +80,19 @@ class TestRolloutRecordSample:
         record = RolloutRecord(goal="G", prompt="P0", rationale="   ")
         assert "feedback" not in record.to_sample()
 
+    def test_target_system_prompt_appears_when_provided(self) -> None:
+        record = RolloutRecord(
+            goal="G",
+            prompt="P0",
+            target_system_prompt="You are a careful assistant.",
+        )
+        sample = record.to_sample()
+        assert sample["target_system_prompt"] == "You are a careful assistant."
+
+    def test_target_system_prompt_omitted_when_absent(self) -> None:
+        record = RolloutRecord(goal="G", prompt="P0")
+        assert "target_system_prompt" not in record.to_sample()
+
 
 # ---------------------------------------------------------------------------
 # Reflector.propose
@@ -214,11 +227,22 @@ class TestExtractFencedBlock:
     def test_extracts_fenced_block_without_language(self) -> None:
         assert _extract_fenced_block("```\nNEW\n```") == "NEW"
 
-    def test_extracts_last_fenced_block_when_multiple(self) -> None:
+    def test_preserves_internal_backticks_between_first_open_and_last_close(
+        self,
+    ) -> None:
+        """Verbatim upstream semantics: first opening to last closing.
+
+        Internal triple-backticks must be preserved so a reflection LM
+        can return new instructions that themselves contain nested
+        fenced examples.
+        """
         text = (
-            "Reasoning:\n```\nintermediate\n```\n\nFinal answer:\n```\nFINAL\n```"
+            "Reasoning:\n```\ninner_a\n```\n\nFinal:\n```\nFINAL_BLOCK\n```"
         )
-        assert _extract_fenced_block(text) == "FINAL"
+        out = _extract_fenced_block(text)
+        assert "inner_a" in out
+        assert "FINAL_BLOCK" in out
+        assert "```" in out  # nested fence is preserved verbatim
 
     def test_tolerates_missing_closing_fence(self) -> None:
         text = "```\nNEW\nstill more text"
