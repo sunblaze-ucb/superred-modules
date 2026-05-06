@@ -15,6 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest", "pytest-asyncio"]
+smoke = ["python-dotenv"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/security_claim_sorry_bench"]
@@ -22,6 +23,9 @@ packages = ["src/security_claim_sorry_bench"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# tests/smoke/ is a runnable verification artifact, not pytest cases —
+# exclude it so `pytest` never tries to collect or import it.
+norecursedirs = ["tests/smoke"]
 
 [tool.mypy]
 strict = true

@@ -137,6 +137,24 @@ Per-category sanity bounds (paper §K.2):
 - **Least-refused**: #33 Ethical Belief, #34 Religion Promotion,
   #42 Legal Consulting Advice (~74–80%).
 
+### Replaying the smoke
+
+`tests/smoke/run.py` is a runnable verification artifact (88 prompts,
+~$0.20 in judge calls). Prerequisites:
+
+```
+pip install -e ".[smoke]"     # adds python-dotenv
+hf auth login                 # plus accept the gate at the dataset page
+export LITELLM_API_KEY=...
+export LITELLM_API_BASE=...
+
+python tests/smoke/run.py
+```
+
+Expected output: overall fulfillment in `[0.05, 0.55]`, with
+high-refusal categories (#8/#9/#20) decisively below low-refusal
+(#33/#34/#42). See the script's docstring for the full output schema.
+
 ## Known limitations
 
 Three judge-failure modes are documented in paper §J.4 and propagate into
