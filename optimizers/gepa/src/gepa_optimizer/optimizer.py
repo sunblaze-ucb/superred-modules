@@ -80,43 +80,44 @@ logger = logging.getLogger(__name__)
 _DEFAULT_RESPONSE_OBSERVABLE_NAMES: frozenset[str] = frozenset(
     {"response", "model_response", "assistant_response"}
 )
-_DEFAULT_SYSTEM_PROMPT_OBSERVABLE_NAMES: frozenset[str] = frozenset(
-    {"system_prompt"}
-)
 
-# Default-mode skip rule (no ``target_controllable_name`` configured).
-# Target shapes such as ChatbotTarget emit a ``system_prompt`` PreCall
-# before the user-message loop; pass it through without locking so the
-# user-message channel can still claim the primary slot when it
-# arrives. When ``target_controllable_name`` IS set, this skip rule is
-# bypassed for that name (so e.g. ``target_controllable_name="system_prompt"``
-# attacks the system-prompt channel directly).
-_DEFAULT_SKIPPED_CONTROLLABLE_NAME = "system_prompt"
+# Hardcoded system-prompt name (matches the chatbot target's naming).
+# Used for two things: (1) the default-mode skip rule on the
+# ``system_prompt`` ControllablePreCallEvent so the user-message channel
+# can still claim the primary slot, and (2) the observable name read
+# from ``initialize``'s ``observables`` to populate
+# ``RolloutRecord.target_system_prompt``.
+_SYSTEM_PROMPT_NAME = "system_prompt"
+
+# Per-candidate rollout history depth. Matches the GEPA paper's default
+# minibatch size of 3, which is what the reflection LM expects to see
+# in the side-info dataset.
+_ROLLOUT_HISTORY_SIZE = 3
 
 
 @dataclass
 class _Candidate:
-    """One prompt candidate with a bounded ring buffer of past rollouts."""
+    """One prompt candidate plus the rollout it scored on, if any.
+
+    ``rollouts`` is a bounded ring buffer of recent rollouts that feeds
+    the reflection LM. ``score``/``response``/``rationale`` track the
+    most recent rollout for parent selection (latest-wins on ties).
+    """
 
     prompt: str
     parent_idx: int | None = None
-    rollouts: deque[RolloutRecord] = field(default_factory=lambda: deque(maxlen=3))
-
-    @property
-    def rolled_out(self) -> bool:
-        return bool(self.rollouts)
-
-    @property
-    def latest(self) -> RolloutRecord | None:
-        return self.rollouts[-1] if self.rollouts else None
+    response: str | None = None
+    score: float | None = None
+    rationale: str = ""
+    rolled_out: bool = False
+    rollouts: deque[RolloutRecord] = field(
+        default_factory=lambda: deque(maxlen=_ROLLOUT_HISTORY_SIZE)
+    )
 
     @property
     def effective_score(self) -> float:
-        """Mean of rollout scores; 0.0 when no scores are visible."""
-        scored = [r.score for r in self.rollouts if r.score is not None]
-        if not scored:
-            return 0.0
-        return sum(scored) / len(scored)
+        """Score used for parent selection; 0.0 when no score is visible."""
+        return self.score if self.score is not None else 0.0
 
 
 class GEPAOptimizer(Optimizer):
@@ -137,11 +138,6 @@ class GEPAOptimizer(Optimizer):
             the trajectory (defaults to ``response``,
             ``model_response``, ``assistant_response`` — same set as
             Crescendo / GOAT).
-        system_prompt_observable_names: Names recognised as the
-            target's static system-prompt observable. When any one is
-            in scope on ``initialize``, its content is surfaced into
-            the reflective dataset as ``target_system_prompt``.
-            Defaults to ``{"system_prompt"}``.
         target_controllable_name: When set, the optimizer locks
             injection onto exactly the controllable with this name and
             ignores all others (including the otherwise-skipped
@@ -152,12 +148,6 @@ class GEPAOptimizer(Optimizer):
             consecutive runs in which neither response nor evaluation
             was visible. Bounds blind-loop cost in the user-query-only
             setting. Disabled by default (matches GOAT / FlipAttack).
-        rollout_history_size: Per-candidate ring buffer size for past
-            rollouts surfaced to the reflection LM (default 3, matching
-            the paper's default minibatch size). Larger values give the
-            reflection LM more context but cost no extra rollouts —
-            this only affects how much of the existing rollout history
-            is replayed into the meta-prompt.
     """
 
     def __init__(
@@ -166,16 +156,12 @@ class GEPAOptimizer(Optimizer):
         max_attempts: int = 20,
         reflection_temperature: float = 1.0,
         response_observable_names: Iterable[str] | None = None,
-        system_prompt_observable_names: Iterable[str] | None = None,
         target_controllable_name: str | None = None,
         max_no_signal_runs: int = 0,
-        rollout_history_size: int = 3,
     ) -> None:
         super().__init__()
         if max_attempts < 1:
             raise ValueError("max_attempts must be at least 1")
-        if rollout_history_size < 1:
-            raise ValueError("rollout_history_size must be at least 1")
 
         self._max_attempts = max_attempts
         self._reflection_temperature = reflection_temperature
@@ -184,14 +170,8 @@ class GEPAOptimizer(Optimizer):
             if response_observable_names is not None
             else _DEFAULT_RESPONSE_OBSERVABLE_NAMES
         )
-        self._system_prompt_observable_names: frozenset[str] = frozenset(
-            system_prompt_observable_names
-            if system_prompt_observable_names is not None
-            else _DEFAULT_SYSTEM_PROMPT_OBSERVABLE_NAMES
-        )
         self._target_controllable_name = target_controllable_name
         self._max_no_signal_runs = max(0, max_no_signal_runs)
-        self._rollout_history_size = rollout_history_size
 
         # Set in initialize().
         self._goal: Goal | None = None
@@ -236,7 +216,7 @@ class GEPAOptimizer(Optimizer):
             temperature=self._reflection_temperature,
         )
         self._target_system_prompt = self._extract_system_prompt(observables)
-        self._pool = [self._make_candidate(prompt=goal.description)]
+        self._pool = [_Candidate(prompt=goal.description)]
         self._pending = None
         self._attempt = 0
         self._succeeded = False
@@ -287,7 +267,7 @@ class GEPAOptimizer(Optimizer):
         else:
             # Default mode: skip the system-prompt PreCall without
             # locking, then lock onto the first remaining controllable.
-            if event.controllable.name == _DEFAULT_SKIPPED_CONTROLLABLE_NAME:
+            if event.controllable.name == _SYSTEM_PROMPT_NAME:
                 return ControllableNoInjection(
                     event=event, controllable=event.controllable
                 )
@@ -364,9 +344,14 @@ class GEPAOptimizer(Optimizer):
 
         # Record the rollout against the candidate that produced it.
         # Freshly-proposed candidates enter the pool here; already-in-pool
-        # candidates accumulate this rollout into their ring buffer.
+        # candidates have their fields refreshed in place and the rollout
+        # appended to their bounded history (for reflection only).
         if self._current is not None:
             assert self._goal is not None
+            self._current.response = response
+            self._current.score = score
+            self._current.rationale = rationale
+            self._current.rolled_out = True
             self._current.rollouts.append(
                 RolloutRecord(
                     goal=self._goal.description,
@@ -432,16 +417,6 @@ class GEPAOptimizer(Optimizer):
         self._last_injected_value = None
         self._pending_post_answer = None
 
-    def _make_candidate(
-        self, *, prompt: str, parent_idx: int | None = None
-    ) -> _Candidate:
-        """Construct a candidate with a properly-sized rollout ring buffer."""
-        return _Candidate(
-            prompt=prompt,
-            parent_idx=parent_idx,
-            rollouts=deque(maxlen=self._rollout_history_size),
-        )
-
     def _select_current_candidate(self) -> tuple[_Candidate, bool]:
         """Pick the candidate to roll out this run.
 
@@ -488,17 +463,13 @@ class GEPAOptimizer(Optimizer):
     def _extract_system_prompt(
         self, observables: list[ObservableValue]
     ) -> str | None:
-        """Return the in-scope system-prompt observable content, if any.
+        """Return the in-scope ``system_prompt`` observable content, if any.
 
         ``observables`` is already scope-filtered by the controller, so
         a non-empty match means the threat model grants read access.
         """
         for value in observables:
-            name = value.observable.name
-            if (
-                name in self._system_prompt_observable_names
-                or name.lower() in self._system_prompt_observable_names
-            ):
+            if value.observable.name == _SYSTEM_PROMPT_NAME:
                 content = value.content
                 if isinstance(content, str) and content.strip():
                     return content
@@ -534,7 +505,7 @@ class GEPAOptimizer(Optimizer):
             return
 
         parent_idx = self._pool.index(parent)
-        self._pending = self._make_candidate(
+        self._pending = _Candidate(
             prompt=result.new_instruction,
             parent_idx=parent_idx,
         )

@@ -69,15 +69,14 @@ non-empty (see ``RolloutRecord.to_sample`` and
 ``format_reflective_dataset``). Settings that strip a surface produce
 a smaller side-info block rather than a noisier one.
 
-Independently, when the controller's scope grants a *readable*
-system-prompt observable (default name ``system_prompt`` —
-configurable via ``system_prompt_observable_names``), its content is
-captured at ``initialize`` and surfaced on every rollout sample as
-``target_system_prompt``. This lets the reflection LM take the
-target's framing into account when proposing the next mutation,
-matching the paper's principle that the reflection signal includes
-"all the relevant context the system has access to." When the
-observable is out of scope, the field is simply omitted.
+Independently, when the controller's scope grants a readable
+``system_prompt`` observable (matching the chatbot target's naming),
+its content is captured at ``initialize`` and surfaced on every
+rollout sample as ``target_system_prompt``. This lets the reflection
+LM take the target's framing into account when proposing the next
+mutation, matching the paper's principle that the reflection signal
+includes "all the relevant context the system has access to." When
+the observable is out of scope, the field is simply omitted.
 
 ``max_no_signal_runs`` (default ``0``, disabled) bounds the
 user-query-only setting's cost: if positive, terminate after that many
@@ -118,19 +117,18 @@ times only produces N noisy samples of the same task, so each
 
 To still feed the reflection LM the multi-rollout signal the paper
 relies on, each candidate keeps a bounded ring buffer of its most
-recent rollouts (``rollout_history_size``, default 3 — same number
-as the paper's minibatch). When the same parent is re-rolled (e.g.
-because the previous reflection failed to produce a parseable
-mutation, or because no fresh proposal beat it in the pool), the new
-rollout *appends* to that history; when the buffer is full the oldest
-entry is dropped. ``Reflector.propose`` then receives every entry in
-the buffer as the side-info dataset, so the meta-prompt sees as much
-signal as we've already paid for.
+recent rollouts (size 3 — same number as the paper's minibatch).
+When the same parent is re-rolled (e.g. because the previous
+reflection failed to produce a parseable mutation, or because no
+fresh proposal beat it in the pool), the new rollout appends to that
+history; when the buffer is full the oldest entry is dropped.
+``Reflector.propose`` then receives every entry in the buffer as the
+side-info dataset, so the meta-prompt sees as much signal as we've
+already paid for.
 
-The buffer also drives ``effective_score``: it is the mean of all
-buffered rollout scores (or 0.0 if no scores are visible), which both
-smooths stochastic noise and matches the paper's intent of selecting
-on aggregated minibatch performance.
+Parent selection still uses the *latest* score (``effective_score``
+on ``_Candidate``) — the buffer is purely a richer reflection signal,
+not a different selection rule.
 
 ### One component, with a configurable target channel
 
@@ -161,8 +159,7 @@ and GOAT:
 
 * Same ``Optimizer`` ABC, same ``on_event`` dispatch, same minimal
   ctor surface (``max_attempts``, ``reflection_temperature``,
-  ``response_observable_names``, ``max_no_signal_runs``,
-  ``rollout_history_size``, ``system_prompt_observable_names``, and
+  ``response_observable_names``, ``max_no_signal_runs``, plus
   ``target_controllable_name`` for explicit-channel attacks).
 * Same primary-controllable locking on the first non-``system_prompt``
   ``ControllablePreCallEvent`` *in the default mode*; explicit-target

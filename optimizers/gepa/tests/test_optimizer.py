@@ -414,8 +414,7 @@ class TestRunEndPoolGrowth:
             await _roll_out_one(opt, eval_=_failure_eval(0.3), response_text="r")
         assert len(opt._pool) == 1
         assert opt._pool[0].rolled_out is True
-        assert opt._pool[0].latest is not None
-        assert opt._pool[0].latest.score == pytest.approx(0.3)
+        assert opt._pool[0].score == pytest.approx(0.3)
 
     @pytest.mark.asyncio
     async def test_freshly_proposed_candidate_enters_pool(self) -> None:
@@ -509,9 +508,8 @@ class TestAdversarialSettings:
         propose = AsyncMock(return_value=_refl("M1"))
         with patch.object(opt._reflector, "propose", new=propose):
             await _roll_out_one(opt, eval_=None, response_text=None)
-        assert opt._pool[0].latest is not None
-        assert opt._pool[0].latest.score is None
-        assert opt._pool[0].latest.response is None
+        assert opt._pool[0].score is None
+        assert opt._pool[0].response is None
         assert propose.called
         # The reflective rollout passed to propose has no response/score.
         rollouts = propose.call_args.kwargs["rollouts"]
@@ -528,9 +526,8 @@ class TestAdversarialSettings:
                 opt, eval_=_success_eval(0.9), response_text=None
             )
         assert end.done is True
-        assert opt._pool[0].latest is not None
-        assert opt._pool[0].latest.score == pytest.approx(0.9)
-        assert opt._pool[0].latest.response is None
+        assert opt._pool[0].score == pytest.approx(0.9)
+        assert opt._pool[0].response is None
 
     @pytest.mark.asyncio
     async def test_setting_3_user_query_plus_responses(self) -> None:
@@ -542,9 +539,8 @@ class TestAdversarialSettings:
                 opt, eval_=None, response_text="dangerous reply"
             )
         assert end.done is False
-        assert opt._pool[0].latest is not None
-        assert opt._pool[0].latest.response == "dangerous reply"
-        assert opt._pool[0].latest.score is None
+        assert opt._pool[0].response == "dangerous reply"
+        assert opt._pool[0].score is None
 
         rollouts = propose.call_args.kwargs["rollouts"]
         assert rollouts[0].response == "dangerous reply"
@@ -560,9 +556,8 @@ class TestAdversarialSettings:
                 opt, eval_=_success_eval(0.92), response_text="r"
             )
         assert end.done is True
-        assert opt._pool[0].latest is not None
-        assert opt._pool[0].latest.response == "r"
-        assert opt._pool[0].latest.score == pytest.approx(0.92)
+        assert opt._pool[0].response == "r"
+        assert opt._pool[0].score == pytest.approx(0.92)
 
 
 # ---------------------------------------------------------------------------
@@ -655,13 +650,12 @@ class TestTargetRunIntegration:
                 RunEndEvent(evaluation=_success_eval(0.95), security_domain=USER_TAG),
             )
         assert end.done is True
-        assert opt._pool[0].latest is not None
-        assert opt._pool[0].latest.response == "assistant reply"
-        assert opt._pool[0].latest.score == pytest.approx(0.95)
+        assert opt._pool[0].response == "assistant reply"
+        assert opt._pool[0].score == pytest.approx(0.95)
 
 
 # ---------------------------------------------------------------------------
-# Per-candidate rollout history (ring buffer)
+# Per-candidate rollout history (bounded by _ROLLOUT_HISTORY_SIZE = 3)
 # ---------------------------------------------------------------------------
 
 
@@ -671,83 +665,33 @@ class TestRolloutHistoryBuffer:
     after a failed mutation proposal."""
 
     @pytest.mark.asyncio
-    async def test_re_rolling_seed_appends_to_history(self) -> None:
+    async def test_history_grows_and_is_bounded(self) -> None:
         # Reflection always returns None so each run re-rolls the seed.
-        opt = await _init_optimizer(max_attempts=4)
-        with patch.object(
-            opt._reflector, "propose", new=AsyncMock(return_value=None),
-        ):
-            await _roll_out_one(opt, eval_=_failure_eval(0.1), response_text="r1")
-            await _roll_out_one(opt, eval_=_failure_eval(0.2), response_text="r2")
-            await _roll_out_one(opt, eval_=_failure_eval(0.3), response_text="r3")
-
-        seed = opt._pool[0]
-        assert len(seed.rollouts) == 3
-        scores = [r.score for r in seed.rollouts]
-        responses = [r.response for r in seed.rollouts]
-        assert scores == pytest.approx([0.1, 0.2, 0.3])
-        assert responses == ["r1", "r2", "r3"]
-
-    @pytest.mark.asyncio
-    async def test_history_is_bounded_by_default_size(self) -> None:
-        # Default ring size is 3; a fourth rollout drops the oldest.
+        # 4 rollouts -> oldest is dropped (buffer cap is 3).
         opt = await _init_optimizer(max_attempts=5)
         with patch.object(
             opt._reflector, "propose", new=AsyncMock(return_value=None),
         ):
-            await _roll_out_one(opt, eval_=_failure_eval(0.1), response_text="r1")
-            await _roll_out_one(opt, eval_=_failure_eval(0.2), response_text="r2")
-            await _roll_out_one(opt, eval_=_failure_eval(0.3), response_text="r3")
-            await _roll_out_one(opt, eval_=_failure_eval(0.4), response_text="r4")
+            for i, score in enumerate([0.1, 0.2, 0.3, 0.4], start=1):
+                await _roll_out_one(
+                    opt, eval_=_failure_eval(score), response_text=f"r{i}",
+                )
 
         seed = opt._pool[0]
         assert len(seed.rollouts) == 3
         scores = [r.score for r in seed.rollouts]
-        assert scores == pytest.approx([0.2, 0.3, 0.4])  # oldest dropped
+        assert scores == pytest.approx([0.2, 0.3, 0.4])
 
     @pytest.mark.asyncio
-    async def test_effective_score_is_mean_of_buffered_scores(self) -> None:
-        opt = await _init_optimizer(max_attempts=3)
-        with patch.object(
-            opt._reflector, "propose", new=AsyncMock(return_value=None),
-        ):
-            await _roll_out_one(opt, eval_=_failure_eval(0.2))
-            await _roll_out_one(opt, eval_=_failure_eval(0.6))
-        assert opt._pool[0].effective_score == pytest.approx(0.4)
-
-    @pytest.mark.asyncio
-    async def test_reflector_receives_all_recent_rollouts(self) -> None:
+    async def test_reflector_receives_all_buffered_rollouts(self) -> None:
         opt = await _init_optimizer(max_attempts=3)
         propose = AsyncMock(return_value=None)
         with patch.object(opt._reflector, "propose", new=propose):
             await _roll_out_one(opt, eval_=_failure_eval(0.1), response_text="r1")
             await _roll_out_one(opt, eval_=_failure_eval(0.2), response_text="r2")
 
-        # Last call should have seen both rollouts in the side-info dataset.
         last_call_rollouts = propose.call_args.kwargs["rollouts"]
-        assert len(last_call_rollouts) == 2
         assert [r.response for r in last_call_rollouts] == ["r1", "r2"]
-
-    @pytest.mark.asyncio
-    async def test_custom_history_size_is_respected(self) -> None:
-        opt = GEPAOptimizer(max_attempts=4, rollout_history_size=2)
-        await opt.initialize(
-            goal=Goal(description="goal"),
-            controllables=[_user_ctrl()],
-            observables=[],
-            llm_client=_empty_llm(),
-        )
-        with patch.object(
-            opt._reflector, "propose", new=AsyncMock(return_value=None),
-        ):
-            await _roll_out_one(opt, eval_=_failure_eval(0.1))
-            await _roll_out_one(opt, eval_=_failure_eval(0.2))
-            await _roll_out_one(opt, eval_=_failure_eval(0.3))
-        assert len(opt._pool[0].rollouts) == 2
-
-    def test_construction_rejects_zero_history_size(self) -> None:
-        with pytest.raises(ValueError):
-            GEPAOptimizer(rollout_history_size=0)
 
 
 # ---------------------------------------------------------------------------
@@ -757,7 +701,7 @@ class TestRolloutHistoryBuffer:
 
 class TestSystemPromptObservable:
     @pytest.mark.asyncio
-    async def test_system_prompt_observable_surfaced_in_rollout(self) -> None:
+    async def test_in_scope_observable_surfaces_on_rollout(self) -> None:
         from superred.core.types.observable import ObservableValue
 
         sp_obs = ObservableValue(
@@ -782,59 +726,8 @@ class TestSystemPromptObservable:
         assert rollouts[0].target_system_prompt == "You are a careful assistant."
 
     @pytest.mark.asyncio
-    async def test_no_system_prompt_observable_means_field_is_none(self) -> None:
+    async def test_out_of_scope_means_field_is_none(self) -> None:
         opt = await _init_optimizer(max_attempts=2)
-        propose = AsyncMock(return_value=None)
-        with patch.object(opt._reflector, "propose", new=propose):
-            await _roll_out_one(opt, eval_=_failure_eval(0.1), response_text="r")
-        rollouts = propose.call_args.kwargs["rollouts"]
-        assert rollouts[0].target_system_prompt is None
-
-    @pytest.mark.asyncio
-    async def test_custom_observable_name_is_recognised(self) -> None:
-        from superred.core.types.observable import ObservableValue
-
-        sp_obs = ObservableValue(
-            observable=Observable(
-                name="initial_prompt",
-                security_domain=SYSTEM_PROMPT_TAG,
-            ),
-            content="custom-frame",
-        )
-        opt = GEPAOptimizer(
-            max_attempts=2,
-            system_prompt_observable_names=("initial_prompt",),
-        )
-        await opt.initialize(
-            goal=Goal(description="g"),
-            controllables=[_user_ctrl()],
-            observables=[sp_obs],
-            llm_client=_empty_llm(),
-        )
-        propose = AsyncMock(return_value=None)
-        with patch.object(opt._reflector, "propose", new=propose):
-            await _roll_out_one(opt, eval_=_failure_eval(0.1), response_text="r")
-        rollouts = propose.call_args.kwargs["rollouts"]
-        assert rollouts[0].target_system_prompt == "custom-frame"
-
-    @pytest.mark.asyncio
-    async def test_empty_system_prompt_observable_is_treated_as_absent(self) -> None:
-        from superred.core.types.observable import ObservableValue
-
-        sp_obs = ObservableValue(
-            observable=Observable(
-                name="system_prompt",
-                security_domain=SYSTEM_PROMPT_TAG,
-            ),
-            content="   ",
-        )
-        opt = GEPAOptimizer(max_attempts=2)
-        await opt.initialize(
-            goal=Goal(description="g"),
-            controllables=[_user_ctrl()],
-            observables=[sp_obs],
-            llm_client=_empty_llm(),
-        )
         propose = AsyncMock(return_value=None)
         with patch.object(opt._reflector, "propose", new=propose):
             await _roll_out_one(opt, eval_=_failure_eval(0.1), response_text="r")
@@ -1121,48 +1014,3 @@ class TestEndToEndControllerIntegration:
         # At least 2 runs: seed (fail) -> mutated candidate (success).
         assert len(tr.runs) >= 2
         assert tr.best_score.value == pytest.approx(1.0)
-
-    @pytest.mark.asyncio
-    async def test_gepa_user_only_scope_skips_system_prompt_observable(self) -> None:
-        """User-only scope: optimizer must not see the system_prompt observable."""
-        from superred.core.controller import Controller
-        from superred.core.interfaces.security_claim import SecurityClaim
-        from superred.core.types.llm import LLMConfig
-
-        target = _FakeChatTarget(system_prompt="should-be-hidden")
-        task = _FakeTask(magic="UNREACHABLE")
-        claim = SecurityClaim.from_tasks([task])
-
-        captured_observables: list[Any] = []
-        original_init = GEPAOptimizer.initialize
-
-        async def _spy_init(
-            self, goal, controllables, observables, llm_client
-        ):  # noqa: ANN001
-            captured_observables.append(list(observables))
-            await original_init(self, goal, controllables, observables, llm_client)
-
-        async def _stub_propose(self, *, current_instruction, rollouts):  # noqa: ANN001
-            return _refl("more attempts")
-
-        with patch.object(GEPAOptimizer, "initialize", new=_spy_init), patch.object(
-            __import__(
-                "gepa_optimizer.reflector", fromlist=["Reflector"]
-            ).Reflector,
-            "propose",
-            new=_stub_propose,
-        ):
-            controller = Controller(
-                optimizer_factory=lambda: GEPAOptimizer(max_attempts=2),
-                target=target,
-                security_claim=claim,
-                llm_configs=[
-                    LLMConfig(model="m", api_base="http://x", api_key="sk"),
-                ],
-            )
-            user_only = frozenset({USER_TAG})
-            await controller.run(scopes=[user_only])
-
-        assert captured_observables, "initialize() must have been called"
-        # Out-of-scope: nothing for the optimizer to read.
-        assert captured_observables[0] == []
