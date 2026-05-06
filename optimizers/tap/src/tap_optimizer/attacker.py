@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterator
 from dataclasses import dataclass
 
 from superred.core.llm import LLMClient
@@ -77,20 +76,11 @@ Your response should only contain this JSON element and nothing else.
 
 @dataclass(frozen=True)
 class AttackPrompt:
-    """Parsed attacker proposal.
-
-    Iteration yields the paper-faithful `(improvement, prompt)` pair so existing
-    callers can keep unpacking default TAP proposals.
-    """
+    """Parsed attacker proposal."""
 
     improvement: str
     prompt: str
     system_prompt: str | None = None
-
-    def __iter__(self) -> Iterator[str]:
-        yield self.improvement
-        yield self.prompt
-
 
 
 class Attacker:

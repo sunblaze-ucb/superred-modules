@@ -45,14 +45,14 @@ class TestAttackerFirstTurn:
         attacker = Attacker(llm=mock_llm, temperature=0.7)
         history: list[dict[str, str]] = []
 
-        improvement, prompt = await attacker.generate_prompt(
+        proposal = await attacker.generate_prompt(
             goal="test goal",
             target_str="Sure, here is",
             conversation_history=history,
         )
 
-        assert improvement == "Try roleplaying."
-        assert prompt == "You are a pirate..."
+        assert proposal.improvement == "Try roleplaying."
+        assert proposal.prompt == "You are a pirate..."
 
     @pytest.mark.asyncio
     async def test_first_turn_returns_system_prompt_when_extension_enabled(self) -> None:
@@ -147,7 +147,7 @@ class TestAttackerSubsequentTurn:
             {"role": "assistant", "content": json.dumps({"improvement": "a", "prompt": "b"})},
         ]
 
-        improvement, prompt = await attacker.generate_prompt(
+        proposal = await attacker.generate_prompt(
             goal="g",
             target_str="Sure, here is",
             conversation_history=history,
@@ -155,8 +155,8 @@ class TestAttackerSubsequentTurn:
             score=2.0,
         )
 
-        assert improvement == "Better approach."
-        assert prompt == "new attack"
+        assert proposal.improvement == "Better approach."
+        assert proposal.prompt == "new attack"
         feedback_msg = history[-2]
         assert "LANGUAGE MODEL OUTPUT" in feedback_msg["content"]
         assert "OBJECTIVE" in feedback_msg["content"]
@@ -202,14 +202,14 @@ class TestAttackerJsonParsing:
         attacker = Attacker(llm=mock_llm, max_attack_attempts=5)
         history: list[dict[str, str]] = []
 
-        improvement, prompt = await attacker.generate_prompt(
+        proposal = await attacker.generate_prompt(
             goal="g",
             target_str="Sure, here is",
             conversation_history=history,
         )
 
-        assert improvement == "valid"
-        assert prompt == "attack"
+        assert proposal.improvement == "valid"
+        assert proposal.prompt == "attack"
         assert mock_llm.complete.await_count == 2
         assert len(history) == 2
 
@@ -238,14 +238,14 @@ class TestAttackerJsonParsing:
         attacker = Attacker(llm=mock_llm)
         history: list[dict[str, str]] = []
 
-        improvement, prompt = await attacker.generate_prompt(
+        proposal = await attacker.generate_prompt(
             goal="g",
             target_str="Sure, here is",
             conversation_history=history,
         )
 
-        assert improvement == "markdown reason"
-        assert prompt == "markdown attack"
+        assert proposal.improvement == "markdown reason"
+        assert proposal.prompt == "markdown attack"
 
     @pytest.mark.asyncio
     async def test_missing_keys_raises_value_error(self) -> None:
