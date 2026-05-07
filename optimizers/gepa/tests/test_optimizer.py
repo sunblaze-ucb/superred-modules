@@ -1014,3 +1014,130 @@ class TestEndToEndControllerIntegration:
         # At least 2 runs: seed (fail) -> mutated candidate (success).
         assert len(tr.runs) >= 2
         assert tr.best_score.value == pytest.approx(1.0)
+
+    @pytest.mark.asyncio
+    async def test_gepa_user_only_scope_runs_blind_to_max_attempts(self) -> None:
+        """Setting 1 (user-query-only): scope = user_message, and
+        ``include_feedback=False`` on the controller so evaluation
+        does not reach the optimizer either. ``target_system_prompt``
+        must stay None on every recorded rollout, every score is None
+        (so latest-wins selection actually kicks in — everyone's
+        effective_score is 0), and the run terminates by budget
+        exhaustion rather than success."""
+        from superred.core.controller import Controller
+        from superred.core.interfaces.security_claim import SecurityClaim
+        from superred.core.types.llm import LLMConfig
+
+        target = _FakeChatTarget(system_prompt="default-careful")
+        task = _FakeTask(magic="ATTACK")
+        claim = SecurityClaim.from_tasks([task])
+
+        proposed: list[str] = []
+
+        async def _stub_propose(self, *, current_instruction, rollouts):  # noqa: ANN001
+            for record in rollouts:
+                # In setting 1, the optimizer must surface neither
+                # responses, scores, nor system_prompt to the
+                # reflection side-info.
+                assert record.response is None
+                assert record.score is None
+                assert record.target_system_prompt is None
+            proposed.append(current_instruction)
+            return _refl(f"mutation-{len(proposed)}")
+
+        max_attempts = 4
+        with patch.object(
+            __import__(
+                "gepa_optimizer.reflector", fromlist=["Reflector"]
+            ).Reflector,
+            "propose",
+            new=_stub_propose,
+        ):
+            controller = Controller(
+                optimizer_factory=lambda: GEPAOptimizer(
+                    max_attempts=max_attempts,
+                ),
+                target=target,
+                security_claim=claim,
+                llm_configs=[
+                    LLMConfig(model="m", api_base="http://x", api_key="sk"),
+                ],
+                include_feedback=False,
+            )
+            user_only_scope = frozenset({USER_TAG})
+            result = await controller.run(scopes=[user_only_scope])
+
+        tr = result.threat_model_results[0].task_results[0]
+        # Magic word never reaches assistant -> task fails by exhaustion.
+        assert tr.success is False
+        assert len(tr.runs) == max_attempts
+        # Reflection fired on every run after the seed: max_attempts - 1.
+        assert len(proposed) == max_attempts - 1
+
+    @pytest.mark.asyncio
+    async def test_gepa_target_controllable_name_attacks_system_prompt(
+        self,
+    ) -> None:
+        """``target_controllable_name='system_prompt'`` should land
+        injection on the system-prompt channel through the real
+        Controller. The fake target echoes the system prompt into the
+        assistant message, so a magic-word mutation that includes the
+        magic in the system-prompt slot must succeed (and *only* that
+        path can succeed: the user_message channel must be left
+        un-injected because the override locked the optimizer to
+        ``system_prompt``)."""
+        from superred.core.controller import Controller
+        from superred.core.interfaces.security_claim import SecurityClaim
+        from superred.core.types.llm import LLMConfig
+
+        # Capture per-run responses; ``target.last_response`` is cleared
+        # by ``cleanup`` between runs so we record into our own list.
+        responses: list[str] = []
+        target = _FakeChatTarget(system_prompt="default-careful")
+        original_run = target.run
+
+        async def _instrumented_run(emit, send_event):  # noqa: ANN001
+            await original_run(emit, send_event)
+            responses.append(target.last_response)
+
+        target.run = _instrumented_run  # type: ignore[method-assign]
+
+        task = _FakeTask(magic="ATTACK")
+        claim = SecurityClaim.from_tasks([task])
+
+        async def _stub_propose(self, *, current_instruction, rollouts):  # noqa: ANN001
+            return _refl("system: ATTACK now please")
+
+        with patch.object(
+            __import__(
+                "gepa_optimizer.reflector", fromlist=["Reflector"]
+            ).Reflector,
+            "propose",
+            new=_stub_propose,
+        ):
+            controller = Controller(
+                optimizer_factory=lambda: GEPAOptimizer(
+                    max_attempts=5,
+                    target_controllable_name="system_prompt",
+                ),
+                target=target,
+                security_claim=claim,
+                llm_configs=[
+                    LLMConfig(model="m", api_base="http://x", api_key="sk"),
+                ],
+            )
+            full_scope = frozenset({USER_TAG, SYSTEM_PROMPT_TAG, RESPONSE_TAG})
+            result = await controller.run(scopes=[full_scope])
+
+        tr = result.threat_model_results[0].task_results[0]
+        assert tr.success is True
+        # The successful response must carry the magic via the
+        # system-prompt echo (``[sys=system: ATTACK now please]``);
+        # the user_message slot must remain the target's default
+        # (``echo:default``) because the override locked injection
+        # to system_prompt.
+        successful = next(
+            r for r in responses if "ATTACK" in r
+        )
+        assert "[sys=system: ATTACK now please]" in successful
+        assert "echo:default" in successful

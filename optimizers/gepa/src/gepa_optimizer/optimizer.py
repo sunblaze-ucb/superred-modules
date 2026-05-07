@@ -99,9 +99,12 @@ _ROLLOUT_HISTORY_SIZE = 3
 class _Candidate:
     """One prompt candidate plus the rollout it scored on, if any.
 
-    ``rollouts`` is a bounded ring buffer of recent rollouts that feeds
-    the reflection LM. ``score``/``response``/``rationale`` track the
-    most recent rollout for parent selection (latest-wins on ties).
+    ``rollouts`` is a bounded ring buffer of recent rollouts that
+    feeds both the reflection LM (recent traces as side-info) and
+    parent selection (mean score across the buffer, so a single
+    lucky/unlucky trial doesn't dominate over a steadier candidate).
+    ``score``/``response``/``rationale`` mirror the *latest* rollout
+    for inspection / debugging only.
     """
 
     prompt: str
@@ -116,8 +119,16 @@ class _Candidate:
 
     @property
     def effective_score(self) -> float:
-        """Score used for parent selection; 0.0 when no score is visible."""
-        return self.score if self.score is not None else 0.0
+        """Mean score across the recent-rollouts buffer.
+
+        Returns 0.0 when no scored rollout is available — keeps
+        latest-wins tie-breaking working in the no-feedback settings
+        where every candidate sits at 0.0.
+        """
+        scored = [r.score for r in self.rollouts if r.score is not None]
+        if not scored:
+            return 0.0
+        return sum(scored) / len(scored)
 
 
 class GEPAOptimizer(Optimizer):

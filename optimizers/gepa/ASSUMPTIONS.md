@@ -57,7 +57,7 @@ The optimizer naturally operates in all four settings — there is no
 setting knob. The framework's scope filter and ``include_feedback``
 flag select which information surfaces are visible:
 
-| Setting | Reflective dataset has | Selection | Behaviour |
+| Setting | Reflective dataset has | Selection (mean across buffer) | Behaviour |
 | --- | --- | --- | --- |
 | 1 user query only | ``goal`` only | latest-wins (all scores 0) | LLM-driven prompt mutation chain; no early-stop |
 | 2 + feedback | ``goal``, score, rationale | best-scoring | score-driven evolution + early-stop on success |
@@ -126,9 +126,12 @@ history; when the buffer is full the oldest entry is dropped.
 side-info dataset, so the meta-prompt sees as much signal as we've
 already paid for.
 
-Parent selection still uses the *latest* score (``effective_score``
-on ``_Candidate``) — the buffer is purely a richer reflection signal,
-not a different selection rule.
+Parent selection (``effective_score`` on ``_Candidate``) is the
+**mean score across the buffer** so a one-off lucky/unlucky rollout
+doesn't dominate over a steadier candidate — the same buffer that
+feeds reflection also feeds the selection rule. Latest-wins
+tie-breaking still applies (relevant in settings 1 and 3, where
+every candidate sits at 0.0).
 
 ### One component, with a configurable target channel
 
