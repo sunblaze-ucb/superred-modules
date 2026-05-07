@@ -81,7 +81,13 @@ ever reaches the optimizer. Disabled by default (matches GOAT, GEPA).
   Numbers are sampled without replacement from `[10^(n-1), 10^n)` so
   every encoding has exactly `num_digits` digits.
 - **Letter encode/decode**: `permute_string` from upstream
-  (`Bijection.encode` / `Bijection.decode`, letter branch).
+  (`Bijection.encode` / `Bijection.decode`, letter branch). Both
+  branches lowercase the input unconditionally — upstream's
+  `permute_string` is a single function reused for both directions
+  and lowercases; we mirror that exactly so a downstream judge wrapper
+  feeding raw model output through `Bijection.decode` gets the
+  upstream-equivalent text. Pinned by
+  `test_letter_decode_lowercases_input_matching_upstream`.
 - **Digit encode**: verbatim port of `DigitBijectionLanguage._f`.
   Delimiter is inserted before each substituted numeric token, never
   before identity-mapped letters.
@@ -160,6 +166,27 @@ honour that exactly. Bijection-related "search" (e.g. dispersion
 schedules) is out of scope for v1 and should live in a separate
 optimizer if needed.
 
+### Observables are not consumed in v1
+
+The optimizer's `initialize` accepts `observables` for symmetry with
+the `Optimizer` ABC, but never reads them. Paper Table 1 reports
+model-specific optima (e.g. digit vs letter, dispersion sweet spots
+per target) and FlipAttack reads `victim_llm` from observables to
+pick its Pliny templates. We deliberately **do not** auto-pick
+codomain / dispersion from `model` observables in v1 because:
+
+1. The paper's per-model recommendations are coarse (a handful of
+   buckets) and don't generalise to arbitrary chatbots.
+2. Static observables like `model` may not be present in every
+   target's observable set — relying on them is a hidden coupling.
+3. The constructor surface (`bijection_type`, `fixed_size`,
+   `num_digits`, `digit_delimiter`) is the explicit knob the user
+   already configures per target, mirroring how the paper's authors
+   ran their evaluations.
+
+A model-driven defaults helper is a small, separate concern; can be
+added later as a thin wrapper without changing the core optimizer.
+
 ### Default teaching corpus
 
 Upstream uses Paul Graham essay snippets. We ship a small set of
@@ -199,15 +226,20 @@ tests/
 
 ## Test coverage
 
-61 tests total. Coverage:
+65 tests total. Coverage:
 
 - Letter and digit bijection construction (alphabet completeness,
   fixed-point counts, validation).
 - Letter roundtrip (exact); digit roundtrip with empty delim
   (exact) and with double-space delim (upstream-faithful leaky).
+- Letter decode lowercases its input (upstream-faithful;
+  `test_letter_decode_lowercases_input_matching_upstream`).
 - Encoder corner cases (delimiter only before substituted tokens,
   non-alpha pass-through, lowercasing).
 - Determinism: same seed → same mapping; consecutive draws differ.
+- Default RNG path: module-level `_DEFAULT_RNG` is a real
+  `random.Random` instance; `generate_bijection` without an `rng`
+  argument produces a well-formed bijection.
 - Prompt rendering: intro inclusion, shot count, teaching-corpus
   looping, encoded-query placement, no-leak of plain English goal.
 - Construction validation (invalid attempts, shots, codomain,
@@ -225,3 +257,8 @@ tests/
 - `max_no_signal_runs` blind-loop guard (trigger and reset).
 - End-to-end ChatbotTarget-style integration (system_prompt then
   user_message loop; with and without system_prompt in scope).
+- End-to-end integration against a real
+  `Trajectory(filtered_scope=...).filtered`, emitting a real
+  `ObservableEvent` and confirming the optimizer drains it through
+  the production trajectory plumbing (guards against future drift in
+  `FilteredTrajectory.drain` semantics).

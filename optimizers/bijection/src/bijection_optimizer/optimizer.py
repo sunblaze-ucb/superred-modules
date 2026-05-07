@@ -161,7 +161,12 @@ class BijectionOptimizer(Optimizer):
         self._consecutive_no_signal_runs: int = 0
         self._stop_due_to_no_signal: bool = False
 
-        # Per-run state (reset in _reset_run_state).
+        # Per-run state (reset in _reset_run_state). We hold a local
+        # ``_trajectory`` reference (mirroring GOAT / FlipAttack /
+        # Crescendo / ManyShot) so unit tests can drive ``on_event``
+        # directly without standing up the full ``_dispatch`` /
+        # envelope machinery; the base class's ``_current_trajectory``
+        # would only be set when going through ``_dispatch``.
         self._current_bijection: Bijection | None = None
         self._current_user_message: str = ""
         self._current_system_prompt: str = ""

@@ -19,6 +19,12 @@ from dataclasses import dataclass, field
 
 ALPHABET: str = string.ascii_lowercase
 
+# Default RNG used by ``generate_bijection`` when no ``rng`` is passed.
+# A real ``random.Random`` instance (not the ``random`` module itself)
+# so the parameter type stays ``random.Random | None`` cleanly under
+# strict type-checking.
+_DEFAULT_RNG: random.Random = random.Random()
+
 
 # ---------------------------------------------------------------------------
 # Public type
@@ -76,9 +82,13 @@ class Bijection:
         upstream ``DigitBijectionLanguage._f``.
         """
         if self.codomain == "letter":
-            return "".join(self.mapping.get(c, c) for c in text.lower())
+            return self._encode_letter(text)
+        return self._encode_digit(text)
 
-        # digit codomain
+    def _encode_letter(self, text: str) -> str:
+        return "".join(self.mapping.get(c, c) for c in text.lower())
+
+    def _encode_digit(self, text: str) -> str:
         out_parts: list[str] = []
         for c in text.lower():
             replacement = self.mapping.get(c, c)
@@ -91,13 +101,17 @@ class Bijection:
     def decode(self, text: str) -> str:
         """Invert the bijection on ``text``.
 
-        For ``letter`` codomain: simple character-wise inverse map.
-        For ``digit`` codomain: a verbatim port of the upstream
+        For ``letter`` codomain: lowercases first then inverse-maps
+        char-by-char (upstream's ``permute_string`` is the same
+        function for encode and decode and lowercases unconditionally;
+        we match that exactly so a downstream judge wrapper feeding
+        raw model output through gets the upstream-equivalent text).
+        For ``digit`` codomain: verbatim port of the upstream
         ``permute_digits_to_string`` walker — peel off ``delimiter``
         then ``num_digits`` digits at each potential token boundary.
         """
         if self.codomain == "letter":
-            return "".join(self._inverse.get(c, c) for c in text)
+            return "".join(self._inverse.get(c, c) for c in text.lower())
 
         # digit codomain
         delim = self.delimiter
@@ -204,7 +218,7 @@ def generate_bijection(
             Defaults to the module-level random instance, matching
             upstream behaviour.
     """
-    rng = rng if rng is not None else random
+    rng = rng if rng is not None else _DEFAULT_RNG
     if codomain == "letter":
         mapping = _make_letter_bijection(rng, fixed_size)
         return Bijection(

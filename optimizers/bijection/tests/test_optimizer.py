@@ -34,6 +34,7 @@ from superred.core.types.events import (
 from superred.core.types.goal import Goal
 from superred.core.types.observable import Observable
 from superred.core.types.security_domain import SecurityDomainTag
+from superred.core.types.trajectory import Trajectory
 
 from bijection_optimizer.optimizer import BijectionOptimizer
 from bijection_optimizer.prompts import MULTITURN_INDICATOR
@@ -738,3 +739,38 @@ class TestTargetRunIntegration:
             RunEndEvent(evaluation=_success_eval(), security_domain=USER_TAG),
         )
         assert end.done is True
+
+    @pytest.mark.asyncio
+    async def test_drains_response_through_real_filtered_trajectory(self) -> None:
+        """Wire up an actual ``Trajectory(filtered_scope=...).filtered``
+        and push a real ``ObservableEvent`` through it.
+
+        Other tests use ``_FakeReadableTrajectory`` for focus; this one
+        guards against drift in real ``Trajectory`` / ``FilteredTrajectory``
+        ``emit`` / ``drain`` semantics.
+        """
+        trajectory = Trajectory(filtered_scope=frozenset({RESPONSE_TAG}))
+        opt = await _init_optimizer(max_attempts=2, max_no_signal_runs=0, seed=7)
+
+        await opt.on_event(RunStartEvent(trajectory=trajectory.filtered))
+
+        await opt.on_event(
+            ControllablePreCallEvent(
+                controllable=_user_ctrl(), request="r1",
+            ),
+        )
+
+        trajectory.emit(
+            ObservableEvent(
+                observable=_response_observable(),
+                content="real-filtered response",
+            ),
+        )
+
+        end1 = await opt.on_event(
+            RunEndEvent(evaluation=None, security_domain=USER_TAG),
+        )
+        assert end1.done is False
+        assert opt._consecutive_no_signal_runs == 0
+        # The drain consumed the response; nothing left over.
+        assert trajectory.filtered.drain() == []

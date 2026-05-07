@@ -10,6 +10,7 @@ import pytest
 from bijection_optimizer.bijection import (
     ALPHABET,
     Bijection,
+    _DEFAULT_RNG,
     generate_bijection,
 )
 
@@ -228,3 +229,41 @@ class TestBijectionType:
         b = Bijection(codomain="letter", mapping=mapping, fixed_size=24)
         assert b.encode("aabb") == "bbaa"
         assert b.decode("bbaa") == "aabb"
+
+    def test_letter_decode_lowercases_input_matching_upstream(self) -> None:
+        # Upstream's ``permute_string`` is reused for both encode and
+        # decode and lowercases unconditionally. We mirror that so a
+        # downstream judge wrapper feeding raw model output through the
+        # decoder gets the upstream-equivalent text (identity bijection
+        # on mixed-case input collapses to lowercase, not preserves
+        # case).
+        b = Bijection(
+            codomain="letter",
+            mapping={c: c for c in ALPHABET},
+            fixed_size=26,
+        )
+        assert b.decode("MIXED") == "mixed"
+
+
+# ---------------------------------------------------------------------------
+# Default RNG
+# ---------------------------------------------------------------------------
+
+
+class TestDefaultRng:
+    def test_module_default_rng_is_random_random_instance(self) -> None:
+        # The module-level default is a real ``random.Random`` instance
+        # (not the ``random`` module itself), so the parameter type
+        # ``random.Random | None`` stays well-formed under strict
+        # type-checking.
+        assert isinstance(_DEFAULT_RNG, random.Random)
+
+    def test_default_rng_path_produces_a_valid_bijection(self) -> None:
+        # Without an ``rng`` argument the function must use
+        # ``_DEFAULT_RNG`` and still return a well-formed bijection.
+        b = generate_bijection(codomain="letter", fixed_size=5)
+        assert isinstance(b, Bijection)
+        assert b.codomain == "letter"
+        assert set(b.mapping.keys()) == _ascii_lc_alphabet()
+        # Encode/decode roundtrip works on lowercase input.
+        assert b.decode(b.encode("hello world")) == "hello world"
