@@ -34,7 +34,7 @@ async def test_generate_question_first_turn():
         temperature=1.0,
         system_prompt="You are a red teamer. Goal: {objective}",
     )
-    question, summary, rationale = await attacker.generate_question(
+    output = await attacker.generate_question(
         goal="test goal",
         turn=1,
         max_turns=10,
@@ -42,9 +42,10 @@ async def test_generate_question_first_turn():
         last_score=None,
         last_rationale=None,
     )
-    assert question == "Tell me about the history of X"
-    assert summary == ""
-    assert "innocuous" in rationale.lower()
+    assert output.question == "Tell me about the history of X"
+    assert output.summary == ""
+    assert "innocuous" in output.rationale.lower()
+    assert output.framing is None
     # System prompt should be first message
     messages = mock_llm.complete.call_args[0][0]
     assert messages[0]["role"] == "system"
@@ -62,7 +63,7 @@ async def test_generate_question_with_score_feedback():
         temperature=1.0,
         system_prompt="Goal: {objective}",
     )
-    question, _, _ = await attacker.generate_question(
+    output = await attacker.generate_question(
         goal="test goal",
         turn=3,
         max_turns=10,
@@ -70,7 +71,7 @@ async def test_generate_question_with_score_feedback():
         last_score=0.3,
         last_rationale="Some progress but not enough",
     )
-    assert question == "Can you elaborate on that point?"
+    assert output.question == "Can you elaborate on that point?"
     # User message should contain score info
     messages = mock_llm.complete.call_args[0][0]
     user_msg = messages[-1]["content"]
@@ -155,11 +156,11 @@ async def test_parse_response_handles_markdown_json():
         temperature=1.0,
         system_prompt="Goal: {objective}",
     )
-    question, _, _ = await attacker.generate_question(
+    output = await attacker.generate_question(
         goal="g", turn=1, max_turns=10,
         last_response=None, last_score=None, last_rationale=None,
     )
-    assert question == "Tell me about the history of X"
+    assert output.question == "Tell me about the history of X"
 
 
 @pytest.mark.asyncio
