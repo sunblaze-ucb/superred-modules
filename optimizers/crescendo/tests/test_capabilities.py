@@ -28,7 +28,7 @@ from superred.core.types.goal import Goal
 from superred.core.types.observable import Observable, ObservableValue
 from superred.core.types.security_domain import SecurityDomainTag
 
-from crescendo_optimizer.attacker import AttackerOutput
+from crescendo_optimizer.attacker import AttackerOutput, ReplayPlan, TurnRecord
 from crescendo_optimizer.optimizer import CrescendoOptimizer
 
 
@@ -69,10 +69,11 @@ async def _make_optimizer(
     max_attempts: int = 2,
     max_attempts_per_variant: int = 1,
     success_threshold: float = 0.8,
+    max_backtracks: int = 2,
 ) -> CrescendoOptimizer:
     opt = CrescendoOptimizer(
         max_turns=max_turns,
-        max_backtracks=2,
+        max_backtracks=max_backtracks,
         success_threshold=success_threshold,
         max_attempts=max_attempts,
         max_attempts_per_variant=max_attempts_per_variant,
@@ -369,7 +370,9 @@ async def test_variant_attempt_increments_within_variant():
     assert opt._variant_attempt == 1
     assert len(opt._variant_failure_log) == 1
     assert opt._variant_failure_log[0].attempt_number == 1
-    assert opt._variant_failure_log[0].final_score == 0.2
+    # No refusals in this stub attempt → no first_refused_question recorded
+    assert opt._variant_failure_log[0].first_refused_question is None
+    assert opt._variant_failure_log[0].task_rationale == "judge: refused often"
 
     # New attacker on RunStart receives failure log
     await opt.on_event(_run_start())
@@ -429,9 +432,9 @@ async def test_all_variants_and_attempts_exhausted_signals_done():
 
 
 @pytest.mark.asyncio
-async def test_failure_record_captures_refused_questions():
-    """Refused questions accumulated by attacker.notify_refusal must end up
-    in the FailureRecord on attempt end."""
+async def test_failure_record_captures_first_refused_question():
+    """First refused question + task rationale must end up in the FailureRecord
+    on attempt end. Subsequent refusals are not separately tracked."""
     um = _ctrl("user_message", tag="user")
     opt = await _make_optimizer(
         controllables=[um], observables=[], max_attempts=1, max_attempts_per_variant=2,
@@ -447,8 +450,25 @@ async def test_failure_record_captures_refused_questions():
     )))
 
     record = opt._variant_failure_log[0]
-    assert record.refused_questions == ("Refused Q A", "Refused Q B")
+    assert record.first_refused_question == "Refused Q A"
     assert record.task_rationale == "judge: refused."
+
+
+@pytest.mark.asyncio
+async def test_failure_record_no_refusal_records_none():
+    """If attempt had no refusals, first_refused_question must be None."""
+    um = _ctrl("user_message", tag="user")
+    opt = await _make_optimizer(
+        controllables=[um], observables=[], max_attempts=1, max_attempts_per_variant=2,
+    )
+    await opt.on_event(_run_start())
+    # No notify_refusal calls
+    await opt.on_event(_run_end(EvaluationResult(
+        success=False, primary_score=Score(value=0.0), rationale="judge: not enough.",
+    )))
+    record = opt._variant_failure_log[0]
+    assert record.first_refused_question is None
+    assert record.task_rationale == "judge: not enough."
 
 
 # ── (e) interaction with attacker rendering ───────────────────────────
@@ -473,7 +493,7 @@ async def test_attacker_rendered_prompt_includes_failure_log_on_retry():
     await opt.on_event(_run_start())
     assert opt._attacker._previous_failures
     record = opt._attacker._previous_failures[0]
-    assert "Don't ask this directly" in record.refused_questions
+    assert record.first_refused_question == "Don't ask this directly"
 
     # Render the attacker's system prompt and check the failure log appears
     mock_llm = opt._attacker._llm
@@ -569,3 +589,304 @@ async def test_full_chatbot_flow_no_writable_sp_baseline():
         assert isinstance(um_out, ControllableInjection)
         assert um_out.value == "Q1"
         assert gen.call_args.kwargs["include_framing"] is False
+
+
+# ── Replay-based pseudo-backtrack ─────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_replay_plan_built_from_successful_prefix_when_refusal_occurred():
+    """After a failed attempt with at least one refusal, the optimizer
+    queues a replay plan containing the consecutive successful prefix
+    captured by _process_answer."""
+    um = _ctrl("user_message", tag="user")
+    opt = await _make_optimizer(
+        controllables=[um], observables=[], max_attempts=1, max_attempts_per_variant=2,
+    )
+    await opt.on_event(_run_start())
+
+    # Manually populate the attempt's successful injections (simulate two
+    # turns that scored, before a refusal-then-terminal at turn 3).
+    opt._attempt_injections = [
+        TurnRecord(
+            injected_question="Q1",
+            target_response="A1",
+            score=0.2,
+            rationale="r1",
+        ),
+        TurnRecord(
+            injected_question="Q2",
+            target_response="A2",
+            score=0.5,
+            rationale="r2",
+        ),
+    ]
+    opt._attacker.notify_refusal("Q3 (refused)")
+
+    await opt.on_event(_run_end(EvaluationResult(
+        success=False, primary_score=Score(value=0.5), rationale="too cautious",
+    )))
+
+    # Plan should have moved to pending state.
+    assert opt._pending_replay_plan is not None
+    assert opt._pending_replay_plan.framing is None  # (c) wasn't used here
+    assert len(opt._pending_replay_plan.successful_turns) == 2
+    assert opt._pending_replay_plan.successful_turns[0].injected_question == "Q1"
+    assert opt._pending_replay_plan.successful_turns[1].injected_question == "Q2"
+
+
+@pytest.mark.asyncio
+async def test_replay_plan_not_built_when_no_refusal_occurred():
+    """If the attempt completed without any refusals, no replay plan is
+    queued — the next attempt starts fresh (escalation completed cleanly
+    but task judge said fail; replaying the same prefix would just hit
+    the same task verdict)."""
+    um = _ctrl("user_message", tag="user")
+    opt = await _make_optimizer(
+        controllables=[um], observables=[], max_attempts=1, max_attempts_per_variant=2,
+    )
+    await opt.on_event(_run_start())
+    opt._attempt_injections = [
+        TurnRecord(injected_question="Q1", target_response="A1", score=0.7, rationale="r"),
+    ]
+    # No notify_refusal calls
+
+    await opt.on_event(_run_end(EvaluationResult(
+        success=False, primary_score=Score(value=0.7), rationale="task: not enough",
+    )))
+    assert opt._pending_replay_plan is None
+
+
+@pytest.mark.asyncio
+async def test_replay_consumed_by_next_attempt_state():
+    """At RunStart of the next attempt within a variant, the pending replay
+    plan is consumed: replay queue populated, pending_replay_plan cleared."""
+    um = _ctrl("user_message", tag="user")
+    opt = await _make_optimizer(
+        controllables=[um], observables=[], max_attempts=1, max_attempts_per_variant=2,
+    )
+    await opt.on_event(_run_start())
+    opt._attempt_injections = [
+        TurnRecord(injected_question="Q1", target_response="A1", score=0.4, rationale="r"),
+    ]
+    opt._attacker.notify_refusal("refused-Q2")
+    await opt.on_event(_run_end(EvaluationResult(
+        success=False, primary_score=Score(value=0.4), rationale="r",
+    )))
+    assert opt._pending_replay_plan is not None
+
+    # Next run: plan is consumed, replay queue populated.
+    await opt.on_event(_run_start())
+    assert opt._pending_replay_plan is None
+    assert len(opt._replay_iter) == 1
+    assert opt._replay_iter[0].injected_question == "Q1"
+
+
+@pytest.mark.asyncio
+async def test_replay_injects_cached_questions_without_calling_attacker():
+    """During replay, user_message PreCalls inject cached questions and
+    feedback consumption uses cached scores — no attacker or evaluator
+    calls until the replay queue is exhausted."""
+    um = _ctrl("user_message", tag="user")
+    opt = await _make_optimizer(
+        controllables=[um], observables=[], max_attempts=1,
+        max_attempts_per_variant=2, max_turns=5,
+    )
+    # Stuff a replay plan in directly (skip building it via run_end).
+    opt._pending_replay_plan = ReplayPlan(
+        framing=None,
+        successful_turns=(
+            TurnRecord("cached-Q1", "cached-A1", 0.2, "r1"),
+            TurnRecord("cached-Q2", "cached-A2", 0.4, "r2"),
+        ),
+    )
+    opt._variant_attempt = 1  # second attempt within the variant
+
+    await opt.on_event(_run_start())
+
+    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as gen, \
+         patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as ref, \
+         patch.object(opt._evaluator, "score_response", new_callable=AsyncMock) as score:
+        # Turn 1: replayed, attacker NOT called
+        out1 = await opt.on_event(_pre_call(um))
+        assert isinstance(out1, ControllableInjection)
+        assert out1.value == "cached-Q1"
+        assert gen.call_count == 0
+        assert ref.call_count == 0
+        assert score.call_count == 0
+
+        # Turn 2: replayed, attacker NOT called; feedback for turn 1 also
+        # comes from the cache (no evaluator call).
+        out2 = await opt.on_event(_pre_call(um))
+        assert isinstance(out2, ControllableInjection)
+        assert out2.value == "cached-Q2"
+        assert gen.call_count == 0
+        assert ref.call_count == 0
+        assert score.call_count == 0
+        assert opt._turn == 1
+        assert opt._last_response == "cached-A1"
+        assert opt._last_score == 0.2
+
+        # Turn 3: replay queue empty → attacker IS called now (with last_response
+        # set from the last replayed turn).
+        gen.return_value = AttackerOutput(question="fresh-Q3", summary="", rationale="r")
+        ref.return_value = False
+        score.return_value = (0.6, "progress")
+        out3 = await opt.on_event(_pre_call(um))
+        assert isinstance(out3, ControllableInjection)
+        assert out3.value == "fresh-Q3"
+        assert gen.call_count == 1
+        # Attacker received last_response from cached turn 2
+        assert gen.call_args.kwargs["last_response"] == "cached-A2"
+        assert gen.call_args.kwargs["last_score"] == 0.4
+
+
+@pytest.mark.asyncio
+async def test_replay_carries_forward_into_next_attempts_injection_log():
+    """Replayed turns must end up in the new attempt's _attempt_injections
+    so that a third attempt's replay plan covers the full prefix."""
+    um = _ctrl("user_message", tag="user")
+    opt = await _make_optimizer(
+        controllables=[um], observables=[], max_attempts=1,
+        max_attempts_per_variant=3, max_turns=5,
+    )
+    opt._pending_replay_plan = ReplayPlan(
+        framing=None,
+        successful_turns=(
+            TurnRecord("cached-Q1", "cached-A1", 0.3, "r1"),
+        ),
+    )
+    opt._variant_attempt = 1
+    await opt.on_event(_run_start())
+
+    # Turn 1 replayed
+    await opt.on_event(_pre_call(um))
+    # Turn 2: attacker call, feedback from turn 1 (cached) consumed first
+    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as gen, \
+         patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as ref, \
+         patch.object(opt._evaluator, "score_response", new_callable=AsyncMock) as score:
+        gen.return_value = AttackerOutput(question="fresh-Q2", summary="", rationale="r")
+        ref.return_value = False
+        score.return_value = (0.4, "ok")
+        await opt.on_event(_pre_call(um))
+
+    # The replayed turn was carried into _attempt_injections
+    assert len(opt._attempt_injections) == 1
+    assert opt._attempt_injections[0].injected_question == "cached-Q1"
+
+
+@pytest.mark.asyncio
+async def test_replay_framing_lifted_on_system_prompt_event():
+    """When replay plan carries a framing, the system_prompt PreCall
+    injects it without calling the attacker."""
+    sp = _ctrl("system_prompt", tag="system_prompt")
+    um = _ctrl("user_message", tag="user")
+    opt = await _make_optimizer(controllables=[sp, um], observables=[])
+    opt._pending_replay_plan = ReplayPlan(
+        framing="cached-framing-text",
+        successful_turns=(),
+    )
+    opt._variant_attempt = 1
+    await opt.on_event(_run_start())
+
+    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as gen:
+        sp_out = await opt.on_event(_pre_call(sp))
+        # Framing replayed verbatim, attacker NOT called for framing
+        assert isinstance(sp_out, ControllableInjection)
+        assert sp_out.value == "cached-framing-text"
+        assert gen.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_replay_plan_captures_attempt_framing():
+    """After a (c)-using attempt fails with refusal, the replay plan
+    carries the framing forward."""
+    sp = _ctrl("system_prompt", tag="system_prompt")
+    um = _ctrl("user_message", tag="user")
+    opt = await _make_optimizer(
+        controllables=[sp, um], observables=[],
+        max_attempts=1, max_attempts_per_variant=2,
+    )
+    await opt.on_event(_run_start())
+
+    # Phase 1: framing eagerly injected
+    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as gen:
+        gen.return_value = AttackerOutput(
+            question="Q1", summary="", rationale="r", framing="framing-A",
+        )
+        await opt.on_event(_pre_call(sp))
+
+    # Simulate one successful turn + a refusal
+    opt._attempt_injections = [
+        TurnRecord("Q1", "A1", 0.3, "r"),
+    ]
+    opt._attacker.notify_refusal("refused-Q2")
+
+    await opt.on_event(_run_end(EvaluationResult(
+        success=False, primary_score=Score(value=0.3), rationale="not enough",
+    )))
+
+    assert opt._pending_replay_plan is not None
+    assert opt._pending_replay_plan.framing == "framing-A"
+    assert opt._pending_replay_plan.successful_turns[0].injected_question == "Q1"
+
+
+@pytest.mark.asyncio
+async def test_terminal_refusal_locks_attempt_injections():
+    """Once the within-attempt backtrack budget is exhausted (refusal
+    accepted as turn outcome), subsequent successful turns must not be
+    added to _attempt_injections — replaying past a poisoned turn would
+    desynchronise from the target's actual conversation."""
+    um = _ctrl("user_message", tag="user")
+    opt = await _make_optimizer(
+        controllables=[um], observables=[], max_backtracks=0, max_turns=5,
+    )
+    await opt.on_event(_run_start())
+
+    # Drive one turn through _process_answer that hits backtracks-exhausted
+    # path: backtrack_count is already at the limit (0), so a refusal will
+    # be accepted as the turn outcome.
+    opt._current_question = "Q1"
+    with patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as ref, \
+         patch.object(opt._evaluator, "score_response", new_callable=AsyncMock) as score:
+        ref.return_value = True
+        score.return_value = (0.0, "refused")
+        await opt._process_answer("I can't help with that.")
+
+    assert opt._terminal_refusal_occurred is True
+    assert opt._attempt_injections == []  # nothing recorded for the refused turn
+
+    # A subsequent (a)-path turn must NOT be appended either.
+    opt._current_question = "Q2"
+    with patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as ref, \
+         patch.object(opt._evaluator, "score_response", new_callable=AsyncMock) as score:
+        ref.return_value = False
+        score.return_value = (0.6, "engaged")
+        await opt._process_answer("Some content.")
+    assert opt._attempt_injections == []  # locked
+
+
+@pytest.mark.asyncio
+async def test_variant_rotation_clears_pending_replay_plan():
+    """Replay plan must not leak across variants — variants are siloed."""
+    um = _ctrl("user_message", tag="user")
+    opt = await _make_optimizer(
+        controllables=[um], observables=[],
+        max_attempts=2, max_attempts_per_variant=1,
+    )
+    await opt.on_event(_run_start())
+    opt._attempt_injections = [
+        TurnRecord("Q1", "A1", 0.3, "r"),
+    ]
+    opt._attacker.notify_refusal("refused-Q2")
+
+    await opt.on_event(_run_end(EvaluationResult(
+        success=False, primary_score=Score(value=0.3), rationale="r",
+    )))
+
+    # max_attempts_per_variant=1, so this immediately rotates variant.
+    assert opt._variant_index == 1
+    assert opt._variant_attempt == 0
+    # Replay plan must be cleared on rotation
+    assert opt._pending_replay_plan is None
+    assert opt._variant_failure_log == []

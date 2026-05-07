@@ -94,30 +94,118 @@ into the cross-attempt failure record (see (e)).
 When `event.evaluation` is `None` (controller `include_feedback=False`),
 the internal verdict stands.
 
-### (e) Cross-attempt memory within variant
+### (e) Cross-attempt memory within variant + deterministic replay
 
 Variants stay fully independent (the strategy variant's meta-prompt does
 not change across them, and the attempt counter resets at variant
-rotation), but **within** a variant the optimizer can retry on full
-failure with a failure log fed to the attacker.
+rotation). **Within** a variant the optimizer can retry on failure, and
+when the previous attempt hit a refusal it also restores the target's
+conversation to the state just before the first refusal — equivalent to
+the paper's `pop(H_T)` realised across runs rather than by mutating the
+target mid-run.
 
-State machine:
+#### State machine
+
 - `_variant_index` rotates 0..N-1 across `max_attempts` variants.
 - Within each variant, `_variant_attempt` rotates 0..K-1 across
   `max_attempts_per_variant` attempts.
-- Each failed attempt appends a `FailureRecord` (refused questions
-  collected from the attacker's `notify_refusal` history, final per-turn
-  score, internal rationale, task-judge rationale) to
-  `_variant_failure_log`.
-- New attacker per attempt: receives `previous_failures` and renders them
-  in a `###Previous Attempts in This Approach###` block in its system
-  prompt with instruction "Try a different angle within the same overall
-  approach."
-- On variant rotation, `_variant_failure_log` is cleared so the next
-  variant starts fresh.
+- Each failed attempt appends a lean `FailureRecord` to
+  `_variant_failure_log` and queues a `ReplayPlan` in
+  `_pending_replay_plan` (only when the attempt had at least one
+  refusal — otherwise no plan).
+- On variant rotation, both `_variant_failure_log` and any pending
+  replay plan are cleared.
 
-Default `max_attempts_per_variant=3`. With default `max_attempts=5` (one
-per bundled variant), a task gets up to 15 runs (5 variants × 3 attempts).
+Default `max_attempts_per_variant=3`. With default `max_attempts=5`
+(one per bundled variant), a task gets up to 15 runs (5 variants × 3
+attempts).
+
+#### `FailureRecord` (rendered to the attacker)
+
+Lean — one observation per attempt, no per-turn data:
+- `attempt_number`: 1-indexed within the variant.
+- `first_refused_question`: the first user_message in the attempt that
+  the target refused, or `None` if the attempt completed without any
+  refusals (failure was at the task judge, not at a refusal trip-wire).
+- `task_rationale`: final task-judge rationale, if available.
+
+Rendered as a `###Previous Attempts in This Approach###` block in the
+new attacker's system prompt with the instruction:
+"The target conversation has been restored to the state just before the
+first refusal of the most recent attempt; you are now generating the
+next turn from that point. Pick a different angle than the refused
+message above."
+
+#### `ReplayPlan` (target-state restoration)
+
+The plan captures what to replay deterministically on the next attempt:
+- `framing`: the system_prompt framing from the previous attempt (only
+  when (c) was used; otherwise `None`).
+- `successful_turns: tuple[TurnRecord, ...]`: the consecutive successful
+  prefix from `_attempt_injections`. Each `TurnRecord` is
+  `(injected_question, target_response, score, rationale)` captured
+  inside `_process_answer` on case-(a) success.
+
+Determinism premise: `ChatbotTarget` runs at `temperature=0`, so
+identical (system_prompt, user_message_sequence) yields identical
+responses. Replay reuses cached `target_response`/`score`/`rationale`
+without re-invoking the target evaluator — an LLM-call saving and a
+correctness statement (we trust determinism).
+
+#### Replay flow on a retry attempt
+
+1. `_start_new_attempt` consumes `_pending_replay_plan`, populating
+   `_replay_iter` (FIFO of `TurnRecord`) and `_replay_framing_pending`.
+2. On the system_prompt PreCall (when (c) is in scope): if
+   `_replay_framing_pending` is set, inject it verbatim — no eager
+   attacker call. Q1 caching does not apply.
+3. On each user_message PreCall while `_replay_iter` is non-empty: pop
+   the next `TurnRecord`, inject its `injected_question`, store the
+   record in `_pending_replay_record`. Trajectory drained but discarded.
+4. On the next user_message PreCall (consume previous turn): if
+   `_pending_replay_record` is set, set `_last_response/_last_score/_last_rationale`
+   from the cache, advance `_turn`, append the record into the new
+   attempt's own `_attempt_injections` (so a third attempt can replay
+   the full prefix again), skip the evaluator entirely.
+5. When `_replay_iter` is exhausted: subsequent user_message PreCalls
+   fall through to the normal attacker-driven flow. The attacker is the
+   fresh per-attempt instance (with the failure log in its system
+   prompt) and conditions on `last_response = last_replayed_turn.target_response`
+   to choose a different angle from that point onward.
+
+#### Terminal-refusal lock
+
+`_process_answer` distinguishes (a) clean non-refusal and (b)
+refusal-accepted-because-backtracks-exhausted. Case (b) sets
+`_terminal_refusal_occurred = True` and is excluded from
+`_attempt_injections` (the refused turn cannot be replayed). Subsequent
+case-(a) turns within the same attempt are also locked out — their
+target context depends on the accepted refusal staying in the live
+target's history, which our replay model can't reproduce.
+
+#### Plan-not-built cases
+
+- Attempt completed without any refusals → `_pending_replay_plan = None`.
+  The next attempt starts fresh (replaying the same prefix would just
+  hit the same task-judge verdict).
+- Variant rotation → plan cleared. New variant gets a clean attacker
+  with a different meta-prompt.
+
+### Departure from paper Algorithm 1
+
+Paper Crescendomation does its `pop(H_T)` *within* a single run by
+deleting the refused entry from the target's conversation history. The
+framework today does not expose a controllable that lets the optimizer
+rewind a live target. The replay mechanism above achieves the same
+behavioural outcome (next attacker turn extends the same successful
+prefix without the refused entry) by starting a new run with a
+deterministic prefix replay.
+
+Within-attempt notify-and-retry on refusal (max `max_backtracks` times
+before accepting the refusal as a turn outcome) is unchanged. It still
+operates on the attacker side only — the target keeps the refusal in
+its history within an attempt — but the cross-attempt replay restores
+the desired state on the next attempt.
 
 ### Response modification (NOT used)
 
@@ -145,10 +233,12 @@ then returns NoInjection to terminate the target's loop.
 
 **Departure from paper/PyRIT:** This implementation rotates through
 prompt variants across attempts AND retries multiple attempts per variant
-with cross-attempt failure-log memory (see (e)). PyRIT selects a single
+with deterministic-prefix replay (see (e)). PyRIT selects a single
 variant at construction time with no rotation; the paper does not define
-cross-attempt behavior. Each "attempt" within a variant is otherwise a
-fully independent attack with reset per-attempt state.
+cross-attempt behavior. Each "attempt" within a variant is independent
+on the attacker side (fresh attacker LLM, fresh conversation history)
+but the target's conversation state is restored via replay before the
+attacker takes over.
 
 ## Crescendo Scoring Format
 
@@ -163,19 +253,23 @@ If attacker generation fails, Crescendo falls back to a conservative
 high-level, neutral prompt (instead of restating the adversarial goal
 directly) to reduce abrupt escalation and refusal risk.
 
-## Crescendo Backtracking Limitation
+## Backtracking — within-attempt vs cross-attempt
 
-**Departure from paper/PyRIT:** On refusal, this implementation can
-notify the attacker and retry, but cannot remove the refused turn from
-the already-sent target conversation state. Paper Algorithm 1 and PyRIT's
-memory-backed flow model an explicit target-history pop/backtrack step.
-The framework today does not expose a controllable that lets the
-optimizer rewind a target's conversation; supporting paper-faithful
-backtracking would require either a new "rewind" controllable on
-`ChatbotTarget` or modelling each Crescendo turn as a separate run with
-explicit conversation state in `ConfigSpec`. This is a separate ticket.
+Two separate mechanisms cooperate to recover from refusals:
 
-The within-attempt backtracking budget is still tracked (notify-and-retry
-up to `max_backtracks` times before accepting the refusal as the turn
-outcome), but the retries change only the attacker's view, not the
-target's history.
+**Within-attempt** (notify-and-retry, up to `max_backtracks`): on
+refusal detection the attacker is told the question was rejected and
+asked to generate a different one without advancing the turn counter.
+The target keeps the refusal in its live history during these retries;
+the attacker side accumulates "do not repeat this" context. After
+`max_backtracks`, the refusal is accepted as the turn outcome and the
+turn advances (case (b) in `_process_answer`), which sets the terminal
+refusal lock.
+
+**Cross-attempt** (deterministic replay; see (e)): when an attempt ends
+with refusals having occurred, the next attempt within the same
+variant starts a *new* run that replays the consecutive successful
+prefix on the (temperature=0) target. After replay, the new attacker
+extends from the restored state with knowledge of the prior failure,
+choosing a different angle. This is the across-runs realisation of
+paper Algorithm 1's `pop(H_T)`.

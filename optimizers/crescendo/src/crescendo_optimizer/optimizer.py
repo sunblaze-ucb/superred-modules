@@ -22,7 +22,13 @@ from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
 from superred.core.types.trajectory import ReadableTrajectory
 
-from crescendo_optimizer.attacker import Attacker, AttackerOutput, FailureRecord
+from crescendo_optimizer.attacker import (
+    Attacker,
+    AttackerOutput,
+    FailureRecord,
+    ReplayPlan,
+    TurnRecord,
+)
 from crescendo_optimizer.evaluator import Evaluator
 from crescendo_optimizer.prompts import get_variant, get_variant_count
 
@@ -62,9 +68,14 @@ class CrescendoOptimizer(Optimizer):
         - Reads ``RunEndEvent.evaluation`` if present and treats the task
           judge's verdict as authoritative for ``success``; logs divergence.
         - Within a variant, retries failed attempts up to
-          ``max_attempts_per_variant`` times, feeding refused questions and
-          the prior task-judge rationale into the attacker. Variants stay
-          fully independent (failure log resets on rotation).
+          ``max_attempts_per_variant`` times. Each retry receives a lean
+          failure log (first refused message + task rationale) and, when
+          the previous attempt hit a terminal refusal, replays the
+          successful prefix on a temperature=0 target so the new attempt
+          generates a different next turn from the same conversation
+          state — equivalent to the paper's ``pop(H_T)`` realised across
+          runs. Variants stay fully independent (failure log and replay
+          plan reset on rotation).
         - Ignores ``response`` controllable injections (no response
           modification by design).
     """
@@ -115,10 +126,26 @@ class CrescendoOptimizer(Optimizer):
         self._pending_q1: str | None = None
         self._system_prompt_event_handled: bool = False
 
+        # Replay/restoration state (per-attempt scope; reset by _start_new_attempt).
+        # _attempt_injections accumulates this attempt's successful turns for use
+        # in the next attempt's replay plan.
+        # _attempt_framing captures the system_prompt framing this attempt set
+        # (whether freshly generated or replayed) so it can be reused.
+        # _terminal_refusal_occurred locks _attempt_injections once a refusal
+        # exhausted the within-attempt backtrack budget — turns past that point
+        # depend on poisoned target context and must not be replayed.
+        self._attempt_injections: list[TurnRecord] = []
+        self._attempt_framing: str | None = None
+        self._terminal_refusal_occurred: bool = False
+        self._replay_iter: list[TurnRecord] = []
+        self._replay_framing_pending: str | None = None
+        self._pending_replay_record: TurnRecord | None = None
+
         # Variant-level state (reset on variant rotation; preserved across
         # attempts within the same variant)
         self._variant_attempt: int = 0
         self._variant_failure_log: list[FailureRecord] = []
+        self._pending_replay_plan: ReplayPlan | None = None
 
         # Cross-variant state
         self._variant_index: int = 0
@@ -193,8 +220,11 @@ class CrescendoOptimizer(Optimizer):
         """Phase-1 system_prompt PreCall (ChatbotTarget-style targets).
 
         Lifts the attacker's pretext/framing into the target's system prompt
-        when writable in scope. Eagerly generates the framing-and-Q1 pair so
-        Q1 can be cached for the immediately-following user_message event.
+        when writable in scope. On a replayed attempt, the framing from the
+        previous attempt is reused verbatim (so the deterministic prefix
+        replay produces the same target conversation state). Otherwise the
+        framing-and-Q1 pair is generated eagerly so Q1 can be cached for
+        the immediately-following user_message event.
         """
         # Only act on the first system_prompt event of an attempt and only if
         # writable in scope (presence of writable controllable is the signal).
@@ -202,6 +232,21 @@ class CrescendoOptimizer(Optimizer):
             return ControllableNoInjection(event=event, controllable=event.controllable)
 
         self._system_prompt_event_handled = True
+
+        # Replay path: reuse the framing from the previous attempt.
+        if self._replay_framing_pending is not None:
+            framing = self._replay_framing_pending
+            self._replay_framing_pending = None
+            self._attempt_framing = framing
+            logger.info(
+                "Crescendo: replayed framing on system prompt (variant %d attempt %d)",
+                self._variant_index, self._variant_attempt + 1,
+            )
+            return ControllableInjection(
+                event=event,
+                controllable=event.controllable,
+                value=framing,
+            )
 
         try:
             output = await self._attacker_generate(turn=1, include_framing=True)
@@ -221,10 +266,12 @@ class CrescendoOptimizer(Optimizer):
             return ControllableNoInjection(event=event, controllable=event.controllable)
 
         self._pending_q1 = output.question
+        self._attempt_framing = output.framing
         logger.info(
-            "Crescendo: framing lifted to system prompt (attempt %d/%d, variant %d)",
-            self._variant_attempt + 1, self._max_attempts_per_variant,
+            "Crescendo: framing lifted to system prompt (variant %d attempt %d/%d)",
             self._variant_index,
+            self._variant_attempt + 1,
+            self._max_attempts_per_variant,
         )
         return ControllableInjection(
             event=event,
@@ -259,8 +306,22 @@ class CrescendoOptimizer(Optimizer):
                 self._attempt_done = True
                 return ControllableNoInjection(event=event, controllable=event.controllable)
 
+        # Replay path: pop the next cached turn record. The injected question
+        # is the same one the previous attempt sent at this turn; the cached
+        # response/score will be used on the next consume_pending_feedback.
+        if self._replay_iter:
+            replay_record = self._replay_iter.pop(0)
+            question = replay_record.injected_question
+            self._pending_replay_record = replay_record
+            logger.info(
+                "Crescendo: replaying turn %d (variant %d attempt %d, %d cached turns left)",
+                self._turn + 1,
+                self._variant_index,
+                self._variant_attempt + 1,
+                len(self._replay_iter),
+            )
         # If we eagerly generated Q1 alongside the framing, use it now.
-        if self._pending_q1 is not None and self._turn == 0:
+        elif self._pending_q1 is not None and self._turn == 0:
             question = self._pending_q1
             self._pending_q1 = None
         else:
@@ -352,22 +413,51 @@ class CrescendoOptimizer(Optimizer):
             return RunEndResponse(event=event, done=True)
 
         # Record this failed attempt for cross-attempt-within-variant memory.
-        record = FailureRecord(
-            attempt_number=self._variant_attempt + 1,
-            refused_questions=(
-                self._attacker.refused_questions if self._attacker is not None else ()
-            ),
-            final_score=self._last_score if self._last_score is not None else 0.0,
-            final_rationale=self._last_rationale or "",
-            task_rationale=task_rationale,
+        first_refused = (
+            self._attacker.refused_questions[0]
+            if self._attacker is not None and self._attacker.refused_questions
+            else None
         )
-        self._variant_failure_log.append(record)
+        self._variant_failure_log.append(FailureRecord(
+            attempt_number=self._variant_attempt + 1,
+            first_refused_question=first_refused,
+            task_rationale=task_rationale,
+        ))
+
+        # Build a replay plan for the next attempt only when this attempt hit
+        # at least one refusal. Without a refusal there is no failure point
+        # to skip past — replaying the whole conversation would just hit the
+        # same task-judge verdict — so the next attempt starts fresh.
+        # The plan captures the consecutive successful prefix; turns after a
+        # terminal refusal were excluded by _process_answer.
+        had_refusal = (
+            self._attacker is not None and bool(self._attacker.refused_questions)
+        )
+        if had_refusal and self._attempt_injections:
+            self._pending_replay_plan = ReplayPlan(
+                framing=self._attempt_framing,
+                successful_turns=tuple(self._attempt_injections),
+            )
+            logger.info(
+                "Crescendo: queued replay plan (%d cached turns) for next attempt",
+                len(self._attempt_injections),
+            )
+        elif had_refusal and not self._attempt_injections:
+            # First turn was the first refusal — no successful prefix to
+            # replay, but the framing (if any) is still worth reusing so the
+            # target context is identical when the new attempt restarts.
+            self._pending_replay_plan = ReplayPlan(
+                framing=self._attempt_framing,
+                successful_turns=(),
+            )
+        else:
+            self._pending_replay_plan = None
 
         # Decide: another attempt within this variant, or rotate to next variant.
         if self._variant_attempt + 1 < self._max_attempts_per_variant:
             self._variant_attempt += 1
             logger.info(
-                "Crescendo: variant %d failed attempt %d/%d, retrying with failure log",
+                "Crescendo: variant %d failed attempt %d/%d, retrying",
                 self._variant_index, self._variant_attempt, self._max_attempts_per_variant,
             )
             return RunEndResponse(event=event, done=False)
@@ -377,6 +467,7 @@ class CrescendoOptimizer(Optimizer):
             self._variant_index += 1
             self._variant_attempt = 0
             self._variant_failure_log = []
+            self._pending_replay_plan = None
             logger.info("Crescendo: rotating to variant %d", self._variant_index)
             return RunEndResponse(event=event, done=False)
 
@@ -392,9 +483,10 @@ class CrescendoOptimizer(Optimizer):
         """Reset per-attempt state and create a fresh attacker.
 
         Variant-level state (_variant_index, _variant_attempt,
-        _variant_failure_log) is preserved across calls. Capabilities
-        (target_model_id, target_system_prompt, can_write_system_prompt)
-        flow into the attacker.
+        _variant_failure_log, _pending_replay_plan) is preserved across
+        calls. Capabilities (target_model_id, target_system_prompt,
+        can_write_system_prompt) flow into the attacker. If a replay plan
+        from the previous attempt is pending, it is consumed here.
         """
         variant = get_variant(self._variant_index)
         self._attacker = Attacker(
@@ -422,6 +514,26 @@ class CrescendoOptimizer(Optimizer):
         self._pending_q1 = None
         self._system_prompt_event_handled = False
 
+        # Replay/restoration state — fresh by default, overridden if a
+        # replay plan is pending from the previous attempt.
+        self._attempt_injections = []
+        self._attempt_framing = None
+        self._terminal_refusal_occurred = False
+        self._pending_replay_record = None
+        if self._pending_replay_plan is not None:
+            self._replay_iter = list(self._pending_replay_plan.successful_turns)
+            self._replay_framing_pending = self._pending_replay_plan.framing
+            logger.info(
+                "Crescendo: replaying %d-turn prefix for variant %d attempt %d",
+                len(self._replay_iter),
+                self._variant_index,
+                self._variant_attempt + 1,
+            )
+            self._pending_replay_plan = None
+        else:
+            self._replay_iter = []
+            self._replay_framing_pending = None
+
     async def _attacker_generate(
         self, *, turn: int, include_framing: bool,
     ) -> AttackerOutput:
@@ -439,7 +551,43 @@ class CrescendoOptimizer(Optimizer):
         )
 
     async def _consume_pending_feedback(self) -> None:
-        """Resolve the previous turn's response (trajectory > post-call > none)."""
+        """Resolve the previous turn's response.
+
+        Replay path: a cached :class:`TurnRecord` is pending; trust the
+        captured response/score (target is deterministic at temperature 0)
+        and skip the evaluator. Trajectory is drained anyway to keep state
+        clean.
+
+        Normal path: prefer trajectory observable > paired post-call >
+        synthesised no-feedback turn, then run the internal evaluator.
+        """
+        if self._pending_replay_record is not None:
+            record = self._pending_replay_record
+            self._pending_replay_record = None
+            # Drain trajectory entries that arrived during the replayed turn —
+            # they're not needed (we trust the cached response) but mustn't
+            # accumulate into the next non-replay turn's drain.
+            self._get_response_from_trajectory()
+            self._last_response = record.target_response
+            self._last_score = record.score
+            self._last_rationale = record.rationale
+            self._turn += 1
+            # Carry the replayed turn forward into this attempt's injection
+            # log, so a subsequent attempt can replay the full prefix again.
+            if not self._terminal_refusal_occurred:
+                self._attempt_injections.append(record)
+            self._awaiting_post_call = False
+            self._current_pre_request = None
+            self._current_injected_value = None
+            self._pending_post_answer = None
+            logger.info(
+                "Crescendo: replayed turn %d (cached score %.2f)",
+                self._turn, record.score,
+            )
+            if self._turn >= self._max_turns:
+                self._attempt_done = True
+            return
+
         recovered = self._get_response_from_trajectory()
         if recovered is not None:
             await self._process_answer(recovered)
@@ -529,6 +677,26 @@ class CrescendoOptimizer(Optimizer):
         self._last_score = score
         self._last_rationale = rationale
         self._turn += 1
+
+        # Distinguish (a) clean non-refusal turn from (b) refusal accepted
+        # because backtracks were exhausted. Only (a) is replay-safe; (b)
+        # locks _attempt_injections so subsequent successful turns can't be
+        # included in the replay plan (their context depends on the
+        # accepted refusal staying in target history).
+        if is_refusal:
+            self._terminal_refusal_occurred = True
+            logger.info(
+                "Crescendo: backtracks exhausted; refusal accepted at turn %d "
+                "(no further turns will be replay-eligible)",
+                self._turn,
+            )
+        elif not self._terminal_refusal_occurred and self._current_question is not None:
+            self._attempt_injections.append(TurnRecord(
+                injected_question=self._current_question,
+                target_response=answer,
+                score=score,
+                rationale=rationale,
+            ))
 
         logger.info("Crescendo: turn %d scored %.2f", self._turn, score)
 
