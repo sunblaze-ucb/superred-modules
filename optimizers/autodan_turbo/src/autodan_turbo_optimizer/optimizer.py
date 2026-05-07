@@ -69,6 +69,14 @@ _SYSTEM_PROMPT_NAME = "system_prompt"
 
 _REFUSAL_MARKERS: tuple[str, ...] = ("I cannot", "I am unable", "I can't")
 
+# Paper seeds the previous-attempt slot per request with score=1.0 and
+# a placeholder refusal as the previous response, so the first scored
+# attempt can already populate the library when the attacker beats the
+# raw-goal baseline. Verbatim port of the seed values from upstream
+# ``pipeline.lifelong_redteaming``.
+_SEEDED_PREV_SCORE: float = 1.0
+_SEEDED_PREV_RESPONSE: str = "Sorry, I cannot help you with that."
+
 
 class AutoDANTurboOptimizer(Optimizer):
     """Lifelong-strategy jailbreak optimizer.
@@ -84,7 +92,8 @@ class AutoDANTurboOptimizer(Optimizer):
         summarizer_temperature: Temperature for summarizer LLM. Paper:
             0.6.
         top_k_strategies: Cap on strategies passed to the attacker
-            during ``use_strategy`` / ``find_new_strategy``.
+            during ``use_strategy`` / ``find_new_strategy``. Default
+            5 matches upstream ``Retrieval.pop`` (``k=5``).
         response_observable_names: Names recognised as target replies
             on the trajectory (defaults to the same set as Crescendo
             / GEPA / GOAT / Bijection).
@@ -103,7 +112,7 @@ class AutoDANTurboOptimizer(Optimizer):
         attacker_temperature: float = 1.0,
         scorer_temperature: float = 0.7,
         summarizer_temperature: float = 0.6,
-        top_k_strategies: int = 1,
+        top_k_strategies: int = 5,
         response_observable_names: Iterable[str] | None = None,
         target_controllable_name: str | None = None,
         max_no_signal_runs: int = 0,
@@ -137,14 +146,16 @@ class AutoDANTurboOptimizer(Optimizer):
         self._scorer: Scorer | None = None
         self._summarizer: Summarizer | None = None
 
-        # Cross-run state.
+        # Cross-run state. Seeded in initialize() per upstream
+        # pipeline so the first scored attempt can populate the
+        # library when it beats the raw-goal baseline.
         self._attempt: int = 0
         self._succeeded: bool = False
         self._consecutive_no_signal_runs: int = 0
         self._stop_due_to_no_signal: bool = False
         self._prev_prompt: str | None = None
         self._prev_response: str | None = None
-        self._prev_score: float = 1.0  # Paper's "refused" floor.
+        self._prev_score: float = _SEEDED_PREV_SCORE
 
         # Per-run state (reset in _reset_run_state).
         self._current_prompt: str = ""
@@ -184,9 +195,14 @@ class AutoDANTurboOptimizer(Optimizer):
         self._succeeded = False
         self._consecutive_no_signal_runs = 0
         self._stop_due_to_no_signal = False
-        self._prev_prompt = None
-        self._prev_response = None
-        self._prev_score = 1.0
+        # Seed the previous-attempt slot with the raw goal as the
+        # baseline weak prompt and a placeholder refusal response at
+        # score=1.0 (upstream's per-request seed). The first scored
+        # attempt that beats 1.0 will summarise (raw goal as weak vs
+        # attacker output as strong) and seed the library on epoch 0.
+        self._prev_prompt = goal.description
+        self._prev_response = _SEEDED_PREV_RESPONSE
+        self._prev_score = _SEEDED_PREV_SCORE
         self._reset_run_state()
 
     async def teardown(self) -> None:
@@ -384,30 +400,29 @@ class AutoDANTurboOptimizer(Optimizer):
         self._pending_post_answer = None
 
     async def _prepare_attempt(self) -> None:
-        """Pick attacker mode and render this run's jailbreak prompt."""
+        """Pick attacker mode and render this run's jailbreak prompt.
+
+        ``_prev_*`` are seeded in ``initialize`` per upstream, so the
+        attacker mode is driven entirely by retrieval: an empty
+        library (epoch 0, or settings 1/2 where responses never
+        arrive and the library never grows) collapses to ``warm_up``;
+        once the library has entries, retrieval picks
+        ``use_strategy`` / ``find_new_strategy``.
+        """
         assert self._goal is not None
         assert self._attacker is not None
         assert self._library is not None
         request = self._goal.description
 
-        is_first_attempt = self._prev_prompt is None
-        no_response_seen = self._prev_response is None
-
-        # First epoch OR no usable feedback from prior runs → cold start.
-        if is_first_attempt or no_response_seen:
+        valid, strategies = self._library.retrieve(k=self._top_k)
+        if not strategies:
             prompt = await self._attacker.warm_up(request)
+        elif valid:
+            prompt = await self._attacker.use_strategy(request, strategies)
         else:
-            valid, strategies = self._library.retrieve(k=self._top_k)
-            if not strategies:
-                prompt = await self._attacker.warm_up(request)
-            elif valid:
-                prompt = await self._attacker.use_strategy(
-                    request, strategies,
-                )
-            else:
-                prompt = await self._attacker.find_new_strategy(
-                    request, strategies,
-                )
+            prompt = await self._attacker.find_new_strategy(
+                request, strategies,
+            )
 
         # Refusal filter (paper fallback): if the attacker refused,
         # use the raw goal as the jailbreak prompt.

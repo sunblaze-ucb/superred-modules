@@ -18,10 +18,10 @@ jailbreak optimizer.
 
 Per epoch on a fixed malicious request `M`:
 
-1. **Attack generation** — pick attacker mode based on what was
-   observed last epoch:
-   - first epoch (or no prior response visible) → cold
-     `warm_up_attack`
+1. **Attack generation** — pick attacker mode by score-based
+   retrieval against the strategy library:
+   - empty library (epoch 0, or settings 1/2 where the library
+     never grows) → cold `warm_up_attack`
    - retrieval finds high/medium-score strategies (avg ≥ 2.0) →
      `use_strategy(strategies)` with the best examples
    - retrieval finds only low-score strategies (avg < 2.0) →
@@ -101,9 +101,27 @@ behaviour is determined by what the framework makes visible.
 - **Cold-start fallback in the lifelong path** — when retrieval
   returns no strategies (empty library), the attacker uses
   `warm_up`. Matches upstream `pipeline.py::lifelong_redteaming`.
+- **Per-request seed** — `prev_jailbreak_prompt = request`,
+  `prev_target_response = "Sorry, I cannot help you with that."`,
+  `prev_score = 1.0`. Verbatim from upstream
+  `pipeline.lifelong_redteaming` and required for the *first*
+  scored attempt to populate the library when it beats the
+  raw-goal baseline. Pinned by
+  `test_initialize_seeds_prev_state_per_upstream` and
+  `test_run_zero_summarizes_when_score_beats_seeded_floor`.
+- **Tag-extraction fallback to bare goal** — when the attacker
+  output omits `[END OF JAILBREAK PROMPT]`,
+  `_extract_jailbreak_prompt` returns the bare `request` (raw
+  goal), exactly as upstream `Attacker.wrapper` does. A rambling
+  attacker that never closed the tag does *not* ship its rambling
+  to the target. Pinned by
+  `test_falls_back_to_request_when_no_end_tag` and
+  `test_falls_back_to_request_on_empty_output`.
 - **Default temperatures** — attacker 1.0, scorer 0.7, summarizer
   0.6 (paper / run-script values).
 - **Default `break_score = 8.5`** — paper / run-script.
+- **Default `top_k_strategies = 5`** — matches upstream
+  `Retrieval.pop` default `k=5`.
 
 ## Deliberate departures
 
@@ -178,7 +196,56 @@ optimisers operate on one `Goal`. The optimiser keeps `prev_prompt /
 prev_response / prev_score` per Goal — exactly the per-request state
 upstream maintains inside the lifelong loop.
 
-### 6. Default `max_attempts = 10` (vs paper's 150 for batch experiments)
+### 6. Observables and `system_prompt_readable` are not consumed in v1
+
+`initialize()` accepts `observables` for ABC symmetry but never
+reads them, and the `system_prompt` `ControllablePreCallEvent`'s
+`event.request` (which carries the current prompt content in
+`chatbot_target` and similar) is skipped by name without being
+read. So in scopes that grant `system_prompt_readable`, the
+attacker remains *blind* to the prompt it's trying to bypass —
+the paper's attacker is goal-only and we mirror that exactly.
+
+This is defensible against the paper but leaves capability on the
+table for the readable-system-prompt threat model. A "read the
+exposed system prompt and feed it to the attacker as side-info"
+extension can be added later without touching the state machine
+(would slot into `_prepare_attempt`'s prompt assembly), and is
+explicitly out of scope for v1. Same goes for using static
+`model` observables to pick attacker temperature / strategy bias
+per target.
+
+### 7. System-prompt write access is not exploited when exposed
+
+When the controller's scope grants write access to
+`system_prompt`, the optimizer's default skip on the
+`system_prompt` PreCall still fires; only `user_message` carries
+the jailbreak. The `target_controllable_name="system_prompt"`
+override flips which surface is used, never combines them.
+
+The paper's attacker emits a *single* jailbreak prompt; combining
+a system-prompt override with a user-message attack is a design
+extension, not a paper feature. We mirror upstream exactly.
+Callers wanting both surfaces hit can wire two optimizers (one
+per controllable) at the controller level, or extend
+`AutoDANTurboOptimizer` to render two complementary prompts.
+
+### 8. Holding `_prev_prompt` / `_prev_response` / `_prev_score` instead of reading from `past_trajectories`
+
+The base `Optimizer` already exposes `past_trajectories` via
+`_dispatch`. We deliberately keep the three `_prev_*` fields
+because (a) `_prev_score` is the scorer LLM's output and is *not*
+on the trajectory at all; recomputing it from past responses
+would mean re-running the scorer LLM each epoch; (b) `_prev_prompt`
+is the optimizer-side jailbreak the attacker emitted, which lives
+inside the `ControllablePreCallEvent` ↔ `ControllableInjection`
+pair on the trajectory but is much cheaper to keep in three
+flat fields than to re-scan the full trajectory each epoch;
+(c) the per-Goal seed in `initialize()` would still need
+explicit storage anyway. The duplication is intentional and
+load-bearing.
+
+### 9. Default `max_attempts = 10` (vs paper's 150 for batch experiments)
 
 The paper budgets 150 epochs per request for a batch experiment with
 a strategy library being progressively built across 50 requests.
@@ -196,7 +263,7 @@ experiments.
 | `attacker_temperature` | `1.0` | paper |
 | `scorer_temperature` | `0.7` | paper |
 | `summarizer_temperature` | `0.6` | paper |
-| `top_k_strategies` | `1` | retrieval cap |
+| `top_k_strategies` | `5` | matches upstream `Retrieval.pop` default `k=5` |
 | `response_observable_names` | `{"response","model_response","assistant_response"}` | matches Crescendo / GEPA / GOAT / Bijection |
 | `target_controllable_name` | `None` | optional named-controllable override |
 | `max_no_signal_runs` | `0` (disabled) | blind-loop guard |
@@ -212,22 +279,24 @@ src/autodan_turbo_optimizer/
   library.py           # StrategyLibrary.add / retrieve / all
   optimizer.py         # AutoDANTurboOptimizer event-state machine
 tests/
-  test_attacker.py     # 12 tests — three modes + tag extraction
+  test_attacker.py     # 13 tests — three modes + tag extraction (incl. fallback)
   test_scorer.py       # 12 tests — parser + LLM-driver
   test_summarizer.py   # 11 tests — parser + LLM-driver
   test_library.py      # 14 tests — add + 3-tier retrieval
-  test_optimizer.py    # 31 tests — state machine + 4 settings + e2e
+  test_optimizer.py    # 33 tests — state machine + 4 settings + e2e
 ```
 
 ## Test coverage
 
-80 tests total. Coverage:
+83 tests total. Coverage:
 
 - **Library**: add / merge / retrieve at each of the three score
   tiers; empty-library, k-cap, score-strip behaviour.
 - **Attacker**: warm-up / use-strategy (single + multi) /
   find-new-strategy system-prompt rendering; START/END tag
-  extraction; empty-strategy fall-through.
+  extraction; empty-strategy fall-through; raw-`request` fallback
+  when the END tag is missing or output is empty (matches
+  upstream `Attacker.wrapper`).
 - **Scorer**: keyword-anchored / fall-through / clamped score parsing;
   request and response embedding; temperature passthrough.
 - **Summarizer**: inline-object / fenced-block / escaped-string
@@ -239,4 +308,7 @@ tests/
   fallback to raw goal; library-update gating on score improvement;
   summarizer-`None` skip; break-score early-stop; external eval
   early-stop; failure eval continues; all four adversarial settings;
-  `max_no_signal_runs`; ChatbotTarget-style end-to-end.
+  `max_no_signal_runs`; ChatbotTarget-style end-to-end; upstream
+  per-request `prev_*` seeding (`prev_score=1.0`,
+  `prev_prompt=goal`, `prev_response="Sorry, ..."`) and run-zero
+  library population when score beats the seeded floor.

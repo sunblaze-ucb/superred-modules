@@ -131,9 +131,10 @@ def _parse_strategy(text: str) -> StrategyDescriptor | None:
 def _decode_json_string(raw: str) -> str:
     """Turn a regex-captured JSON string body into the actual text."""
     try:
-        return json.loads(f'"{raw}"')
+        decoded = json.loads(f'"{raw}"')
     except json.JSONDecodeError:
         return raw.strip()
+    return str(decoded)
 
 
 _FENCED_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)

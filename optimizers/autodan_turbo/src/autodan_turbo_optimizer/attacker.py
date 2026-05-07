@@ -12,11 +12,11 @@ upstream ``framework/attacker.py``:
 
 Upstream parses the response by extracting text between
 ``[START OF JAILBREAK PROMPT]`` and ``[END OF JAILBREAK PROMPT]``
-tags. We do the same; on failure we return the raw model text. The
-optimizer applies an additional refusal filter
-(``I cannot`` / ``I am unable`` / ``I can't``) and falls back to the
-raw goal — that's also upstream behaviour, kept at the optimizer
-level so the attacker is purely a prompt-renderer.
+tags. We do the same; on failure we fall back to the bare ``request``
+(the raw goal) — same as upstream ``Attacker.wrapper``, so a
+rambling attacker that never closed the tag never ships its
+rambling to the target. The optimizer applies an additional refusal
+filter (``I cannot`` / ``I am unable`` / ``I can't``) on top.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ class Attacker:
 
     async def warm_up(self, request: str) -> str:
         system = self._warm_up_system(request)
-        return await self._call(system)
+        return await self._call(system, request)
 
     async def use_strategy(
         self, request: str, strategies: list[dict[str, Any]],
@@ -58,7 +58,7 @@ class Attacker:
         if not strategies:
             return await self.warm_up(request)
         system = self._use_strategy_system(request, strategies)
-        return await self._call(system)
+        return await self._call(system, request)
 
     async def find_new_strategy(
         self, request: str, strategies: list[dict[str, Any]],
@@ -66,7 +66,7 @@ class Attacker:
         if not strategies:
             return await self.warm_up(request)
         system = self._find_new_strategy_system(request, strategies)
-        return await self._call(system)
+        return await self._call(system, request)
 
     # ------------------------------------------------------------------
     # System-prompt rendering (verbatim from upstream)
@@ -158,7 +158,7 @@ Please present your jailbreak prompt enclosed between {_START_TAG} and {_END_TAG
     # LLM call + response parsing
     # ------------------------------------------------------------------
 
-    async def _call(self, system_prompt: str) -> str:
+    async def _call(self, system_prompt: str, request: str) -> str:
         messages = [
             {"role": "system", "content": system_prompt},
             {
@@ -173,18 +173,20 @@ Please present your jailbreak prompt enclosed between {_START_TAG} and {_END_TAG
             messages, temperature=self._temperature,
         )
         content = response.choices[0].message.content or ""
-        return _extract_jailbreak_prompt(content)
+        return _extract_jailbreak_prompt(content, request)
 
 
-def _extract_jailbreak_prompt(text: str) -> str:
+def _extract_jailbreak_prompt(text: str, request: str) -> str:
     """Return the substring between the START / END tags.
 
     Mirrors upstream ``Attacker.wrapper``: returns the substring before
     ``[END OF JAILBREAK PROMPT]`` (after the START tag if present).
-    Falls back to the raw text if no END tag is found.
+    Falls back to ``request`` (the bare goal) if no END tag is found,
+    so a rambling attacker that never closed the tag doesn't ship its
+    rambling to the target — same behaviour as upstream.
     """
     if _END_TAG not in text:
-        return text.strip()
+        return request
     head, _, _ = text.partition(_END_TAG)
     if _START_TAG in head:
         head = head.split(_START_TAG, 1)[1]

@@ -37,15 +37,22 @@ class TestExtractJailbreakPrompt:
             "[START OF JAILBREAK PROMPT]\nactual jailbreak prompt\n"
             "[END OF JAILBREAK PROMPT]\nthat was it"
         )
-        assert _extract_jailbreak_prompt(text) == "actual jailbreak prompt"
+        assert _extract_jailbreak_prompt(text, "the goal") == "actual jailbreak prompt"
 
     def test_returns_substring_before_end_when_no_start(self) -> None:
         text = "leading content [END OF JAILBREAK PROMPT] trailing"
-        assert _extract_jailbreak_prompt(text) == "leading content"
+        assert _extract_jailbreak_prompt(text, "the goal") == "leading content"
 
-    def test_returns_raw_when_no_end_tag(self) -> None:
-        text = "  bare jailbreak prompt without tags  "
-        assert _extract_jailbreak_prompt(text) == "bare jailbreak prompt without tags"
+    def test_falls_back_to_request_when_no_end_tag(self) -> None:
+        # Upstream-faithful: rambling output without the END tag must
+        # NOT ship to the target as the jailbreak prompt; fall back
+        # to the bare request (raw goal). Matches upstream
+        # ``Attacker.wrapper``.
+        text = "I will now ramble about strategies but never close the tag..."
+        assert _extract_jailbreak_prompt(text, "the goal") == "the goal"
+
+    def test_falls_back_to_request_on_empty_output(self) -> None:
+        assert _extract_jailbreak_prompt("", "the goal") == "the goal"
 
 
 # ---------------------------------------------------------------------------

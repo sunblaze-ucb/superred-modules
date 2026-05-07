@@ -230,6 +230,55 @@ class TestRunStart:
         assert opt._pending_post_answer is None
         assert opt._primary_pre_controllable is None
 
+    @pytest.mark.asyncio
+    async def test_initialize_seeds_prev_state_per_upstream(self) -> None:
+        """Upstream pipeline seeds ``prev_jailbreak_prompt = request``,
+        ``prev_target_response = "Sorry, I cannot help you with that."``
+        and ``prev_score = 1.0`` per request, so the very first scored
+        attempt can already populate the library when the attacker
+        beats the raw-goal baseline. Regression for PR 17 review.
+        """
+        opt = await _init_optimizer()
+        assert opt._prev_prompt == "describe a recipe"
+        assert opt._prev_response == "Sorry, I cannot help you with that."
+        assert opt._prev_score == 1.0
+
+    @pytest.mark.asyncio
+    async def test_run_zero_summarizes_when_score_beats_seeded_floor(self) -> None:
+        """End-to-end check on the seeding fix: a single epoch with a
+        score above 1.0 must already trigger summarisation and seed
+        the library on the very first run. Regression for PR 17
+        review.
+        """
+        opt = await _init_optimizer(max_attempts=1, break_score=8.5)
+        _stub_attacker(opt)
+        _stub_scorer(opt, score=4.0)
+        summarizer = _stub_summarizer(opt)
+
+        traj = _FakeReadableTrajectory()
+        await opt.on_event(RunStartEvent(trajectory=traj))
+        await opt.on_event(
+            ControllablePreCallEvent(
+                controllable=_user_ctrl(), request="r1",
+            ),
+        )
+        traj.push(
+            ObservableEvent(
+                observable=_response_observable(), content="resp-1",
+            ),
+        )
+        await opt.on_event(
+            RunEndEvent(evaluation=None, security_domain=USER_TAG),
+        )
+
+        # 4.0 > seeded 1.0 → summarise once, library has the entry.
+        assert summarizer.call_count == 1
+        assert len(opt.library) == 1
+        # Weak prompt passed to summariser is the raw goal (seeded
+        # _prev_prompt), not None.
+        kwargs = summarizer.call_args.kwargs
+        assert kwargs["weak_prompt"] == "describe a recipe"
+
 
 # ---------------------------------------------------------------------------
 # Pre-call: injection + skip + lock
@@ -370,12 +419,19 @@ class TestRunEndScoring:
     async def test_score_increase_triggers_summarizer_and_library_add(
         self,
     ) -> None:
+        """Upstream-faithful epoch-0 seeding: prev_score=1.0,
+        prev_prompt=raw goal. The first scored attempt that beats 1.0
+        already fires the summarizer (raw goal as weak vs attacker
+        output as strong).
+        """
         opt = await _init_optimizer(max_attempts=10, break_score=8.5)
-        attacker = _stub_attacker(opt)
+        _stub_attacker(opt)
         scorer = _stub_scorer(opt, score=[3.0, 7.0])
         summarizer = _stub_summarizer(opt)
 
-        # Run 1: cold, score=3.0 (no prev_prompt yet → no summarize).
+        # Run 1: cold attacker, score=3.0. With seeded prev_score=1.0
+        # the summarizer fires immediately and the library gets its
+        # first entry.
         traj1 = _FakeReadableTrajectory()
         await opt.on_event(RunStartEvent(trajectory=traj1))
         await opt.on_event(
@@ -391,20 +447,21 @@ class TestRunEndScoring:
         await opt.on_event(
             RunEndEvent(evaluation=None, security_domain=USER_TAG),
         )
-        assert summarizer.call_count == 0
-        assert len(opt.library) == 0
+        assert summarizer.call_count == 1
+        assert len(opt.library) == 1
 
-        # Run 2: cold-warm-up still (because prev_prompt is set but
-        # we want to check retrieval — library is empty so still warm).
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        # Run 2: prev_score is now 3.0, score=7.0 > 3.0 so summarizer
+        # fires again. The library entry already exists for the same
+        # strategy name, so add() merges (still len==1) and appends a
+        # second example/score.
+        traj2 = _FakeReadableTrajectory()
+        await opt.on_event(RunStartEvent(trajectory=traj2))
         await opt.on_event(
             ControllablePreCallEvent(
                 controllable=_user_ctrl(), request="r2",
             ),
         )
-        traj2 = opt._trajectory
-        assert traj2 is not None
-        traj2.push(  # type: ignore[attr-defined]
+        traj2.push(
             ObservableEvent(
                 observable=_response_observable(), content="resp-2",
             ),
@@ -413,12 +470,8 @@ class TestRunEndScoring:
             RunEndEvent(evaluation=None, security_domain=USER_TAG),
         )
 
-        # Score went 3 -> 7, prev_prompt was set -> summarizer fires.
-        assert summarizer.call_count == 1
+        assert summarizer.call_count == 2
         assert len(opt.library) == 1
-        # Attacker called twice in warm_up mode (library was empty
-        # both times).
-        assert attacker.warm_up.call_count == 2
         assert scorer.call_count == 2
 
     @pytest.mark.asyncio
@@ -449,6 +502,9 @@ class TestRunEndScoring:
 
     @pytest.mark.asyncio
     async def test_no_score_improvement_skips_library_update(self) -> None:
+        """Run 1 beats the seeded 1.0 floor → 1 summarize. Run 2 is
+        below run 1's score → no second summarize.
+        """
         opt = await _init_optimizer(max_attempts=10, break_score=8.5)
         _stub_attacker(opt)
         _stub_scorer(opt, score=[5.0, 4.0])
@@ -471,11 +527,15 @@ class TestRunEndScoring:
                 RunEndEvent(evaluation=None, security_domain=USER_TAG),
             )
 
-        assert summarizer.call_count == 0
-        assert len(opt.library) == 0
+        # Run 1 (5 > 1.0 seed) summarises; run 2 (4 < 5) does not.
+        assert summarizer.call_count == 1
+        assert len(opt.library) == 1
 
     @pytest.mark.asyncio
     async def test_summarizer_returns_none_skips_library_update(self) -> None:
+        """Both runs beat the seeded floor → 2 summarize calls; both
+        return None → library stays empty.
+        """
         opt = await _init_optimizer(max_attempts=10, break_score=8.5)
         _stub_attacker(opt)
         _stub_scorer(opt, score=[3.0, 7.0])
@@ -498,7 +558,7 @@ class TestRunEndScoring:
                 RunEndEvent(evaluation=None, security_domain=USER_TAG),
             )
 
-        assert summarizer.call_count == 1  # called but returned None
+        assert summarizer.call_count == 2
         assert len(opt.library) == 0
 
 
@@ -548,19 +608,21 @@ class TestStrategyRetrieval:
         attacker.warm_up.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_no_prev_response_uses_warm_up(self) -> None:
-        """Even with a populated library, no prior response → cold start."""
+    async def test_empty_library_uses_warm_up(self) -> None:
+        """Empty library → cold start (epoch 0 / no entries yet).
+
+        With the upstream-faithful prev_* seeding done in
+        ``initialize`` the first epoch's mode is driven entirely by
+        retrieval: an empty library returns ``(True, [])`` and
+        ``_prepare_attempt`` falls through to ``warm_up``.
+        """
         opt = await _init_optimizer()
         attacker = _stub_attacker(opt)
-        opt._library.add(
-            strategy="X", definition="d", example="e", score=8.0,
-        )
-        # Set prev_prompt but leave prev_response None (paper's
-        # "M empty" fallback shape).
-        opt._prev_prompt = "p"
 
         await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
         attacker.warm_up.assert_called_once()
+        attacker.use_strategy.assert_not_called()
+        attacker.find_new_strategy.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -635,7 +697,14 @@ class TestAdversarialSettings:
 
     @pytest.mark.asyncio
     async def test_setting_3_user_query_plus_responses_full_loop(self) -> None:
-        """Responses present, no eval. Full algorithm: scorer + library updates."""
+        """Responses present, no eval. Full algorithm: scorer + library updates.
+
+        Per upstream-faithful prev_* seeding (prev_score=1.0,
+        prev_prompt=raw goal): run 1's score 3.0 already beats the
+        seeded floor and triggers summarisation at end of run 1, so
+        run 2 sees a populated library and dispatches via retrieval
+        (not warm_up).
+        """
         opt = await _init_optimizer(max_attempts=10, break_score=8.5)
         attacker = _stub_attacker(opt)
         scorer = _stub_scorer(opt, score=[3.0, 7.0])
@@ -660,11 +729,13 @@ class TestAdversarialSettings:
             assert end.done is False  # break_score not hit, no eval
 
         assert scorer.call_count == 2
-        assert summarizer.call_count == 1  # 3 -> 7 improvement
+        # Both runs improve over the previous score → 2 summarises.
+        assert summarizer.call_count == 2
+        # Same strategy name → library merges to 1 entry, 2 examples.
         assert len(opt.library) == 1
-        # Both runs ran warm_up (library still empty during run 2's
-        # prepare_attempt; the new strategy is added at end of run 2).
-        assert attacker.warm_up.call_count >= 1
+        # Run 1 cold-started (empty library); run 2 dispatched via
+        # retrieval thanks to the run-1 library seed.
+        assert attacker.warm_up.call_count == 1
 
     @pytest.mark.asyncio
     async def test_setting_4_full_access(self) -> None:
