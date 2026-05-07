@@ -134,6 +134,42 @@ class TestAttackerFirstTurn:
         assert "steal data" in system_msg["content"]
         assert "Sure, here is private data" in system_msg["content"]
 
+    @pytest.mark.asyncio
+    async def test_first_turn_includes_static_context_when_provided(self) -> None:
+        mock_llm = AsyncMock()
+        payload = json.dumps({"improvement": "x", "prompt": "y"})
+        mock_llm.complete.return_value = _make_completion_response(payload)
+        attacker = Attacker(llm=mock_llm)
+        history: list[dict[str, str]] = []
+
+        await attacker.generate_prompt(
+            goal="g",
+            target_str="Sure, here is",
+            conversation_history=history,
+            static_target_context="Observable model: test-model",
+        )
+
+        messages = mock_llm.complete.call_args.args[0]
+        assert "SUPERRED STATIC TARGET CONTEXT" in messages[0]["content"]
+        assert "Observable model: test-model" in messages[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_first_turn_omits_static_context_when_not_provided(self) -> None:
+        mock_llm = AsyncMock()
+        payload = json.dumps({"improvement": "x", "prompt": "y"})
+        mock_llm.complete.return_value = _make_completion_response(payload)
+        attacker = Attacker(llm=mock_llm)
+        history: list[dict[str, str]] = []
+
+        await attacker.generate_prompt(
+            goal="g",
+            target_str="Sure, here is",
+            conversation_history=history,
+        )
+
+        messages = mock_llm.complete.call_args.args[0]
+        assert "SUPERRED STATIC TARGET CONTEXT" not in messages[0]["content"]
+
 
 class TestAttackerSubsequentTurn:
     @pytest.mark.asyncio

@@ -53,15 +53,25 @@ response together.
 
 ## Prompt Placement
 
-TAP is a user-prompt attack. For chatbot-style targets with both `system_prompt`
-and `user_message`, the optimizer leaves `system_prompt` unchanged and injects
-TAP candidates into `user_message`.
+TAP is a user-prompt attack in the original setting. If SuperRed only exposes
+`user_message`, this optimizer keeps that behavior and injects TAP candidates
+there.
 
-Set `attack_system_prompt=True` only when you want a SuperRed extension that
-uses an in-scope `system_prompt` controllable. In that mode, the attacker may
-return both `system_prompt` and `prompt`: the optimizer injects the first into
-`system_prompt` and still injects the second into `user_message`. The default is
-`False`, so normal TAP remains paper-faithful.
+If SuperRed also exposes `system_prompt`, the optimizer treats that as a
+stronger threat model and uses it automatically. The attacker may return both
+`system_prompt` and `prompt`: the optimizer injects the first into
+`system_prompt` and still injects the second into `user_message`.
+
+## Static Target Context
+
+The original TAP attacker does not receive target metadata such as model name or
+available injection points. SuperRed can expose that information through the
+threat model before a run starts.
+
+When extra in-scope static context is available, TAP includes it in the attacker
+prompt. This is a SuperRed extension. If only the normal `user_message`
+controllable is available and no static observables are exposed, no static
+context is added and the prompt path stays paper-faithful.
 
 ## Target String
 

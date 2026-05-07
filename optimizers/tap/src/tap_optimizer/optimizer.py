@@ -58,7 +58,6 @@ class TapOptimizer(Optimizer):
         max_attack_attempts: int = 5,
         keep_last_n: int = 3,
         target_str: str = "Sure, here is",
-        attack_system_prompt: bool = False,
         random_seed: int | None = None,
         response_observable_names: list[str] | None = None,
     ) -> None:
@@ -75,7 +74,8 @@ class TapOptimizer(Optimizer):
         self._max_attack_attempts = max_attack_attempts
         self._keep_last_n = keep_last_n
         self._target_str = target_str
-        self._attack_system_prompt = attack_system_prompt
+        self._attack_system_prompt = False
+        self._static_target_context: str | None = None
         self._random_seed = random_seed
         self._response_observable_names = set(
             response_observable_names
@@ -96,7 +96,6 @@ class TapOptimizer(Optimizer):
         self._saw_system_prompt_event: bool = False
         self._injected_this_run: bool = False
         self._injected_system_prompt_this_run: bool = False
-        self._manually_tracking_trajectory: bool = False
 
     async def initialize(
         self,
@@ -107,6 +106,13 @@ class TapOptimizer(Optimizer):
     ) -> None:
         await super().initialize(goal, controllables, observables, llm_client)
         self._goal = goal
+        self._attack_system_prompt = any(
+            controllable.name == "system_prompt" for controllable in controllables
+        )
+        self._static_target_context = self._build_static_target_context(
+            controllables=controllables,
+            observables=observables,
+        )
         self._attacker = Attacker(
             llm=self.llm,
             temperature=self._attack_temperature,
@@ -132,7 +138,6 @@ class TapOptimizer(Optimizer):
         self._saw_system_prompt_event = False
         self._injected_this_run = False
         self._injected_system_prompt_this_run = False
-        self._manually_tracking_trajectory = False
 
     async def on_event(self, event: Event) -> EventResponse:
         if isinstance(event, RunStartEvent):
@@ -150,9 +155,6 @@ class TapOptimizer(Optimizer):
 
     async def _handle_run_start(self, event: RunStartEvent) -> EventResponse:
         assert self._tree is not None
-        if self.current_trajectory is None:
-            self._current_trajectory = event.trajectory
-            self._manually_tracking_trajectory = True
         self._current_candidate = None
         self._injected_this_run = False
         self._injected_system_prompt_this_run = False
@@ -201,6 +203,7 @@ class TapOptimizer(Optimizer):
                     target_response=node.target_response,
                     score=node.score if node.target_response is not None else None,
                     include_system_prompt=self._attack_system_prompt,
+                    static_target_context=self._static_target_context,
                 )
                 node.improvement = proposal.improvement
                 node.prompt = proposal.prompt
@@ -292,7 +295,6 @@ class TapOptimizer(Optimizer):
 
     async def _handle_run_end(self, event: RunEndEvent) -> RunEndResponse:
         if self._done:
-            self._clear_manual_trajectory()
             return RunEndResponse(event=event, done=True)
 
         if self._current_candidate is not None:
@@ -300,18 +302,14 @@ class TapOptimizer(Optimizer):
             self._current_candidate = None
 
         if self._done:
-            self._clear_manual_trajectory()
             return RunEndResponse(event=event, done=True)
 
         if self._pending_candidates:
-            self._clear_manual_trajectory()
             return RunEndResponse(event=event, done=False)
 
         self._finish_depth()
         if self._done:
-            self._clear_manual_trajectory()
             return RunEndResponse(event=event, done=True)
-        self._clear_manual_trajectory()
         return RunEndResponse(event=event, done=False)
 
     async def _finalize_current_candidate(
@@ -393,11 +391,6 @@ class TapOptimizer(Optimizer):
                 recovered = item.content
         return recovered
 
-    def _clear_manual_trajectory(self) -> None:
-        if self._manually_tracking_trajectory:
-            self._current_trajectory = None
-            self._manually_tracking_trajectory = False
-
     @staticmethod
     def _score_from_evaluation(evaluation: EvaluationResult) -> float:
         if evaluation.success:
@@ -414,3 +407,42 @@ class TapOptimizer(Optimizer):
             f"success={evaluation.success}, score={evaluation.primary_score.value}, "
             f"rationale={evaluation.rationale}"
         )
+
+    @staticmethod
+    def _build_static_target_context(
+        *,
+        controllables: list[Controllable],
+        observables: list[ObservableValue],
+    ) -> str | None:
+        sections: list[str] = []
+        extra_controllables = [
+            controllable
+            for controllable in controllables
+            if controllable.name != "user_message"
+        ]
+        if extra_controllables:
+            lines = ["In-scope controllables:"]
+            lines.extend(
+                (
+                    f"- {controllable.name} ({controllable.value_type})"
+                    f": {controllable.description}"
+                ).rstrip()
+                for controllable in extra_controllables
+            )
+            sections.append("\n".join(lines))
+
+        if observables:
+            lines = ["In-scope observables:"]
+            lines.extend(
+                (
+                    f"- {observable_value.observable.name} "
+                    f"({observable_value.observable.observable_type})"
+                    f": {observable_value.content}"
+                ).rstrip()
+                for observable_value in observables
+            )
+            sections.append("\n".join(lines))
+
+        if not sections:
+            return None
+        return "\n".join(sections)
