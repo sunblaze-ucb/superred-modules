@@ -192,6 +192,37 @@ attacker is reasoning from a fictitious context.
    prompt) and conditions on `last_response = last_replayed_turn.target_response`
    to choose a different angle from that point onward.
 
+#### Attacker context after replay
+
+Replay restores the target's conversation state, not the attacker's.
+The post-replay attacker is a fresh `Attacker` instance with empty
+`_conversation_history`; its only window onto the just-replayed
+prefix is `last_response`/`last_score`/`last_rationale` from the
+final cached turn (supplied via the next per-turn user message),
+plus the cross-attempt `###Previous Attempts in This Approach###`
+log in its system prompt. That log covers prior *attempts*, not
+the prefix of *this* attempt: the questions and responses of
+turns 1..N-1 of this attempt are not surfaced anywhere the
+attacker can see.
+
+Reconstructing the prefix into `_conversation_history` is avoided
+deliberately. Each `assistant` entry there is a JSON blob with
+internal reasoning fields (`last_response_summary`,
+`rationale_behind_jailbreak`); the prior attempt's attacker
+populated them via its own sampled rollout (attacker temperature
+is non-zero by default), we did not record them, and synthesising
+plausible-looking values would put words in this attacker's mouth
+that it never said. The post-replay attacker can therefore pivot
+off the immediately prior response and the cross-attempt failure
+log but cannot make callbacks to earlier turns of the in-progress
+conversation (e.g., a name introduced at turn 2 cannot be
+referenced when generating turn 5 after a replay that restored
+turn 5's target state). A future change could surface the prefix
+as a structured "restored context" block prepended to the first
+per-turn user message, sidestepping the fabrication issue at the
+cost of a larger initial prompt; this is deferred until empirical
+post-replay attacker quality says it is needed.
+
 #### Terminal-refusal lock
 
 `_process_answer` distinguishes (a) clean non-refusal and (b)
