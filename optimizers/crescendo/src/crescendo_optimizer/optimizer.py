@@ -176,8 +176,6 @@ class CrescendoOptimizer(Optimizer):
             c.name == _SYSTEM_PROMPT_CONTROLLABLE_NAME for c in controllables
         )
 
-        self._start_new_attempt()
-
     async def on_event(self, event: Event) -> EventResponse:
         if isinstance(event, RunStartEvent):
             return self._handle_run_start(event)
@@ -200,8 +198,7 @@ class CrescendoOptimizer(Optimizer):
 
     def _handle_run_start(self, event: RunStartEvent) -> EventResponse:
         """Prepare a new attempt. Each run = one full multi-turn attempt."""
-        if self._variant_index > 0 or self._variant_attempt > 0:
-            self._start_new_attempt()
+        self._start_new_attempt()
         self._trajectory = event.trajectory
         return EventResponse(event=event)
 

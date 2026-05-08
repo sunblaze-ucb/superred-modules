@@ -135,6 +135,7 @@ async def test_model_observable_passed_to_attacker():
     um = _ctrl("user_message", tag="user")
     obs = [_obs("model", "openai/gpt-4o", tag="model_identity")]
     opt = await _make_optimizer(controllables=[um], observables=obs)
+    await opt.on_event(_run_start())
     assert opt._target_model_id == "openai/gpt-4o"
     assert opt._attacker is not None
     # The attacker holds the captured value
@@ -146,6 +147,7 @@ async def test_system_prompt_observable_passed_to_attacker():
     um = _ctrl("user_message", tag="user")
     obs = [_obs("system_prompt", "You are a helpful X assistant.", tag="sp_readable")]
     opt = await _make_optimizer(controllables=[um], observables=obs)
+    await opt.on_event(_run_start())
     assert opt._target_system_prompt == "You are a helpful X assistant."
     assert opt._attacker is not None
     assert opt._attacker._target_system_prompt == "You are a helpful X assistant."
@@ -160,6 +162,7 @@ async def test_attacker_system_prompt_includes_target_context():
         _obs("system_prompt", "Be terse.", tag="sp_readable"),
     ]
     opt = await _make_optimizer(controllables=[um], observables=obs)
+    await opt.on_event(_run_start())
 
     mock_llm = opt._attacker._llm
     mock_llm.complete = AsyncMock()
