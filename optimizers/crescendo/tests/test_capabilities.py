@@ -779,6 +779,96 @@ async def test_replay_carries_forward_into_next_attempts_injection_log():
 
 
 @pytest.mark.asyncio
+async def test_replay_chain_three_attempts_carries_full_prefix():
+    """Three-deep replay chain: attempt 1 caches 1 turn, attempt 2 replays
+    that turn AND adds a fresh successful turn, attempt 3's plan must
+    cover both turns. Locks down the carry-forward across more than one
+    hop (the existing 1->2 test only covers a single hop).
+    """
+    um = _ctrl("user_message", tag="user")
+    opt = await _make_optimizer(
+        controllables=[um], observables=[],
+        max_variants=1, max_attempts_per_variant=3, max_turns=5,
+    )
+
+    # ── Attempt 1 finishes: 1 successful turn + 1 refusal recorded ──
+    await opt.on_event(_run_start())
+    opt._attempt_injections = [TurnRecord("Q1", "A1", 0.3, "r1")]
+    opt._attacker.notify_refusal("refused-Q2")
+    end1 = await opt.on_event(_run_end(EvaluationResult(
+        success=False, primary_score=Score(value=0.3), rationale="r",
+    )))
+    assert end1.done is False
+    assert opt._pending_replay_plan is not None
+    assert len(opt._pending_replay_plan.successful_turns) == 1
+
+    # ── Attempt 2: replay 1 turn, run a fresh turn 2, then refuse ──
+    await opt.on_event(_run_start())
+    assert opt._replay_iter and opt._replay_iter[0].injected_question == "Q1"
+
+    # Pre-call #1: replay turn 1 (injects cached Q1).
+    out_a = await opt.on_event(_pre_call(um))
+    assert isinstance(out_a, ControllableInjection)
+    assert out_a.value == "Q1"
+
+    # Pre-call #2: consume turn 1's cached feedback (advances to turn 1),
+    # then attacker generates fresh-Q2 for turn 2.
+    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as gen:
+        gen.return_value = AttackerOutput(question="fresh-Q2", summary="", rationale="r")
+        out_b = await opt.on_event(_pre_call(um))
+    assert isinstance(out_b, ControllableInjection)
+    assert out_b.value == "fresh-Q2"
+    assert opt._turn == 1
+    # Carry-forward: replayed turn 1 now sits in _attempt_injections.
+    assert [t.injected_question for t in opt._attempt_injections] == ["Q1"]
+
+    # Pre-call #3: consume turn 2's real feedback (evaluator runs on A2),
+    # which appends TurnRecord("fresh-Q2", ...) to _attempt_injections.
+    opt._pending_post_answer = "fresh-A2"
+    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as gen, \
+         patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as ref, \
+         patch.object(opt._evaluator, "score_response", new_callable=AsyncMock) as score:
+        gen.return_value = AttackerOutput(question="fresh-Q3", summary="", rationale="r")
+        ref.return_value = False
+        score.return_value = (0.5, "ok")
+        await opt.on_event(_pre_call(um))
+    assert opt._turn == 2
+    assert [t.injected_question for t in opt._attempt_injections] == ["Q1", "fresh-Q2"]
+
+    # Refusal arrives for fresh-Q3, then run_end closes attempt 2.
+    opt._attacker.notify_refusal("refused-Q3")
+    end2 = await opt.on_event(_run_end(EvaluationResult(
+        success=False, primary_score=Score(value=0.5), rationale="r",
+    )))
+    assert end2.done is False
+    # The chained plan must cover BOTH the replayed turn and the fresh one.
+    assert opt._pending_replay_plan is not None
+    chained = [t.injected_question for t in opt._pending_replay_plan.successful_turns]
+    assert chained == ["Q1", "fresh-Q2"]
+
+    # ── Attempt 3: replay both turns, then take over with the attacker ──
+    await opt.on_event(_run_start())
+    assert [t.injected_question for t in opt._replay_iter] == ["Q1", "fresh-Q2"]
+
+    out_c = await opt.on_event(_pre_call(um))  # replay turn 1
+    assert isinstance(out_c, ControllableInjection)
+    assert out_c.value == "Q1"
+    out_d = await opt.on_event(_pre_call(um))  # replay turn 2
+    assert isinstance(out_d, ControllableInjection)
+    assert out_d.value == "fresh-Q2"
+
+    # After both replays consumed, the next pre-call falls through to a
+    # fresh attacker call.
+    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as gen:
+        gen.return_value = AttackerOutput(question="fresh-Q3-take2", summary="", rationale="r")
+        out_e = await opt.on_event(_pre_call(um))
+    assert isinstance(out_e, ControllableInjection)
+    assert out_e.value == "fresh-Q3-take2"
+    # Both replayed turns carried into attempt 3's injection log.
+    assert [t.injected_question for t in opt._attempt_injections] == ["Q1", "fresh-Q2"]
+
+
+@pytest.mark.asyncio
 async def test_replay_framing_lifted_on_system_prompt_event():
     """When replay plan carries a framing, the system_prompt PreCall
     injects it without calling the attacker."""
