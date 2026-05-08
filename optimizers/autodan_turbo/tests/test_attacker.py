@@ -299,7 +299,7 @@ class TestSystemPromptWritableSignal:
         system = llm.complete.call_args.args[0][0]["content"]
         assert "[START OF SYSTEM PROMPT OVERRIDE]" in system
         assert "[END OF SYSTEM PROMPT OVERRIDE]" in system
-        assert "OPTIONALLY emit" in system
+        assert "may emit a second tagged block" in system
 
     @pytest.mark.asyncio
     async def test_extracts_override_when_attacker_emits_it(self) -> None:
