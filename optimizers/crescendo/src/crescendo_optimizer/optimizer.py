@@ -428,12 +428,14 @@ class CrescendoOptimizer(Optimizer):
         # at least one refusal. Without a refusal there is no failure point
         # to skip past — replaying the whole conversation would just hit the
         # same task-judge verdict — so the next attempt starts fresh.
-        # The plan captures the consecutive successful prefix; turns after a
-        # terminal refusal were excluded by _process_answer.
+        # The plan captures the consecutive successful prefix (turns after a
+        # terminal refusal were excluded by _process_answer); when the very
+        # first turn was the refusal the prefix is empty, but any framing
+        # is still worth carrying so the retry sees identical target context.
         had_refusal = (
             self._attacker is not None and bool(self._attacker.refused_questions)
         )
-        if had_refusal and self._attempt_injections:
+        if had_refusal:
             self._pending_replay_plan = ReplayPlan(
                 framing=self._attempt_framing,
                 successful_turns=tuple(self._attempt_injections),
@@ -441,14 +443,6 @@ class CrescendoOptimizer(Optimizer):
             logger.info(
                 "Crescendo: queued replay plan (%d cached turns) for next attempt",
                 len(self._attempt_injections),
-            )
-        elif had_refusal and not self._attempt_injections:
-            # First turn was the first refusal — no successful prefix to
-            # replay, but the framing (if any) is still worth reusing so the
-            # target context is identical when the new attempt restarts.
-            self._pending_replay_plan = ReplayPlan(
-                framing=self._attempt_framing,
-                successful_turns=(),
             )
         else:
             self._pending_replay_plan = None
