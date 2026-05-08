@@ -152,6 +152,16 @@ responses. Replay reuses cached `target_response`/`score`/`rationale`
 without re-invoking the target evaluator — an LLM-call saving and a
 correctness statement (we trust determinism).
 
+Defensive guard: on each replay turn, `_consume_pending_feedback`
+still drains the live trajectory (and falls back to
+`_pending_post_answer`) and compares to the cached
+`record.target_response`. If they diverge, a WARNING is logged with
+both responses truncated. The cache continues to win so the run
+completes for inspection. Divergence here means the target stopped
+being temperature-0-deterministic between attempts (e.g. a provider
+hot-swap or a wrapper that introduces noise) and the post-replay
+attacker is reasoning from a fictitious context.
+
 #### Replay flow on a retry attempt
 
 1. `_start_new_attempt` consumes `_pending_replay_plan`, populating
