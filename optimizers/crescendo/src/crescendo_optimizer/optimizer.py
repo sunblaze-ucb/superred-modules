@@ -415,6 +415,8 @@ class CrescendoOptimizer(Optimizer):
     def _handle_run_end(self, event: RunEndEvent) -> RunEndResponse:
         # Apply task-judge verdict (authoritative) before deciding next step.
         task_rationale: str | None = None
+        internal_was_success = self._succeeded
+        task_overrode_success = False
         if event.evaluation is not None:
             task_rationale = event.evaluation.rationale or None
             task_success = event.evaluation.success
@@ -424,6 +426,8 @@ class CrescendoOptimizer(Optimizer):
                     "(task verdict is authoritative)",
                     self._succeeded, task_success,
                 )
+            if internal_was_success and not task_success:
+                task_overrode_success = True
             self._succeeded = task_success
 
         if self._succeeded:
@@ -456,7 +460,12 @@ class CrescendoOptimizer(Optimizer):
         had_refusal = (
             self._attacker is not None and bool(self._attacker.refused_questions)
         )
-        if had_refusal:
+        if task_overrode_success:
+            # The cached prefix is the exact transcript the task judge
+            # already rejected. Replaying it would just reproduce the
+            # same verdict; let the next attempt start fresh.
+            self._pending_replay_plan = None
+        elif had_refusal:
             self._pending_replay_plan = ReplayPlan(
                 framing=self._attempt_framing,
                 successful_turns=tuple(self._attempt_injections),

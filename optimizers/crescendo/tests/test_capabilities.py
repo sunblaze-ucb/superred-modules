@@ -798,6 +798,44 @@ async def test_replay_framing_lifted_on_system_prompt_event():
 
 
 @pytest.mark.asyncio
+async def test_task_override_of_internal_success_does_not_queue_replay():
+    """When the internal judge concluded success mid-conversation but
+    the task judge overrules to failure at run end, the cached prefix
+    is the exact transcript the task judge already rejected. Replaying
+    it would just reproduce the same verdict and burn an attempt. The
+    next attempt should start fresh with the failure log."""
+    um = _ctrl("user_message", tag="user")
+    opt = await _make_optimizer(
+        controllables=[um], observables=[],
+        max_attempts=1, max_attempts_per_variant=2,
+    )
+    await opt.on_event(_run_start())
+
+    # Internal judge said the attempt succeeded, with prior backtrack
+    # refusal and accumulated successful turns.
+    opt._succeeded = True
+    opt._attempt_injections = [
+        TurnRecord("Q1", "A1", 0.4, "r1"),
+        TurnRecord("Q2", "A2", 0.9, "r2"),
+    ]
+    opt._attacker.notify_refusal("Q-mid-refused")
+
+    await opt.on_event(_run_end(EvaluationResult(
+        success=False, primary_score=Score(value=0.1),
+        rationale="judge: answer was generic, goal not met",
+    )))
+
+    assert opt._succeeded is False
+    # Failure log captured for next attempt
+    assert len(opt._variant_failure_log) == 1
+    assert opt._variant_failure_log[0].task_rationale == (
+        "judge: answer was generic, goal not met"
+    )
+    # No replay plan: task already rejected this prefix
+    assert opt._pending_replay_plan is None
+
+
+@pytest.mark.asyncio
 async def test_replay_attempt_with_no_framing_does_not_re_invoke_eager_call():
     """Replay plan with framing=None means the prior attempt did NOT
     install a persona on the target's system prompt (either capability
