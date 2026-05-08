@@ -798,6 +798,40 @@ async def test_replay_framing_lifted_on_system_prompt_event():
 
 
 @pytest.mark.asyncio
+async def test_replay_attempt_with_no_framing_does_not_re_invoke_eager_call():
+    """Replay plan with framing=None means the prior attempt did NOT
+    install a persona on the target's system prompt (either capability
+    (c) was unused, or the eager attacker call had failed). Faithful
+    replay must reproduce that context: leave the system prompt at
+    default. Firing a fresh eager call (which could succeed this time)
+    would inject a persona the cached turns never saw, desynchronising
+    replayed responses from what the live target now produces."""
+    sp = _ctrl("system_prompt", tag="system_prompt")
+    um = _ctrl("user_message", tag="user")
+    opt = await _make_optimizer(controllables=[sp, um], observables=[])
+
+    # Stage a replay plan with cached turns but no framing — simulates
+    # a prior attempt where (c) was in scope but the eager call failed,
+    # so turns ran against the task-default system prompt until refusal.
+    opt._pending_replay_plan = ReplayPlan(
+        framing=None,
+        successful_turns=(
+            TurnRecord("cached-Q1", "cached-A1", 0.3, "r1"),
+        ),
+    )
+    opt._variant_attempt = 1
+    await opt.on_event(_run_start())
+
+    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as gen:
+        sp_out = await opt.on_event(_pre_call(sp))
+
+    assert isinstance(sp_out, ControllableNoInjection)
+    # No eager attacker call: the system prompt stays at task-default,
+    # matching the prior attempt's actual target state.
+    assert gen.call_count == 0
+
+
+@pytest.mark.asyncio
 async def test_replay_plan_captures_attempt_framing():
     """After a (c)-using attempt fails with refusal, the replay plan
     carries the framing forward."""

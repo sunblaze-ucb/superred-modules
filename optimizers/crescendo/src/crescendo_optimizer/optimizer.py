@@ -140,6 +140,11 @@ class CrescendoOptimizer(Optimizer):
         self._replay_iter: list[TurnRecord] = []
         self._replay_framing_pending: str | None = None
         self._pending_replay_record: TurnRecord | None = None
+        # True for the duration of an attempt that consumed a replay plan.
+        # Distinct from ``_replay_framing_pending``: a plan can carry no
+        # framing yet still require us to leave the system prompt at its
+        # task-default to faithfully reproduce the prior attempt's context.
+        self._replay_in_progress: bool = False
 
         # Variant-level state (reset on variant rotation; preserved across
         # attempts within the same variant)
@@ -247,6 +252,22 @@ class CrescendoOptimizer(Optimizer):
                 controllable=event.controllable,
                 value=framing,
             )
+
+        # Replay path with no framing in plan: the prior attempt did not
+        # install a persona (either capability (c) was unused, or its
+        # eager attacker call had failed). Faithful replay requires
+        # reproducing that target context, so skip the install here.
+        # Firing a fresh eager call could succeed this time and inject a
+        # persona the cached turns never saw, desynchronising replayed
+        # responses from what the live target now produces.
+        if self._replay_in_progress:
+            logger.info(
+                "Crescendo: replay attempt with no framing in plan; "
+                "leaving system prompt at default to match prior attempt "
+                "(variant %d attempt %d)",
+                self._variant_index, self._variant_attempt + 1,
+            )
+            return ControllableNoInjection(event=event, controllable=event.controllable)
 
         try:
             output = await self._attacker_generate(turn=1, include_framing=True)
@@ -515,6 +536,7 @@ class CrescendoOptimizer(Optimizer):
         self._terminal_refusal_occurred = False
         self._pending_replay_record = None
         if self._pending_replay_plan is not None:
+            self._replay_in_progress = True
             self._replay_iter = list(self._pending_replay_plan.successful_turns)
             self._replay_framing_pending = self._pending_replay_plan.framing
             logger.info(
@@ -525,6 +547,7 @@ class CrescendoOptimizer(Optimizer):
             )
             self._pending_replay_plan = None
         else:
+            self._replay_in_progress = False
             self._replay_iter = []
             self._replay_framing_pending = None
 

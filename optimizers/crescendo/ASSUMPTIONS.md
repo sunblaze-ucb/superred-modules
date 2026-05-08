@@ -158,7 +158,12 @@ correctness statement (we trust determinism).
    `_replay_iter` (FIFO of `TurnRecord`) and `_replay_framing_pending`.
 2. On the system_prompt PreCall (when (c) is in scope): if
    `_replay_framing_pending` is set, inject it verbatim — no eager
-   attacker call. Q1 caching does not apply.
+   attacker call. Q1 caching does not apply. If a replay plan was
+   consumed but carried no framing (the prior attempt did not install
+   one, e.g. because the eager call had failed), return
+   `ControllableNoInjection` rather than firing a fresh eager call;
+   reproducing the prior attempt's target state keeps the cached
+   responses faithful to the live target.
 3. On each user_message PreCall while `_replay_iter` is non-empty: pop
    the next `TurnRecord`, inject its `injected_question`, store the
    record in `_pending_replay_record`. Trajectory drained but discarded.
