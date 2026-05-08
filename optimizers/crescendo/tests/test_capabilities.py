@@ -66,7 +66,7 @@ async def _make_optimizer(
     controllables: list[Controllable],
     observables: list[ObservableValue],
     max_turns: int = 3,
-    max_attempts: int = 2,
+    max_variants: int = 2,
     max_attempts_per_variant: int = 1,
     success_threshold: float = 0.8,
     max_backtracks: int = 2,
@@ -75,7 +75,7 @@ async def _make_optimizer(
         max_turns=max_turns,
         max_backtracks=max_backtracks,
         success_threshold=success_threshold,
-        max_attempts=max_attempts,
+        max_variants=max_variants,
         max_attempts_per_variant=max_attempts_per_variant,
     )
     await opt.initialize(
@@ -293,7 +293,7 @@ async def test_task_evaluator_overrides_internal_success():
     """Internal said success but task says failure → not done; record failure."""
     um = _ctrl("user_message", tag="user")
     opt = await _make_optimizer(
-        controllables=[um], observables=[], max_attempts=1, max_attempts_per_variant=2,
+        controllables=[um], observables=[], max_variants=1, max_attempts_per_variant=2,
     )
     await opt.on_event(_run_start())
 
@@ -356,7 +356,7 @@ async def test_variant_attempt_increments_within_variant():
     """First attempt fails → next run is same variant, attempt+1, with failure log."""
     um = _ctrl("user_message", tag="user")
     opt = await _make_optimizer(
-        controllables=[um], observables=[], max_attempts=2, max_attempts_per_variant=3,
+        controllables=[um], observables=[], max_variants=2, max_attempts_per_variant=3,
     )
     await opt.on_event(_run_start())
 
@@ -388,7 +388,7 @@ async def test_variant_rotation_clears_failure_log():
     """When all attempts in a variant are exhausted, rotate variant and clear log."""
     um = _ctrl("user_message", tag="user")
     opt = await _make_optimizer(
-        controllables=[um], observables=[], max_attempts=2, max_attempts_per_variant=2,
+        controllables=[um], observables=[], max_variants=2, max_attempts_per_variant=2,
     )
     # First failed attempt of variant 0
     opt._succeeded = False
@@ -418,7 +418,7 @@ async def test_variant_rotation_clears_failure_log():
 async def test_all_variants_and_attempts_exhausted_signals_done():
     um = _ctrl("user_message", tag="user")
     opt = await _make_optimizer(
-        controllables=[um], observables=[], max_attempts=1, max_attempts_per_variant=2,
+        controllables=[um], observables=[], max_variants=1, max_attempts_per_variant=2,
     )
     opt._succeeded = False
     await opt.on_event(_run_start())
@@ -440,7 +440,7 @@ async def test_failure_record_captures_first_refused_question():
     on attempt end. Subsequent refusals are not separately tracked."""
     um = _ctrl("user_message", tag="user")
     opt = await _make_optimizer(
-        controllables=[um], observables=[], max_attempts=1, max_attempts_per_variant=2,
+        controllables=[um], observables=[], max_variants=1, max_attempts_per_variant=2,
     )
     await opt.on_event(_run_start())
 
@@ -462,7 +462,7 @@ async def test_failure_record_no_refusal_records_none():
     """If attempt had no refusals, first_refused_question must be None."""
     um = _ctrl("user_message", tag="user")
     opt = await _make_optimizer(
-        controllables=[um], observables=[], max_attempts=1, max_attempts_per_variant=2,
+        controllables=[um], observables=[], max_variants=1, max_attempts_per_variant=2,
     )
     await opt.on_event(_run_start())
     # No notify_refusal calls
@@ -483,7 +483,7 @@ async def test_attacker_rendered_prompt_includes_failure_log_on_retry():
     must contain the previous-attempts block."""
     um = _ctrl("user_message", tag="user")
     opt = await _make_optimizer(
-        controllables=[um], observables=[], max_attempts=1, max_attempts_per_variant=2,
+        controllables=[um], observables=[], max_variants=1, max_attempts_per_variant=2,
     )
     opt._succeeded = False
     await opt.on_event(_run_start())
@@ -532,7 +532,7 @@ async def test_full_chatbot_phase1_phase2_flow_with_writable_sp():
     resp = _ctrl("response", tag="model")
     opt = await _make_optimizer(
         controllables=[sp, um, resp], observables=[],
-        max_turns=2, max_attempts=1, success_threshold=0.99,
+        max_turns=2, max_variants=1, success_threshold=0.99,
     )
     await opt.on_event(_run_start())
 
@@ -604,7 +604,7 @@ async def test_replay_plan_built_from_successful_prefix_when_refusal_occurred():
     captured by _process_answer."""
     um = _ctrl("user_message", tag="user")
     opt = await _make_optimizer(
-        controllables=[um], observables=[], max_attempts=1, max_attempts_per_variant=2,
+        controllables=[um], observables=[], max_variants=1, max_attempts_per_variant=2,
     )
     await opt.on_event(_run_start())
 
@@ -646,7 +646,7 @@ async def test_replay_plan_not_built_when_no_refusal_occurred():
     the same task verdict)."""
     um = _ctrl("user_message", tag="user")
     opt = await _make_optimizer(
-        controllables=[um], observables=[], max_attempts=1, max_attempts_per_variant=2,
+        controllables=[um], observables=[], max_variants=1, max_attempts_per_variant=2,
     )
     await opt.on_event(_run_start())
     opt._attempt_injections = [
@@ -666,7 +666,7 @@ async def test_replay_consumed_by_next_attempt_state():
     plan is consumed: replay queue populated, pending_replay_plan cleared."""
     um = _ctrl("user_message", tag="user")
     opt = await _make_optimizer(
-        controllables=[um], observables=[], max_attempts=1, max_attempts_per_variant=2,
+        controllables=[um], observables=[], max_variants=1, max_attempts_per_variant=2,
     )
     await opt.on_event(_run_start())
     opt._attempt_injections = [
@@ -692,7 +692,7 @@ async def test_replay_injects_cached_questions_without_calling_attacker():
     calls until the replay queue is exhausted."""
     um = _ctrl("user_message", tag="user")
     opt = await _make_optimizer(
-        controllables=[um], observables=[], max_attempts=1,
+        controllables=[um], observables=[], max_variants=1,
         max_attempts_per_variant=2, max_turns=5,
     )
     # Stuff a replay plan in directly (skip building it via run_end).
@@ -750,7 +750,7 @@ async def test_replay_carries_forward_into_next_attempts_injection_log():
     so that a third attempt's replay plan covers the full prefix."""
     um = _ctrl("user_message", tag="user")
     opt = await _make_optimizer(
-        controllables=[um], observables=[], max_attempts=1,
+        controllables=[um], observables=[], max_variants=1,
         max_attempts_per_variant=3, max_turns=5,
     )
     opt._pending_replay_plan = ReplayPlan(
@@ -809,7 +809,7 @@ async def test_failure_log_omits_restored_sentence_on_fresh_retry():
     um = _ctrl("user_message", tag="user")
     opt = await _make_optimizer(
         controllables=[um], observables=[],
-        max_attempts=1, max_attempts_per_variant=2,
+        max_variants=1, max_attempts_per_variant=2,
     )
     await opt.on_event(_run_start())
     # Failed attempt with no refusals — task judge rejected on goal grounds
@@ -847,7 +847,7 @@ async def test_failure_log_keeps_restored_sentence_on_replay_retry():
     um = _ctrl("user_message", tag="user")
     opt = await _make_optimizer(
         controllables=[um], observables=[],
-        max_attempts=1, max_attempts_per_variant=2,
+        max_variants=1, max_attempts_per_variant=2,
     )
     await opt.on_event(_run_start())
     opt._attempt_injections = [
@@ -888,7 +888,7 @@ async def test_task_override_of_internal_success_does_not_queue_replay():
     um = _ctrl("user_message", tag="user")
     opt = await _make_optimizer(
         controllables=[um], observables=[],
-        max_attempts=1, max_attempts_per_variant=2,
+        max_variants=1, max_attempts_per_variant=2,
     )
     await opt.on_event(_run_start())
 
@@ -958,7 +958,7 @@ async def test_replay_plan_captures_attempt_framing():
     um = _ctrl("user_message", tag="user")
     opt = await _make_optimizer(
         controllables=[sp, um], observables=[],
-        max_attempts=1, max_attempts_per_variant=2,
+        max_variants=1, max_attempts_per_variant=2,
     )
     await opt.on_event(_run_start())
 
@@ -1025,7 +1025,7 @@ async def test_variant_rotation_clears_pending_replay_plan():
     um = _ctrl("user_message", tag="user")
     opt = await _make_optimizer(
         controllables=[um], observables=[],
-        max_attempts=2, max_attempts_per_variant=1,
+        max_variants=2, max_attempts_per_variant=1,
     )
     await opt.on_event(_run_start())
     opt._attempt_injections = [

@@ -86,10 +86,42 @@ class CrescendoOptimizer(Optimizer):
         max_turns: int = 10,
         max_backtracks: int = 10,
         success_threshold: float = 0.8,
-        max_attempts: int | None = None,
+        max_variants: int | None = None,
         max_attempts_per_variant: int = 3,
         attack_temperature: float = 1.0,
     ) -> None:
+        """Configure the Crescendo state machine.
+
+        The total number of runs the controller will dispatch for one task
+        is ``max_variants * max_attempts_per_variant`` (assuming the
+        optimizer never signals ``done=True`` early). Each run is one full
+        multi-turn attempt of up to ``max_turns`` user-message turns.
+
+        Args:
+            max_turns: Maximum user-message turns within a single attempt.
+            max_backtracks: Within an attempt, how many refusal-driven
+                attacker retries are allowed before the refusal is
+                accepted as the turn outcome (and the terminal-refusal
+                lock is set).
+            success_threshold: Internal-evaluator score (0.0-1.0) at or
+                above which the attempt is declared an internal success.
+                The task judge's verdict at ``RunEnd`` overrides this.
+            max_variants: Number of distinct attacker meta-prompts to
+                rotate through. Defaults to the bundled variant count
+                (5). Each variant gets up to ``max_attempts_per_variant``
+                attempts before rotating to the next.
+            max_attempts_per_variant: Retries within a single variant
+                before rotation. Must be >= 1. Failed attempts feed a
+                lean failure log into the next attacker; refusal-driven
+                failures additionally queue a deterministic-prefix
+                replay plan (see ASSUMPTIONS.md §(e)).
+            attack_temperature: Temperature passed to the attacker LLM.
+                The internal evaluator and the target are temperature-0
+                (the latter is required for replay determinism).
+
+        Raises:
+            ValueError: If ``max_attempts_per_variant < 1``.
+        """
         super().__init__()
         if max_attempts_per_variant < 1:
             raise ValueError("max_attempts_per_variant must be >= 1")
@@ -97,7 +129,7 @@ class CrescendoOptimizer(Optimizer):
         self._max_turns = max_turns
         self._max_backtracks = max_backtracks
         self._success_threshold = success_threshold
-        self._max_attempts = max_attempts if max_attempts is not None else get_variant_count()
+        self._max_variants = max_variants if max_variants is not None else get_variant_count()
         self._max_attempts_per_variant = max_attempts_per_variant
 
         # Filled by initialize()
@@ -484,7 +516,7 @@ class CrescendoOptimizer(Optimizer):
             return RunEndResponse(event=event, done=False)
 
         # Variant exhausted. Rotate.
-        if self._variant_index + 1 < self._max_attempts:
+        if self._variant_index + 1 < self._max_variants:
             self._variant_index += 1
             self._variant_attempt = 0
             self._variant_failure_log = []
@@ -494,7 +526,7 @@ class CrescendoOptimizer(Optimizer):
 
         logger.info(
             "Crescendo: all %d variants × %d attempts exhausted",
-            self._max_attempts, self._max_attempts_per_variant,
+            self._max_variants, self._max_attempts_per_variant,
         )
         return RunEndResponse(event=event, done=True)
 

@@ -76,7 +76,7 @@ async def _init_optimizer(**kwargs) -> CrescendoOptimizer:
         max_turns=3,
         max_backtracks=2,
         success_threshold=0.8,
-        max_attempts=2,
+        max_variants=2,
         max_attempts_per_variant=1,
     )
     defaults.update(kwargs)
@@ -622,7 +622,7 @@ async def test_max_backtracks_stops_backtracking():
 @pytest.mark.asyncio
 async def test_variant_rotation_across_runs():
     """Each run uses a different variant. Failed attempt → next variant."""
-    opt = await _init_optimizer(max_turns=1, max_attempts=2)
+    opt = await _init_optimizer(max_turns=1, max_variants=2)
     ctrl = _make_controllable()
 
     # Run 1 (attempt 0): exhaust max_turns
@@ -652,7 +652,7 @@ async def test_variant_rotation_across_runs():
 @pytest.mark.asyncio
 async def test_all_attempts_exhausted():
     """When all attempts exhausted, RunEnd signals done=True."""
-    opt = await _init_optimizer(max_turns=1, max_attempts=1)
+    opt = await _init_optimizer(max_turns=1, max_variants=1)
     ctrl = _make_controllable()
 
     await opt.on_event(_make_run_start())

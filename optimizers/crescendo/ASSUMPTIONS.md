@@ -106,7 +106,7 @@ target mid-run.
 
 #### State machine
 
-- `_variant_index` rotates 0..N-1 across `max_attempts` variants.
+- `_variant_index` rotates 0..N-1 across `max_variants` variants.
 - Within each variant, `_variant_attempt` rotates 0..K-1 across
   `max_attempts_per_variant` attempts.
 - Each failed attempt appends a lean `FailureRecord` to
@@ -116,7 +116,7 @@ target mid-run.
 - On variant rotation, both `_variant_failure_log` and any pending
   replay plan are cleared.
 
-Default `max_attempts_per_variant=3`. With default `max_attempts=5`
+Default `max_attempts_per_variant=3`. With default `max_variants=5`
 (one per bundled variant), a task gets up to 15 runs (5 variants × 3
 attempts).
 
