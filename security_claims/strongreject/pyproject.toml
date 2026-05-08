@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "strongreject-claim"
+version = "0.1.0"
+description = "StrongREJECT (Souly et al., NeurIPS 2024) jailbreak benchmark as a superred SecurityClaim against ChatbotTarget"
+requires-python = ">=3.11,<3.14"
+dependencies = ["superred>=0.1.0", "chatbot-target", "litellm>=1.0"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=6.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/strongreject_claim"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "--cov=strongreject_claim --cov-branch --cov-report=term-missing --strict-markers -m 'not integration and not smoke'"
+testpaths = ["tests"]
+markers = [
+    "integration: short end-to-end test against a real LiteLLM proxy (requires LITELLM_API_KEY and LITELLM_API_BASE)",
+    "smoke: 54-prompt cross-baseline check against a real LiteLLM proxy (~$0.01 of judge spend, ~1-2 min wall-clock)",
+]
+
+[tool.coverage.report]
+fail_under = 90
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "^\\s*\\.\\.\\.\\s*$",
+]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+files = ["src"]
+
+[[tool.mypy.overrides]]
+module = "chatbot_target.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "litellm.*"
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["UP046", "UP047"]
