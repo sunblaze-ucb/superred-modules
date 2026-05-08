@@ -4,7 +4,8 @@ from unittest.mock import AsyncMock, MagicMock
 import json
 import pytest
 
-from crescendo_optimizer.attacker import Attacker
+from crescendo_optimizer.attacker import Attacker, _render_framing_instruction
+from crescendo_optimizer.prompts import BASE_SCHEMA, FRAMING_FIELD
 
 
 def _mock_response(content: str) -> MagicMock:
@@ -179,5 +180,26 @@ async def test_parse_response_raises_on_missing_key():
             goal="g", turn=1, max_turns=10,
             last_response=None, last_score=None, last_rationale=None,
         )
+
+
+def test_framing_instruction_renders_every_base_field():
+    """The (c) override must list every field declared in BASE_SCHEMA so
+    a future variant adding a base field cannot silently desynchronise
+    with the framing path. The framing field itself must also appear."""
+    rendered = _render_framing_instruction(BASE_SCHEMA, FRAMING_FIELD)
+    for field in BASE_SCHEMA:
+        assert field in rendered, f"base field {field!r} missing from rendered framing override"
+    assert FRAMING_FIELD in rendered
+
+
+def test_framing_instruction_picks_up_extended_schema():
+    """If the base schema is extended (e.g. a new variant adds a
+    `confidence` field), the rendered override must include it without
+    any change to attacker.py. Locks the dynamic-rendering contract."""
+    extended = (*BASE_SCHEMA, "confidence")
+    rendered = _render_framing_instruction(extended, FRAMING_FIELD)
+    for field in extended:
+        assert field in rendered
+    assert FRAMING_FIELD in rendered
 
 
