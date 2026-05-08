@@ -621,10 +621,25 @@ class CrescendoOptimizer(Optimizer):
         if self._pending_replay_record is not None:
             record = self._pending_replay_record
             self._pending_replay_record = None
-            # Drain trajectory entries that arrived during the replayed turn —
-            # they're not needed (we trust the cached response) but mustn't
-            # accumulate into the next non-replay turn's drain.
-            self._get_response_from_trajectory()
+            # The target re-ran with the cached question. We trust the cached
+            # response (premise: temperature-0 determinism), but still drain
+            # the live response and compare. On divergence, log a WARNING
+            # and continue with the cache so the run completes for
+            # inspection. A divergence here means the determinism premise
+            # has broken and the post-replay attacker will be reasoning
+            # from a fictitious context.
+            live = self._get_response_from_trajectory()
+            if live is None and self._pending_post_answer is not None:
+                live = self._pending_post_answer
+            if live is not None and live != record.target_response:
+                logger.warning(
+                    "Crescendo: replay determinism check failed at turn %d "
+                    "(cached=%r, live=%r); using cached. The target may not "
+                    "be deterministic at temperature 0.",
+                    self._turn + 1,
+                    record.target_response[:120],
+                    live[:120],
+                )
             self._last_response = record.target_response
             self._last_score = record.score
             self._last_rationale = record.rationale

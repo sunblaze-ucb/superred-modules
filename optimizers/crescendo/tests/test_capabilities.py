@@ -10,6 +10,7 @@ Covers:
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,6 +22,7 @@ from superred.core.types.events import (
     ControllableNoInjection,
     ControllablePreCallEvent,
     ControllablePostCallEvent,
+    ObservableEvent,
     RunEndEvent,
     RunStartEvent,
 )
@@ -1107,6 +1109,99 @@ async def test_terminal_refusal_locks_attempt_injections():
         score.return_value = (0.6, "engaged")
         await opt._process_answer("Some content.")
     assert opt._attempt_injections == []  # locked
+
+
+@pytest.mark.asyncio
+async def test_replay_warns_when_live_response_diverges_from_cache(caplog):
+    """Determinism guard: if the live target's response on a replay turn
+    diverges from the cached one (premise: temperature-0 determinism),
+    log a WARNING. Cached response continues to win to keep the run
+    inspectable."""
+    um = _ctrl("user_message", tag="user")
+    opt = await _make_optimizer(controllables=[um], observables=[])
+
+    response_tag = SecurityDomainTag(name="response_readable")
+    traj = MagicMock()
+    traj.drain.return_value = [ObservableEvent(
+        observable=Observable(name="response", security_domain=response_tag),
+        content="LIVE-A1-DIFFERENT",
+    )]
+    opt._trajectory = traj
+    opt._pending_replay_record = TurnRecord(
+        injected_question="Q1", target_response="cached-A1", score=0.4,
+        rationale="r",
+    )
+    opt._awaiting_post_call = True
+
+    with caplog.at_level(logging.WARNING, logger="crescendo_optimizer.optimizer"):
+        await opt._consume_pending_feedback()
+
+    # Cached response wins (determinism premise preserved for downstream code)
+    assert opt._last_response == "cached-A1"
+    assert opt._last_score == 0.4
+    # Divergence logged
+    assert any(
+        "determinism" in record.message.lower()
+        for record in caplog.records if record.levelno == logging.WARNING
+    )
+
+
+@pytest.mark.asyncio
+async def test_replay_silent_when_live_response_matches_cache(caplog):
+    """Determinism guard does NOT warn when the live response matches the
+    cached one. Defensive check that the guard is keyed on actual
+    divergence, not merely on the trajectory containing data."""
+    um = _ctrl("user_message", tag="user")
+    opt = await _make_optimizer(controllables=[um], observables=[])
+
+    response_tag = SecurityDomainTag(name="response_readable")
+    traj = MagicMock()
+    traj.drain.return_value = [ObservableEvent(
+        observable=Observable(name="response", security_domain=response_tag),
+        content="A1",
+    )]
+    opt._trajectory = traj
+    opt._pending_replay_record = TurnRecord(
+        injected_question="Q1", target_response="A1", score=0.4, rationale="r",
+    )
+    opt._awaiting_post_call = True
+
+    with caplog.at_level(logging.WARNING, logger="crescendo_optimizer.optimizer"):
+        await opt._consume_pending_feedback()
+
+    assert opt._last_response == "A1"
+    assert not any(
+        "determinism" in record.message.lower()
+        for record in caplog.records if record.levelno == logging.WARNING
+    )
+
+
+@pytest.mark.asyncio
+async def test_replay_determinism_guard_falls_back_to_post_call(caplog):
+    """When the trajectory yields no response (PostCall is the only signal,
+    e.g. response observable is filtered out of scope), the guard
+    compares against ``_pending_post_answer`` instead."""
+    um = _ctrl("user_message", tag="user")
+    opt = await _make_optimizer(controllables=[um], observables=[])
+
+    traj = MagicMock()
+    traj.drain.return_value = []  # no observables
+    opt._trajectory = traj
+    opt._pending_replay_record = TurnRecord(
+        injected_question="Q1", target_response="cached-A1", score=0.4,
+        rationale="r",
+    )
+    opt._pending_post_answer = "LIVE-DIFFERENT-A1"
+    opt._awaiting_post_call = True
+
+    with caplog.at_level(logging.WARNING, logger="crescendo_optimizer.optimizer"):
+        await opt._consume_pending_feedback()
+
+    assert opt._last_response == "cached-A1"
+    assert any(
+        "determinism" in record.message.lower()
+        for record in caplog.records if record.levelno == logging.WARNING
+    )
 
 
 @pytest.mark.asyncio
