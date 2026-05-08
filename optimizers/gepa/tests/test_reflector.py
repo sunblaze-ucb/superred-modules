@@ -80,18 +80,28 @@ class TestRolloutRecordSample:
         record = RolloutRecord(goal="G", prompt="P0", rationale="   ")
         assert "feedback" not in record.to_sample()
 
-    def test_target_system_prompt_appears_when_provided(self) -> None:
+    def test_target_observables_appears_when_provided(self) -> None:
         record = RolloutRecord(
             goal="G",
             prompt="P0",
-            target_system_prompt="You are a careful assistant.",
+            target_observables={
+                "system_prompt": "You are a careful assistant.",
+                "model": "gpt-4",
+            },
         )
         sample = record.to_sample()
-        assert sample["target_system_prompt"] == "You are a careful assistant."
+        assert sample["target_observables"] == {
+            "system_prompt": "You are a careful assistant.",
+            "model": "gpt-4",
+        }
 
-    def test_target_system_prompt_omitted_when_absent(self) -> None:
+    def test_target_observables_omitted_when_absent(self) -> None:
         record = RolloutRecord(goal="G", prompt="P0")
-        assert "target_system_prompt" not in record.to_sample()
+        assert "target_observables" not in record.to_sample()
+
+    def test_target_observables_omitted_when_empty_dict(self) -> None:
+        record = RolloutRecord(goal="G", prompt="P0", target_observables={})
+        assert "target_observables" not in record.to_sample()
 
 
 # ---------------------------------------------------------------------------

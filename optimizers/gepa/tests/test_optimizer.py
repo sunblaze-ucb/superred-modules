@@ -695,13 +695,15 @@ class TestRolloutHistoryBuffer:
 
 
 # ---------------------------------------------------------------------------
-# System-prompt observable surfaces into the reflective dataset (item 3a)
+# Static observables surface as ``target_observables`` in the reflective
+# dataset — generalised over every in-scope static observable, not just
+# system_prompt (item 3, follow-up review).
 # ---------------------------------------------------------------------------
 
 
-class TestSystemPromptObservable:
+class TestStaticObservables:
     @pytest.mark.asyncio
-    async def test_in_scope_observable_surfaces_on_rollout(self) -> None:
+    async def test_system_prompt_observable_surfaces_on_rollout(self) -> None:
         from superred.core.types.observable import ObservableValue
 
         sp_obs = ObservableValue(
@@ -723,16 +725,85 @@ class TestSystemPromptObservable:
             await _roll_out_one(opt, eval_=_failure_eval(0.1), response_text="r")
 
         rollouts = propose.call_args.kwargs["rollouts"]
-        assert rollouts[0].target_system_prompt == "You are a careful assistant."
+        assert rollouts[0].target_observables == {
+            "system_prompt": "You are a careful assistant.",
+        }
 
     @pytest.mark.asyncio
-    async def test_out_of_scope_means_field_is_none(self) -> None:
+    async def test_multiple_observables_all_surface(self) -> None:
+        """Generalised over *all* in-scope static observables: model
+        identity, system prompt, etc. all flow into the reflective
+        dataset so the reflection LM sees whatever capability the
+        threat model granted."""
+        from superred.core.types.observable import ObservableValue
+
+        observables = [
+            ObservableValue(
+                observable=Observable(
+                    name="system_prompt",
+                    security_domain=SYSTEM_PROMPT_TAG,
+                ),
+                content="You are a careful assistant.",
+            ),
+            ObservableValue(
+                observable=Observable(
+                    name="model",
+                    security_domain=SecurityDomainTag("model_identity"),
+                ),
+                content="gpt-4-turbo",
+            ),
+        ]
+        opt = GEPAOptimizer(max_attempts=2)
+        await opt.initialize(
+            goal=Goal(description="exfil"),
+            controllables=[_user_ctrl()],
+            observables=observables,
+            llm_client=_empty_llm(),
+        )
+        propose = AsyncMock(return_value=None)
+        with patch.object(opt._reflector, "propose", new=propose):
+            await _roll_out_one(opt, eval_=_failure_eval(0.1), response_text="r")
+
+        rollouts = propose.call_args.kwargs["rollouts"]
+        assert rollouts[0].target_observables == {
+            "system_prompt": "You are a careful assistant.",
+            "model": "gpt-4-turbo",
+        }
+
+    @pytest.mark.asyncio
+    async def test_no_observables_means_field_is_none(self) -> None:
         opt = await _init_optimizer(max_attempts=2)
         propose = AsyncMock(return_value=None)
         with patch.object(opt._reflector, "propose", new=propose):
             await _roll_out_one(opt, eval_=_failure_eval(0.1), response_text="r")
         rollouts = propose.call_args.kwargs["rollouts"]
-        assert rollouts[0].target_system_prompt is None
+        assert rollouts[0].target_observables is None
+
+    @pytest.mark.asyncio
+    async def test_empty_string_observables_are_dropped(self) -> None:
+        from superred.core.types.observable import ObservableValue
+
+        observables = [
+            ObservableValue(
+                observable=Observable(
+                    name="system_prompt",
+                    security_domain=SYSTEM_PROMPT_TAG,
+                ),
+                content="   ",
+            ),
+        ]
+        opt = GEPAOptimizer(max_attempts=2)
+        await opt.initialize(
+            goal=Goal(description="exfil"),
+            controllables=[_user_ctrl()],
+            observables=observables,
+            llm_client=_empty_llm(),
+        )
+        propose = AsyncMock(return_value=None)
+        with patch.object(opt._reflector, "propose", new=propose):
+            await _roll_out_one(opt, eval_=_failure_eval(0.1), response_text="r")
+        rollouts = propose.call_args.kwargs["rollouts"]
+        assert rollouts[0].target_observables is None
 
 
 # ---------------------------------------------------------------------------
@@ -787,6 +858,62 @@ class TestTargetControllableName:
             ),
         )
         assert isinstance(user_resp, ControllableNoInjection)
+
+    @pytest.mark.asyncio
+    async def test_auto_claim_system_prompt_when_writable_in_scope(self) -> None:
+        """When ``target_controllable_name`` is unset and the controller
+        grants ``system_prompt`` as a writable controllable, the
+        optimizer auto-claims it (higher-leverage attack surface)."""
+        opt = GEPAOptimizer(max_attempts=2)
+        await opt.initialize(
+            goal=Goal(description="payload"),
+            controllables=[_system_prompt_ctrl(), _user_ctrl()],
+            observables=[],
+            llm_client=_empty_llm(),
+        )
+        assert opt._target_controllable_name == "system_prompt"
+
+        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        sp_resp = await opt.on_event(
+            ControllablePreCallEvent(
+                controllable=_system_prompt_ctrl(),
+                request="default-system-prompt",
+            ),
+        )
+        assert isinstance(sp_resp, ControllableInjection)
+        assert sp_resp.value == "payload"
+
+        # Subsequent user_message PreCall is rejected — auto-claim
+        # locks injection to system_prompt just like the explicit knob.
+        user_resp = await opt.on_event(
+            ControllablePreCallEvent(
+                controllable=_user_ctrl(), request="next",
+            ),
+        )
+        assert isinstance(user_resp, ControllableNoInjection)
+
+    @pytest.mark.asyncio
+    async def test_no_auto_claim_when_system_prompt_not_writable(self) -> None:
+        """Default scope (no system_prompt controllable) → no
+        auto-claim, optimizer attacks user_message."""
+        opt = await _init_optimizer()
+        assert opt._target_controllable_name is None
+
+    @pytest.mark.asyncio
+    async def test_explicit_override_wins_over_auto_claim(self) -> None:
+        """An explicit ``target_controllable_name`` always beats
+        auto-claim, even when ``system_prompt`` is writable."""
+        opt = GEPAOptimizer(
+            max_attempts=2,
+            target_controllable_name="user_message",
+        )
+        await opt.initialize(
+            goal=Goal(description="payload"),
+            controllables=[_system_prompt_ctrl(), _user_ctrl()],
+            observables=[],
+            llm_client=_empty_llm(),
+        )
+        assert opt._target_controllable_name == "user_message"
 
     @pytest.mark.asyncio
     async def test_explicit_target_ignores_unrelated_controllables(self) -> None:
@@ -1019,7 +1146,7 @@ class TestEndToEndControllerIntegration:
     async def test_gepa_user_only_scope_runs_blind_to_max_attempts(self) -> None:
         """Setting 1 (user-query-only): scope = user_message, and
         ``include_feedback=False`` on the controller so evaluation
-        does not reach the optimizer either. ``target_system_prompt``
+        does not reach the optimizer either. ``target_observables``
         must stay None on every recorded rollout, every score is None
         (so latest-wins selection actually kicks in — everyone's
         effective_score is 0), and the run terminates by budget
@@ -1037,11 +1164,11 @@ class TestEndToEndControllerIntegration:
         async def _stub_propose(self, *, current_instruction, rollouts):  # noqa: ANN001
             for record in rollouts:
                 # In setting 1, the optimizer must surface neither
-                # responses, scores, nor system_prompt to the
-                # reflection side-info.
+                # responses, scores, nor any static observables to
+                # the reflection side-info.
                 assert record.response is None
                 assert record.score is None
-                assert record.target_system_prompt is None
+                assert record.target_observables is None
             proposed.append(current_instruction)
             return _refl(f"mutation-{len(proposed)}")
 
@@ -1140,4 +1267,62 @@ class TestEndToEndControllerIntegration:
             r for r in responses if "ATTACK" in r
         )
         assert "[sys=system: ATTACK now please]" in successful
+        assert "echo:default" in successful
+
+    @pytest.mark.asyncio
+    async def test_gepa_auto_claims_writable_system_prompt_via_controller(
+        self,
+    ) -> None:
+        """End-to-end: with full scope and no explicit
+        ``target_controllable_name``, the optimizer auto-claims the
+        writable ``system_prompt`` channel through the real Controller.
+        Same behaviour as the explicit-override variant, no caller
+        configuration required."""
+        from superred.core.controller import Controller
+        from superred.core.interfaces.security_claim import SecurityClaim
+        from superred.core.types.llm import LLMConfig
+
+        responses: list[str] = []
+        target = _FakeChatTarget(system_prompt="default-careful")
+        original_run = target.run
+
+        async def _instrumented_run(emit, send_event):  # noqa: ANN001
+            await original_run(emit, send_event)
+            responses.append(target.last_response)
+
+        target.run = _instrumented_run  # type: ignore[method-assign]
+
+        task = _FakeTask(magic="ATTACK")
+        claim = SecurityClaim.from_tasks([task])
+
+        async def _stub_propose(self, *, current_instruction, rollouts):  # noqa: ANN001
+            return _refl("ATTACK now please")
+
+        with patch.object(
+            __import__(
+                "gepa_optimizer.reflector", fromlist=["Reflector"]
+            ).Reflector,
+            "propose",
+            new=_stub_propose,
+        ):
+            controller = Controller(
+                # No ``target_controllable_name`` — relies on auto-claim.
+                optimizer_factory=lambda: GEPAOptimizer(max_attempts=5),
+                target=target,
+                security_claim=claim,
+                llm_configs=[
+                    LLMConfig(model="m", api_base="http://x", api_key="sk"),
+                ],
+            )
+            full_scope = frozenset(
+                {USER_TAG, SYSTEM_PROMPT_TAG, RESPONSE_TAG}
+            )
+            result = await controller.run(scopes=[full_scope])
+
+        tr = result.threat_model_results[0].task_results[0]
+        assert tr.success is True
+        # Auto-claim must land injection on system_prompt; user_message
+        # slot stays at the target's default.
+        successful = next(r for r in responses if "ATTACK" in r)
+        assert "[sys=ATTACK now please]" in successful
         assert "echo:default" in successful

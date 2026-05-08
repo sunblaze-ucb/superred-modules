@@ -42,12 +42,17 @@ to evaluate.
 Appendix B of the paper), including the two required placeholders
 ``<curr_param>`` and ``<side_info>``.
 
-``_extract_fenced_block`` in ``reflector.py`` is a verbatim port of
-the upstream ``output_extractor``: take the content between the
-*first opening* and the *last closing* triple-backtick, stripping an
-optional language tag on the first line; tolerate incomplete blocks
-by trimming a leading or trailing fence; return empty for output with
-no fence at all. This preserves any internal triple-backticks the
+``_extract_fenced_block`` in ``reflector.py`` ports upstream's
+``output_extractor`` first-open-to-last-close span and incomplete-block
+handling exactly (including stripping the optional language tag on
+the first line and trimming a leading or trailing fence when only
+one is present), with a single deliberate divergence: when the input
+contains no fences at all, we return the empty string so reflection
+can no-op the mutation rather than the upstream behaviour of
+returning the raw stripped text. The divergence is the right call
+for adversarial use — a reflection LM that ignored the fence
+contract should not silently ship its rambling as the next
+candidate. This preserves any internal triple-backticks the
 reflection LM may emit when its proposed instruction itself contains
 nested fenced examples.
 
@@ -69,14 +74,31 @@ non-empty (see ``RolloutRecord.to_sample`` and
 ``format_reflective_dataset``). Settings that strip a surface produce
 a smaller side-info block rather than a noisier one.
 
-Independently, when the controller's scope grants a readable
-``system_prompt`` observable (matching the chatbot target's naming),
-its content is captured at ``initialize`` and surfaced on every
-rollout sample as ``target_system_prompt``. This lets the reflection
-LM take the target's framing into account when proposing the next
-mutation, matching the paper's principle that the reflection signal
-includes "all the relevant context the system has access to." When
-the observable is out of scope, the field is simply omitted.
+Independently, **all** in-scope static observables are captured at
+``initialize`` and surfaced on every rollout sample as a single
+``target_observables`` dict (e.g. ``{"system_prompt": "...",
+"model": "gpt-4"}``). The reflection LM sees whatever capability
+the threat model granted — system prompt content, model identity,
+anything else the controller routed in — rather than only one
+hardcoded surface. When no static observables are in scope, the
+field is omitted entirely. Non-string observable contents and empty
+/ whitespace strings are dropped (matches the
+``format_reflective_dataset`` field-skip rule).
+
+Capability symmetry on the **write** side: when the controller's
+scope grants ``system_prompt`` as a writable controllable and the
+caller hasn't pinned ``target_controllable_name`` explicitly, the
+optimizer auto-claims it as the attack channel. The system prompt
+is the higher-leverage attack surface (the assistant is conditioned
+on it from the first token, before any user message arrives) and
+auto-claiming it whenever it's available keeps the optimizer
+*threat-model-faithful* — the same scope grant that previously gave
+the optimizer "I can read the system prompt" capability now also
+gives it "I can write the system prompt" if the controller wants to
+expose that. The explicit ``target_controllable_name`` constructor
+knob still wins over auto-claim. When ``system_prompt`` is not
+writable, behaviour is unchanged: attack ``user_message`` and skip
+read-only ``system_prompt`` PreCalls.
 
 ``max_no_signal_runs`` (default ``0``, disabled) bounds the
 user-query-only setting's cost: if positive, terminate after that many
@@ -133,21 +155,33 @@ feeds reflection also feeds the selection rule. Latest-wins
 tie-breaking still applies (relevant in settings 1 and 3, where
 every candidate sits at 0.0).
 
-### One component, with a configurable target channel
+Caveat: a buffer-mean over a partially-filled deque has a subtle
+freshness bias. A candidate with one rollout at 0.9 (mean 0.9)
+beats a candidate with three rollouts averaging 0.85 (mean 0.85),
+even though the latter is the more reliable estimate. We
+intentionally keep this — the bias prefers fresh exploration over
+old stable results, which is the right behaviour during a
+short-budget GEPA loop where every rollout costs a target call.
+Future work could swap in a confidence-weighted score (e.g. a
+shrinkage estimator with a fixed prior count) if the noise budget
+becomes the dominant cost.
+
+### One component, auto-claimed from the writable scope
 
 The paper supports multi-component systems (e.g. multi-hop QA with
 several modules). We optimize a single component per session.
 
-By default that component is the user-message channel — the right
-shape for one-prompt jailbreak optimization. The
-``target_controllable_name`` knob (default ``None``) overrides this:
-when set, the optimizer locks injection onto exactly the named
-controllable and ignores all others (including the otherwise-skipped
-``system_prompt`` PreCall). Set it to ``"system_prompt"`` to attack
-the system-prompt channel directly when the controller's scope grants
-write access; set it to any other in-scope name to attack a custom
-channel. Multi-component (simultaneous multi-channel) support is a
-future extension, not a current requirement.
+Default channel selection is *threat-model-driven*: the optimizer
+auto-claims ``system_prompt`` when the controller's scope grants it
+as a writable controllable (higher-leverage attack surface, and the
+single component the paper would naturally optimise on a chatbot
+target), otherwise falls back to ``user_message`` and skips the
+read-only ``system_prompt`` PreCall. The
+``target_controllable_name`` constructor knob (default ``None``)
+always wins over auto-claim and lets callers pin any in-scope
+controllable as the attack channel. Multi-component (simultaneous
+multi-channel) support is a future extension, not a current
+requirement.
 
 ### No merge / crossover proposer
 
@@ -167,10 +201,11 @@ and GOAT:
 * Same primary-controllable locking on the first non-``system_prompt``
   ``ControllablePreCallEvent`` *in the default mode*; explicit-target
   mode (``target_controllable_name`` set) locks onto exactly that name.
-* Same default ``system_prompt`` skip rule (matches GOAT and
-  FlipAttack — the paper's default optimization target is the
-  user-message channel); the skip is bypassed when
-  ``target_controllable_name="system_prompt"``.
+* Same ``system_prompt`` skip rule **only when ``system_prompt`` is
+  not writable** (matches GOAT and FlipAttack on read-only system
+  prompts); the skip is bypassed by auto-claim when ``system_prompt``
+  is a writable controllable, or when
+  ``target_controllable_name="system_prompt"`` is set explicitly.
 * Same trajectory-first response recovery over
   ``{response, model_response, assistant_response}``.
 * Same 3-way PostCall pairing (same controllable, request matches the

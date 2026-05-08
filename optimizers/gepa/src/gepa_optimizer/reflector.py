@@ -41,9 +41,10 @@ logger = logging.getLogger(__name__)
 class RolloutRecord:
     """A single past rollout used to build the reflective dataset.
 
-    ``target_system_prompt`` is filled when the optimizer's scope grants
-    a readable system-prompt observable, so the reflection LM can take
-    the target's framing into account when proposing the next mutation.
+    ``target_observables`` is filled with the in-scope static
+    observables (e.g. ``{"system_prompt": "...", "model": "gpt-4"}``)
+    so the reflection LM sees whatever capability the threat model
+    actually grants — not just one hardcoded surface.
     """
 
     goal: str
@@ -51,7 +52,7 @@ class RolloutRecord:
     response: str | None = None
     score: float | None = None
     rationale: str = ""
-    target_system_prompt: str | None = None
+    target_observables: dict[str, str] | None = None
 
     def to_sample(self) -> dict[str, Any]:
         """Convert to the markdown-renderable sample dict.
@@ -62,8 +63,8 @@ class RolloutRecord:
             "task_input": self.goal,
             "candidate_instruction": self.prompt,
         }
-        if self.target_system_prompt is not None:
-            sample["target_system_prompt"] = self.target_system_prompt
+        if self.target_observables:
+            sample["target_observables"] = dict(self.target_observables)
         if self.response is not None:
             sample["assistant_response"] = self.response
         feedback = _format_feedback(score=self.score, rationale=self.rationale)

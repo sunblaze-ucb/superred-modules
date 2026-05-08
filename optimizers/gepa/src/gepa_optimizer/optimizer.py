@@ -30,18 +30,18 @@ flag select which information surfaces are visible:
 Threat-model fidelity
 ---------------------
 
-The optimizer also adapts to the *capability* surface the controller's
+The optimizer adapts to the *capability* surface the controller's
 scope grants:
 
-* When a system-prompt observable (default name ``system_prompt``)
-  is in scope, its content is surfaced as ``target_system_prompt`` in
-  the reflective dataset so the reflection LM sees the framing the
-  target was configured with.
-* When ``target_controllable_name`` is set (default ``None`` = attack
-  the user-message channel), the optimizer locks injection onto that
-  named controllable instead. Set it to ``"system_prompt"`` to attack
-  the system-prompt channel directly when the controller's scope
-  grants write access.
+* All in-scope static observables (e.g. ``system_prompt``, ``model``)
+  are surfaced as a ``target_observables`` dict in the reflective
+  dataset so the reflection LM sees whatever capability the threat
+  model actually grants — not just one hardcoded surface.
+* When the controller's scope grants write access to ``system_prompt``
+  the optimizer auto-claims it and attacks that channel by default
+  (the higher-leverage attack surface). Otherwise the user-message
+  channel is attacked. The explicit ``target_controllable_name``
+  constructor knob always wins over auto-claim.
 
 Refer to ``ASSUMPTIONS.md`` for paper alignment and deliberate
 departures.
@@ -83,10 +83,13 @@ _DEFAULT_RESPONSE_OBSERVABLE_NAMES: frozenset[str] = frozenset(
 
 # Hardcoded system-prompt name (matches the chatbot target's naming).
 # Used for two things: (1) the default-mode skip rule on the
-# ``system_prompt`` ControllablePreCallEvent so the user-message channel
-# can still claim the primary slot, and (2) the observable name read
-# from ``initialize``'s ``observables`` to populate
-# ``RolloutRecord.target_system_prompt``.
+# ``system_prompt`` ControllablePreCallEvent so the user-message
+# channel can still claim the primary slot when ``system_prompt`` is
+# read-only, and (2) the auto-claim default — when the controller's
+# scope grants ``system_prompt`` as a *writable* controllable and the
+# caller didn't pin ``target_controllable_name`` explicitly, the
+# optimizer prefers it over ``user_message`` because the system
+# prompt is the higher-leverage attack surface.
 _SYSTEM_PROMPT_NAME = "system_prompt"
 
 # Per-candidate rollout history depth. Matches the GEPA paper's default
@@ -151,10 +154,12 @@ class GEPAOptimizer(Optimizer):
             Crescendo / GOAT).
         target_controllable_name: When set, the optimizer locks
             injection onto exactly the controllable with this name and
-            ignores all others (including the otherwise-skipped
-            ``system_prompt`` channel). Default ``None`` keeps the
-            paper's original threat model — attack the user-message
-            channel; skip ``system_prompt`` PreCalls without locking.
+            ignores all others. Default ``None`` enables auto-claim:
+            attack ``system_prompt`` when the controller's scope
+            includes it as a writable controllable (higher-leverage
+            attack surface); otherwise attack ``user_message`` and
+            skip the ``system_prompt`` PreCall (read-only system
+            prompt).
         max_no_signal_runs: If positive, terminate after this many
             consecutive runs in which neither response nor evaluation
             was visible. Bounds blind-loop cost in the user-query-only
@@ -181,13 +186,20 @@ class GEPAOptimizer(Optimizer):
             if response_observable_names is not None
             else _DEFAULT_RESPONSE_OBSERVABLE_NAMES
         )
-        self._target_controllable_name = target_controllable_name
         self._max_no_signal_runs = max(0, max_no_signal_runs)
+
+        # User-supplied override; resolved (with auto-claim) inside
+        # ``initialize`` into ``_target_controllable_name``.
+        self._target_controllable_name_override = target_controllable_name
 
         # Set in initialize().
         self._goal: Goal | None = None
         self._reflector: Reflector | None = None
-        self._target_system_prompt: str | None = None
+        self._target_observables: dict[str, str] | None = None
+        # Resolved attack channel: override if set, else auto-claim
+        # ``system_prompt`` when writable, else ``None`` (default
+        # user-message attack with system_prompt skipped).
+        self._target_controllable_name: str | None = None
 
         # Cross-run state.
         self._pool: list[_Candidate] = []
@@ -226,7 +238,10 @@ class GEPAOptimizer(Optimizer):
             llm=self.llm,
             temperature=self._reflection_temperature,
         )
-        self._target_system_prompt = self._extract_system_prompt(observables)
+        self._target_observables = self._extract_static_observables(observables)
+        self._target_controllable_name = self._resolve_target_controllable_name(
+            controllables,
+        )
         self._pool = [_Candidate(prompt=goal.description)]
         self._pending = None
         self._attempt = 0
@@ -370,7 +385,7 @@ class GEPAOptimizer(Optimizer):
                     response=response,
                     score=score,
                     rationale=rationale,
-                    target_system_prompt=self._target_system_prompt,
+                    target_observables=self._target_observables,
                 )
             )
             if self._current_is_fresh:
@@ -471,19 +486,54 @@ class GEPAOptimizer(Optimizer):
                     latest = item.content
         return latest
 
-    def _extract_system_prompt(
-        self, observables: list[ObservableValue]
-    ) -> str | None:
-        """Return the in-scope ``system_prompt`` observable content, if any.
+    @staticmethod
+    def _extract_static_observables(
+        observables: list[ObservableValue],
+    ) -> dict[str, str] | None:
+        """Return a name → content dict of in-scope static observables.
 
         ``observables`` is already scope-filtered by the controller, so
-        a non-empty match means the threat model grants read access.
+        every entry the optimizer sees here is one the threat model
+        explicitly granted read access to. Each value is surfaced as a
+        ``target_observables`` field on every ``RolloutRecord`` so the
+        reflection LM sees whatever capability the controller actually
+        granted (system prompt, model identity, …) rather than just
+        one hardcoded surface.
+
+        Non-string values and empty / whitespace strings are dropped
+        (matches the ``format_reflective_dataset`` field-skip rule).
         """
+        out: dict[str, str] = {}
         for value in observables:
-            if value.observable.name == _SYSTEM_PROMPT_NAME:
-                content = value.content
-                if isinstance(content, str) and content.strip():
-                    return content
+            content = value.content
+            if isinstance(content, str) and content.strip():
+                out[value.observable.name] = content
+        return out or None
+
+    def _resolve_target_controllable_name(
+        self, controllables: list[Controllable],
+    ) -> str | None:
+        """Resolve ``target_controllable_name`` from override + scope.
+
+        Resolution order:
+        1. Explicit constructor override always wins.
+        2. Auto-claim ``system_prompt`` when the controller's scope
+           grants it as a writable controllable — the higher-leverage
+           attack surface, and matches the paper's "single-component
+           optimisation" framing more naturally than user-message.
+        3. Otherwise leave ``None`` so the default user-message attack
+           path runs (and ``system_prompt`` PreCalls are skipped).
+        """
+        if self._target_controllable_name_override is not None:
+            return self._target_controllable_name_override
+        for ctrl in controllables:
+            if ctrl.name == _SYSTEM_PROMPT_NAME:
+                logger.info(
+                    "GEPA: auto-claiming write access to %r as the attack "
+                    "channel (higher-leverage than user_message)",
+                    _SYSTEM_PROMPT_NAME,
+                )
+                return _SYSTEM_PROMPT_NAME
         return None
 
     async def _reflect_next_candidate(self) -> None:
