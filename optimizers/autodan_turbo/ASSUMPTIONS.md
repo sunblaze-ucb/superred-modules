@@ -36,8 +36,7 @@ Per epoch on a fixed malicious request `M`:
    compares `(prev_prompt, current_prompt)`, extracts a
    `{Strategy, Definition}` object, and adds it to the library with
    `Example=current_prompt`, `Score=score-prev_score`.
-6. **Update** — `prev_prompt`, `prev_response`, `prev_score` ←
-   current.
+6. **Update** — `prev_prompt`, `prev_score` ← current.
 7. **Stop** — `score ≥ break_score (8.5)`.
 
 ## Mapping to superred
@@ -266,8 +265,8 @@ update for that run, matching upstream's "retry-then-skip" semantics.
 
 Upstream iterates over a list of `data['lifelong']` requests. Superred
 optimisers operate on one `Goal`. The optimiser keeps `prev_prompt /
-prev_response / prev_score` per Goal — exactly the per-request state
-upstream maintains inside the lifelong loop.
+prev_score` per Goal — exactly the per-request state upstream maintains
+inside the lifelong loop.
 
 ### 8. Holding `_prev_prompt` / `_prev_score` instead of reading from `past_trajectories`
 
