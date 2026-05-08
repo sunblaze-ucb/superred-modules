@@ -798,6 +798,84 @@ async def test_replay_framing_lifted_on_system_prompt_event():
 
 
 @pytest.mark.asyncio
+async def test_failure_log_omits_restored_sentence_on_fresh_retry():
+    """When the prior attempt failed without any refusals (no replay
+    plan queued), the next attempt's attacker prompt must NOT claim
+    the conversation has been restored — that retry actually starts
+    from turn 1 against a fresh target."""
+    um = _ctrl("user_message", tag="user")
+    opt = await _make_optimizer(
+        controllables=[um], observables=[],
+        max_attempts=1, max_attempts_per_variant=2,
+    )
+    await opt.on_event(_run_start())
+    # Failed attempt with no refusals — task judge rejected on goal grounds
+    await opt.on_event(_run_end(EvaluationResult(
+        success=False, primary_score=Score(value=0.3),
+        rationale="answer was off-target",
+    )))
+    assert opt._pending_replay_plan is None  # fresh retry
+    await opt.on_event(_run_start())
+
+    mock_llm = opt._attacker._llm
+    mock_llm.complete = AsyncMock()
+    mock_llm.complete.return_value = MagicMock(
+        choices=[MagicMock(message=MagicMock(content=(
+            '{"generated_question": "Q", '
+            '"last_response_summary": "", '
+            '"rationale_behind_jailbreak": "r"}'
+        )))],
+    )
+    await opt._attacker.generate_question(
+        goal="g", turn=1, max_turns=3,
+        last_response=None, last_score=None, last_rationale=None,
+    )
+    system_text = mock_llm.complete.call_args[0][0][0]["content"]
+    assert "Previous Attempts" in system_text
+    assert "restored" not in system_text
+    assert "starting from turn 1" in system_text
+
+
+@pytest.mark.asyncio
+async def test_failure_log_keeps_restored_sentence_on_replay_retry():
+    """When the prior attempt hit a refusal and a replay plan was queued,
+    the next attempt's attacker prompt must include the 'restored'
+    sentence — that retry does in fact replay the prefix."""
+    um = _ctrl("user_message", tag="user")
+    opt = await _make_optimizer(
+        controllables=[um], observables=[],
+        max_attempts=1, max_attempts_per_variant=2,
+    )
+    await opt.on_event(_run_start())
+    opt._attempt_injections = [
+        TurnRecord("Q1", "A1", 0.4, "r1"),
+    ]
+    opt._attacker.notify_refusal("refused-Q2")
+    await opt.on_event(_run_end(EvaluationResult(
+        success=False, primary_score=Score(value=0.4), rationale="r",
+    )))
+    assert opt._pending_replay_plan is not None
+    await opt.on_event(_run_start())
+
+    mock_llm = opt._attacker._llm
+    mock_llm.complete = AsyncMock()
+    mock_llm.complete.return_value = MagicMock(
+        choices=[MagicMock(message=MagicMock(content=(
+            '{"generated_question": "Q", '
+            '"last_response_summary": "", '
+            '"rationale_behind_jailbreak": "r"}'
+        )))],
+    )
+    await opt._attacker.generate_question(
+        goal="g", turn=1, max_turns=3,
+        last_response=None, last_score=None, last_rationale=None,
+    )
+    system_text = mock_llm.complete.call_args[0][0][0]["content"]
+    assert "restored" in system_text
+    assert "starting from turn 1" not in system_text
+
+
+@pytest.mark.asyncio
 async def test_task_override_of_internal_success_does_not_queue_replay():
     """When the internal judge concluded success mid-conversation but
     the task judge overrules to failure at run end, the cached prefix

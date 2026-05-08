@@ -512,6 +512,7 @@ class CrescendoOptimizer(Optimizer):
         can_write_system_prompt) flow into the attacker. If a replay plan
         from the previous attempt is pending, it is consumed here.
         """
+        is_replay_attempt = self._pending_replay_plan is not None
         variant = get_variant(self._variant_index)
         self._attacker = Attacker(
             llm=self.llm,
@@ -520,6 +521,7 @@ class CrescendoOptimizer(Optimizer):
             target_model_id=self._target_model_id,
             target_system_prompt=self._target_system_prompt,
             previous_failures=tuple(self._variant_failure_log),
+            is_replay_attempt=is_replay_attempt,
         )
         self._turn = 0
         self._backtrack_count = 0
