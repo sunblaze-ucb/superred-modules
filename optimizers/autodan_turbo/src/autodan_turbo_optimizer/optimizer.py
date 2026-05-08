@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
+from typing import Any
 
 from superred.core.interfaces.optimizer import Optimizer
 from superred.core.llm import LLMClient
@@ -53,7 +54,7 @@ from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
 from superred.core.types.trajectory import ReadableTrajectory
 
-from autodan_turbo_optimizer.attacker import Attacker
+from autodan_turbo_optimizer.attacker import Attacker, AttackerOutput
 from autodan_turbo_optimizer.library import StrategyLibrary
 from autodan_turbo_optimizer.scorer import Scorer
 from autodan_turbo_optimizer.summarizer import Summarizer
@@ -69,13 +70,15 @@ _SYSTEM_PROMPT_NAME = "system_prompt"
 
 _REFUSAL_MARKERS: tuple[str, ...] = ("I cannot", "I am unable", "I can't")
 
-# Paper seeds the previous-attempt slot per request with score=1.0 and
-# a placeholder refusal as the previous response, so the first scored
-# attempt can already populate the library when the attacker beats the
-# raw-goal baseline. Verbatim port of the seed values from upstream
-# ``pipeline.lifelong_redteaming``.
+# Paper seeds the previous-attempt slot per request with score=1.0
+# (and ``prev_jailbreak_prompt = request``), so the first scored
+# attempt can already populate the library when the attacker beats
+# the raw-goal baseline. Verbatim port of the seed value from
+# upstream ``pipeline.lifelong_redteaming``. (Upstream also seeds
+# ``prev_target_response = "Sorry, ..."`` but that field is never
+# read again — neither here nor upstream's lifelong loop — so we
+# don't carry it.)
 _SEEDED_PREV_SCORE: float = 1.0
-_SEEDED_PREV_RESPONSE: str = "Sorry, I cannot help you with that."
 
 
 class AutoDANTurboOptimizer(Optimizer):
@@ -98,7 +101,13 @@ class AutoDANTurboOptimizer(Optimizer):
             on the trajectory (defaults to the same set as Crescendo
             / GEPA / GOAT / Bijection).
         target_controllable_name: Optional override; lock injection
-            to exactly this named controllable.
+            to exactly this named controllable. When ``None`` (the
+            default), the optimizer routes the attacker's jailbreak
+            into ``user_message`` (paper-faithful) and *additionally*
+            injects the attacker's optional system-prompt override
+            into ``system_prompt`` when that channel is writable in
+            the controller's scope (capability-utilization extension
+            beyond the paper).
         max_no_signal_runs: Terminate after this many consecutive
             runs with no visible response or evaluation. Disabled by
             default.
@@ -145,24 +154,36 @@ class AutoDANTurboOptimizer(Optimizer):
         self._attacker: Attacker | None = None
         self._scorer: Scorer | None = None
         self._summarizer: Summarizer | None = None
+        # Capability-utilization state (resolved from controllables /
+        # observables in ``initialize``):
+        # - ``_target_context``: in-scope static observables, fed to
+        #   the attacker as side-info.
+        # - ``_system_prompt_writable``: scope grants write access to
+        #   ``system_prompt`` so the attacker may emit an optional
+        #   override that we inject alongside the user-message
+        #   jailbreak.
+        self._target_context: dict[str, str] = {}
+        self._system_prompt_writable: bool = False
 
-        # Cross-run state. Seeded in initialize() per upstream
-        # pipeline so the first scored attempt can populate the
-        # library when it beats the raw-goal baseline.
+        # Cross-run state. ``_prev_score`` and ``_prev_prompt`` are
+        # seeded in ``initialize`` per upstream pipeline so the first
+        # scored attempt can populate the library when it beats the
+        # raw-goal baseline.
         self._attempt: int = 0
         self._succeeded: bool = False
         self._consecutive_no_signal_runs: int = 0
         self._stop_due_to_no_signal: bool = False
         self._prev_prompt: str | None = None
-        self._prev_response: str | None = None
         self._prev_score: float = _SEEDED_PREV_SCORE
 
         # Per-run state (reset in _reset_run_state).
         self._current_prompt: str = ""
+        self._current_system_prompt_override: str | None = None
         self._trajectory: ReadableTrajectory | None = None
         self._primary_pre_controllable: Controllable | None = None
         self._primary_post_controllable: Controllable | None = None
         self._injected_this_run: bool = False
+        self._injected_system_prompt_this_run: bool = False
         self._awaiting_post_call: bool = False
         self._last_pre_request: str | None = None
         self._last_injected_value: str | None = None
@@ -191,19 +212,71 @@ class AutoDANTurboOptimizer(Optimizer):
         self._summarizer = Summarizer(
             llm_client, temperature=self._summarizer_temperature,
         )
+        # Capture the threat-model surfaces granted by the controller.
+        self._target_context = self._extract_target_context(observables)
+        self._system_prompt_writable = self._is_system_prompt_writable(
+            controllables,
+        )
+        if self._target_context:
+            logger.info(
+                "AutoDAN-Turbo: feeding %d static observable(s) to attacker "
+                "as [TARGET CONTEXT]: %s",
+                len(self._target_context),
+                ", ".join(sorted(self._target_context.keys())),
+            )
+        if (
+            self._system_prompt_writable
+            and self._target_controllable_name is None
+        ):
+            logger.info(
+                "AutoDAN-Turbo: system_prompt is writable in scope; "
+                "attacker may emit a system-prompt override alongside the "
+                "user-message jailbreak (dual-channel attack)",
+            )
         self._attempt = 0
         self._succeeded = False
         self._consecutive_no_signal_runs = 0
         self._stop_due_to_no_signal = False
         # Seed the previous-attempt slot with the raw goal as the
-        # baseline weak prompt and a placeholder refusal response at
-        # score=1.0 (upstream's per-request seed). The first scored
-        # attempt that beats 1.0 will summarise (raw goal as weak vs
-        # attacker output as strong) and seed the library on epoch 0.
+        # baseline weak prompt at score=1.0 (upstream's per-request
+        # seed). The first scored attempt that beats 1.0 will
+        # summarise (raw goal as weak vs attacker output as strong)
+        # and seed the library on epoch 0.
         self._prev_prompt = goal.description
-        self._prev_response = _SEEDED_PREV_RESPONSE
         self._prev_score = _SEEDED_PREV_SCORE
         self._reset_run_state()
+
+    @staticmethod
+    def _extract_target_context(
+        observables: list[ObservableValue],
+    ) -> dict[str, str]:
+        """Capture in-scope static observables as attacker side-info.
+
+        Mirrors GEPA's static-observable consumption: every
+        observable whose content is a non-empty string is exposed to
+        the attacker. Empty / non-string observables are dropped
+        silently. Per the framework-wide guidance to use the full
+        capability set granted by the threat model.
+        """
+        out: dict[str, str] = {}
+        for value in observables:
+            content = value.content
+            if isinstance(content, str) and content.strip():
+                out[value.observable.name] = content
+        return out
+
+    def _is_system_prompt_writable(
+        self, controllables: list[Controllable],
+    ) -> bool:
+        """Return ``True`` iff scope grants write access to ``system_prompt``.
+
+        An explicit ``target_controllable_name`` override always wins;
+        when it's set we honour exactly that channel and skip the
+        dual-channel extension.
+        """
+        if self._target_controllable_name is not None:
+            return False
+        return any(c.name == _SYSTEM_PROMPT_NAME for c in controllables)
 
     async def teardown(self) -> None:
         return None
@@ -243,8 +316,24 @@ class AutoDANTurboOptimizer(Optimizer):
                 )
         else:
             if event.controllable.name == _SYSTEM_PROMPT_NAME:
-                # Don't steal the primary lock with a system_prompt PreCall;
-                # ChatbotTarget emits one before the user_message loop.
+                # Dual-channel attack (capability extension): when
+                # ``system_prompt`` is writable in scope and the
+                # attacker emitted an override, inject it. Otherwise
+                # pass through (paper-faithful: don't steal the
+                # primary lock with a system_prompt PreCall;
+                # ChatbotTarget emits one before the user_message
+                # loop).
+                if (
+                    self._system_prompt_writable
+                    and self._current_system_prompt_override is not None
+                    and not self._injected_system_prompt_this_run
+                ):
+                    self._injected_system_prompt_this_run = True
+                    return ControllableInjection(
+                        event=event,
+                        controllable=event.controllable,
+                        value=self._current_system_prompt_override,
+                    )
                 return ControllableNoInjection(
                     event=event, controllable=event.controllable
                 )
@@ -364,7 +453,6 @@ class AutoDANTurboOptimizer(Optimizer):
                 )
 
             self._prev_prompt = self._current_prompt
-            self._prev_response = response
             self._prev_score = score
 
         # External evaluation can additionally early-stop.
@@ -390,10 +478,12 @@ class AutoDANTurboOptimizer(Optimizer):
 
     def _reset_run_state(self) -> None:
         self._current_prompt = ""
+        self._current_system_prompt_override = None
         self._trajectory = None
         self._primary_pre_controllable = None
         self._primary_post_controllable = None
         self._injected_this_run = False
+        self._injected_system_prompt_this_run = False
         self._awaiting_post_call = False
         self._last_pre_request = None
         self._last_injected_value = None
@@ -408,27 +498,49 @@ class AutoDANTurboOptimizer(Optimizer):
         arrive and the library never grows) collapses to ``warm_up``;
         once the library has entries, retrieval picks
         ``use_strategy`` / ``find_new_strategy``.
+
+        Capability-utilization extensions (beyond paper) are
+        threaded through to the attacker:
+        ``target_context=self._target_context`` exposes in-scope
+        static observables, ``system_prompt_writable=...`` lets the
+        attacker optionally emit a system-prompt override.
         """
         assert self._goal is not None
         assert self._attacker is not None
         assert self._library is not None
         request = self._goal.description
 
+        kwargs: dict[str, Any] = {
+            "target_context": self._target_context or None,
+            "system_prompt_writable": self._system_prompt_writable,
+        }
+
         valid, strategies = self._library.retrieve(k=self._top_k)
+        output: AttackerOutput
         if not strategies:
-            prompt = await self._attacker.warm_up(request)
+            output = await self._attacker.warm_up(request, **kwargs)
         elif valid:
-            prompt = await self._attacker.use_strategy(request, strategies)
+            output = await self._attacker.use_strategy(
+                request, strategies, **kwargs,
+            )
         else:
-            prompt = await self._attacker.find_new_strategy(
-                request, strategies,
+            output = await self._attacker.find_new_strategy(
+                request, strategies, **kwargs,
             )
 
+        prompt = output.jailbreak_prompt
         # Refusal filter (paper fallback): if the attacker refused,
-        # use the raw goal as the jailbreak prompt.
+        # use the raw goal as the jailbreak prompt. Note: only the
+        # user-message channel is replaced; if the attacker also
+        # refused the optional system-prompt override we drop it
+        # rather than ship a refusal there.
         if any(marker in prompt for marker in _REFUSAL_MARKERS):
             prompt = request
-
+            self._current_system_prompt_override = None
+        else:
+            self._current_system_prompt_override = (
+                output.system_prompt_override
+            )
         self._current_prompt = prompt
 
     async def _maybe_summarize_and_add(

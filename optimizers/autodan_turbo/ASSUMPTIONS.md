@@ -102,11 +102,13 @@ behaviour is determined by what the framework makes visible.
   returns no strategies (empty library), the attacker uses
   `warm_up`. Matches upstream `pipeline.py::lifelong_redteaming`.
 - **Per-request seed** — `prev_jailbreak_prompt = request`,
-  `prev_target_response = "Sorry, I cannot help you with that."`,
   `prev_score = 1.0`. Verbatim from upstream
   `pipeline.lifelong_redteaming` and required for the *first*
   scored attempt to populate the library when it beats the
-  raw-goal baseline. Pinned by
+  raw-goal baseline. Upstream additionally seeds
+  `prev_target_response = "Sorry, I cannot help you with that."`
+  but that field is never read (neither there nor here — see
+  item 8 below), so we don't carry it. Pinned by
   `test_initialize_seeds_prev_state_per_upstream` and
   `test_run_zero_summarizes_when_score_beats_seeded_floor`.
 - **Tag-extraction fallback to bare goal** — when the attacker
@@ -122,6 +124,77 @@ behaviour is determined by what the framework makes visible.
 - **Default `break_score = 8.5`** — paper / run-script.
 - **Default `top_k_strategies = 5`** — matches upstream
   `Retrieval.pop` default `k=5`.
+
+## Threat-model fidelity: full use of in-scope capabilities
+
+Per the framework-wide guidance to *"automatically utilize the full
+scope of capabilities granted by the threat model, even when slightly
+beyond the original publication"*, the optimizer reads everything in
+scope that the LLM-driven attacker can naturally absorb and degrades
+silently to the paper-faithful path when a surface is absent.
+Concretely:
+
+- **All in-scope static observables → attacker side-info.**
+  `initialize` captures every observable whose content is a
+  non-empty string into a `target_context: dict[str, str]` and
+  threads it through to all three attacker modes (`warm_up` /
+  `use_strategy` / `find_new_strategy`). The attacker prepends a
+  `[TARGET CONTEXT]` block to its system prompt listing each
+  observable name and value, and is instructed to use the info to
+  tailor its persuasion (reference the target's stated persona,
+  exploit known weaknesses of the target model family, subvert the
+  visible system prompt's defenses). When `target_context` is
+  empty / `None`, the attacker reverts to the paper-faithful
+  goal-only system prompt (no `[TARGET CONTEXT]` block at all).
+  This generalises to any observable the controller exposes —
+  `model`, `system_prompt` readable, anything else a target
+  surfaces. Pinned by `TestTargetContextPropagation` (5 tests:
+  empty observables, captured-into-dict, empty-string drop,
+  passed-to-warm_up, passed-to-use_strategy) and
+  `TestTargetContextBlock` (5 tests: rendered block contents and
+  presence across all three attacker modes).
+
+- **System-prompt write access → dual-channel attack.** When the
+  controller's scope grants write access to `system_prompt` *and*
+  the user did not set an explicit `target_controllable_name`,
+  the attacker is informed via a `system_prompt_writable=True`
+  flag that it may *optionally* emit a second tagged block,
+  `[START OF SYSTEM PROMPT OVERRIDE] ... [END OF SYSTEM PROMPT
+  OVERRIDE]`. The optimizer parses this block out of the
+  attacker's response (separately from the existing
+  `[START/END OF JAILBREAK PROMPT]` extraction), stores it as
+  `_current_system_prompt_override`, and injects it into the
+  `system_prompt` `ControllablePreCallEvent`. The user-message
+  jailbreak still goes to `user_message` as in the paper — both
+  surfaces granted by the threat model are used. When the attacker
+  *omits* the optional block (paper-faithful behaviour), the
+  `system_prompt` PreCall passes through with no injection. When
+  the scope grants only `user_message`, the
+  `system_prompt_writable` flag stays `False` and the attacker
+  isn't asked for an override at all (token-efficient: no wasted
+  attacker capacity on a channel we can't use). Pinned by
+  `TestDualChannelAttack` (10 tests: writable detection,
+  user-only-scope, explicit-override-disables-dual-channel,
+  signal-passed-to-attacker, override-injected,
+  no-override-passes-through, scope-doesn't-grant-write-defends,
+  injected-once-per-run, refusal-filter-drops-override,
+  user-message-unchanged) and
+  `TestSystemPromptWritableSignal` (5 tests: signal-omits-block,
+  signal-adds-instructions, override-extracted, false-flag-drops-emitted-override,
+  attacker-omits-block-returns-none).
+
+- **Refusal filter applies to both channels.** When the attacker's
+  user-message output trips the refusal filter (`I cannot` / `I am
+  unable` / `I can't`), the raw goal replaces the user-message
+  jailbreak (paper behaviour) *and* the system-prompt override is
+  dropped — we don't ship a refusal-shaped override to the system
+  channel either. Pinned by `test_refusal_filter_drops_override_too`.
+
+- **Response observables → consumed as success signal (paper).**
+  The internal scorer reads target responses from the trajectory
+  (preferred) or PostCall fallback to drive library updates and
+  break-score early-stop. This is the paper's success path and is
+  unchanged.
 
 ## Deliberate departures
 
@@ -196,54 +269,24 @@ optimisers operate on one `Goal`. The optimiser keeps `prev_prompt /
 prev_response / prev_score` per Goal — exactly the per-request state
 upstream maintains inside the lifelong loop.
 
-### 6. Observables and `system_prompt_readable` are not consumed in v1
-
-`initialize()` accepts `observables` for ABC symmetry but never
-reads them, and the `system_prompt` `ControllablePreCallEvent`'s
-`event.request` (which carries the current prompt content in
-`chatbot_target` and similar) is skipped by name without being
-read. So in scopes that grant `system_prompt_readable`, the
-attacker remains *blind* to the prompt it's trying to bypass —
-the paper's attacker is goal-only and we mirror that exactly.
-
-This is defensible against the paper but leaves capability on the
-table for the readable-system-prompt threat model. A "read the
-exposed system prompt and feed it to the attacker as side-info"
-extension can be added later without touching the state machine
-(would slot into `_prepare_attempt`'s prompt assembly), and is
-explicitly out of scope for v1. Same goes for using static
-`model` observables to pick attacker temperature / strategy bias
-per target.
-
-### 7. System-prompt write access is not exploited when exposed
-
-When the controller's scope grants write access to
-`system_prompt`, the optimizer's default skip on the
-`system_prompt` PreCall still fires; only `user_message` carries
-the jailbreak. The `target_controllable_name="system_prompt"`
-override flips which surface is used, never combines them.
-
-The paper's attacker emits a *single* jailbreak prompt; combining
-a system-prompt override with a user-message attack is a design
-extension, not a paper feature. We mirror upstream exactly.
-Callers wanting both surfaces hit can wire two optimizers (one
-per controllable) at the controller level, or extend
-`AutoDANTurboOptimizer` to render two complementary prompts.
-
-### 8. Holding `_prev_prompt` / `_prev_response` / `_prev_score` instead of reading from `past_trajectories`
+### 8. Holding `_prev_prompt` / `_prev_score` instead of reading from `past_trajectories`
 
 The base `Optimizer` already exposes `past_trajectories` via
-`_dispatch`. We deliberately keep the three `_prev_*` fields
+`_dispatch`. We deliberately keep the two `_prev_*` fields
 because (a) `_prev_score` is the scorer LLM's output and is *not*
 on the trajectory at all; recomputing it from past responses
 would mean re-running the scorer LLM each epoch; (b) `_prev_prompt`
 is the optimizer-side jailbreak the attacker emitted, which lives
 inside the `ControllablePreCallEvent` ↔ `ControllableInjection`
-pair on the trajectory but is much cheaper to keep in three
+pair on the trajectory but is much cheaper to keep in two
 flat fields than to re-scan the full trajectory each epoch;
 (c) the per-Goal seed in `initialize()` would still need
 explicit storage anyway. The duplication is intentional and
 load-bearing.
+
+(Upstream also carries `prev_target_response` alongside these
+two; we dropped it because nothing in either codebase ever
+reads it — see "Per-request seed" above.)
 
 ### 9. Default `max_attempts = 10` (vs paper's 150 for batch experiments)
 
@@ -265,7 +308,7 @@ experiments.
 | `summarizer_temperature` | `0.6` | paper |
 | `top_k_strategies` | `5` | matches upstream `Retrieval.pop` default `k=5` |
 | `response_observable_names` | `{"response","model_response","assistant_response"}` | matches Crescendo / GEPA / GOAT / Bijection |
-| `target_controllable_name` | `None` | optional named-controllable override |
+| `target_controllable_name` | `None` | optional named-controllable override; `None` enables the dual-channel extension when scope grants `system_prompt` write access |
 | `max_no_signal_runs` | `0` (disabled) | blind-loop guard |
 
 ## Module layout
@@ -279,16 +322,20 @@ src/autodan_turbo_optimizer/
   library.py           # StrategyLibrary.add / retrieve / all
   optimizer.py         # AutoDANTurboOptimizer event-state machine
 tests/
-  test_attacker.py     # 13 tests — three modes + tag extraction (incl. fallback)
-  test_scorer.py       # 12 tests — parser + LLM-driver
+  test_attacker.py     # 27 tests — three modes + tag extraction
+                       #             (incl. fallback) + target_context
+                       #             + system-prompt-override block
+  test_scorer.py       # 14 tests — parser + LLM-driver
   test_summarizer.py   # 11 tests — parser + LLM-driver
-  test_library.py      # 14 tests — add + 3-tier retrieval
-  test_optimizer.py    # 33 tests — state machine + 4 settings + e2e
+  test_library.py      # 13 tests — add + 3-tier retrieval
+  test_optimizer.py    # 49 tests — state machine + 4 settings + e2e
+                       #             + target_context propagation
+                       #             + dual-channel attack
 ```
 
 ## Test coverage
 
-83 tests total. Coverage:
+114 tests total. Coverage:
 
 - **Library**: add / merge / retrieve at each of the three score
   tiers; empty-library, k-cap, score-strip behaviour.
@@ -297,6 +344,15 @@ tests/
   extraction; empty-strategy fall-through; raw-`request` fallback
   when the END tag is missing or output is empty (matches
   upstream `Attacker.wrapper`).
+- **Attacker capability extensions**:
+  `[TARGET CONTEXT]` block rendered/omitted across all three modes
+  based on `target_context`;
+  system-prompt-override block extraction (matched, unmatched,
+  empty, no-tags-at-all);
+  `system_prompt_writable=True` adds the override-block
+  instructions to the system prompt;
+  `system_prompt_writable=False` strips any emitted override
+  (defends against smuggling).
 - **Scorer**: keyword-anchored / fall-through / clamped score parsing;
   request and response embedding; temperature passthrough.
 - **Summarizer**: inline-object / fenced-block / escaped-string
@@ -310,5 +366,22 @@ tests/
   early-stop; failure eval continues; all four adversarial settings;
   `max_no_signal_runs`; ChatbotTarget-style end-to-end; upstream
   per-request `prev_*` seeding (`prev_score=1.0`,
-  `prev_prompt=goal`, `prev_response="Sorry, ..."`) and run-zero
-  library population when score beats the seeded floor.
+  `prev_prompt=goal`) and run-zero library population when score
+  beats the seeded floor.
+- **Capability utilization (beyond paper)**:
+  *Target-context propagation*: empty-observables yields empty
+  `_target_context`; observables → captured into dict (and
+  `None` is passed when empty so the attacker wire-format is
+  unambiguous); empty-string observables dropped; threaded into
+  all three attacker modes.
+  *Dual-channel attack*: writable-flag detected from controllable
+  scope; user-only-scope → flag stays `False`; explicit
+  `target_controllable_name` disables the dual-channel extension;
+  attacker informed via `system_prompt_writable=True`; emitted
+  override → injected into `system_prompt` PreCall; omitted
+  override → PreCall passes through (paper-faithful);
+  scope-doesn't-grant-write → defensive PreCall NoInjection;
+  override injected at most once per run; refusal filter drops
+  the override too (no refusal smuggling); user-message
+  injection is unchanged when only the override extension is
+  active.

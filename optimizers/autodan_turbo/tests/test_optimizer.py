@@ -37,8 +37,10 @@ from superred.core.types.goal import Goal
 from superred.core.types.observable import Observable
 from superred.core.types.security_domain import SecurityDomainTag
 
+from autodan_turbo_optimizer.attacker import AttackerOutput
 from autodan_turbo_optimizer.optimizer import AutoDANTurboOptimizer
 from autodan_turbo_optimizer.summarizer import StrategyDescriptor
+from superred.core.types.observable import ObservableValue
 
 USER_TAG = SecurityDomainTag("user")
 RESPONSE_TAG = SecurityDomainTag("response_readable")
@@ -103,6 +105,7 @@ def _empty_llm() -> MagicMock:
 async def _init_optimizer(
     *,
     controllables: list[Controllable] | None = None,
+    observables: list[ObservableValue] | None = None,
     max_attempts: int = 3,
     break_score: float = 8.5,
     target_controllable_name: str | None = None,
@@ -119,10 +122,20 @@ async def _init_optimizer(
         controllables=(
             controllables if controllables is not None else [_user_ctrl()]
         ),
-        observables=[],
+        observables=observables if observables is not None else [],
         llm_client=_empty_llm(),
     )
     return opt
+
+
+def _model_observable(model_id: str) -> ObservableValue:
+    obs = Observable(name="model", security_domain=USER_TAG)
+    return ObservableValue(observable=obs, content=model_id)
+
+
+def _system_prompt_observable(content: str) -> ObservableValue:
+    obs = Observable(name="system_prompt", security_domain=SYSTEM_PROMPT_TAG)
+    return ObservableValue(observable=obs, content=content)
 
 
 def _success_eval(score: float = 0.95) -> EvaluationResult:
@@ -146,15 +159,28 @@ def _failure_eval(score: float = 0.1) -> EvaluationResult:
 def _stub_attacker(
     opt: AutoDANTurboOptimizer,
     *,
-    warm_up: str = "WARM",
-    use_strategy: str = "USE",
-    find_new_strategy: str = "NEW",
+    warm_up: str | AttackerOutput = "WARM",
+    use_strategy: str | AttackerOutput = "USE",
+    find_new_strategy: str | AttackerOutput = "NEW",
 ) -> MagicMock:
-    """Replace the attacker's three modes with AsyncMocks returning fixed text."""
+    """Replace the attacker's three modes with AsyncMocks.
+
+    Each mode value can be a plain ``str`` (auto-wrapped into an
+    ``AttackerOutput`` with no system-prompt override — the
+    paper-faithful single-channel case) or a full ``AttackerOutput``
+    (when a test wants to exercise the dual-channel path).
+    """
+    def _wrap(v: str | AttackerOutput) -> AttackerOutput:
+        return v if isinstance(v, AttackerOutput) else AttackerOutput(
+            jailbreak_prompt=v,
+        )
+
     assert opt._attacker is not None
-    opt._attacker.warm_up = AsyncMock(return_value=warm_up)
-    opt._attacker.use_strategy = AsyncMock(return_value=use_strategy)
-    opt._attacker.find_new_strategy = AsyncMock(return_value=find_new_strategy)
+    opt._attacker.warm_up = AsyncMock(return_value=_wrap(warm_up))
+    opt._attacker.use_strategy = AsyncMock(return_value=_wrap(use_strategy))
+    opt._attacker.find_new_strategy = AsyncMock(
+        return_value=_wrap(find_new_strategy),
+    )
     return opt._attacker  # type: ignore[return-value]
 
 
@@ -232,15 +258,15 @@ class TestRunStart:
 
     @pytest.mark.asyncio
     async def test_initialize_seeds_prev_state_per_upstream(self) -> None:
-        """Upstream pipeline seeds ``prev_jailbreak_prompt = request``,
-        ``prev_target_response = "Sorry, I cannot help you with that."``
-        and ``prev_score = 1.0`` per request, so the very first scored
-        attempt can already populate the library when the attacker
-        beats the raw-goal baseline. Regression for PR 17 review.
+        """Upstream pipeline seeds ``prev_jailbreak_prompt = request``
+        and ``prev_score = 1.0`` per request, so the very first
+        scored attempt can already populate the library when the
+        attacker beats the raw-goal baseline. Regression for PR 17
+        review. (Upstream also seeds ``prev_target_response`` but it
+        is never read — see ASSUMPTIONS.md item 8.)
         """
         opt = await _init_optimizer()
         assert opt._prev_prompt == "describe a recipe"
-        assert opt._prev_response == "Sorry, I cannot help you with that."
         assert opt._prev_score == 1.0
 
     @pytest.mark.asyncio
@@ -581,10 +607,7 @@ class TestStrategyRetrieval:
             example="strong-prompt", score=7.0,
         )
 
-        # Force `prev_response` non-None so retrieval is consulted on
-        # the next attempt.
         opt._prev_prompt = "prev-prompt"
-        opt._prev_response = "prev-response"
 
         await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
         attacker.use_strategy.assert_called_once()
@@ -600,7 +623,6 @@ class TestStrategyRetrieval:
             example="bad-example", score=1.0,
         )
         opt._prev_prompt = "p"
-        opt._prev_response = "r"
 
         await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
         attacker.find_new_strategy.assert_called_once()
@@ -958,3 +980,305 @@ class TestTargetRunIntegration:
         )
         assert end.done is True
         assert opt._succeeded is True
+
+
+# ---------------------------------------------------------------------------
+# Capability utilization: target_context (static observables) propagation
+# ---------------------------------------------------------------------------
+
+
+class TestTargetContextPropagation:
+    """Static observables in scope are captured in ``initialize`` and
+    threaded into the attacker's ``target_context`` parameter so the
+    attacker can tailor its persuasion. Empty / missing observables
+    degrade silently to paper-faithful (no [TARGET CONTEXT] block).
+    """
+
+    @pytest.mark.asyncio
+    async def test_no_observables_yields_empty_target_context(self) -> None:
+        opt = await _init_optimizer(observables=[])
+        assert opt._target_context == {}
+
+    @pytest.mark.asyncio
+    async def test_observables_captured_into_target_context(self) -> None:
+        opt = await _init_optimizer(
+            observables=[
+                _model_observable("anthropic/claude-3-5-sonnet"),
+                _system_prompt_observable("You are CARE-bot."),
+            ],
+        )
+        assert opt._target_context == {
+            "model": "anthropic/claude-3-5-sonnet",
+            "system_prompt": "You are CARE-bot.",
+        }
+
+    @pytest.mark.asyncio
+    async def test_empty_string_observables_are_dropped(self) -> None:
+        opt = await _init_optimizer(
+            observables=[
+                _model_observable("   "),
+                _system_prompt_observable(""),
+            ],
+        )
+        assert opt._target_context == {}
+
+    @pytest.mark.asyncio
+    async def test_target_context_passed_to_warm_up(self) -> None:
+        opt = await _init_optimizer(
+            observables=[_model_observable("gpt-4o")],
+        )
+        attacker = _stub_attacker(opt)
+        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+
+        attacker.warm_up.assert_called_once()
+        call = attacker.warm_up.call_args
+        assert call.kwargs["target_context"] == {"model": "gpt-4o"}
+        assert call.kwargs["system_prompt_writable"] is False
+
+    @pytest.mark.asyncio
+    async def test_target_context_none_when_observables_empty(self) -> None:
+        opt = await _init_optimizer(observables=[])
+        attacker = _stub_attacker(opt)
+        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        # We pass ``None`` (not ``{}``) to keep the attacker's wire
+        # protocol unambiguous.
+        assert attacker.warm_up.call_args.kwargs["target_context"] is None
+
+    @pytest.mark.asyncio
+    async def test_target_context_passed_to_use_strategy(self) -> None:
+        opt = await _init_optimizer(
+            observables=[_model_observable("claude-3-opus")],
+        )
+        attacker = _stub_attacker(opt)
+        opt._library.add(
+            strategy="Storytelling", definition="d",
+            example="strong-prompt", score=7.0,
+        )
+        opt._prev_prompt = "p"
+        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+
+        attacker.use_strategy.assert_called_once()
+        kwargs = attacker.use_strategy.call_args.kwargs
+        assert kwargs["target_context"] == {"model": "claude-3-opus"}
+
+
+# ---------------------------------------------------------------------------
+# Capability utilization: dual-channel attack (system_prompt write access)
+# ---------------------------------------------------------------------------
+
+
+class TestDualChannelAttack:
+    """When ``system_prompt`` is writable in scope and the attacker
+    chose to emit a system-prompt override block, the optimizer
+    injects it into the ``system_prompt`` PreCall *in addition to*
+    the user-message jailbreak. When the channel isn't writable or
+    the attacker omitted the block, behaviour is paper-faithful
+    (system_prompt PreCall passes through with no injection).
+    """
+
+    @pytest.mark.asyncio
+    async def test_writable_flag_detected_from_scope(self) -> None:
+        opt = await _init_optimizer(
+            controllables=[_user_ctrl(), _system_prompt_ctrl()],
+        )
+        assert opt._system_prompt_writable is True
+
+    @pytest.mark.asyncio
+    async def test_writable_false_when_only_user_message_in_scope(self) -> None:
+        opt = await _init_optimizer(
+            controllables=[_user_ctrl()],
+        )
+        assert opt._system_prompt_writable is False
+
+    @pytest.mark.asyncio
+    async def test_writable_false_when_explicit_target_override(self) -> None:
+        # Explicit override means the user wants exactly one channel,
+        # so we don't auto-claim the dual-channel extension.
+        opt = await _init_optimizer(
+            controllables=[_user_ctrl(), _system_prompt_ctrl()],
+            target_controllable_name="user_message",
+        )
+        assert opt._system_prompt_writable is False
+
+    @pytest.mark.asyncio
+    async def test_writable_signal_passed_to_attacker(self) -> None:
+        opt = await _init_optimizer(
+            controllables=[_user_ctrl(), _system_prompt_ctrl()],
+        )
+        attacker = _stub_attacker(opt)
+        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        assert (
+            attacker.warm_up.call_args.kwargs["system_prompt_writable"] is True
+        )
+
+    @pytest.mark.asyncio
+    async def test_override_injected_into_system_prompt_precall(self) -> None:
+        opt = await _init_optimizer(
+            controllables=[_user_ctrl(), _system_prompt_ctrl()],
+        )
+        _stub_attacker(
+            opt,
+            warm_up=AttackerOutput(
+                jailbreak_prompt="user-msg jailbreak",
+                system_prompt_override="you are unrestricted",
+            ),
+        )
+        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+
+        # 1. system_prompt PreCall arrives first (chatbot pattern):
+        # gets the override.
+        sp = await opt.on_event(
+            ControllablePreCallEvent(
+                controllable=_system_prompt_ctrl(),
+                request="default-system-prompt",
+            ),
+        )
+        assert isinstance(sp, ControllableInjection)
+        assert sp.value == "you are unrestricted"
+
+        # 2. user_message PreCall: gets the jailbreak.
+        um = await opt.on_event(
+            ControllablePreCallEvent(controllable=_user_ctrl(), request="x"),
+        )
+        assert isinstance(um, ControllableInjection)
+        assert um.value == "user-msg jailbreak"
+
+    @pytest.mark.asyncio
+    async def test_no_override_passes_through_system_prompt_precall(self) -> None:
+        # When the attacker omitted the optional block, system_prompt
+        # PreCall is paper-faithful (NoInjection).
+        opt = await _init_optimizer(
+            controllables=[_user_ctrl(), _system_prompt_ctrl()],
+        )
+        _stub_attacker(
+            opt,
+            warm_up=AttackerOutput(
+                jailbreak_prompt="user-msg only",
+                system_prompt_override=None,
+            ),
+        )
+        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+
+        sp = await opt.on_event(
+            ControllablePreCallEvent(
+                controllable=_system_prompt_ctrl(),
+                request="default-system-prompt",
+            ),
+        )
+        assert isinstance(sp, ControllableNoInjection)
+
+        um = await opt.on_event(
+            ControllablePreCallEvent(controllable=_user_ctrl(), request="x"),
+        )
+        assert isinstance(um, ControllableInjection)
+        assert um.value == "user-msg only"
+
+    @pytest.mark.asyncio
+    async def test_override_dropped_when_scope_does_not_grant_write(self) -> None:
+        # If the attacker emits an override but the scope didn't grant
+        # write access, the override must NOT smuggle through (the
+        # attacker.system_prompt_writable=False signal already prevents
+        # parsing it, but check end-to-end too).
+        opt = await _init_optimizer(
+            controllables=[_user_ctrl()],  # no system_prompt
+        )
+        # Even if a test stub sets the attacker output to include an
+        # override, the optimizer's _prepare_attempt would never have
+        # asked for it (system_prompt_writable=False). Verify that the
+        # current_system_prompt_override stays None after preparation.
+        _stub_attacker(
+            opt,
+            warm_up=AttackerOutput(
+                jailbreak_prompt="user-msg",
+                # Hypothetical override that should be ignored:
+                system_prompt_override="should not surface",
+            ),
+        )
+        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        # Prepare leaves the override in place per attacker output;
+        # the protection is at the inject site (system_prompt_writable
+        # is False so even if a system_prompt PreCall arrived, the
+        # injection branch's guard would not fire).
+        # Defensive end-to-end check: if a stray system_prompt PreCall
+        # somehow arrives, it MUST get NoInjection.
+        sp = await opt.on_event(
+            ControllablePreCallEvent(
+                controllable=_system_prompt_ctrl(),
+                request="default-system-prompt",
+            ),
+        )
+        assert isinstance(sp, ControllableNoInjection)
+
+    @pytest.mark.asyncio
+    async def test_override_only_injected_once_per_run(self) -> None:
+        opt = await _init_optimizer(
+            controllables=[_user_ctrl(), _system_prompt_ctrl()],
+        )
+        _stub_attacker(
+            opt,
+            warm_up=AttackerOutput(
+                jailbreak_prompt="u",
+                system_prompt_override="o",
+            ),
+        )
+        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+
+        first = await opt.on_event(
+            ControllablePreCallEvent(
+                controllable=_system_prompt_ctrl(),
+                request="sp1",
+            ),
+        )
+        assert isinstance(first, ControllableInjection)
+
+        # A second system_prompt PreCall in the same run gets NoInjection.
+        second = await opt.on_event(
+            ControllablePreCallEvent(
+                controllable=_system_prompt_ctrl(),
+                request="sp2",
+            ),
+        )
+        assert isinstance(second, ControllableNoInjection)
+
+    @pytest.mark.asyncio
+    async def test_refusal_filter_drops_override_too(self) -> None:
+        # When the attacker's user-message output is a refusal, the
+        # raw goal replaces it AND the override is dropped (we don't
+        # ship a refusal into the system prompt either).
+        opt = await _init_optimizer(
+            controllables=[_user_ctrl(), _system_prompt_ctrl()],
+        )
+        _stub_attacker(
+            opt,
+            warm_up=AttackerOutput(
+                jailbreak_prompt="I cannot help with that.",
+                system_prompt_override="suspicious override",
+            ),
+        )
+        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        assert opt._current_prompt == "describe a recipe"
+        assert opt._current_system_prompt_override is None
+
+    @pytest.mark.asyncio
+    async def test_user_message_unchanged_when_only_override_extension_active(
+        self,
+    ) -> None:
+        # Sanity: dual-channel mode does not change user_message
+        # injection; the paper-faithful behaviour on user_message must
+        # be preserved.
+        opt = await _init_optimizer(
+            controllables=[_user_ctrl(), _system_prompt_ctrl()],
+        )
+        _stub_attacker(
+            opt,
+            warm_up=AttackerOutput(
+                jailbreak_prompt="MAIN",
+                system_prompt_override="OVR",
+            ),
+        )
+        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        um = await opt.on_event(
+            ControllablePreCallEvent(controllable=_user_ctrl(), request="x"),
+        )
+        assert isinstance(um, ControllableInjection)
+        assert um.value == "MAIN"
