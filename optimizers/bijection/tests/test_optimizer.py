@@ -36,8 +36,13 @@ from superred.core.types.observable import Observable
 from superred.core.types.security_domain import SecurityDomainTag
 from superred.core.types.trajectory import Trajectory
 
-from bijection_optimizer.optimizer import BijectionOptimizer
+from bijection_optimizer.optimizer import (
+    _FALLBACK_BIJECTION_TYPE,
+    _FALLBACK_FIXED_SIZE,
+    BijectionOptimizer,
+)
 from bijection_optimizer.prompts import MULTITURN_INDICATOR
+from superred.core.types.observable import ObservableValue
 
 USER_TAG = SecurityDomainTag("user")
 RESPONSE_TAG = SecurityDomainTag("response_readable")
@@ -100,8 +105,9 @@ def _empty_llm() -> MagicMock:
 async def _init_optimizer(
     *,
     controllables: list[Controllable] | None = None,
-    bijection_type: str = "digit",
-    fixed_size: int = 10,
+    observables: list[ObservableValue] | None = None,
+    bijection_type: str | None = "digit",
+    fixed_size: int | None = 10,
     num_digits: int = 2,
     digit_delimiter: str = "  ",
     num_teaching_shots: int = 3,
@@ -124,10 +130,16 @@ async def _init_optimizer(
     await opt.initialize(
         goal=Goal(description="describe a recipe"),
         controllables=controllables if controllables is not None else [_user_ctrl()],
-        observables=[],
+        observables=observables if observables is not None else [],
         llm_client=_empty_llm(),
     )
     return opt
+
+
+def _model_observable(model_id: str) -> ObservableValue:
+    """Static ``model`` observable, mirroring how ChatbotTarget surfaces it."""
+    obs = Observable(name="model", security_domain=USER_TAG)
+    return ObservableValue(observable=obs, content=model_id)
 
 
 def _success_eval(score: float = 0.95) -> EvaluationResult:
@@ -170,6 +182,129 @@ class TestConstruction:
     def test_rejects_out_of_range_fixed_size(self, fixed_size: int) -> None:
         with pytest.raises(ValueError):
             BijectionOptimizer(fixed_size=fixed_size)
+
+
+# ---------------------------------------------------------------------------
+# Model observable auto-tuning (paper Table 1)
+# ---------------------------------------------------------------------------
+
+
+class TestModelObservableAutoTune:
+    """Bijection auto-tunes ``bijection_type`` and ``fixed_size`` from the
+    in-scope ``model`` observable per paper Table 1, when the caller leaves
+    those knobs at the default ``None``. Explicit overrides always win.
+
+    Mirrors the general "use the full scope of capabilities granted by the
+    threat model" principle: when scope matches the paper, we land on the
+    paper's per-target optima; when scope grants more, we use it; when
+    less, we degrade to the paper main-table fallback.
+    """
+
+    @pytest.mark.asyncio
+    async def test_no_observable_falls_back_to_paper_defaults(self) -> None:
+        opt = await _init_optimizer(
+            bijection_type=None, fixed_size=None, observables=[],
+        )
+        assert opt._bijection_type == _FALLBACK_BIJECTION_TYPE
+        assert opt._fixed_size == _FALLBACK_FIXED_SIZE
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "model_id,expected_codomain,expected_fixed_size",
+        [
+            ("anthropic/claude-3-5-sonnet-20241022", "digit", 10),
+            ("claude-3.5-sonnet-latest", "digit", 10),
+            ("claude-3-opus-20240229", "digit", 12),
+            ("openai/gpt-4o", "digit", 12),
+            ("openai/gpt-4-turbo", "letter", 8),
+            ("anthropic/claude-3-haiku", "letter", 8),
+            ("anthropic/claude-3-sonnet", "letter", 8),
+        ],
+    )
+    async def test_known_model_id_auto_tunes_per_table_1(
+        self,
+        model_id: str,
+        expected_codomain: str,
+        expected_fixed_size: int,
+    ) -> None:
+        opt = await _init_optimizer(
+            bijection_type=None,
+            fixed_size=None,
+            observables=[_model_observable(model_id)],
+        )
+        assert opt._bijection_type == expected_codomain
+        assert opt._fixed_size == expected_fixed_size
+
+    @pytest.mark.asyncio
+    async def test_unknown_model_id_falls_back_to_paper_defaults(self) -> None:
+        opt = await _init_optimizer(
+            bijection_type=None,
+            fixed_size=None,
+            observables=[_model_observable("some-future-model-x99")],
+        )
+        assert opt._bijection_type == _FALLBACK_BIJECTION_TYPE
+        assert opt._fixed_size == _FALLBACK_FIXED_SIZE
+
+    @pytest.mark.asyncio
+    async def test_explicit_codomain_override_wins_over_observable(self) -> None:
+        opt = await _init_optimizer(
+            bijection_type="letter",
+            fixed_size=None,
+            observables=[_model_observable("anthropic/claude-3-5-sonnet")],
+        )
+        assert opt._bijection_type == "letter"
+        # fixed_size still resolved from model observable.
+        assert opt._fixed_size == 10
+
+    @pytest.mark.asyncio
+    async def test_explicit_fixed_size_override_wins_over_observable(self) -> None:
+        opt = await _init_optimizer(
+            bijection_type=None,
+            fixed_size=20,
+            observables=[_model_observable("openai/gpt-4-turbo")],
+        )
+        # bijection_type still resolved from model observable.
+        assert opt._bijection_type == "letter"
+        assert opt._fixed_size == 20
+
+    @pytest.mark.asyncio
+    async def test_both_explicit_overrides_skip_observable_lookup(self) -> None:
+        opt = await _init_optimizer(
+            bijection_type="digit",
+            fixed_size=14,
+            observables=[_model_observable("openai/gpt-4-turbo")],
+        )
+        assert opt._bijection_type == "digit"
+        assert opt._fixed_size == 14
+
+    @pytest.mark.asyncio
+    async def test_empty_string_model_observable_is_treated_as_absent(self) -> None:
+        opt = await _init_optimizer(
+            bijection_type=None,
+            fixed_size=None,
+            observables=[_model_observable("   ")],
+        )
+        assert opt._bijection_type == _FALLBACK_BIJECTION_TYPE
+        assert opt._fixed_size == _FALLBACK_FIXED_SIZE
+
+    @pytest.mark.asyncio
+    async def test_non_model_observables_do_not_affect_resolution(self) -> None:
+        # ``system_prompt`` (or any non-``model`` observable) never feeds
+        # bijection's config — it has no natural attack vector for a
+        # static-encoding attacker; documented in ASSUMPTIONS.md.
+        sys_obs_value = ObservableValue(
+            observable=Observable(
+                name="system_prompt", security_domain=SYSTEM_PROMPT_TAG,
+            ),
+            content="You are a careful assistant.",
+        )
+        opt = await _init_optimizer(
+            bijection_type=None,
+            fixed_size=None,
+            observables=[sys_obs_value],
+        )
+        assert opt._bijection_type == _FALLBACK_BIJECTION_TYPE
+        assert opt._fixed_size == _FALLBACK_FIXED_SIZE
 
 
 # ---------------------------------------------------------------------------

@@ -107,7 +107,66 @@ ever reaches the optimizer. Disabled by default (matches GOAT, GEPA).
 - **Default `num_digits = 2` and `digit_delimiter = "  "` (two
   spaces)**: paper's main-table digit configuration (Table 1).
 - **Default `fixed_size = 10`** (dispersion 16): matches the
-  Sonnet-optimal digit setting from Table 1.
+  Sonnet-optimal digit setting from Table 1. Used as the no-observable
+  / unknown-model fallback when the new auto-tune resolver finds no
+  Table 1 entry.
+
+## Threat-model fidelity: full use of in-scope capabilities
+
+Per the framework-wide guidance to *"automatically utilize the full
+scope of capabilities granted by the threat model, even when slightly
+beyond the original publication"*, the optimizer reads everything in
+scope that has a natural attack vector for a static-encoding attacker
+and degrades silently when a surface is absent. Concretely:
+
+- **`model` static observable → auto-tune codomain & dispersion per
+  paper Table 1.** When `bijection_type` and/or `fixed_size` are left
+  at their default (`None`), `initialize` looks up the in-scope
+  `model` observable in `_MODEL_OPTIMAL_DEFAULTS` and applies the
+  paper's per-target optimum. Mirrors FlipAttack's `victim_llm`-driven
+  Pliny-template selection. Resolution priority:
+  1. Explicit constructor override (`bijection_type="letter"`, etc.).
+  2. Paper Table 1 lookup against the in-scope `model` observable
+     (`claude-3-5-sonnet` → digit/10, `gpt-4-turbo` → letter/8, …).
+  3. Paper main-table fallback (`digit`, `fixed_size=10`) when no
+     `model` observable is present or it doesn't match a Table 1 row.
+  When scope matches the paper's threat model the optimizer lands on
+  the paper's per-target optimum; when scope grants more (an unknown
+  model identifier) the optimizer keeps the paper main-table strong
+  default; when scope grants less (no `model` observable) the
+  optimizer is exactly the paper's main configuration. Pinned by
+  `TestModelObservableAutoTune`.
+
+- **`system_prompt` writable controllable → two-channel split.** When
+  the controller's scope grants write access to `system_prompt`, the
+  teaching intro + alphabet table goes to the system channel and the
+  teaching shots + encoded query stay in `user_message` (FlipAttack
+  pattern). Already shipped pre-PR-feedback.
+
+- **`system_prompt_readable` (and other non-`model` static
+  observables) → not consumed.** Bijection's attack vector is a
+  deterministic, content-blind packed prompt: a teaching intro +
+  alphabet table + encoded query. There is no LLM-driven attacker that
+  could naturally consume readable context (contrast GEPA / GOAT /
+  AutoDAN-Turbo, where the attacker prompt absorbs context cleanly).
+  Two paths were considered and rejected for v1:
+  1. Inject `system_prompt_readable` content as a "for your context,
+     the assistant has been told: …" preamble. Rejected: would alert
+     the assistant that its instructions have leaked, plausibly
+     triggering the very defensive paths the bijection encoding is
+     designed to skip.
+  2. Encode `system_prompt_readable` content under the bijection as
+     additional teaching pairs. Rejected: paper's teaching corpus is
+     bland prose chosen specifically to be unrelated to the harmful
+     query; injecting the system prompt would be off-distribution and
+     plausibly degrade the teaching effect.
+  Pinned by `test_non_model_observables_do_not_affect_resolution`.
+
+- **Response observables → consumed only as a no-signal heartbeat.**
+  Best-of-N is non-adaptive by paper definition, so target responses
+  do not feed back into the next attempt's bijection. We still drain
+  the trajectory to detect "blind" runs (no response *and* no
+  evaluation) so `max_no_signal_runs` can trip cleanly.
 
 ## Deliberate departures
 
@@ -166,27 +225,6 @@ honour that exactly. Bijection-related "search" (e.g. dispersion
 schedules) is out of scope for v1 and should live in a separate
 optimizer if needed.
 
-### Observables are not consumed in v1
-
-The optimizer's `initialize` accepts `observables` for symmetry with
-the `Optimizer` ABC, but never reads them. Paper Table 1 reports
-model-specific optima (e.g. digit vs letter, dispersion sweet spots
-per target) and FlipAttack reads `victim_llm` from observables to
-pick its Pliny templates. We deliberately **do not** auto-pick
-codomain / dispersion from `model` observables in v1 because:
-
-1. The paper's per-model recommendations are coarse (a handful of
-   buckets) and don't generalise to arbitrary chatbots.
-2. Static observables like `model` may not be present in every
-   target's observable set — relying on them is a hidden coupling.
-3. The constructor surface (`bijection_type`, `fixed_size`,
-   `num_digits`, `digit_delimiter`) is the explicit knob the user
-   already configures per target, mirroring how the paper's authors
-   ran their evaluations.
-
-A model-driven defaults helper is a small, separate concern; can be
-added later as a thin wrapper without changing the core optimizer.
-
 ### Default teaching corpus
 
 Upstream uses Paul Graham essay snippets. We ship a small set of
@@ -199,8 +237,8 @@ keeping the constructor minimal; can be promoted later if needed).
 
 | Argument | Default | Purpose |
 | --- | --- | --- |
-| `bijection_type` | `"digit"` | `"letter"` or `"digit"`; `"digit"` matches paper main-table strong-model setting. |
-| `fixed_size` | `10` | Dispersion = `26 - fixed_size`; default matches paper Sonnet-optimal digit row. |
+| `bijection_type` | `None` | `"letter"` or `"digit"`; `None` auto-tunes from the in-scope `model` observable (paper Table 1) and falls back to `"digit"` (Sonnet-optimal main-table row) when no recognised `model` observable is in scope. Explicit values always win. |
+| `fixed_size` | `None` | Dispersion = `26 - fixed_size`; `None` auto-tunes from the in-scope `model` observable (paper Table 1) and falls back to `10` (Sonnet-optimal `digit` row, dispersion 16) when no recognised `model` observable is in scope. Explicit values always win. |
 | `num_digits` | `2` | Encoding length for digit codomain; paper default. |
 | `digit_delimiter` | `"  "` (two spaces) | Inserted before substituted numeric tokens; paper default. |
 | `num_teaching_shots` | `10` | Teaching pairs in the packed prompt; paper / run-script default. |
@@ -219,14 +257,15 @@ src/bijection_optimizer/
   prompts.py           # render_teaching_intro / render_attack_prompt
   optimizer.py         # BijectionOptimizer event-state machine
 tests/
-  test_bijection.py    # 24 tests — construction + encode/decode
+  test_bijection.py    # 27 tests — construction + encode/decode + RNG
   test_prompts.py      #  9 tests — rendering, intro, shots, encoding
-  test_optimizer.py    # 28 tests — state machine, 4 settings, e2e
+  test_optimizer.py    # 43 tests — state machine, 4 settings, e2e,
+                       #             model-observable auto-tune
 ```
 
 ## Test coverage
 
-65 tests total. Coverage:
+79 tests total. Coverage:
 
 - Letter and digit bijection construction (alphabet completeness,
   fixed-point counts, validation).
@@ -244,6 +283,16 @@ tests/
   looping, encoded-query placement, no-leak of plain English goal.
 - Construction validation (invalid attempts, shots, codomain,
   fixed_size).
+- **Model-observable auto-tune** (`TestModelObservableAutoTune`):
+  no observable → paper main-table fallback; seven Table 1 model
+  IDs (Claude 3.5 Sonnet, Claude 3.5 Sonnet alias, Claude 3 Opus,
+  GPT-4o, GPT-4-Turbo, Claude 3 Haiku, Claude 3 Sonnet) → expected
+  per-paper codomain / `fixed_size`; unknown model identifier →
+  fallback; explicit `bijection_type` override wins; explicit
+  `fixed_size` override wins; both explicit overrides skip the
+  observable lookup; empty / whitespace `model` observable treated
+  as absent; non-`model` observables (e.g. `system_prompt`) do not
+  affect resolution.
 - RunStart resets per-run state and prepares a fresh bijection.
 - PreCall: injection on user_message, lock-in to first user
   controllable, single-turn behaviour (one injection per run),

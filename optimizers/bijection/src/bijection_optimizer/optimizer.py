@@ -69,6 +69,46 @@ _DEFAULT_RESPONSE_OBSERVABLE_NAMES: frozenset[str] = frozenset(
 )
 
 _SYSTEM_PROMPT_NAME = "system_prompt"
+_MODEL_OBSERVABLE_NAME = "model"
+
+# Fall-back when no ``model`` observable is in scope or it doesn't match
+# any known string. Matches the paper's Sonnet-optimal "digit" main-table
+# row from Table 1 (Huang et al., ICLR 2025).
+_FALLBACK_BIJECTION_TYPE: str = "digit"
+_FALLBACK_FIXED_SIZE: int = 10
+
+# Paper Table 1 per-model optima (Huang et al., ICLR 2025). Each entry
+# is ``(model_id_substring, bijection_type, fixed_size)``; the first
+# substring that appears in the lower-cased ``model`` observable wins.
+# Substrings let us match on the family (e.g. ``"claude-3-5-sonnet"``
+# matches ``"anthropic/claude-3-5-sonnet-20241022"``). Unknown models
+# fall back to ``_FALLBACK_*`` above.
+_MODEL_OPTIMAL_DEFAULTS: tuple[tuple[str, str, int], ...] = (
+    # Strongest Anthropic models — paper highlights digit codomain.
+    ("claude-3-5-sonnet", "digit", 10),
+    ("claude-3.5-sonnet", "digit", 10),
+    ("claude-opus", "digit", 12),
+    ("claude-3-opus", "digit", 12),
+    # Strongest OpenAI models — paper highlights digit codomain.
+    ("gpt-4o", "digit", 12),
+    ("gpt-4-turbo", "letter", 8),
+    # Weaker / older Anthropic models — letter codomain is competitive.
+    ("claude-3-haiku", "letter", 8),
+    ("claude-3-sonnet", "letter", 8),
+)
+
+
+def _lookup_model_defaults(model_id: str) -> tuple[str, int] | None:
+    """Pick paper Table 1 ``(bijection_type, fixed_size)`` for ``model_id``.
+
+    Returns ``None`` when the model identifier matches no known entry,
+    so the caller can fall back to the paper main-table defaults.
+    """
+    lower = model_id.lower()
+    for substring, codomain, fixed in _MODEL_OPTIMAL_DEFAULTS:
+        if substring in lower:
+            return codomain, fixed
+    return None
 
 
 class BijectionOptimizer(Optimizer):
@@ -77,13 +117,20 @@ class BijectionOptimizer(Optimizer):
     Args:
         bijection_type: ``"letter"`` (alphabet permutation) or
             ``"digit"`` (each non-fixed letter → unique
-            ``num_digits``-digit number). Paper's main results use
-            ``digit`` for stronger models and ``letter`` for weaker
-            ones (Table 1).
+            ``num_digits``-digit number). Default ``None`` means
+            *auto-tune from the in-scope ``model`` observable* per
+            paper Table 1: digit for stronger models (Sonnet 3.5,
+            Opus, GPT-4o), letter for weaker ones (GPT-4-Turbo,
+            Haiku). Falls back to ``"digit"`` when no recognised
+            ``model`` observable is in scope. Explicit values always
+            win over auto-tune.
         fixed_size: Number of letters that map to themselves. The
-            paper's dispersion is ``26 - fixed_size``. Default ``10``
-            matches the Sonnet-optimal ``digit`` setting (dispersion
-            16) from Table 1.
+            paper's dispersion is ``26 - fixed_size``. Default
+            ``None`` means *auto-tune from the in-scope ``model``
+            observable* per paper Table 1; falls back to ``10``
+            (Sonnet-optimal ``digit`` row, dispersion 16) when no
+            recognised ``model`` observable is in scope. Explicit
+            values always win over auto-tune.
         num_digits: Encoding length for ``digit`` codomain. Paper
             default 2.
         digit_delimiter: String inserted before each substituted
@@ -113,8 +160,8 @@ class BijectionOptimizer(Optimizer):
     def __init__(
         self,
         *,
-        bijection_type: str = "digit",
-        fixed_size: int = 10,
+        bijection_type: str | None = None,
+        fixed_size: int | None = None,
         num_digits: int = 2,
         digit_delimiter: str = "  ",
         num_teaching_shots: int = 10,
@@ -129,15 +176,22 @@ class BijectionOptimizer(Optimizer):
             raise ValueError("max_attempts must be at least 1")
         if num_teaching_shots < 0:
             raise ValueError("num_teaching_shots must be >= 0")
-        if bijection_type not in {"letter", "digit"}:
+        if bijection_type is not None and bijection_type not in {"letter", "digit"}:
             raise ValueError(
                 f"bijection_type must be 'letter' or 'digit', got {bijection_type!r}"
             )
-        if not 0 <= fixed_size <= 26:
+        if fixed_size is not None and not 0 <= fixed_size <= 26:
             raise ValueError("fixed_size must be in [0, 26]")
 
-        self._bijection_type = bijection_type
-        self._fixed_size = fixed_size
+        # User-supplied overrides; resolved in ``initialize`` against
+        # the in-scope ``model`` observable.
+        self._bijection_type_override = bijection_type
+        self._fixed_size_override = fixed_size
+        # Resolved values (set in ``initialize``); defaults match the
+        # Sonnet-optimal main-table row so the no-observable fall-back
+        # is itself paper-validated.
+        self._bijection_type: str = _FALLBACK_BIJECTION_TYPE
+        self._fixed_size: int = _FALLBACK_FIXED_SIZE
         self._num_digits = num_digits
         self._digit_delimiter = digit_delimiter
         self._num_teaching_shots = num_teaching_shots
@@ -197,11 +251,63 @@ class BijectionOptimizer(Optimizer):
         self._system_prompt_in_scope = any(
             c.name == _SYSTEM_PROMPT_NAME for c in controllables
         )
+        # Resolve auto-tunable knobs against the in-scope ``model``
+        # observable; explicit user overrides always win.
+        self._resolve_config_from_observables(observables)
         self._attempt = 0
         self._succeeded = False
         self._consecutive_no_signal_runs = 0
         self._stop_due_to_no_signal = False
         self._reset_run_state()
+
+    def _resolve_config_from_observables(
+        self, observables: list[ObservableValue]
+    ) -> None:
+        """Pick ``bijection_type`` / ``fixed_size`` from the model observable.
+
+        Priority: explicit constructor override > paper Table 1 entry
+        for the in-scope ``model`` observable > paper main-table
+        fallback (digit, fixed_size=10).
+        """
+        model_id = self._extract_model_id(observables)
+        model_defaults = (
+            _lookup_model_defaults(model_id) if model_id is not None else None
+        )
+
+        if self._bijection_type_override is not None:
+            self._bijection_type = self._bijection_type_override
+        elif model_defaults is not None:
+            self._bijection_type = model_defaults[0]
+        else:
+            self._bijection_type = _FALLBACK_BIJECTION_TYPE
+
+        if self._fixed_size_override is not None:
+            self._fixed_size = self._fixed_size_override
+        elif model_defaults is not None:
+            self._fixed_size = model_defaults[1]
+        else:
+            self._fixed_size = _FALLBACK_FIXED_SIZE
+
+        if model_id is not None:
+            logger.info(
+                "Bijection: model observable %r → resolved config "
+                "(codomain=%s, fixed_size=%d)%s",
+                model_id,
+                self._bijection_type,
+                self._fixed_size,
+                " (paper Table 1 lookup)" if model_defaults else " (no Table 1 entry)",
+            )
+
+    @staticmethod
+    def _extract_model_id(observables: list[ObservableValue]) -> str | None:
+        """Return the in-scope ``model`` observable's string content, if any."""
+        for value in observables:
+            if value.observable.name != _MODEL_OBSERVABLE_NAME:
+                continue
+            content = value.content
+            if isinstance(content, str) and content.strip():
+                return content.strip()
+        return None
 
     async def teardown(self) -> None:
         return None
