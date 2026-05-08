@@ -134,7 +134,7 @@ def _format_target_context(
         lines.append(f"Target model: {target_model_id}")
     if target_system_prompt is not None:
         text = target_system_prompt if target_system_prompt else "(empty)"
-        lines.append(f"Target system prompt:\n{text}")
+        lines.append(f"Default target system prompt:\n{text}")
     if not lines:
         return ""
     return "\n###Target Context###\n" + "\n\n".join(lines)

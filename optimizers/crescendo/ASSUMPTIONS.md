@@ -52,9 +52,13 @@ framings break).
 
 If an `ObservableValue` named `system_prompt` is in scope, its content is
 captured as `target_system_prompt` and prepended to the attacker's system
-prompt as `Target system prompt:\n<text>`. Empty content is rendered as
+prompt as `Default target system prompt:\n<text>`. Empty content is rendered as
 `(empty)`. The attacker can then construct escalation aligned with the
-target's stated persona/role rather than fighting it.
+target's stated persona/role rather than fighting it. The label says
+`Default ...` so that when (c) is also active the attacker reads it as a
+baseline reference rather than the live target state (the live state in
+that case is the framing, which the attacker generated itself and sees in
+its own conversation history).
 
 ### (c) Override target system prompt — pretext lift (Option C2)
 
