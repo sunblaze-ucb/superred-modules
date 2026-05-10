@@ -47,9 +47,13 @@ feedback is visible, the candidate is scored as 1.
 `ControllableNoInjection`. This preserves SuperRed's scope model: model responses
 are available only through in-scope trajectory observables.
 
-Framework success feedback is treated as a hard success signal. Otherwise, when
-a trajectory response is visible, TAP uses the TAP judge on the prompt and
-response together.
+Framework success feedback is treated as a hard success signal. When both a
+trajectory response and framework evaluation are visible, TAP keeps the response
+text and also uses the framework score/rationale as feedback. This is a SuperRed
+extension: the original TAP paper did not have an external task evaluator.
+
+If a response is visible but framework evaluation is not, TAP uses the TAP judge
+on the prompt and response together.
 
 ## Prompt Placement
 

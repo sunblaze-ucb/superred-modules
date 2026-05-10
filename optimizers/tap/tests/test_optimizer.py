@@ -58,6 +58,22 @@ def _make_run_end_with_eval(*, success: bool, score: float) -> RunEndEvent:
     )
 
 
+def _make_run_end_with_detailed_eval(
+    *,
+    success: bool,
+    score: float,
+    rationale: str,
+) -> RunEndEvent:
+    return RunEndEvent(
+        evaluation=EvaluationResult(
+            success=success,
+            primary_score=Score(value=score, security_domain=DOMAIN),
+            sub_scores={"policy": Score(value=0.25, security_domain=DOMAIN, name="policy")},
+            rationale=rationale,
+        )
+    )
+
+
 def _make_pre_call(ctrl: Controllable) -> ControllablePreCallEvent:
     return ControllablePreCallEvent(controllable=ctrl, request="hello")
 
@@ -228,6 +244,30 @@ async def test_system_prompt_extension_falls_back_when_system_prompt_not_seen() 
 
 
 @pytest.mark.asyncio
+async def test_system_prompt_extension_skips_blank_system_prompt() -> None:
+    opt = await _init_optimizer(controllables=[
+        _make_controllable(name="system_prompt"),
+        _make_controllable(name="user_message"),
+    ])
+    attacker_json = json.dumps({
+        "improvement": "No system override",
+        "system_prompt": "",
+        "prompt": "You are a pirate",
+    })
+    _setup_llm_mock(opt, [attacker_json, "Response: [[YES]]"])
+    await _dispatch_event(opt, _make_run_start())
+
+    system_ctrl = _make_controllable(name="system_prompt")
+    system_resp = await _dispatch_event(opt, _make_pre_call(system_ctrl))
+    assert isinstance(system_resp, ControllableNoInjection)
+
+    user_ctrl = _make_controllable(name="user_message")
+    user_resp = await _dispatch_event(opt, _make_pre_call(user_ctrl))
+    assert isinstance(user_resp, ControllableInjection)
+    assert user_resp.value == "You are a pirate"
+
+
+@pytest.mark.asyncio
 async def test_system_prompt_extension_is_not_requested_when_not_in_scope() -> None:
     opt = await _init_optimizer()
     attacker_json = json.dumps({"improvement": "Only user", "prompt": "You are a pirate"})
@@ -237,6 +277,27 @@ async def test_system_prompt_extension_is_not_requested_when_not_in_scope() -> N
     assert opt._attack_system_prompt is False
     attacker_messages = opt.llm.complete.call_args_list[0].args[0]
     assert "system_prompt" not in attacker_messages[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_static_context_does_not_duplicate_system_prompt_controllable() -> None:
+    opt = await _init_optimizer(controllables=[
+        _make_controllable(name="system_prompt"),
+        _make_controllable(name="user_message"),
+    ])
+    attacker_json = json.dumps({
+        "improvement": "Split channels",
+        "system_prompt": "System attack",
+        "prompt": "User attack",
+    })
+    _setup_llm_mock(opt, [attacker_json, "Response: [[YES]]"])
+
+    await _dispatch_event(opt, _make_run_start())
+
+    attacker_messages = opt.llm.complete.call_args_list[0].args[0]
+    system_content = attacker_messages[0]["content"]
+    assert "SUPERRED SYSTEM PROMPT EXTENSION" in system_content
+    assert "In-scope controllables" not in system_content
 
 
 @pytest.mark.asyncio
@@ -416,7 +477,7 @@ async def test_run_end_scores_trajectory_response_and_ignores_post_call() -> Non
 
 
 @pytest.mark.asyncio
-async def test_trajectory_response_takes_priority_over_run_end_score() -> None:
+async def test_visible_response_is_combined_with_run_end_score() -> None:
     opt = await _init_optimizer(tree_depth=2)
     attacker_json = json.dumps({"improvement": "Try this", "prompt": "attack prompt"})
     _setup_llm_mock(opt, [
@@ -434,10 +495,42 @@ async def test_trajectory_response_takes_priority_over_run_end_score() -> None:
 
     assert isinstance(result, RunEndResponse)
     assert opt._best_candidate is not None
-    assert opt._best_candidate.target_response == "visible target response"
-    assert opt._best_candidate.score == 7.0
-    scoring_messages = opt.llm.complete.call_args.args[0]
-    assert "visible target response" in scoring_messages[1]["content"]
+    assert opt._best_candidate.target_response is not None
+    assert "visible target response" in opt._best_candidate.target_response
+    assert "Framework evaluation feedback" in opt._best_candidate.target_response
+    assert opt._best_candidate.score == 1.9
+    assert opt.llm.complete.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_framework_evaluation_is_used_with_visible_response() -> None:
+    opt = await _init_optimizer(tree_depth=2)
+    attacker_json = json.dumps({"improvement": "Try this", "prompt": "attack prompt"})
+    _setup_llm_mock(opt, [
+        attacker_json,
+        "Response: [[YES]]",
+        "Rating: [[7]]",
+    ])
+    ctrl = _make_controllable()
+    trajectory = Trajectory()
+
+    await _dispatch_event(opt, _make_run_start(trajectory))
+    await _dispatch_event(opt, _make_pre_call(ctrl))
+    trajectory.emit(_make_response_observable("visible target response"))
+    result = await _dispatch_event(opt, _make_run_end_with_detailed_eval(
+        success=False,
+        score=0.9,
+        rationale="framework saw near-success",
+    ))
+
+    assert isinstance(result, RunEndResponse)
+    assert opt._best_candidate is not None
+    assert opt._best_candidate.target_response is not None
+    assert "visible target response" in opt._best_candidate.target_response
+    assert "framework saw near-success" in opt._best_candidate.target_response
+    assert "policy=0.25" in opt._best_candidate.target_response
+    assert opt._best_candidate.score == 9.1
+    assert opt.llm.complete.await_count == 2
 
 
 @pytest.mark.asyncio

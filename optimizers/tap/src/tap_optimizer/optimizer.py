@@ -249,7 +249,7 @@ class TapOptimizer(Optimizer):
             system_prompt = self._current_candidate.system_prompt
             if (
                 self._attack_system_prompt
-                and system_prompt is not None
+                and system_prompt
                 and not self._injected_system_prompt_this_run
             ):
                 self._injected_system_prompt_this_run = True
@@ -324,20 +324,30 @@ class TapOptimizer(Optimizer):
 
         response = self._get_response_from_trajectory()
         if evaluation is not None and evaluation.success:
-            candidate.target_response = response or self._format_framework_feedback(evaluation)
+            candidate.target_response = self._format_visible_feedback(
+                response=response,
+                evaluation=evaluation,
+            )
             candidate.score = 10.0
         elif response is not None:
-            candidate.target_response = response
-            try:
-                candidate.score = await self._evaluator.score_response(
-                    prompt=candidate.prompt,
+            if evaluation is not None:
+                candidate.target_response = self._format_visible_feedback(
                     response=response,
-                    goal=self._goal.description,
-                    target_str=self._target_str,
+                    evaluation=evaluation,
                 )
-            except Exception:
-                logger.warning("TAP: scoring failed for %s", candidate.node_id, exc_info=True)
-                candidate.score = 1.0
+                candidate.score = self._score_from_evaluation(evaluation)
+            else:
+                candidate.target_response = response
+                try:
+                    candidate.score = await self._evaluator.score_response(
+                        prompt=candidate.prompt,
+                        response=response,
+                        goal=self._goal.description,
+                        target_str=self._target_str,
+                    )
+                except Exception:
+                    logger.warning("TAP: scoring failed for %s", candidate.node_id, exc_info=True)
+                    candidate.score = 1.0
         elif evaluation is not None:
             candidate.target_response = self._format_framework_feedback(evaluation)
             candidate.score = self._score_from_evaluation(evaluation)
@@ -405,7 +415,32 @@ class TapOptimizer(Optimizer):
         return (
             "Framework evaluation feedback only; target response was not visible. "
             f"success={evaluation.success}, score={evaluation.primary_score.value}, "
+            f"sub_scores={TapOptimizer._format_sub_scores(evaluation)}, "
             f"rationale={evaluation.rationale}"
+        )
+
+    @staticmethod
+    def _format_visible_feedback(
+        *,
+        response: str | None,
+        evaluation: EvaluationResult,
+    ) -> str:
+        if response is None:
+            return TapOptimizer._format_framework_feedback(evaluation)
+        return (
+            f"{response}\n\n"
+            "Framework evaluation feedback: "
+            f"success={evaluation.success}, score={evaluation.primary_score.value}, "
+            f"sub_scores={TapOptimizer._format_sub_scores(evaluation)}, "
+            f"rationale={evaluation.rationale}"
+        )
+
+    @staticmethod
+    def _format_sub_scores(evaluation: EvaluationResult) -> str:
+        if not evaluation.sub_scores:
+            return "{}"
+        return ", ".join(
+            f"{name}={score.value}" for name, score in evaluation.sub_scores.items()
         )
 
     @staticmethod
@@ -415,10 +450,11 @@ class TapOptimizer(Optimizer):
         observables: list[ObservableValue],
     ) -> str | None:
         sections: list[str] = []
+        excluded_controllables = {"user_message", "system_prompt"}
         extra_controllables = [
             controllable
             for controllable in controllables
-            if controllable.name != "user_message"
+            if controllable.name not in excluded_controllables
         ]
         if extra_controllables:
             lines = ["In-scope controllables:"]
