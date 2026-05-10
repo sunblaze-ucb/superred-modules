@@ -213,6 +213,8 @@ class Attacker:
             if isinstance(improvement, str) and isinstance(prompt, str):
                 system_prompt = data.get("system_prompt")
                 if include_system_prompt:
+                    if system_prompt is None:
+                        return AttackPrompt(improvement=improvement, prompt=prompt)
                     if not isinstance(system_prompt, str):
                         raise ValueError(
                             "Failed to parse attacker LLM response as JSON with "

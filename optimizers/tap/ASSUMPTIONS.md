@@ -47,10 +47,11 @@ feedback is visible, the candidate is scored as 1.
 `ControllableNoInjection`. This preserves SuperRed's scope model: model responses
 are available only through in-scope trajectory observables.
 
-Framework success feedback is treated as a hard success signal. When both a
-trajectory response and framework evaluation are visible, TAP keeps the response
-text and also uses the framework score/rationale as feedback. This is a SuperRed
-extension: the original TAP paper did not have an external task evaluator.
+Framework success feedback is treated as a hard success signal only when
+`evaluation.success=True`. When both a trajectory response and framework
+evaluation are visible, TAP keeps the response text and also uses the framework
+score/rationale as feedback. This is a SuperRed extension: the original TAP
+paper did not have an external task evaluator.
 
 If a response is visible but framework evaluation is not, TAP uses the TAP judge
 on the prompt and response together.
@@ -64,7 +65,9 @@ there.
 If SuperRed also exposes `system_prompt`, the optimizer treats that as a
 stronger threat model and uses it automatically. The attacker may return both
 `system_prompt` and `prompt`: the optimizer injects the first into
-`system_prompt` and still injects the second into `user_message`.
+`system_prompt` and still injects the second into `user_message`. If the attacker
+returns only the normal TAP JSON (`improvement` and `prompt`), TAP treats that as
+"no system override" and still uses the prompt.
 
 ## Static Target Context
 
@@ -76,6 +79,9 @@ When extra in-scope static context is available, TAP includes it in the attacker
 prompt. This is a SuperRed extension. If only the normal `user_message`
 controllable is available and no static observables are exposed, no static
 context is added and the prompt path stays paper-faithful.
+
+Static context is bounded by `static_context_max_chars` to avoid crowding out the
+TAP prompt when large observables are in scope.
 
 ## Target String
 

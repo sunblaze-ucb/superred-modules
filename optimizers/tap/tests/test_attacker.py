@@ -81,20 +81,23 @@ class TestAttackerFirstTurn:
         assert "system_prompt" in messages[0]["content"]
 
     @pytest.mark.asyncio
-    async def test_system_prompt_extension_requires_system_prompt_key(self) -> None:
+    async def test_system_prompt_extension_allows_missing_system_prompt_key(self) -> None:
         mock_llm = AsyncMock()
-        payload = json.dumps({"improvement": "missing", "prompt": "attack"})
+        payload = json.dumps({"improvement": "No system override.", "prompt": "attack"})
         mock_llm.complete.return_value = _make_completion_response(payload)
         attacker = Attacker(llm=mock_llm, max_attack_attempts=1)
         history: list[dict[str, str]] = []
 
-        with pytest.raises(ValueError, match="system_prompt"):
-            await attacker.generate_prompt(
-                goal="test goal",
-                target_str="Sure, here is",
-                conversation_history=history,
-                include_system_prompt=True,
-            )
+        proposal = await attacker.generate_prompt(
+            goal="test goal",
+            target_str="Sure, here is",
+            conversation_history=history,
+            include_system_prompt=True,
+        )
+
+        assert proposal.improvement == "No system override."
+        assert proposal.prompt == "attack"
+        assert proposal.system_prompt is None
 
     @pytest.mark.asyncio
     async def test_first_turn_uses_seed_prompt_and_official_max_tokens(self) -> None:

@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 _RESPONSE_OBSERVABLE_NAMES = {"response", "model_response", "assistant_response"}
 _RESPONSE_NAME_HINTS = ("response", "assistant", "reply", "output", "completion")
+_STATIC_CONTEXT_TRUNCATION_MARKER = "\n[truncated]"
 
 
 class TapOptimizer(Optimizer):
@@ -58,6 +59,7 @@ class TapOptimizer(Optimizer):
         max_attack_attempts: int = 5,
         keep_last_n: int = 3,
         target_str: str = "Sure, here is",
+        static_context_max_chars: int = 4000,
         random_seed: int | None = None,
         response_observable_names: list[str] | None = None,
     ) -> None:
@@ -74,6 +76,7 @@ class TapOptimizer(Optimizer):
         self._max_attack_attempts = max_attack_attempts
         self._keep_last_n = keep_last_n
         self._target_str = target_str
+        self._static_context_max_chars = static_context_max_chars
         self._attack_system_prompt = False
         self._static_target_context: str | None = None
         self._random_seed = random_seed
@@ -112,6 +115,7 @@ class TapOptimizer(Optimizer):
         self._static_target_context = self._build_static_target_context(
             controllables=controllables,
             observables=observables,
+            max_chars=self._static_context_max_chars,
         )
         self._attacker = Attacker(
             llm=self.llm,
@@ -407,8 +411,8 @@ class TapOptimizer(Optimizer):
             return 10.0
         raw_score = float(evaluation.primary_score.value)
         if 0.0 <= raw_score <= 1.0:
-            return 1.0 + (9.0 * raw_score)
-        return max(1.0, min(10.0, raw_score))
+            return min(9.999, 1.0 + (9.0 * raw_score))
+        return min(9.999, max(1.0, raw_score))
 
     @staticmethod
     def _format_framework_feedback(evaluation: EvaluationResult) -> str:
@@ -448,7 +452,10 @@ class TapOptimizer(Optimizer):
         *,
         controllables: list[Controllable],
         observables: list[ObservableValue],
+        max_chars: int,
     ) -> str | None:
+        if max_chars <= 0:
+            return None
         sections: list[str] = []
         excluded_controllables = {"user_message", "system_prompt"}
         extra_controllables = [
@@ -481,4 +488,10 @@ class TapOptimizer(Optimizer):
 
         if not sections:
             return None
-        return "\n".join(sections)
+        context = "\n".join(sections)
+        if len(context) <= max_chars:
+            return context
+        marker = _STATIC_CONTEXT_TRUNCATION_MARKER
+        if max_chars <= len(marker):
+            return marker[:max_chars]
+        return f"{context[: max_chars - len(marker)].rstrip()}{marker}"

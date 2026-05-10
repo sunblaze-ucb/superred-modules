@@ -333,6 +333,29 @@ async def test_static_context_from_initialize_reaches_attacker_prompt() -> None:
 
 
 @pytest.mark.asyncio
+async def test_static_context_is_bounded() -> None:
+    observables = [
+        ObservableValue(
+            observable=Observable(
+                name="large_config",
+                security_domain=DOMAIN,
+                description="Large target config",
+            ),
+            content="x" * 500,
+        )
+    ]
+
+    opt = await _init_optimizer(
+        observables=observables,
+        static_context_max_chars=120,
+    )
+
+    assert opt._static_target_context is not None
+    assert len(opt._static_target_context) <= 120
+    assert "[truncated]" in opt._static_target_context
+
+
+@pytest.mark.asyncio
 async def test_user_message_only_scope_keeps_attacker_prompt_paper_baseline() -> None:
     opt = await _init_optimizer()
     attacker_json = json.dumps({"improvement": "Only user", "prompt": "User attack"})
@@ -587,6 +610,29 @@ async def test_feedback_score_can_rank_candidate_when_response_is_not_visible() 
     assert opt._best_candidate is not None
     assert opt._best_candidate.score == 5.5
     assert "Framework evaluation" in (opt._best_candidate.target_response or "")
+
+
+@pytest.mark.asyncio
+async def test_non_success_framework_max_score_does_not_stop_as_success() -> None:
+    opt = await _init_optimizer(tree_depth=2)
+    attacker_json = json.dumps({"improvement": "Try this", "prompt": "attack prompt"})
+    _setup_llm_mock(opt, [attacker_json, "Response: [[YES]]"])
+    ctrl = _make_controllable()
+
+    await _dispatch_event(opt, _make_run_start(Trajectory()))
+    await _dispatch_event(opt, _make_pre_call(ctrl))
+    result = await _dispatch_event(opt, _make_run_end_with_eval(success=False, score=1.0))
+
+    assert isinstance(result, RunEndResponse)
+    assert result.done is False
+    assert opt._best_candidate is not None
+    assert opt._best_candidate.score < 10.0
+    assert opt._success_found is False
+    raw_ten = EvaluationResult(
+        success=False,
+        primary_score=Score(value=10.0, security_domain=DOMAIN),
+    )
+    assert TapOptimizer._score_from_evaluation(raw_ten) < 10.0
 
 
 @pytest.mark.asyncio
