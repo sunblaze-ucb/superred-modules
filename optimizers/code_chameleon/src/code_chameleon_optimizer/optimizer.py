@@ -80,7 +80,6 @@ class CodeChameleonOptimizer(Optimizer):
         self._goal: Goal | None = None
         self._evaluator: Evaluator | None = None
         self._system_prompt_writable = False
-        self._model_id: str | None = None
 
         self._attempt = 0
         self._succeeded = False
@@ -128,7 +127,6 @@ class CodeChameleonOptimizer(Optimizer):
             success_score=self._success_score,
             max_tokens=self._judge_max_tokens,
         )
-        self._model_id = self._extract_model_id(observables)
         self._system_prompt_writable = (
             self._target_controllable_name is None
             and self._use_system_prompt_when_available
@@ -350,19 +348,4 @@ class CodeChameleonOptimizer(Optimizer):
     def _resolve_encrypt_rules(self) -> list[str]:
         if self._encrypt_rules_override is not None:
             return list(self._encrypt_rules_override)
-        model = (self._model_id or "").lower()
-        # Paper Table 2 reports Length as best on Llama2-70B; BinaryTree is
-        # best for 7B/13B and has the best average across that table.
-        if "llama" in model and "70" in model:
-            return ["length"]
         return [_DEFAULT_ENCRYPT_RULE]
-
-    @staticmethod
-    def _extract_model_id(observables: list[ObservableValue]) -> str | None:
-        for value in observables:
-            if value.observable.name != "model":
-                continue
-            content = value.content
-            if isinstance(content, str) and content.strip():
-                return content.strip()
-        return None

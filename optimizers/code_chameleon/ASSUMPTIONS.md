@@ -52,16 +52,17 @@ judge, even if the local judge scores the response highly.
 
 ## Capability Use
 
-If a `model` observable is visible and the caller did not explicitly choose an
-encryption rule, the optimizer can pick a paper-tested rule for that model. For
-Llama2-70B it uses `length`, which is the best rule in the paper's Table 2. For
-other models and for no model observable, it uses `binary_tree`.
+The official scripts do not auto-select an encryption rule from the model name:
+the caller chooses `--encrypt_rule`. This optimizer follows that behavior. The
+default is `binary_tree` because it is the rule used in the official README
+example command, and callers can pass a different rule or a staged rule list
+when they want to reproduce another paper table row.
 
-Static observables such as a readable system prompt are not inserted into the
-CodeChameleon prompt. This attack is a deterministic encryption template, not an
-LLM-driven attacker that can naturally reason over extra context. The writable
-system prompt is used when available because the official code already has a
-separate system prompt for chat models.
+Static observables such as `model` and a readable system prompt are not inserted
+into the CodeChameleon prompt. This attack is a deterministic encryption
+template, not an LLM-driven attacker that can naturally reason over extra
+context. The writable system prompt is used when available because the official
+GPT path already has a separate system prompt for chat models.
 
 ## Deliberate Differences
 

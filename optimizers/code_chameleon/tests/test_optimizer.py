@@ -27,7 +27,6 @@ from tests.conftest import (
     make_controllable,
     make_observable,
     mock_response,
-    model_observable,
 )
 from code_chameleon_optimizer.optimizer import CodeChameleonOptimizer
 from code_chameleon_optimizer.prompts import CODE_SYSTEM_PROMPT
@@ -81,14 +80,20 @@ async def test_default_rule_is_binary_tree_without_model_observable() -> None:
 
 
 @pytest.mark.asyncio
-async def test_model_observable_can_select_paper_table_rule_when_not_explicit() -> None:
+async def test_model_observable_does_not_change_the_chosen_encrypt_rule() -> None:
+    # The official script uses the caller-provided --encrypt_rule. It does
+    # not auto-tune based on target model metadata.
+    from tests.conftest import model_observable
+
     opt = await init_optimizer(observables=[model_observable("Llama-2-70b-chat")])
     await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
-    assert opt._current_encrypt_rule == "length"
+    assert opt._current_encrypt_rule == "binary_tree"
 
 
 @pytest.mark.asyncio
 async def test_explicit_rule_wins_over_model_observable() -> None:
+    from tests.conftest import model_observable
+
     opt = await init_optimizer(
         encrypt_rules=["reverse"],
         observables=[model_observable("Llama-2-70b-chat")],
