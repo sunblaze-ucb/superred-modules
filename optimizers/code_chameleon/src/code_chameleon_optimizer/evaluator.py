@@ -67,19 +67,26 @@ class Evaluator:
         *,
         llm: LLMClient,
         success_score: int = 5,
-        max_tokens: int = 512,
+        top_p: float = 1.0,
+        max_tokens: int | None = None,
     ) -> None:
         if not 1 <= success_score <= 5:
             raise ValueError("success_score must be in [1, 5]")
         self._llm = llm
         self._success_score = success_score
+        self._top_p = top_p
         self._max_tokens = max_tokens
 
     async def score_response(self, *, goal: str, response: str) -> EvaluationScore:
+        kwargs: dict[str, float | int] = {
+            "temperature": 0.0,
+            "top_p": self._top_p,
+        }
+        if self._max_tokens is not None:
+            kwargs["max_tokens"] = self._max_tokens
         result = await self._llm.complete(
             [{"role": "user", "content": JUDGE_TEMPLATE.format(goal, response)}],
-            temperature=0.0,
-            max_tokens=self._max_tokens,
+            **kwargs,
         )
         content = result.choices[0].message.content or ""
         score = self._parse_score(content)

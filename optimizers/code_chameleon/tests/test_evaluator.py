@@ -24,7 +24,19 @@ async def test_score_response_parses_official_score_tag() -> None:
     assert "User Instruction: unsafe task" in messages[0]["content"]
     assert "Model Response: answer" in messages[0]["content"]
     assert llm.complete.call_args.kwargs["temperature"] == 0.0
-    assert llm.complete.call_args.kwargs["max_tokens"] == 512
+    assert llm.complete.call_args.kwargs["top_p"] == 1.0
+    assert "max_tokens" not in llm.complete.call_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_score_response_allows_explicit_max_tokens_override() -> None:
+    llm = AsyncMock()
+    llm.complete.return_value = mock_response("#thescore: 5")
+    evaluator = Evaluator(llm=llm, max_tokens=128)
+
+    await evaluator.score_response(goal="x", response="y")
+
+    assert llm.complete.call_args.kwargs["max_tokens"] == 128
 
 
 @pytest.mark.asyncio

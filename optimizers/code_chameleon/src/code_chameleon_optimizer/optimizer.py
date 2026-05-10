@@ -52,7 +52,7 @@ class CodeChameleonOptimizer(Optimizer):
         encrypt_rules: Iterable[str] | None = None,
         prompt_style: str = "code",
         success_score: int = 5,
-        judge_max_tokens: int = 512,
+        judge_max_tokens: int | None = None,
         response_observable_names: Iterable[str] | None = None,
         target_controllable_name: str | None = None,
         use_system_prompt_when_available: bool = True,

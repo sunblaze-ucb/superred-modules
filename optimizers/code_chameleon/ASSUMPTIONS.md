@@ -46,6 +46,11 @@ The local evaluator uses the official GPT-4-style CodeChameleon judge prompt and
 its 1-5 score. The default success threshold is score `5`, the strongest success
 category in the official rubric.
 
+The judge call defaults also follow the official evaluator script:
+`temperature=0.0`, `top_p=1.0`, and no `max_tokens` cap. The optional
+`judge_max_tokens` constructor argument exists only as an explicit caller
+override; it is not used by default.
+
 When framework evaluation is present, `evaluation.success` is authoritative for
 stopping. A non-success framework evaluation is not overturned by the local
 judge, even if the local judge scores the response highly.
