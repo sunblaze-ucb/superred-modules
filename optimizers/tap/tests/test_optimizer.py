@@ -12,6 +12,7 @@ from superred.core.channel import EventEnvelope
 from superred.core.types.controllable import Controllable
 from superred.core.types.event import EventResponse
 from superred.core.types.evaluation import EvaluationResult, Score
+from superred.core.types.llm import BudgetExhaustedError, LLMUsage
 from superred.core.types.events import (
     ControllableInjection,
     ControllableNoInjection,
@@ -142,7 +143,13 @@ async def _dispatch_event(opt: TapOptimizer, event) -> EventResponse:
     loop = asyncio.get_running_loop()
     future: asyncio.Future[EventResponse] = loop.create_future()
     envelope = EventEnvelope(event=event, future=future, loop=loop)
-    await opt._dispatch(envelope)
+    try:
+        await opt._dispatch(envelope)
+    except Exception:
+        await asyncio.sleep(0)
+        if future.done():
+            future.exception()
+        raise
     return await future
 
 
@@ -729,3 +736,36 @@ async def test_no_candidate_signals_done_when_attacker_generation_fails() -> Non
     result = await _dispatch_event(opt, _make_run_end())
     assert isinstance(result, RunEndResponse)
     assert result.done is True
+
+
+@pytest.mark.asyncio
+async def test_budget_exhaustion_during_attacker_generation_propagates() -> None:
+    opt = await _init_optimizer()
+    opt.llm.complete = AsyncMock(
+        side_effect=BudgetExhaustedError("budget exhausted", LLMUsage())
+    )
+
+    with pytest.raises(BudgetExhaustedError):
+        await _dispatch_event(opt, _make_run_start())
+
+
+@pytest.mark.asyncio
+async def test_budget_exhaustion_during_response_scoring_propagates() -> None:
+    opt = await _init_optimizer(tree_depth=2)
+    attacker_json = json.dumps({"improvement": "Try this", "prompt": "attack prompt"})
+    _setup_llm_mock(opt, [
+        attacker_json,
+        "Response: [[YES]]",
+    ])
+    opt._evaluator.score_response = AsyncMock(  # type: ignore[union-attr, method-assign]
+        side_effect=BudgetExhaustedError("budget exhausted", LLMUsage())
+    )
+    ctrl = _make_controllable()
+    trajectory = Trajectory()
+
+    await _dispatch_event(opt, _make_run_start(trajectory))
+    await _dispatch_event(opt, _make_pre_call(ctrl))
+    trajectory.emit(_make_response_observable("visible response"))
+
+    with pytest.raises(BudgetExhaustedError):
+        await _dispatch_event(opt, _make_run_end())

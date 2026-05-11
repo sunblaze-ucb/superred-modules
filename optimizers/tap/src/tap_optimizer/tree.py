@@ -61,7 +61,7 @@ class TapTree:
         """Return all non-pruned leaf nodes."""
         parent_ids_with_children: set[str | None] = set()
         for node in self._nodes:
-            if not node.pruned and node.parent_id is not None:
+            if node.parent_id is not None:
                 parent_ids_with_children.add(node.parent_id)
 
         return [

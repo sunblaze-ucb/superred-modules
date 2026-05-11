@@ -74,6 +74,18 @@ class TestTapTree:
         assert parent not in leaves
         assert len(leaves) == 2
 
+    def test_get_leaves_does_not_resurrect_parent_when_child_is_pruned(self) -> None:
+        tree = TapTree()
+        roots = tree.create_root_nodes(width=1)
+        parent = roots[0]
+        children = tree.branch(parent, branching_factor=1)
+        children[0].pruned = True
+
+        leaves = tree.get_leaves()
+
+        assert parent not in leaves
+        assert leaves == []
+
     def test_prune_off_topic_keeps_minimum_candidate_when_all_are_off_topic(self) -> None:
         tree = TapTree(rng=random.Random(0))
         roots = tree.create_root_nodes(width=3)

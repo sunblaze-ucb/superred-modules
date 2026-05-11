@@ -62,7 +62,6 @@ class TestScoreResponse:
             prompt="attack prompt",
             response="some text",
             goal="the goal",
-            target_str="Sure, here is",
         )
         assert score == 7.0
 
@@ -75,7 +74,6 @@ class TestScoreResponse:
             prompt="attack prompt",
             response="target response",
             goal="the goal",
-            target_str="Sure, here is",
         )
 
         messages = mock_llm.complete.call_args.args[0]
@@ -93,7 +91,6 @@ class TestScoreResponse:
             prompt="attack prompt",
             response="target response",
             goal="the goal",
-            target_str="Sure, here is",
         )
         _, kwargs = mock_llm.complete.call_args
         assert kwargs["max_tokens"] == 10
@@ -107,6 +104,19 @@ class TestScoreResponse:
             prompt="attack prompt",
             response="some text",
             goal="the goal",
-            target_str="Sure, here is",
         )
         assert score == 1.0
+
+    @pytest.mark.asyncio
+    async def test_score_response_does_not_accept_unused_target_string(self) -> None:
+        mock_llm = AsyncMock()
+        mock_llm.complete.return_value = _mock_response("Rating: [[7]]")
+        evaluator = Evaluator(llm=mock_llm)
+
+        with pytest.raises(TypeError):
+            await evaluator.score_response(
+                prompt="attack prompt",
+                response="some text",
+                goal="the goal",
+                target_str="Sure, here is",  # type: ignore[call-arg]
+            )

@@ -56,13 +56,12 @@ class Evaluator:
         prompt: str,
         response: str,
         goal: str,
-        target_str: str,
     ) -> float:
         """Score a prompt/response pair on the TAP 1-10 jailbreak scale."""
         messages = [
             {
                 "role": "system",
-                "content": JUDGE_SYSTEM_PROMPT.format(goal=goal, target_str=target_str),
+                "content": JUDGE_SYSTEM_PROMPT.format(goal=goal),
             },
             {
                 "role": "user",

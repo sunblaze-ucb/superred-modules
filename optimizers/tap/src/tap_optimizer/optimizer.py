@@ -22,6 +22,7 @@ from superred.core.types.events import (
 )
 from superred.core.types.evaluation import EvaluationResult
 from superred.core.types.goal import Goal
+from superred.core.types.llm import BudgetExhaustedError
 from superred.core.types.observable import ObservableValue
 
 from tap_optimizer.attacker import Attacker
@@ -212,6 +213,8 @@ class TapOptimizer(Optimizer):
                 node.improvement = proposal.improvement
                 node.prompt = proposal.prompt
                 node.system_prompt = proposal.system_prompt
+            except BudgetExhaustedError:
+                raise
             except Exception:
                 logger.warning("TAP: pruning node %s -- attacker failed", node.node_id, exc_info=True)
                 node.pruned = True
@@ -229,6 +232,8 @@ class TapOptimizer(Optimizer):
                     prompt=node.prompt,
                     goal=goal,
                 )
+            except BudgetExhaustedError:
+                raise
             except Exception:
                 logger.warning("TAP: on-topic check failed for %s", node.node_id, exc_info=True)
                 node.is_on_topic = True
@@ -347,8 +352,9 @@ class TapOptimizer(Optimizer):
                         prompt=candidate.prompt,
                         response=response,
                         goal=self._goal.description,
-                        target_str=self._target_str,
                     )
+                except BudgetExhaustedError:
+                    raise
                 except Exception:
                     logger.warning("TAP: scoring failed for %s", candidate.node_id, exc_info=True)
                     candidate.score = 1.0
