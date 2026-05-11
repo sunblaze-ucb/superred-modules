@@ -506,15 +506,21 @@ class FITDOptimizer(Optimizer):
             logger.info("FITD: local official evaluator returned unsafe for final response")
             self._succeeded = True
             return
-        for candidate in candidates:
-            if candidate == response:
-                continue
-            result = await self._assistant.evaluate_success(self._goal.description, candidate)
-            self._record_helper_query()
-            if result.success:
-                logger.info("FITD: local official evaluator returned unsafe for prior output")
-                self._succeeded = True
-                return
+        most_index = await self._assistant.find_most_jailbreaking_index(
+            candidates,
+            self._goal.description,
+        )
+        self._record_helper_query()
+        if most_index is None:
+            return
+        most_response = candidates[most_index]
+        if most_response == response:
+            return
+        result = await self._assistant.evaluate_success(self._goal.description, most_response)
+        self._record_helper_query()
+        if result.success:
+            logger.info("FITD: local official evaluator returned unsafe for most harmful output")
+            self._succeeded = True
 
     def _apply_evaluation(self, evaluation: EvaluationResult) -> None:
         if evaluation.success:

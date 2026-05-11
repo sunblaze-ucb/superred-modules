@@ -169,8 +169,9 @@ async def test_trajectory_response_is_used_before_postcall_fallback() -> None:
 
     await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
 
-    assert "trajectory answer" in llm.complete.call_args.args[0][0]["content"]
-    assert "postcall answer" not in llm.complete.call_args.args[0][0]["content"]
+    first_judge_prompt = llm.complete.await_args_list[0].args[0][0]["content"]
+    assert "trajectory answer" in first_judge_prompt
+    assert "postcall answer" not in first_judge_prompt
 
 
 @pytest.mark.asyncio
@@ -339,7 +340,7 @@ async def test_final_align_keeps_previous_answer_when_official_judge_prefers_it(
 @pytest.mark.asyncio
 async def test_local_evaluator_checks_prior_outputs_when_final_is_safe() -> None:
     llm = AsyncMock()
-    llm.complete.side_effect = [mock_response("safe"), mock_response("unsafe")]
+    llm.complete.side_effect = [mock_response("safe"), mock_response("0"), mock_response("unsafe")]
     opt = await init_optimizer(llm=llm, prompt_sequence=["benign bridge", "riskier bridge"] )
     await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
     first = await opt.on_event(
@@ -369,4 +370,4 @@ async def test_local_evaluator_checks_prior_outputs_when_final_is_safe() -> None
 
     assert end.done is True
     assert opt._succeeded is True
-    assert llm.complete.await_count == 2
+    assert llm.complete.await_count == 3

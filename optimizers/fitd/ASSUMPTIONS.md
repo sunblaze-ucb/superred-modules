@@ -19,9 +19,11 @@ format, polish prompt, realign prompt, intermediate-prompt prompt, similarity
 judge, harmfulness judge, and `safe`/`unsafe` evaluator prompt are preserved.
 
 Prompt-ladder generation follows the official transformation format and retries
-invalid/refusal outputs before falling back to a simple generated ladder. Callers
-can pass `prompt_sequence` to reproduce a stored ladder; matching the official
-script, the final target prompt is appended to that sequence during setup.
+invalid/refusal outputs. If generation never returns the official `Step N`
+format, the optimizer raises instead of silently inventing a non-official ladder.
+Callers can pass `prompt_sequence` to reproduce a stored ladder; matching the
+official script, the final target prompt is appended to that sequence during
+setup.
 
 ## Mapping To SuperRed
 
@@ -51,9 +53,8 @@ failed framework evaluation is not overridden by the local FITD judge.
 
 When framework feedback is not available but model responses are visible, the
 local evaluator uses the official `safe`/`unsafe` FITD evaluation prompt. It
-checks the final response first, then prior stored outputs, matching the
-official idea of considering both the final-step answer and the most harmful
-answer seen during the run.
+checks the final response first, then uses the official `find_most` judge prompt
+to select and evaluate the most jailbreak-like prior output.
 
 If neither responses nor feedback are visible, FITD runs open-loop through the
 prompt ladder. It cannot detect refusals or do realign/paraphrase recovery in
@@ -78,7 +79,10 @@ closely as SuperRed allows. It works best when the target is deterministic.
 For SlipperySlopeParaphrase, the optimizer keeps the refused level pending after
 a successful intermediate prompt. It uses the official similarity and
 harmfulness judges to decide whether the intermediate prompt/answer should
-replace the previous prompt/answer, then retries the original next level.
+replace the optimizer's previous prompt/answer, then retries the original next
+level. SuperRed currently cannot rewrite the target's already-recorded assistant
+message, so this replacement affects optimizer state and future prompts, not the
+target's private conversation history.
 
 ## Deliberate Differences
 
