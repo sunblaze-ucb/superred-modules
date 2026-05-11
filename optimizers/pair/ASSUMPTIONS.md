@@ -20,14 +20,22 @@ This optimizer keeps the current official runtime defaults:
 
 The attacker system prompts, initial user message, target-response feedback
 format, JSON fields, and GPT-judge prompt follow the official implementation.
+Attacker generation also follows the official JSON behavior: stop at `}`, add
+the closing brace back before parsing, retry malformed JSON up to five times,
+and store the extracted JSON object in attacker history.
 
 ## Mapping To SuperRed
 
 One SuperRed run can send only one target prompt. PAIR normally sends a batch of
-one prompt per stream each iteration, so this optimizer stages that batch across
-multiple SuperRed runs. It finishes the current staged batch before stopping on a
-successful candidate, matching PAIR's batch-at-a-time shape as closely as the
-event loop allows.
+one prompt per stream each iteration, so this optimizer stages that target batch
+across multiple SuperRed runs. It finishes the current staged batch before
+stopping on a successful candidate, matching PAIR's batch-at-a-time shape as
+closely as the event loop allows.
+
+The official implementation batches attacker LLM calls. SuperRed's optimizer
+LLM client exposes one chat completion at a time, so attacker proposals are
+generated sequentially while preserving the same prompts, defaults, retry
+behavior, and per-stream histories.
 
 The optimizer injects PAIR's `prompt` into `user_message` or the first visible
 user-like controllable. It skips ChatbotTarget's `response` controllable and does
@@ -39,11 +47,17 @@ The optimizer reads model responses from the filtered trajectory first. If no
 trajectory response is visible, it falls back to a paired PostCall answer when
 that is in scope.
 
-When framework evaluation is visible, `evaluation.success` is the hard success
-signal. A failed framework evaluation never counts as success, even if its numeric
-score is high. If framework feedback is visible but the model response is not,
-the optimizer still uses the framework rationale and score to refine the next
-PAIR prompt.
+When a model response is visible, the optimizer still runs PAIR's local judge so
+the refinement loop receives the paper-shaped 1-10 score. When framework
+evaluation is also visible, `evaluation.success` is the hard success signal. A
+failed framework evaluation never counts as success, even if its numeric score is
+high or the local judge is optimistic; the score sent back to the attacker is
+capped below 10 in that case. If framework feedback is visible but the model
+response is not, the optimizer uses the framework rationale and score to refine
+the next PAIR prompt.
+
+The official repository also has a JailbreakBench judge option. In SuperRed,
+that role is covered by the framework evaluator and arrives on `RunEndEvent`.
 
 If neither model response nor framework feedback is visible, PAIR cannot truly
 learn from the target. In that blind setting, the optimizer continues through the

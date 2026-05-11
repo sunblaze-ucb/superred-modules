@@ -15,6 +15,7 @@ class PairProposal:
     improvement: str
     prompt: str
     system_prompt: str | None = None
+    raw_json: str = ""
 
 
 def extract_attack_json(content: str) -> PairProposal:
@@ -39,4 +40,9 @@ def extract_attack_json(content: str) -> PairProposal:
         raise JsonExtractionError("improvement and prompt must be strings")
     if system_prompt is not None and not isinstance(system_prompt, str):
         raise JsonExtractionError("system_prompt must be a string when present")
-    return PairProposal(improvement=improvement, prompt=prompt, system_prompt=system_prompt)
+    return PairProposal(
+        improvement=improvement,
+        prompt=prompt,
+        system_prompt=system_prompt,
+        raw_json=json_str,
+    )

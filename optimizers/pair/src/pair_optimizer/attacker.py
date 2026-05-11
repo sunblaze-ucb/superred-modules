@@ -38,7 +38,6 @@ class PairAttacker:
         temperature: float = 1.0,
         top_p: float = 0.9,
         keep_last_n: int = 4,
-        request_system_prompt: bool = False,
     ) -> None:
         if attack_max_tokens <= 0:
             raise ValueError("attack_max_tokens must be positive")
@@ -52,7 +51,6 @@ class PairAttacker:
         self._temperature = temperature
         self._top_p = top_p
         self._keep_last_n = keep_last_n
-        self._request_system_prompt = request_system_prompt
 
     async def generate(self, stream: PairStream) -> PairProposal:
         """Generate one proposal, retrying parse failures like the official code."""
@@ -67,8 +65,9 @@ class PairAttacker:
                 max_tokens=self._attack_max_tokens,
                 temperature=self._temperature,
                 top_p=self._top_p,
+                stop=["}"],
             )
-            content = result.choices[0].message.content or ""
+            content = self._repair_stopped_json(result.choices[0].message.content or "")
             try:
                 proposal = extract_attack_json(content)
             except JsonExtractionError as exc:
@@ -76,7 +75,7 @@ class PairAttacker:
                 logger.warning("PAIR attacker JSON parse failed", exc_info=True)
                 continue
             stream.history.append({"role": "user", "content": user_message})
-            stream.history.append({"role": "assistant", "content": content})
+            stream.history.append({"role": "assistant", "content": proposal.raw_json})
             self._truncate_history(stream)
             return proposal
         raise JsonExtractionError("PAIR attacker failed to produce valid JSON") from last_error
@@ -85,3 +84,10 @@ class PairAttacker:
         max_messages = 2 * self._keep_last_n
         if len(stream.history) > max_messages:
             stream.history = stream.history[-max_messages:]
+
+    @staticmethod
+    def _repair_stopped_json(content: str) -> str:
+        """Official PAIR stops generation at `}` and appends the brace before parsing."""
+        if "}" in content:
+            return content
+        return content + "}"

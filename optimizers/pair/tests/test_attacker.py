@@ -27,7 +27,7 @@ async def test_attacker_uses_official_generation_defaults() -> None:
         {"role": "system", "content": "system"},
         {"role": "user", "content": "init"},
     ]
-    assert kwargs == {"max_tokens": 500, "temperature": 1.0, "top_p": 0.9}
+    assert kwargs == {"max_tokens": 500, "temperature": 1.0, "top_p": 0.9, "stop": ["}"]}
 
 
 @pytest.mark.asyncio
@@ -47,11 +47,11 @@ async def test_attacker_retries_invalid_json() -> None:
 
 
 @pytest.mark.asyncio
-async def test_attacker_missing_system_prompt_is_allowed_when_extension_enabled() -> None:
+async def test_attacker_missing_system_prompt_is_allowed() -> None:
     llm = AsyncMock()
     llm.complete.return_value = mock_response('{"improvement": "better", "prompt": "attack"}')
     stream = PairStream(index=0, system_prompt="system", processed_response="init")
-    attacker = PairAttacker(llm=llm, request_system_prompt=True)
+    attacker = PairAttacker(llm=llm)
 
     proposal = await attacker.generate(stream)
 
@@ -84,3 +84,16 @@ async def test_budget_errors_propagate_from_attacker() -> None:
 
     with pytest.raises(BudgetExhaustedError):
         await attacker.generate(stream)
+
+
+@pytest.mark.asyncio
+async def test_attacker_repairs_stop_truncated_json_and_stores_clean_json() -> None:
+    llm = AsyncMock()
+    llm.complete.return_value = mock_response('{"improvement": "better", "prompt": "attack"')
+    stream = PairStream(index=0, system_prompt="system", processed_response="init")
+    attacker = PairAttacker(llm=llm)
+
+    proposal = await attacker.generate(stream)
+
+    assert proposal.prompt == "attack"
+    assert stream.history[-1]["content"] == '{"improvement": "better", "prompt": "attack"}'

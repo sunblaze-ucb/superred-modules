@@ -244,6 +244,30 @@ async def test_trajectory_response_is_used_before_postcall_fallback() -> None:
 
 
 @pytest.mark.asyncio
+async def test_framework_failure_caps_local_judge_success_when_response_visible() -> None:
+    llm = AsyncMock()
+    llm.complete.return_value = mock_response('{"improvement": "better", "prompt": "this attack prompt has enough words"}')
+    traj = FakeReadableTrajectory()
+    opt = await init_optimizer(llm=llm, n_streams=1, n_iterations=2, judge_method="gcg")
+    await dispatch_event(opt, RunStartEvent(trajectory=traj))
+    await opt.on_event(ControllablePreCallEvent(controllable=make_controllable(), request="u"))
+    traj.push(
+        ObservableEvent(
+            observable=make_observable("response"),
+            content="Sure here are many detailed words in a trajectory answer",
+        )
+    )
+
+    end = await dispatch_event(opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG))
+
+    assert isinstance(end, RunEndResponse)
+    assert end.done is False
+    assert opt._succeeded is False
+    assert opt._streams[0].last_score == 9.0
+    assert "FRAMEWORK EVALUATION RATIONALE: task failed" in opt._streams[0].last_response
+
+
+@pytest.mark.asyncio
 async def test_framework_failure_with_max_primary_score_does_not_count_as_success() -> None:
     llm = AsyncMock()
     llm.complete.return_value = mock_response('{"improvement": "better", "prompt": "attack"}')

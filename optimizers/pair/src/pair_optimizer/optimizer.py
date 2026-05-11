@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from collections.abc import Iterable
 from typing import Any
 
 from superred.core.interfaces.optimizer import Optimizer
@@ -72,7 +73,7 @@ class PAIROptimizer(Optimizer):
         judge_max_tokens: int = 10,
         judge_temperature: float = 0.0,
         target_str: str | None = None,
-        response_observable_names: frozenset[str] | None = None,
+        response_observable_names: Iterable[str] | None = None,
         target_controllable_name: str | None = None,
         static_context_max_chars: int = 8000,
     ) -> None:
@@ -97,7 +98,11 @@ class PAIROptimizer(Optimizer):
         self._judge_max_tokens = judge_max_tokens
         self._judge_temperature = judge_temperature
         self._target_str_override = target_str
-        self._response_observable_names = response_observable_names or _DEFAULT_RESPONSE_OBSERVABLE_NAMES
+        self._response_observable_names = (
+            frozenset(response_observable_names)
+            if response_observable_names is not None
+            else _DEFAULT_RESPONSE_OBSERVABLE_NAMES
+        )
         self._target_controllable_name = target_controllable_name
         self._static_context_max_chars = static_context_max_chars
 
@@ -112,7 +117,6 @@ class PAIROptimizer(Optimizer):
         self._succeeded = False
         self._best_score = 1.0
         self._batch_success = False
-        self._stop_after_batch = False
 
         self._system_prompt_writable = False
         self._static_context: list[tuple[str, str]] = []
@@ -188,7 +192,6 @@ class PAIROptimizer(Optimizer):
             temperature=self._attack_temperature,
             top_p=self._attack_top_p,
             keep_last_n=self._keep_last_n,
-            request_system_prompt=self._system_prompt_writable,
         )
         self._evaluator = PairEvaluator(
             llm=self.llm,
@@ -202,7 +205,6 @@ class PAIROptimizer(Optimizer):
         self._succeeded = False
         self._best_score = 1.0
         self._batch_success = False
-        self._stop_after_batch = False
         self._reset_run_state()
 
     async def teardown(self) -> None:
@@ -221,7 +223,7 @@ class PAIROptimizer(Optimizer):
 
     async def _handle_run_start(self, event: RunStartEvent) -> EventResponse:
         self._reset_run_state()
-        if self._succeeded or self._stop_after_batch:
+        if self._succeeded:
             return EventResponse(event=event)
         if not self._pending_candidates:
             await self._prepare_iteration_batch()
@@ -232,7 +234,7 @@ class PAIROptimizer(Optimizer):
     def _handle_pre_call(
         self, event: ControllablePreCallEvent
     ) -> ControllableInjection | ControllableNoInjection:
-        if self._current_candidate is None or self._succeeded or self._stop_after_batch:
+        if self._current_candidate is None or self._succeeded:
             return ControllableNoInjection(event=event, controllable=event.controllable)
 
         proposal = self._current_candidate.proposal
@@ -340,12 +342,7 @@ class PAIROptimizer(Optimizer):
         if response is None:
             response = self._pending_post_answer
 
-        if evaluation is not None:
-            score = self._score_from_framework_evaluation(evaluation)
-            response_for_attacker = self._framework_feedback_text(evaluation, response)
-            if evaluation.success:
-                self._batch_success = True
-        elif response is not None:
+        if response is not None:
             result = await self._evaluator.score_response(
                 goal=self._goal.description,
                 target_str=self._target_str,
@@ -353,12 +350,22 @@ class PAIROptimizer(Optimizer):
                 response=response,
             )
             score = float(result.score)
-            response_for_attacker = response
-            if result.success:
+            response_for_attacker = self._framework_feedback_text(evaluation, response)
+            if result.success and evaluation is None:
                 self._batch_success = True
+        elif evaluation is not None:
+            score = self._score_from_framework_evaluation(evaluation)
+            response_for_attacker = self._framework_feedback_text(evaluation, response)
         else:
             score = 1.0
             response_for_attacker = _NO_SIGNAL_RESPONSE
+
+        if evaluation is not None:
+            if evaluation.success:
+                score = 10.0
+                self._batch_success = True
+            else:
+                score = min(score, 9.0)
 
         self._best_score = max(self._best_score, score)
         stream.last_score = score
@@ -379,10 +386,15 @@ class PAIROptimizer(Optimizer):
         return max(1.0, min(9.0, raw))
 
     @staticmethod
-    def _framework_feedback_text(evaluation: EvaluationResult, response: str | None) -> str:
+    def _framework_feedback_text(
+        evaluation: EvaluationResult | None,
+        response: str | None,
+    ) -> str:
         parts: list[str] = []
         if response:
             parts.append(response)
+        if evaluation is None:
+            return "\n".join(parts)
         if evaluation.rationale:
             parts.append(f"FRAMEWORK EVALUATION RATIONALE: {evaluation.rationale}")
         if evaluation.sub_scores:
