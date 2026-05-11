@@ -48,7 +48,12 @@ from gptfuzzer_optimizer.predictor import (
     RoBERTaPredictor,
 )
 from gptfuzzer_optimizer.selection import MCTSExploreSelectPolicy
-from gptfuzzer_optimizer.templates import load_official_seed_templates, synthesis_message
+from gptfuzzer_optimizer.templates import (
+    QUESTION_PLACEHOLDER,
+    load_official_seed_templates,
+    split_template_at_placeholder,
+    synthesis_message,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +133,7 @@ class GPTFuzzerOptimizer(Optimizer):
 
         self._current_node: PromptNode | None = None
         self._current_prompt: str | None = None
+        self._current_system_prompt: str | None = None
         self._current_user_prompt: str | None = None
         self._primary_controllable: Controllable | None = None
         self._trajectory: ReadableTrajectory | None = None
@@ -233,7 +239,15 @@ class GPTFuzzerOptimizer(Optimizer):
         self._current_node = await self._next_node()
         if self._goal is not None and self._current_node is not None:
             self._current_prompt = synthesis_message(self._goal.description, self._current_node.prompt)
-            self._current_user_prompt = self._goal.description
+            if self._system_prompt_channel_available:
+                split = split_template_at_placeholder(self._current_node.prompt)
+                if split is not None:
+                    prefix, suffix = split
+                    self._current_system_prompt = prefix
+                    self._current_user_prompt = (
+                        f"{self._goal.description}"
+                        f"{suffix.replace(QUESTION_PLACEHOLDER, self._goal.description)}"
+                    )
         logger.info("GPTFuzzer: starting iteration %d", self._current_iteration + 1)
         return EventResponse(event=event)
 
@@ -249,11 +263,13 @@ class GPTFuzzerOptimizer(Optimizer):
             and event.controllable.name == _SYSTEM_PROMPT_NAME
             and not self._used_system_prompt_channel
         ):
+            if self._current_system_prompt is None or not self._current_system_prompt.strip():
+                return ControllableNoInjection(event=event, controllable=event.controllable)
             self._used_system_prompt_channel = True
             return ControllableInjection(
                 event=event,
                 controllable=event.controllable,
-                value=self._current_prompt,
+                value=self._current_system_prompt,
             )
         if self._target_controllable_name is None and event.controllable.name == _SYSTEM_PROMPT_NAME:
             return ControllableNoInjection(event=event, controllable=event.controllable)
@@ -343,6 +359,7 @@ class GPTFuzzerOptimizer(Optimizer):
         self._trajectory = trajectory
         self._current_node = None
         self._current_prompt = None
+        self._current_system_prompt = None
         self._current_user_prompt = None
         self._primary_controllable = None
         self._last_pre_request = None

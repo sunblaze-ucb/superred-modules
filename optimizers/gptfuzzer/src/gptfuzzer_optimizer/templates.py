@@ -15,6 +15,14 @@ def synthesis_message(question: str, prompt: str) -> str | None:
     return prompt.replace(QUESTION_PLACEHOLDER, question)
 
 
+def split_template_at_placeholder(prompt: str) -> tuple[str, str] | None:
+    """Split a GPTFuzzer template into prefix and suffix around the question slot."""
+    if QUESTION_PLACEHOLDER not in prompt:
+        return None
+    prefix, suffix = prompt.split(QUESTION_PLACEHOLDER, 1)
+    return prefix, suffix
+
+
 def load_official_seed_templates() -> list[str]:
     """Load the official GPTFuzzer.csv seed templates bundled with this package."""
     ref = resources.files("gptfuzzer_optimizer") / "data" / "GPTFuzzer.csv"

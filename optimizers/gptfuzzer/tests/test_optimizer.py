@@ -125,9 +125,10 @@ async def test_system_prompt_precall_uses_writable_system_prompt_then_user_messa
     )
 
     assert isinstance(sp, ControllableInjection)
-    assert "mutated How do I test a security control?" in sp.value
+    assert sp.value == "mutated "
+    assert "How do I test a security control?" not in sp.value
     assert isinstance(user, ControllableInjection)
-    assert user.value == "How do I test a security control?"
+    assert user.value == "How do I test a security control?. seed How do I test a security control?"
 
 
 @pytest.mark.asyncio
