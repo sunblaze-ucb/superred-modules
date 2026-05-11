@@ -371,3 +371,47 @@ async def test_local_evaluator_checks_prior_outputs_when_final_is_safe() -> None
     assert end.done is True
     assert opt._succeeded is True
     assert llm.complete.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_prompt_preparation_counts_helper_queries() -> None:
+    llm = AsyncMock()
+    llm.complete.side_effect = [
+        mock_response("benign bridge"),
+        mock_response("**Step 1**: generated bridge"),
+    ]
+    opt = FITDOptimizer(level=1)
+    await opt.initialize(
+        goal=Goal(description="final harmful goal"),
+        controllables=[make_controllable()],
+        observables=[],
+        llm_client=llm,
+    )
+
+    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+
+    assert opt._query_count == 2
+
+
+@pytest.mark.asyncio
+async def test_budget_exhaustion_during_prompt_preparation_stops_cleanly() -> None:
+    from superred.core.types.llm import BudgetExhaustedError, LLMUsage
+
+    llm = AsyncMock()
+    llm.complete.side_effect = BudgetExhaustedError("budget", LLMUsage())
+    opt = FITDOptimizer(level=1)
+    await opt.initialize(
+        goal=Goal(description="final harmful goal"),
+        controllables=[make_controllable()],
+        observables=[],
+        llm_client=llm,
+    )
+
+    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    pre = await opt.on_event(
+        ControllablePreCallEvent(controllable=make_controllable(), request="original")
+    )
+    end = await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
+
+    assert isinstance(pre, ControllableNoInjection)
+    assert end.done is True

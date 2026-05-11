@@ -22,6 +22,7 @@ from superred.core.types.events import (
 )
 from superred.core.types.evaluation import EvaluationResult
 from superred.core.types.goal import Goal
+from superred.core.types.llm import BudgetExhaustedError
 from superred.core.types.observable import ObservableValue
 from superred.core.types.trajectory import ReadableTrajectory
 
@@ -122,6 +123,7 @@ class FITDOptimizer(Optimizer):
         self._query_count = 0
         self._succeeded = False
         self._attempt_done = False
+        self._budget_exhausted = False
         self._prompt_sequence: list[str] = []
         self._level_index = 0
         self._last_level_prompt: str | None = None
@@ -173,7 +175,12 @@ class FITDOptimizer(Optimizer):
         self._reset_run_state(clear_attempt_state=False)
         self._trajectory = event.trajectory
         if not self._prompt_sequence:
-            self._prompt_sequence = await self._prepare_prompt_sequence()
+            try:
+                self._prompt_sequence = await self._prepare_prompt_sequence()
+            except BudgetExhaustedError:
+                logger.info("FITD: attacker LLM budget exhausted during prompt preparation")
+                self._budget_exhausted = True
+                self._attempt_done = True
         return EventResponse(event=event)
 
     async def _handle_pre_call(
@@ -244,7 +251,7 @@ class FITDOptimizer(Optimizer):
         ):
             await self._apply_local_success_judge(self._last_response)
 
-        if self._succeeded:
+        if self._succeeded or self._budget_exhausted:
             return RunEndResponse(event=event, done=True)
 
         if self._attempt_done and self._pending_recovery is not None and self._attempt + 1 < self._max_attempts:
@@ -270,11 +277,14 @@ class FITDOptimizer(Optimizer):
         benign = self._configured_benign_prompt
         if benign is None:
             benign = await self._assistant.soften_prompt(target)
-        return await self._assistant.generate_prompt_sequence(
+            self._record_helper_query()
+        sequence = await self._assistant.generate_prompt_sequence(
             target_prompt=target,
             benign_prompt=benign,
             level=self._level,
         )
+        self._record_helper_query()
+        return sequence
 
     async def _next_turn(self) -> ActiveTurn | None:
         if self._replay_prompts:
@@ -536,6 +546,7 @@ class FITDOptimizer(Optimizer):
         self._awaiting_response = False
         if clear_attempt_state:
             self._attempt_done = False
+            self._budget_exhausted = False
             self._prompt_sequence = []
             self._level_index = 0
             self._last_level_prompt = None
