@@ -3,6 +3,12 @@
 from gptfuzzer_optimizer.templates import QUESTION_PLACEHOLDER, load_official_seed_templates, synthesis_message
 
 
+def test_default_predictor_model_matches_official_hub_id() -> None:
+    from gptfuzzer_optimizer.predictor import DEFAULT_GPTFUZZ_MODEL
+
+    assert DEFAULT_GPTFUZZ_MODEL == "hubert233/GPTFuzz"
+
+
 def test_synthesis_message_replaces_official_placeholder() -> None:
     assert synthesis_message("question", f"prefix {QUESTION_PLACEHOLDER} suffix") == "prefix question suffix"
 

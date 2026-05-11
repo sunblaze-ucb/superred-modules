@@ -23,6 +23,7 @@ This module follows the GPTFuzzer paper and official implementation as closely a
 - Responses are read from the trajectory first. If no trajectory response is visible, the optimizer falls back to a matching PostCall answer.
 - If `RunEndEvent.evaluation` is visible, `evaluation.success` is the authoritative success signal.
 - A failed framework evaluation never counts as success, even if its numeric score is high.
+- If no framework evaluation is visible but a model response is visible, the optimizer uses the official GPTFuzzer RoBERTa classifier, `hubert233/GPTFuzz`, to score that response.
 
 ## Intentional SuperRed Extensions
 
@@ -31,6 +32,8 @@ This module follows the GPTFuzzer paper and official implementation as closely a
 - Static context is capped by `static_context_max_chars` so large observables do not crowd out the official mutator instruction.
 - Writable system-prompt use is an automatic SuperRed extension. Disable it with `use_system_prompt_when_available=False` when you want the exact user-channel attack even in a broader scope.
 
-## Known Difference
+## Runtime Predictor Notes
 
-- The official implementation uses a finetuned RoBERTa predictor for response-only scoring. This module prefers SuperRed task feedback when available. When only a response is visible and no framework evaluation is present, it uses a lightweight refusal-string fallback rather than bundling a heavyweight model dependency.
+- The default response predictor is `hubert233/GPTFuzz`, matching the official implementation.
+- The model is loaded lazily on the first response-visible run, so unit tests do not download model weights.
+- If the RoBERTa dependencies or weights are unavailable, the optimizer can fall back to a lightweight refusal-string predictor. Set `allow_predictor_fallback=False` to require the official classifier and fail fast instead.

@@ -7,7 +7,11 @@ name = "gptfuzzer-optimizer"
 version = "0.1.0"
 description = "GPTFuzzer jailbreak optimizer for superred"
 requires-python = ">=3.11,<3.14"
-dependencies = ["superred>=0.1.0"]
+dependencies = [
+    "superred>=0.1.0",
+    "torch",
+    "transformers",
+]
 
 [project.optional-dependencies]
 test = ["pytest", "pytest-asyncio"]

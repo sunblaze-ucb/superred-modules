@@ -40,7 +40,13 @@ from gptfuzzer_optimizer.mutator import (
     OpenAIMutatorRephrase,
     OpenAIMutatorShorten,
 )
-from gptfuzzer_optimizer.predictor import RefusalStringPredictor
+from gptfuzzer_optimizer.predictor import (
+    DEFAULT_GPTFUZZ_MODEL,
+    FallbackPredictor,
+    Predictor,
+    RefusalStringPredictor,
+    RoBERTaPredictor,
+)
 from gptfuzzer_optimizer.selection import MCTSExploreSelectPolicy
 from gptfuzzer_optimizer.templates import load_official_seed_templates, synthesis_message
 
@@ -80,6 +86,10 @@ class GPTFuzzerOptimizer(Optimizer):
         static_context_max_chars: int = 4000,
         use_static_context: bool = True,
         use_system_prompt_when_available: bool = True,
+        predictor: Predictor | None = None,
+        predictor_model: str = DEFAULT_GPTFUZZ_MODEL,
+        predictor_device: str | None = None,
+        allow_predictor_fallback: bool = True,
     ) -> None:
         super().__init__()
         if energy < 1:
@@ -100,13 +110,16 @@ class GPTFuzzerOptimizer(Optimizer):
         self._static_context_max_chars = static_context_max_chars
         self._use_static_context = use_static_context
         self._use_system_prompt_when_available = use_system_prompt_when_available
+        self._predictor_model = predictor_model
+        self._predictor_device = predictor_device
+        self._allow_predictor_fallback = allow_predictor_fallback
         names = response_observable_names or _DEFAULT_RESPONSE_OBSERVABLE_NAMES
         self._response_observable_names = {name for name in names} | {name.lower() for name in names}
 
         self._goal: Goal | None = None
         self._selector: MCTSExploreSelectPolicy | None = None
         self._mutator_policy: MutateRandomSinglePolicy | None = None
-        self._predictor = RefusalStringPredictor()
+        self._predictor = predictor if predictor is not None else self._make_default_predictor()
         self._prompt_nodes: list[PromptNode] = []
         self._initial_prompt_nodes: list[PromptNode] = []
         self._pending_nodes: deque[PromptNode] = deque()
@@ -131,6 +144,12 @@ class GPTFuzzerOptimizer(Optimizer):
         self._current_iteration = 0
         self._no_signal_runs = 0
         self._stop_due_to_no_signal = False
+
+    def _make_default_predictor(self) -> Predictor:
+        roberta = RoBERTaPredictor(self._predictor_model, device=self._predictor_device)
+        if self._allow_predictor_fallback:
+            return FallbackPredictor(roberta, RefusalStringPredictor())
+        return roberta
 
     async def initialize(
         self,

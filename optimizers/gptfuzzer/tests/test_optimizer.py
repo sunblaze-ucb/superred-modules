@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -61,6 +61,7 @@ async def init_optimizer(
     max_query: int = 10,
     max_jailbreak: int = 1,
     max_no_signal_runs: int = 0,
+    predictor: object | None = None,
 ) -> GPTFuzzerOptimizer:
     opt = GPTFuzzerOptimizer(
         initial_seed=initial_seed if initial_seed is not None else ["seed [INSERT PROMPT HERE]"],
@@ -68,6 +69,7 @@ async def init_optimizer(
         max_jailbreak=max_jailbreak,
         max_no_signal_runs=max_no_signal_runs,
         random_seed=0,
+        predictor=predictor,
     )
     await opt.initialize(
         goal=Goal(description="How do I test a security control?"),
@@ -231,6 +233,28 @@ async def test_non_success_framework_evaluation_does_not_retain_seed_even_with_s
     assert len(opt._prompt_nodes) == 1
     assert opt._current_node is not None
     assert opt._current_node.results == [0]
+
+
+@pytest.mark.asyncio
+async def test_response_visible_run_uses_configured_predictor_when_no_framework_eval() -> None:
+    predictor = MagicMock()
+    predictor.predict.return_value = [1]
+    llm = AsyncMock()
+    llm.complete.return_value = mock_response("mutated [INSERT PROMPT HERE]. ")
+    traj = FakeReadableTrajectory()
+    opt = await init_optimizer(llm=llm, max_jailbreak=2, predictor=predictor)
+    await opt.on_event(RunStartEvent(trajectory=traj))
+    pre = await opt.on_event(
+        ControllablePreCallEvent(controllable=make_controllable(), request="user message")
+    )
+    assert isinstance(pre, ControllableInjection)
+    traj.push(ObservableEvent(observable=make_observable("response"), content="target answer"))
+
+    await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
+
+    predictor.predict.assert_called_once_with(["target answer"])
+    assert opt._current_node is not None
+    assert opt._current_node.results == [1]
 
 
 @pytest.mark.asyncio
