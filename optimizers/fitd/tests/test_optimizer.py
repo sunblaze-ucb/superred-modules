@@ -206,7 +206,12 @@ async def test_success_framework_evaluation_stops_without_response() -> None:
 @pytest.mark.asyncio
 async def test_refusal_plans_replay_backtracking_in_next_run() -> None:
     llm = AsyncMock()
-    llm.complete.side_effect = [mock_response("Yes"), mock_response("intermediate bridge")]
+    llm.complete.side_effect = [
+        mock_response("Yes"),
+        mock_response("intermediate bridge"),
+        mock_response("2"),
+        mock_response("2"),
+    ]
     opt = await init_optimizer(llm=llm, max_attempts=2)
     await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
     first = await opt.on_event(
@@ -253,6 +258,19 @@ async def test_refusal_plans_replay_backtracking_in_next_run() -> None:
     )
     assert isinstance(recovery, ControllableInjection)
     assert "intermediate bridge" in recovery.value
+    await opt.on_event(
+        ControllablePostCallEvent(
+            controllable=make_controllable("response", MODEL_TAG),
+            request=recovery.value,
+            answer="intermediate answer",
+        )
+    )
+    original = await opt.on_event(
+        ControllablePreCallEvent(controllable=make_controllable(), request="next original")
+    )
+    assert isinstance(original, ControllableInjection)
+    assert "riskier bridge" in original.value
+    assert "intermediate bridge" in original.value
 
 
 @pytest.mark.asyncio
@@ -290,8 +308,19 @@ async def test_final_align_keeps_previous_answer_when_official_judge_prefers_it(
             answer="previous answer",
         )
     )
-    final_align = await opt.on_event(
+    second = await opt.on_event(
         ControllablePreCallEvent(controllable=make_controllable(), request="next")
+    )
+    assert isinstance(second, ControllableInjection)
+    await opt.on_event(
+        ControllablePostCallEvent(
+            controllable=make_controllable("response", MODEL_TAG),
+            request=second.value,
+            answer="previous answer",
+        )
+    )
+    final_align = await opt.on_event(
+        ControllablePreCallEvent(controllable=make_controllable(), request="final align")
     )
     assert isinstance(final_align, ControllableInjection)
     assert "Rewrite the response" in final_align.value
@@ -305,3 +334,39 @@ async def test_final_align_keeps_previous_answer_when_official_judge_prefers_it(
     await opt.on_event(RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG))
 
     assert opt._last_response == "previous answer"
+
+
+@pytest.mark.asyncio
+async def test_local_evaluator_checks_prior_outputs_when_final_is_safe() -> None:
+    llm = AsyncMock()
+    llm.complete.side_effect = [mock_response("safe"), mock_response("unsafe")]
+    opt = await init_optimizer(llm=llm, prompt_sequence=["benign bridge", "riskier bridge"] )
+    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    first = await opt.on_event(
+        ControllablePreCallEvent(controllable=make_controllable(), request="original")
+    )
+    assert isinstance(first, ControllableInjection)
+    await opt.on_event(
+        ControllablePostCallEvent(
+            controllable=make_controllable("response", MODEL_TAG),
+            request=first.value,
+            answer="prior unsafe answer",
+        )
+    )
+    second = await opt.on_event(
+        ControllablePreCallEvent(controllable=make_controllable(), request="next")
+    )
+    assert isinstance(second, ControllableInjection)
+    await opt.on_event(
+        ControllablePostCallEvent(
+            controllable=make_controllable("response", MODEL_TAG),
+            request=second.value,
+            answer="safe final answer",
+        )
+    )
+
+    end = await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
+
+    assert end.done is True
+    assert opt._succeeded is True
+    assert llm.complete.await_count == 2

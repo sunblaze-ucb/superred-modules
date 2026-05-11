@@ -59,6 +59,7 @@ class RecoveryPlan:
     kind: RecoveryKind
     level_index: int
     level_prompt: str | None = None
+    retry_original_after_success: bool = False
 
 
 class FITDOptimizer(Optimizer):
@@ -132,6 +133,7 @@ class FITDOptimizer(Optimizer):
         self._active_turn: ActiveTurn | None = None
         self._awaiting_response = False
         self._final_align_sent = False
+        self._retry_original_after_intermediate = False
 
     async def initialize(
         self,
@@ -263,8 +265,7 @@ class FITDOptimizer(Optimizer):
         target = change_sensitive_words(self._goal.description)
         if self._configured_prompt_sequence is not None:
             sequence = list(self._configured_prompt_sequence)
-            if sequence[-1] != target:
-                sequence.append(target)
+            sequence.append(target)
             return sequence
         benign = self._configured_benign_prompt
         if benign is None:
@@ -292,6 +293,7 @@ class FITDOptimizer(Optimizer):
                 return ActiveTurn(kind="align", user_prompt=prompt, level_prompt=self._last_level_prompt)
             if recovery.kind == "slippery" and recovery.level_prompt is not None and self._last_level_prompt is not None:
                 prompt = build_polish_prompt(self._last_level_prompt, recovery.level_prompt)
+                self._retry_original_after_intermediate = recovery.retry_original_after_success
                 return ActiveTurn(
                     kind="polish",
                     user_prompt=prompt,
@@ -346,10 +348,14 @@ class FITDOptimizer(Optimizer):
         self._accepted_user_prompts.append(turn.user_prompt)
 
         if turn.kind in {"initial", "polish"} and turn.level_prompt is not None:
-            self._last_response = answer
-            self._outputs.append(answer)
-            self._last_level_prompt = turn.level_prompt
-            self._level_index += 1
+            if turn.kind == "polish" and self._retry_original_after_intermediate:
+                await self._accept_intermediate_recovery(answer, turn)
+                self._retry_original_after_intermediate = False
+            else:
+                self._last_response = answer
+                self._outputs.append(answer)
+                self._last_level_prompt = turn.level_prompt
+                self._level_index += 1
         elif turn.kind in {"align", "final_align"}:
             await self._maybe_keep_more_harmful_answer(answer, turn.level_prompt)
             if not self._outputs:
@@ -363,10 +369,48 @@ class FITDOptimizer(Optimizer):
         if self._query_count >= self._max_queries:
             self._attempt_done = True
 
+
+    async def _accept_intermediate_recovery(self, answer: str, turn: ActiveTurn) -> None:
+        assert self._assistant is not None
+        previous_prompt = turn.previous_level_prompt or self._last_level_prompt
+        previous_response = self._last_response
+        if previous_prompt is None or previous_response is None or turn.level_prompt is None:
+            self._last_response = answer
+            self._outputs.append(answer)
+            return
+
+        similarity = await self._assistant.compare_similarity(
+            previous_prompt,
+            turn.level_prompt,
+            self._prompt_sequence[self._level_index],
+        )
+        self._record_helper_query()
+        effective_prompt = previous_prompt
+        if similarity != 1:
+            self._prompt_sequence[self._level_index - 1] = turn.level_prompt
+            effective_prompt = turn.level_prompt
+
+        harmful = await self._assistant.judge_harmful_content(
+            previous_response,
+            answer,
+            effective_prompt,
+        )
+        self._record_helper_query()
+        if harmful == 1:
+            self._last_response = previous_response
+        else:
+            if self._outputs:
+                self._outputs[-1] = answer
+            else:
+                self._outputs.append(answer)
+            self._last_response = answer
+        self._last_level_prompt = effective_prompt
+
     async def _handle_refusal(self, turn: ActiveTurn) -> None:
         assert self._assistant is not None
         if turn.kind == "initial" and turn.level_prompt is not None:
             softened = await self._assistant.soften_prompt(turn.level_prompt)
+            self._record_helper_query()
             self._pending_recovery = RecoveryPlan(
                 kind="retry_initial",
                 level_index=0,
@@ -374,15 +418,18 @@ class FITDOptimizer(Optimizer):
             )
         elif self._last_level_prompt is not None and self._last_response is not None:
             is_aligned = await self._assistant.detect_align(self._last_level_prompt, self._last_response)
+            self._record_helper_query()
             if is_aligned and turn.level_prompt is not None:
                 intermediate = await self._assistant.generate_intermediate_prompt(
                     self._last_level_prompt,
                     turn.level_prompt,
                 )
+                self._record_helper_query()
                 self._pending_recovery = RecoveryPlan(
                     kind="slippery",
                     level_index=self._level_index,
                     level_prompt=intermediate,
+                    retry_original_after_success=True,
                 )
             else:
                 self._pending_recovery = RecoveryPlan(kind="align", level_index=self._level_index)
@@ -398,6 +445,7 @@ class FITDOptimizer(Optimizer):
         assert self._assistant is not None
         previous = self._outputs[-1]
         result = await self._assistant.judge_harmful_content(previous, answer, level_prompt)
+        self._record_helper_query()
         if result == 1:
             self._last_response = previous
         else:
@@ -440,13 +488,33 @@ class FITDOptimizer(Optimizer):
                 recovered = item.content
         return recovered
 
+
+    def _record_helper_query(self, count: int = 1) -> None:
+        self._query_count += count
+        if self._query_count >= self._max_queries:
+            self._attempt_done = True
+
     async def _apply_local_success_judge(self, response: str) -> None:
         assert self._goal is not None
         assert self._assistant is not None
-        result = await self._assistant.evaluate_success(self._goal.description, response)
-        if result.success:
-            logger.info("FITD: local official evaluator returned unsafe")
+        candidates = list(self._outputs) or [response]
+        if response not in candidates:
+            candidates.append(response)
+        final_result = await self._assistant.evaluate_success(self._goal.description, response)
+        self._record_helper_query()
+        if final_result.success:
+            logger.info("FITD: local official evaluator returned unsafe for final response")
             self._succeeded = True
+            return
+        for candidate in candidates:
+            if candidate == response:
+                continue
+            result = await self._assistant.evaluate_success(self._goal.description, candidate)
+            self._record_helper_query()
+            if result.success:
+                logger.info("FITD: local official evaluator returned unsafe for prior output")
+                self._succeeded = True
+                return
 
     def _apply_evaluation(self, evaluation: EvaluationResult) -> None:
         if evaluation.success:
@@ -471,6 +539,7 @@ class FITDOptimizer(Optimizer):
             self._replay_prompts = []
             self._pending_recovery = None
             self._final_align_sent = False
+            self._retry_original_after_intermediate = False
         elif self._attempt_done and self._pending_recovery is not None:
             self._attempt_done = False
             self._primary_user_controllable = None

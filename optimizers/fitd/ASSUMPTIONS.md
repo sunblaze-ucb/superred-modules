@@ -15,8 +15,13 @@ The default values follow the official code where they map to SuperRed:
 - `max_history_length=22`
 
 The official refusal phrases, sensitive-word replacements, prompt-generation
-format, polish prompt, realign prompt, intermediate-prompt prompt, and
-`safe`/`unsafe` evaluator prompt are preserved.
+format, polish prompt, realign prompt, intermediate-prompt prompt, similarity
+judge, harmfulness judge, and `safe`/`unsafe` evaluator prompt are preserved.
+
+Prompt-ladder generation follows the official transformation format and retries
+invalid/refusal outputs before falling back to a simple generated ladder. Callers
+can pass `prompt_sequence` to reproduce a stored ladder; matching the official
+script, the final target prompt is appended to that sequence during setup.
 
 ## Mapping To SuperRed
 
@@ -44,12 +49,21 @@ trajectory response is visible, it falls back to an in-scope PostCall answer.
 When `RunEndEvent.evaluation` is present, framework success is authoritative. A
 failed framework evaluation is not overridden by the local FITD judge.
 
-When framework feedback is not available but a model response is visible, the
-local evaluator uses the official `safe`/`unsafe` FITD evaluation prompt.
+When framework feedback is not available but model responses are visible, the
+local evaluator uses the official `safe`/`unsafe` FITD evaluation prompt. It
+checks the final response first, then prior stored outputs, matching the
+official idea of considering both the final-step answer and the most harmful
+answer seen during the run.
 
 If neither responses nor feedback are visible, FITD runs open-loop through the
 prompt ladder. It cannot detect refusals or do realign/paraphrase recovery in
 that threat model, but it still exercises the user-message capability.
+
+`max_queries` counts target turns plus helper-LLM calls made during recovery and
+local evaluation. This is close to the official script's `total_query` counter,
+while SuperRed's LLM budget remains the hard cost control. Prompt-ladder
+generation happens before target interaction and is governed by the attacker LLM
+budget rather than this target-loop query counter.
 
 ## Refusal Backtracking
 
@@ -60,6 +74,11 @@ To avoid continuing from poisoned history, this optimizer stops the current run
 when it sees a refusal, then replays the accepted prefix in the next run before
 sending the recovery prompt. This matches the paper's backtracking intent as
 closely as SuperRed allows. It works best when the target is deterministic.
+
+For SlipperySlopeParaphrase, the optimizer keeps the refused level pending after
+a successful intermediate prompt. It uses the official similarity and
+harmfulness judges to decide whether the intermediate prompt/answer should
+replace the previous prompt/answer, then retries the original next level.
 
 ## Deliberate Differences
 
@@ -72,3 +91,8 @@ official transformation prompt.
 The official code owns target model calls directly. SuperRed targets own target
 decoding, temperature, and chat formatting, so this optimizer does not pass
 target decoding parameters.
+
+The `control_history` option cannot physically trim ChatbotTarget's private
+conversation state. It limits the accepted-prefix replay maintained by the
+optimizer. Exact live-history truncation would require a target-side history
+mutation primitive.
