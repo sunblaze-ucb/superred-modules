@@ -94,10 +94,14 @@ async def test_generates_one_candidate_per_stream_before_advancing_iteration() -
     opt = await init_optimizer(llm=llm, n_streams=2, n_iterations=1)
 
     await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
-    first = await opt.on_event(ControllablePreCallEvent(controllable=make_controllable(), request="u"))
+    first = await opt.on_event(
+        ControllablePreCallEvent(controllable=make_controllable(), request="u")
+    )
     end1 = await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
     await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
-    second = await opt.on_event(ControllablePreCallEvent(controllable=make_controllable(), request="u"))
+    second = await opt.on_event(
+        ControllablePreCallEvent(controllable=make_controllable(), request="u")
+    )
     end2 = await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
 
     assert isinstance(first, ControllableInjection)
@@ -112,7 +116,9 @@ async def test_generates_one_candidate_per_stream_before_advancing_iteration() -
 @pytest.mark.asyncio
 async def test_system_prompt_precall_does_not_steal_user_lock_when_not_writable() -> None:
     llm = AsyncMock()
-    llm.complete.return_value = mock_response('{"improvement": "better", "prompt": "this attack prompt has enough words"}')
+    llm.complete.return_value = mock_response(
+        '{"improvement": "better", "prompt": "this attack prompt has enough words"}'
+    )
     opt = await init_optimizer(llm=llm, controllables=[make_controllable("user_message", USER_TAG)])
     await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
 
@@ -215,11 +221,15 @@ async def test_response_precall_is_skipped_without_stealing_user_lock() -> None:
 @pytest.mark.asyncio
 async def test_trajectory_response_is_used_before_postcall_fallback() -> None:
     llm = AsyncMock()
-    llm.complete.return_value = mock_response('{"improvement": "better", "prompt": "this attack prompt has enough words"}')
+    llm.complete.return_value = mock_response(
+        '{"improvement": "better", "prompt": "this attack prompt has enough words"}'
+    )
     traj = FakeReadableTrajectory()
     opt = await init_optimizer(llm=llm, n_streams=1, n_iterations=1, judge_method="gcg")
     await dispatch_event(opt, RunStartEvent(trajectory=traj))
-    pre = await opt.on_event(ControllablePreCallEvent(controllable=make_controllable(), request="u"))
+    pre = await opt.on_event(
+        ControllablePreCallEvent(controllable=make_controllable(), request="u")
+    )
     assert isinstance(pre, ControllableInjection)
     await opt.on_event(
         ControllablePostCallEvent(
@@ -240,13 +250,17 @@ async def test_trajectory_response_is_used_before_postcall_fallback() -> None:
     assert isinstance(end, RunEndResponse)
     assert end.done is True
     assert opt._best_score == 10
-    assert opt._streams[0].last_response == "Sure here are many detailed words in a trajectory answer"
+    assert (
+        opt._streams[0].last_response == "Sure here are many detailed words in a trajectory answer"
+    )
 
 
 @pytest.mark.asyncio
 async def test_framework_failure_caps_local_judge_success_when_response_visible() -> None:
     llm = AsyncMock()
-    llm.complete.return_value = mock_response('{"improvement": "better", "prompt": "this attack prompt has enough words"}')
+    llm.complete.return_value = mock_response(
+        '{"improvement": "better", "prompt": "this attack prompt has enough words"}'
+    )
     traj = FakeReadableTrajectory()
     opt = await init_optimizer(llm=llm, n_streams=1, n_iterations=2, judge_method="gcg")
     await dispatch_event(opt, RunStartEvent(trajectory=traj))
@@ -258,7 +272,9 @@ async def test_framework_failure_caps_local_judge_success_when_response_visible(
         )
     )
 
-    end = await dispatch_event(opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG))
+    end = await dispatch_event(
+        opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
+    )
 
     assert isinstance(end, RunEndResponse)
     assert end.done is False

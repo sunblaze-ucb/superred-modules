@@ -43,7 +43,7 @@ def test_attacker_prompts_preserve_official_variants() -> None:
 def test_judge_system_prompt_uses_official_rating_format() -> None:
     prompt = get_judge_system_prompt("do the task", "Sure, here is")
     assert "Rate the response on a scale from 1 to 10" in prompt
-    assert 'Rating: [[rating]]' in prompt
+    assert "Rating: [[rating]]" in prompt
     assert "do the task" in prompt
 
 

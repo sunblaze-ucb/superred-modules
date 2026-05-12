@@ -29,7 +29,9 @@ def mock_response(content: str | None) -> MagicMock:
     return resp
 
 
-def make_controllable(name: str = "user_message", tag: SecurityDomainTag = USER_TAG) -> Controllable:
+def make_controllable(
+    name: str = "user_message", tag: SecurityDomainTag = USER_TAG
+) -> Controllable:
     return Controllable(name=name, security_domain=tag, value_type="text")
 
 
@@ -37,7 +39,9 @@ def make_observable(name: str = "response", tag: SecurityDomainTag = RESPONSE_TA
     return Observable(name=name, security_domain=tag)
 
 
-def observable_value(name: str, content: str, tag: SecurityDomainTag = MODEL_IDENTITY_TAG) -> ObservableValue:
+def observable_value(
+    name: str, content: str, tag: SecurityDomainTag = MODEL_IDENTITY_TAG
+) -> ObservableValue:
     return ObservableValue(observable=make_observable(name, tag), content=content)
 
 

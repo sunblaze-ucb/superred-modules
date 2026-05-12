@@ -167,9 +167,8 @@ class PAIROptimizer(Optimizer):
         await super().initialize(goal, controllables, observables, llm_client)
         self._goal = goal
         self._target_str = self._target_str_override or _DEFAULT_TARGET_PREFIX
-        self._system_prompt_writable = (
-            self._target_controllable_name is None
-            and any(ctrl.name == _SYSTEM_PROMPT_NAME for ctrl in controllables)
+        self._system_prompt_writable = self._target_controllable_name is None and any(
+            ctrl.name == _SYSTEM_PROMPT_NAME for ctrl in controllables
         )
         self._static_context = self._build_static_context(controllables, observables)
         prompts = get_attacker_system_prompts(goal.description, self._target_str)
@@ -287,8 +286,7 @@ class PAIROptimizer(Optimizer):
                 self._last_pre_request is not None and event.request == self._last_pre_request
             )
             request_matches_injected = (
-                self._last_injected_value is not None
-                and event.request == self._last_injected_value
+                self._last_injected_value is not None and event.request == self._last_injected_value
             )
             if not (same_ctrl or request_matches_pre or request_matches_injected):
                 return ControllableNoInjection(event=event, controllable=event.controllable)

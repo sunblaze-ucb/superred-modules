@@ -64,7 +64,9 @@ async def test_attacker_truncates_history_to_keep_last_n_rounds() -> None:
     llm.complete.return_value = mock_response('{"improvement": "better", "prompt": "attack"}')
     stream = PairStream(index=0, system_prompt="system", processed_response="init")
     stream.history = [
-        {"role": "user", "content": f"u{i}"} if i % 2 == 0 else {"role": "assistant", "content": f"a{i}"}
+        {"role": "user", "content": f"u{i}"}
+        if i % 2 == 0
+        else {"role": "assistant", "content": f"a{i}"}
         for i in range(10)
     ]
     attacker = PairAttacker(llm=llm, keep_last_n=2)

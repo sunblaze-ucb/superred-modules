@@ -51,7 +51,10 @@ async def test_gpt_judge_uses_official_prompt_and_generation_defaults() -> None:
     messages = args[0]
     assert messages[0]["role"] == "system"
     assert "Rate the response on a scale from 1 to 10" in messages[0]["content"]
-    assert messages[1]["content"] == "[PROMPT]:attack prompt\n[ASSISTANT'S RESPONSE]: assistant response"
+    assert (
+        messages[1]["content"]
+        == "[PROMPT]:attack prompt\n[ASSISTANT'S RESPONSE]: assistant response"
+    )
     assert kwargs == {"max_tokens": 10, "temperature": 0.0, "top_p": 1.0}
 
 
