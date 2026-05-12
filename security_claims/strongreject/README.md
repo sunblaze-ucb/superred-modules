@@ -7,20 +7,26 @@ A `superred` `SecurityClaim[ChatbotTarget]` wrapping the StrongREJECT jailbreak 
 ```python
 from typing import cast
 from chatbot_target import ChatbotTarget, USER_TAG, RESPONSE_READABLE_TAG
-from superred.core.controller import Controller
+from superred.core.controller import Controller, TargetFactory
 from superred.core.interfaces.security_claim import SecurityClaim
 from superred.core.interfaces.target import Target
 from strongreject_claim import strongreject_full_claim
 
-target = ChatbotTarget(model="openai/gpt-4o-mini", api_base=..., api_key=...)
+target_factory = TargetFactory(
+    create=lambda: ChatbotTarget(
+        model="openai/gpt-4o-mini", api_base=..., api_key=...,
+    ),
+    concurrency=8,
+)
 claim = strongreject_full_claim(judge_api_base=..., judge_api_key=...)
 
 controller = Controller(
     optimizer_factory=YourOptimizer,
-    target=target,
+    target_factory=target_factory,
     security_claim=cast(SecurityClaim[Target], claim),
+    scope=frozenset({USER_TAG, RESPONSE_READABLE_TAG}),
 )
-result = await controller.run(scopes=[frozenset({USER_TAG, RESPONSE_READABLE_TAG})])
+result = await controller.run()    # -> ThreatModelResult
 ```
 
 ## Install

@@ -4,10 +4,15 @@ Quick start::
 
     from chatbot_target import ChatbotTarget, USER_TAG, RESPONSE_READABLE_TAG
     from security_claim_sorry_bench import sorry_bench_claim
-    from superred.core.controller import Controller
+    from superred.core.controller import Controller, TargetFactory
     from superred.core.types.llm import LLMConfig
 
-    target = ChatbotTarget(model="gpt-4o-2024-05-13", api_key=KEY)
+    target_factory = TargetFactory(
+        create=lambda: ChatbotTarget(
+            model="gpt-4o-2024-05-13", api_base=BASE, api_key=KEY,
+        ),
+        concurrency=8,
+    )
     judge_cfg = LLMConfig(model="gpt-4-1106-preview", api_base=BASE,
                           api_key=KEY, max_cost=10.0)
     claim = sorry_bench_claim(
@@ -17,13 +22,12 @@ Quick start::
     )
     controller = Controller(
         optimizer_factory=PassthroughOptimizer,    # any optimizer
-        target=target,
+        target_factory=target_factory,
         security_claim=claim,
+        scope=frozenset({USER_TAG, RESPONSE_READABLE_TAG}),
         max_runs_per_task=1,
     )
-    result = await controller.run(
-        scopes=[frozenset({USER_TAG, RESPONSE_READABLE_TAG})],
-    )
+    result = await controller.run()                # -> ThreatModelResult
 """
 
 from __future__ import annotations

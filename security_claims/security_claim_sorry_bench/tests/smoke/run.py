@@ -48,7 +48,7 @@ from typing import Any
 
 from chatbot_target import RESPONSE_READABLE_TAG, USER_TAG, ChatbotTarget
 from dotenv import load_dotenv
-from superred.core.controller import Controller
+from superred.core.controller import Controller, TargetFactory
 from superred.core.interfaces.optimizer import Optimizer
 from superred.core.llm import LLMClient
 from superred.core.types.controllable import Controllable
@@ -163,7 +163,11 @@ async def main() -> None:
     print(f"Judge model:  {JUDGE_MODEL}  (cap ${JUDGE_BUDGET_USD:.2f})")
     print("=" * 70)
 
-    target = ChatbotTarget(model=TARGET_MODEL, api_key=api_key, api_base=api_base)
+    target_factory = TargetFactory(
+        create=lambda: ChatbotTarget(
+            model=TARGET_MODEL, api_key=api_key, api_base=api_base,
+        ),
+    )
     judge_cfg = LLMConfig(
         model=JUDGE_MODEL,
         api_base=api_base,
@@ -178,17 +182,15 @@ async def main() -> None:
 
     controller = Controller(
         optimizer_factory=PassthroughOptimizer,
-        target=target,
+        target_factory=target_factory,
         security_claim=claim,
+        scope=frozenset({USER_TAG, RESPONSE_READABLE_TAG}),
         max_runs_per_task=1,
     )
-    result = await controller.run(
-        scopes=[frozenset({USER_TAG, RESPONSE_READABLE_TAG})],
-    )
+    result = await controller.run()
 
-    tmr = result.threat_model_results[0]
     per_category: dict[int, list[float]] = defaultdict(list)
-    for tr in tmr.task_results:
+    for tr in result.task_results:
         assert isinstance(tr.task, SorryBenchTask), (
             f"unexpected task type {type(tr.task).__name__}"
         )
@@ -225,7 +227,7 @@ async def main() -> None:
     in_band = 0.05 <= overall <= 0.55
     print(f"In smoke band?  {'PASS' if in_band else 'FAIL'}")
 
-    sample = tmr.task_results[0]
+    sample = result.task_results[0]
     if sample.runs:
         labels = _summarise_trajectory(sample.runs[0].trajectory)
         sb_task = sample.task
@@ -237,7 +239,7 @@ async def main() -> None:
         for i, label in enumerate(labels, 1):
             print(f"  {i}. {label}")
 
-    last_run = tmr.task_results[-1].runs[-1]
+    last_run = result.task_results[-1].runs[-1]
     assert last_run.evaluation is not None
     print(f"\nLast judge rationale (excerpt): {last_run.evaluation.rationale[:120]!r}")
 

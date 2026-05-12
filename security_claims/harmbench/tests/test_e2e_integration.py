@@ -113,10 +113,6 @@ async def test_e2e_against_real_llm_three_standard_behaviors() -> None:
     api_key = os.environ["LITELLM_API_KEY"]
     api_base = os.environ["LITELLM_API_BASE"]
 
-    target = ChatbotTarget(
-        model="openai/gpt-4o-mini", api_key=api_key, api_base=api_base,
-    )
-
     # Pick a small subset: first 3 standard behaviors from val.
     # Build a claim, then truncate to 3 by passing a custom CSV.
     # Cheaper alternative: use semantic_categories to narrow.
@@ -137,24 +133,27 @@ async def test_e2e_against_real_llm_three_standard_behaviors() -> None:
     from superred.core.interfaces.security_claim import SecurityClaim
     short_claim = SecurityClaim.from_tasks(short_tasks)
 
+    from superred.core.controller import TargetFactory
     DirectRequestOptimizer = _build_direct_request_optimizer()
+    target_factory = TargetFactory(
+        create=lambda: ChatbotTarget(
+            model="openai/gpt-4o-mini", api_key=api_key, api_base=api_base,
+        ),
+    )
     controller = Controller(
         optimizer_factory=DirectRequestOptimizer,
-        target=target,
+        target_factory=target_factory,
         security_claim=short_claim,
+        scope=frozenset({USER_TAG, RESPONSE_READABLE_TAG}),
         max_runs_per_task=1,
         include_feedback=False,
     )
 
-    result = await controller.run(
-        scopes=[frozenset({USER_TAG, RESPONSE_READABLE_TAG})],
-    )
+    result = await controller.run()
 
     # Shape assertions.
-    assert len(result.threat_model_results) == 1
-    tmr = result.threat_model_results[0]
-    assert len(tmr.task_results) == 3
-    for tr in tmr.task_results:
+    assert len(result.task_results) == 3
+    for tr in result.task_results:
         # Each TaskResult has runs, primary_score, etc.
         assert len(tr.runs) == 1
         run = tr.runs[0]
@@ -193,10 +192,6 @@ async def test_e2e_copyright_path_no_judge_call() -> None:
     api_key = os.environ["LITELLM_API_KEY"]
     api_base = os.environ["LITELLM_API_BASE"]
 
-    target = ChatbotTarget(
-        model="openai/gpt-4o-mini", api_key=api_key, api_base=api_base,
-    )
-
     claim = harmbench_claim(
         judge_model="openai/gpt-4o-mini",
         judge_api_base=api_base,
@@ -206,22 +201,26 @@ async def test_e2e_copyright_path_no_judge_call() -> None:
     )
     short_claim = SecurityClaim.from_tasks(list(claim)[:2])  # 2 copyright tasks
 
+    from superred.core.controller import TargetFactory
     DirectRequestOptimizer = _build_direct_request_optimizer()
+    target_factory = TargetFactory(
+        create=lambda: ChatbotTarget(
+            model="openai/gpt-4o-mini", api_key=api_key, api_base=api_base,
+        ),
+    )
     controller = Controller(
         optimizer_factory=DirectRequestOptimizer,
-        target=target,
+        target_factory=target_factory,
         security_claim=short_claim,
+        scope=frozenset({USER_TAG, RESPONSE_READABLE_TAG}),
         max_runs_per_task=1,
         include_feedback=False,
     )
 
-    result = await controller.run(
-        scopes=[frozenset({USER_TAG, RESPONSE_READABLE_TAG})],
-    )
+    result = await controller.run()
 
-    tmr = result.threat_model_results[0]
-    assert len(tmr.task_results) == 2
-    for tr in tmr.task_results:
+    assert len(result.task_results) == 2
+    for tr in result.task_results:
         eval_result = tr.runs[0].evaluation
         # The rationale must indicate the hash_check path (not judge).
         assert "hash_check" in eval_result.rationale

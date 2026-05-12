@@ -1101,7 +1101,7 @@ class TestEndToEndControllerIntegration:
 
     @pytest.mark.asyncio
     async def test_gepa_drives_full_controller_loop_to_success(self) -> None:
-        from superred.core.controller import Controller
+        from superred.core.controller import Controller, TargetFactory
         from superred.core.interfaces.security_claim import SecurityClaim
         from superred.core.types.llm import LLMConfig
 
@@ -1120,23 +1120,21 @@ class TestEndToEndControllerIntegration:
             "propose",
             new=_stub_propose,
         ):
-            controller = Controller(
-                optimizer_factory=lambda: GEPAOptimizer(max_attempts=5),
-                target=target,
-                security_claim=claim,
-                llm_configs=[
-                    LLMConfig(model="m", api_base="http://x", api_key="sk"),
-                ],
-            )
             # Full-access scope: user-message + system_prompt readable +
             # response readable; success after 2 runs (seed fails, mutation
             # injects "ATTACK now please" -> magic word in response).
             full_scope = frozenset({USER_TAG, SYSTEM_PROMPT_TAG, RESPONSE_TAG})
-            result = await controller.run(scopes=[full_scope])
+            controller = Controller(
+                optimizer_factory=lambda: GEPAOptimizer(max_attempts=5),
+                target_factory=TargetFactory(create=lambda: target),
+                security_claim=claim,
+                scope=full_scope,
+                llm_config=LLMConfig(model="m", api_base="http://x", api_key="sk"),
+            )
+            result = await controller.run()
 
-        tmr = result.threat_model_results[0]
-        assert len(tmr.task_results) == 1
-        tr = tmr.task_results[0]
+        assert len(result.task_results) == 1
+        tr = result.task_results[0]
         assert tr.success is True
         # At least 2 runs: seed (fail) -> mutated candidate (success).
         assert len(tr.runs) >= 2
@@ -1151,7 +1149,7 @@ class TestEndToEndControllerIntegration:
         (so latest-wins selection actually kicks in — everyone's
         effective_score is 0), and the run terminates by budget
         exhaustion rather than success."""
-        from superred.core.controller import Controller
+        from superred.core.controller import Controller, TargetFactory
         from superred.core.interfaces.security_claim import SecurityClaim
         from superred.core.types.llm import LLMConfig
 
@@ -1180,21 +1178,20 @@ class TestEndToEndControllerIntegration:
             "propose",
             new=_stub_propose,
         ):
+            user_only_scope = frozenset({USER_TAG})
             controller = Controller(
                 optimizer_factory=lambda: GEPAOptimizer(
                     max_attempts=max_attempts,
                 ),
-                target=target,
+                target_factory=TargetFactory(create=lambda: target),
                 security_claim=claim,
-                llm_configs=[
-                    LLMConfig(model="m", api_base="http://x", api_key="sk"),
-                ],
+                scope=user_only_scope,
+                llm_config=LLMConfig(model="m", api_base="http://x", api_key="sk"),
                 include_feedback=False,
             )
-            user_only_scope = frozenset({USER_TAG})
-            result = await controller.run(scopes=[user_only_scope])
+            result = await controller.run()
 
-        tr = result.threat_model_results[0].task_results[0]
+        tr = result.task_results[0]
         # Magic word never reaches assistant -> task fails by exhaustion.
         assert tr.success is False
         assert len(tr.runs) == max_attempts
@@ -1213,7 +1210,7 @@ class TestEndToEndControllerIntegration:
         path can succeed: the user_message channel must be left
         un-injected because the override locked the optimizer to
         ``system_prompt``)."""
-        from superred.core.controller import Controller
+        from superred.core.controller import Controller, TargetFactory
         from superred.core.interfaces.security_claim import SecurityClaim
         from superred.core.types.llm import LLMConfig
 
@@ -1242,21 +1239,20 @@ class TestEndToEndControllerIntegration:
             "propose",
             new=_stub_propose,
         ):
+            full_scope = frozenset({USER_TAG, SYSTEM_PROMPT_TAG, RESPONSE_TAG})
             controller = Controller(
                 optimizer_factory=lambda: GEPAOptimizer(
                     max_attempts=5,
                     target_controllable_name="system_prompt",
                 ),
-                target=target,
+                target_factory=TargetFactory(create=lambda: target),
                 security_claim=claim,
-                llm_configs=[
-                    LLMConfig(model="m", api_base="http://x", api_key="sk"),
-                ],
+                scope=full_scope,
+                llm_config=LLMConfig(model="m", api_base="http://x", api_key="sk"),
             )
-            full_scope = frozenset({USER_TAG, SYSTEM_PROMPT_TAG, RESPONSE_TAG})
-            result = await controller.run(scopes=[full_scope])
+            result = await controller.run()
 
-        tr = result.threat_model_results[0].task_results[0]
+        tr = result.task_results[0]
         assert tr.success is True
         # The successful response must carry the magic via the
         # system-prompt echo (``[sys=system: ATTACK now please]``);
@@ -1278,7 +1274,7 @@ class TestEndToEndControllerIntegration:
         writable ``system_prompt`` channel through the real Controller.
         Same behaviour as the explicit-override variant, no caller
         configuration required."""
-        from superred.core.controller import Controller
+        from superred.core.controller import Controller, TargetFactory
         from superred.core.interfaces.security_claim import SecurityClaim
         from superred.core.types.llm import LLMConfig
 
@@ -1305,21 +1301,20 @@ class TestEndToEndControllerIntegration:
             "propose",
             new=_stub_propose,
         ):
-            controller = Controller(
-                # No ``target_controllable_name`` — relies on auto-claim.
-                optimizer_factory=lambda: GEPAOptimizer(max_attempts=5),
-                target=target,
-                security_claim=claim,
-                llm_configs=[
-                    LLMConfig(model="m", api_base="http://x", api_key="sk"),
-                ],
-            )
             full_scope = frozenset(
                 {USER_TAG, SYSTEM_PROMPT_TAG, RESPONSE_TAG}
             )
-            result = await controller.run(scopes=[full_scope])
+            controller = Controller(
+                # No ``target_controllable_name`` — relies on auto-claim.
+                optimizer_factory=lambda: GEPAOptimizer(max_attempts=5),
+                target_factory=TargetFactory(create=lambda: target),
+                security_claim=claim,
+                scope=full_scope,
+                llm_config=LLMConfig(model="m", api_base="http://x", api_key="sk"),
+            )
+            result = await controller.run()
 
-        tr = result.threat_model_results[0].task_results[0]
+        tr = result.task_results[0]
         assert tr.success is True
         # Auto-claim must land injection on system_prompt; user_message
         # slot stays at the target's default.

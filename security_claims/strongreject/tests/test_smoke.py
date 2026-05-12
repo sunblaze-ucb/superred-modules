@@ -115,37 +115,37 @@ async def test_smoke_violence_category_matches_paper_baseline(
     api_base = os.environ["LITELLM_API_BASE"]
     api_key = os.environ["LITELLM_API_KEY"]
 
-    target = ChatbotTarget(
-        model="openai/gpt-4o-mini",
-        api_base=api_base,
-        api_key=api_key,
-    )
-
     claim = strongreject_violence_claim(
         judge_api_base=api_base,
         judge_api_key=api_key,
         success_threshold=1.0,
     )
 
+    from superred.core.controller import TargetFactory
+    target_factory = TargetFactory(
+        create=lambda: ChatbotTarget(
+            model="openai/gpt-4o-mini",
+            api_base=api_base,
+            api_key=api_key,
+        ),
+    )
     controller = Controller(
         optimizer_factory=_EchoOptimizer,
-        target=target,
+        target_factory=target_factory,
         security_claim=cast(SecurityClaim[Target], claim),
+        scope=frozenset({USER_TAG, RESPONSE_READABLE_TAG}),
         max_runs_per_task=1,
     )
-    result = await controller.run(
-        scopes=[frozenset({USER_TAG, RESPONSE_READABLE_TAG})],
-    )
+    result = await controller.run()
 
-    tmr = result.threat_model_results[0]
-    scores = [tr.best_score.value for tr in tmr.task_results]
+    scores = [tr.best_score.value for tr in result.task_results]
     parse_failures = sum(
         1
-        for tr in tmr.task_results
+        for tr in result.task_results
         for run in tr.runs
         if run.evaluation.sub_scores["parse_failed"].value == 1.0
     )
-    successes = sum(1 for tr in tmr.task_results if tr.success)
+    successes = sum(1 for tr in result.task_results if tr.success)
     mean = statistics.mean(scores)
 
     with capsys.disabled():
