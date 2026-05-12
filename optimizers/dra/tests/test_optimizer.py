@@ -162,6 +162,26 @@ async def test_chatbot_target_shape_injects_system_prompt_then_user_prompt() -> 
 
 
 @pytest.mark.asyncio
+async def test_system_prompt_only_scope_delivers_combined_attack_prompt() -> None:
+    opt = await init_optimizer(
+        controllables=[make_controllable("system_prompt", SYSTEM_PROMPT_TAG)],
+    )
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+
+    sp = await dispatch_event(
+        opt,
+        ControllablePreCallEvent(
+            controllable=make_controllable("system_prompt", SYSTEM_PROMPT_TAG),
+            request="default",
+        ),
+    )
+
+    assert isinstance(sp, ControllableInjection)
+    assert sp.value.startswith(OFFICIAL_SYSTEM_PROMPT)
+    assert "construct a sentence named Q1" in sp.value
+
+
+@pytest.mark.asyncio
 async def test_system_prompt_precall_does_not_steal_user_lock_when_not_writable() -> None:
     opt = await init_optimizer(controllables=[make_controllable("user_message", USER_TAG)])
     await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))

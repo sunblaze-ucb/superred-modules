@@ -31,6 +31,12 @@ system prompt, `You are a helpful assistant.`, into `system_prompt` and keeps th
 DRA attack text in `user_message`. When `system_prompt` is not writable, behavior
 is the paper-style user-message-only attack.
 
+If the threat model exposes `system_prompt` but does not expose any user-message
+controllable, the optimizer combines the official chat-model system prompt and
+the DRA attack prompt into `system_prompt`. That is a SuperRed capability
+mapping for system-prompt-only scopes; normal user-message scopes remain the
+paper/code-mainline path.
+
 The optimizer reads target responses from the filtered trajectory first. If no
 trajectory response is visible, it can use a paired PostCall response when that
 is in scope. If neither response path is visible, the optimizer still advances

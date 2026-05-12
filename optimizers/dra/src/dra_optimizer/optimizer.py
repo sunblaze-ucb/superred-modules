@@ -100,6 +100,7 @@ class DraOptimizer(Optimizer):
         self._goal: Goal | None = None
         self._model = "llama"
         self._system_prompt_writable = False
+        self._system_prompt_only_attack = False
         self._prompt_builder: DraPromptBuilder | None = None
         self._judge: DraGptJudge | None = None
 
@@ -137,6 +138,13 @@ class DraOptimizer(Optimizer):
             self._target_controllable_name is None
             and self._use_system_prompt_when_available
             and any(ctrl.name == _SYSTEM_PROMPT_NAME for ctrl in controllables)
+        )
+        self._system_prompt_only_attack = (
+            self._system_prompt_writable
+            and not any(
+                ctrl.name not in {_SYSTEM_PROMPT_NAME, _RESPONSE_CONTROLLABLE_NAME}
+                for ctrl in controllables
+            )
         )
         observed_model = self._model_from_observables(observables)
         if self._model_override == "auto":
@@ -304,7 +312,12 @@ class DraOptimizer(Optimizer):
             benign_trunc=self._benign_trunc,
         )
         self._current_attack = attack
-        self._current_system_prompt = attack.system_prompt if self._system_prompt_writable else ""
+        if self._system_prompt_only_attack:
+            self._current_system_prompt = f"{attack.system_prompt}\n\n{attack.user_prompt}"
+        elif self._system_prompt_writable:
+            self._current_system_prompt = attack.system_prompt
+        else:
+            self._current_system_prompt = ""
         self._current_user_prompt = attack.user_prompt
 
     def _reset_run_state(self) -> None:
