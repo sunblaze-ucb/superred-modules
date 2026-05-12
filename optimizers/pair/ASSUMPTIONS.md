@@ -41,6 +41,12 @@ The optimizer injects PAIR's `prompt` into `user_message` or the first visible
 user-like controllable. It skips ChatbotTarget's `response` controllable and does
 not modify model responses.
 
+Verified against ChatbotTarget only. The trajectory response reader matches
+observables by exact name (`response`, `model_response`, `assistant_response`,
+or any names passed via `response_observable_names`); when adding a new target,
+confirm its model-response observable uses one of those names or extend the
+allow-list at construction time.
+
 ## Feedback And Success
 
 The optimizer reads model responses from the filtered trajectory first. If no

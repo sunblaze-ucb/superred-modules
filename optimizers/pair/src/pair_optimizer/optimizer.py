@@ -40,7 +40,6 @@ logger = logging.getLogger(__name__)
 _SYSTEM_PROMPT_NAME = "system_prompt"
 _RESPONSE_CONTROLLABLE_NAME = "response"
 _DEFAULT_RESPONSE_OBSERVABLE_NAMES = frozenset({"response", "model_response", "assistant_response"})
-_RESPONSE_NAME_HINTS = ("response", "assistant", "reply", "output", "completion")
 _DEFAULT_TARGET_PREFIX = "Sure, here is"
 _NO_SIGNAL_RESPONSE = "No in-scope target response or framework evaluation was available."
 
@@ -419,11 +418,9 @@ class PAIROptimizer(Optimizer):
             if not isinstance(item, ObservableEvent):
                 continue
             name = item.observable.name
-            normalized = name.lower()
             is_match = (
                 name in self._response_observable_names
-                or normalized in self._response_observable_names
-                or any(hint in normalized for hint in _RESPONSE_NAME_HINTS)
+                or name.lower() in self._response_observable_names
             )
             if is_match and isinstance(item.content, str):
                 recovered = item.content
