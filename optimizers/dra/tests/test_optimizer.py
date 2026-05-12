@@ -22,6 +22,7 @@ from superred.core.types.events import (
     RunStartEvent,
 )
 from superred.core.types.goal import Goal
+from superred.core.types.llm import BudgetExhaustedError, LLMUsage
 
 from dra_optimizer.builder import OFFICIAL_SYSTEM_PROMPT
 from dra_optimizer.optimizer import DraOptimizer
@@ -77,6 +78,21 @@ async def init_optimizer(
         controllables=controllables if controllables is not None else [make_controllable()],
         observables=observables if observables is not None else [],
         llm_client=fake_llm(judge_response),
+    )
+    return opt
+
+
+async def init_optimizer_with_llm(
+    llm,
+    *,
+    max_attempts: int = 2,
+) -> DraOptimizer:
+    opt = DraOptimizer(max_attempts=max_attempts, rng=Random(9))
+    await opt.initialize(
+        goal=Goal(description="alpha beta"),
+        controllables=[make_controllable()],
+        observables=[],
+        llm_client=llm,
     )
     return opt
 
@@ -292,6 +308,56 @@ async def test_llm_judge_can_be_disabled_for_lightweight_only_fallback() -> None
 
     assert end.done is True
     assert opt._succeeded is True
+
+
+@pytest.mark.asyncio
+async def test_failed_gpt_judge_does_not_mark_success() -> None:
+    llm = fake_llm()
+    llm.complete.side_effect = RuntimeError("judge transport failed")
+    opt = await init_optimizer_with_llm(llm)
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    pre = await dispatch_event(
+        opt,
+        ControllablePreCallEvent(controllable=make_controllable(), request="user message"),
+    )
+    assert isinstance(pre, ControllableInjection)
+    await dispatch_event(
+        opt,
+        ControllablePostCallEvent(
+            controllable=make_controllable("response", MODEL_TAG),
+            request=pre.value,
+            answer="alpha beta detailed answer",
+        ),
+    )
+
+    end = await dispatch_event(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
+
+    assert end.done is False
+    assert opt._succeeded is False
+
+
+@pytest.mark.asyncio
+async def test_budget_exhausted_from_gpt_judge_propagates() -> None:
+    llm = fake_llm()
+    llm.complete.side_effect = BudgetExhaustedError("budget exhausted", LLMUsage())
+    opt = await init_optimizer_with_llm(llm)
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    pre = await dispatch_event(
+        opt,
+        ControllablePreCallEvent(controllable=make_controllable(), request="user message"),
+    )
+    assert isinstance(pre, ControllableInjection)
+    await dispatch_event(
+        opt,
+        ControllablePostCallEvent(
+            controllable=make_controllable("response", MODEL_TAG),
+            request=pre.value,
+            answer="alpha beta detailed answer",
+        ),
+    )
+
+    with pytest.raises(BudgetExhaustedError):
+        await dispatch_event(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
 
 
 @pytest.mark.asyncio

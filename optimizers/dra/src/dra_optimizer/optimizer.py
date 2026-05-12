@@ -22,6 +22,7 @@ from superred.core.types.events import (
 )
 from superred.core.types.evaluation import EvaluationResult
 from superred.core.types.goal import Goal
+from superred.core.types.llm import BudgetExhaustedError
 from superred.core.types.observable import ObservableValue
 
 from dra_optimizer.builder import (
@@ -360,11 +361,17 @@ class DraOptimizer(Optimizer):
             return True
         assert self._goal is not None
         assert self._judge is not None
-        score = await self._judge.score(
-            goal=self._goal.description,
-            attack_prompt=self._current_user_prompt,
-            response=response,
-        )
+        try:
+            score = await self._judge.score(
+                goal=self._goal.description,
+                attack_prompt=self._current_user_prompt,
+                response=response,
+            )
+        except BudgetExhaustedError:
+            raise
+        except Exception:
+            logger.warning("DRA: official GPT judge failed", exc_info=True)
+            return False
         self._best_score = max(self._best_score, score.normalized_score)
         logger.info("DRA: official GPT judge rating=%d/10", score.rating)
         return score.success
