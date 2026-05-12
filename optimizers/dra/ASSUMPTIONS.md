@@ -43,9 +43,9 @@ is in scope. If neither response path is visible, the optimizer still advances
 through the official retry budget instead of guessing success.
 
 Static observables are used only when they naturally map to official behavior.
-For example, a visible target model name can choose the GPT, Llama, or Mini DRA
-suffix family. Static context is not pasted into the DRA prompt because the
-published attack is a fixed reconstruction template, not an LLM attacker prompt.
+For example, a visible target model name can choose the GPT or Llama DRA suffix
+family. Static context is not pasted into the DRA prompt because the published
+attack is a fixed reconstruction template, not an LLM attacker prompt.
 
 ## Feedback And Success
 

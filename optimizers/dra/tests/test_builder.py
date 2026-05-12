@@ -34,6 +34,7 @@ def test_model_normalization_maps_visible_model_names_to_official_branches() -> 
     assert normalize_model_name("gpt-4o-2024-05-13") == "gpt-4o"
     assert normalize_model_name("gpt4") == "gpt-4"
     assert normalize_model_name("Llama-2-13b-chat") == "llama"
+    assert normalize_model_name("mini") == "llama"
     assert normalize_model_name(None) == "llama"
 
 

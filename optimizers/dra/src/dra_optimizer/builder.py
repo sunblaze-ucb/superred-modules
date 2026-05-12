@@ -359,7 +359,7 @@ def normalize_model_name(model: str | None) -> str:
     if "gpt" in normalized:
         return "gpt"
     if "mini" in normalized:
-        return "mini"
+        return "llama"
     if any(name in normalized for name in ("llama", "vicuna", "mistral", "mixtral", "zephyr")):
         return "llama"
     return normalized
