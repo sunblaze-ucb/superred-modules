@@ -720,12 +720,12 @@ class TestApiBase:
 
 
 # ======================================================================
-# Run: temperature is fixed at 0
+# Run: temperature is not set (each provider's default is used)
 # ======================================================================
 
 
 class TestTemperature:
-    async def test_temperature_zero_passed_to_acompletion(
+    async def test_temperature_not_passed_to_acompletion(
         self, target: ChatbotTarget,
     ) -> None:
         captured_kwargs: list[dict] = []
@@ -751,9 +751,9 @@ class TestTemperature:
         with patch("chatbot_target.target.acompletion", side_effect=mock_acompletion):
             await target.run(lambda e: None, mock_send_event)
 
-        assert captured_kwargs[0]["temperature"] == 0
+        assert "temperature" not in captured_kwargs[0]
 
-    async def test_temperature_zero_with_api_base(
+    async def test_temperature_not_passed_with_api_base(
         self, target_with_base: ChatbotTarget,
     ) -> None:
         captured_kwargs: list[dict] = []
@@ -779,7 +779,7 @@ class TestTemperature:
         with patch("chatbot_target.target.acompletion", side_effect=mock_acompletion):
             await target_with_base.run(lambda e: None, mock_send_event)
 
-        assert captured_kwargs[0]["temperature"] == 0
+        assert "temperature" not in captured_kwargs[0]
 
 
 # ======================================================================
