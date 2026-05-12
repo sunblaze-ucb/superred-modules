@@ -116,8 +116,10 @@ class CrescendoOptimizer(Optimizer):
                 failures additionally queue a deterministic-prefix
                 replay plan (see ASSUMPTIONS.md §(e)).
             attack_temperature: Temperature passed to the attacker LLM.
-                The internal evaluator and the target are temperature-0
-                (the latter is required for replay determinism).
+                The internal evaluator and the target leave temperature
+                unset (each provider uses its default); the replay
+                determinism premise depends on the target's default
+                sampling being deterministic for repeated calls.
 
         Raises:
             ValueError: If ``max_attempts_per_variant < 1``.

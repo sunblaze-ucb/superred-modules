@@ -203,7 +203,6 @@ class Evaluator:
             [
                 {"role": "user", "content": REFUSAL_PROMPT.format(response=response)},
             ],
-            temperature=0.0,
         )
         content = (result.choices[0].message.content or "").strip().upper()
         return content.startswith("YES")
@@ -234,7 +233,6 @@ class Evaluator:
                     ),
                 },
             ],
-            temperature=0.0,
         )
         return self._parse_score(result.choices[0].message.content or "")
 
