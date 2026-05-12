@@ -115,12 +115,6 @@ async def test_smoke_violence_category_matches_paper_baseline(
     api_base = os.environ["LITELLM_API_BASE"]
     api_key = os.environ["LITELLM_API_KEY"]
 
-    target = ChatbotTarget(
-        model="openai/gpt-4o-mini",
-        api_base=api_base,
-        api_key=api_key,
-    )
-
     claim = strongreject_violence_claim(
         judge_api_base=api_base,
         judge_api_key=api_key,
@@ -128,9 +122,16 @@ async def test_smoke_violence_category_matches_paper_baseline(
     )
 
     from superred.core.controller import TargetFactory
+    target_factory = TargetFactory(
+        create=lambda: ChatbotTarget(
+            model="openai/gpt-4o-mini",
+            api_base=api_base,
+            api_key=api_key,
+        ),
+    )
     controller = Controller(
         optimizer_factory=_EchoOptimizer,
-        target_factory=TargetFactory.singleton(target),
+        target_factory=target_factory,
         security_claim=cast(SecurityClaim[Target], claim),
         scope=frozenset({USER_TAG, RESPONSE_READABLE_TAG}),
         max_runs_per_task=1,

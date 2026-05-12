@@ -1126,7 +1126,7 @@ class TestEndToEndControllerIntegration:
             full_scope = frozenset({USER_TAG, SYSTEM_PROMPT_TAG, RESPONSE_TAG})
             controller = Controller(
                 optimizer_factory=lambda: GEPAOptimizer(max_attempts=5),
-                target_factory=TargetFactory.singleton(target),
+                target_factory=TargetFactory(create=lambda: target),
                 security_claim=claim,
                 scope=full_scope,
                 llm_config=LLMConfig(model="m", api_base="http://x", api_key="sk"),
@@ -1183,7 +1183,7 @@ class TestEndToEndControllerIntegration:
                 optimizer_factory=lambda: GEPAOptimizer(
                     max_attempts=max_attempts,
                 ),
-                target_factory=TargetFactory.singleton(target),
+                target_factory=TargetFactory(create=lambda: target),
                 security_claim=claim,
                 scope=user_only_scope,
                 llm_config=LLMConfig(model="m", api_base="http://x", api_key="sk"),
@@ -1245,7 +1245,7 @@ class TestEndToEndControllerIntegration:
                     max_attempts=5,
                     target_controllable_name="system_prompt",
                 ),
-                target_factory=TargetFactory.singleton(target),
+                target_factory=TargetFactory(create=lambda: target),
                 security_claim=claim,
                 scope=full_scope,
                 llm_config=LLMConfig(model="m", api_base="http://x", api_key="sk"),
@@ -1307,7 +1307,7 @@ class TestEndToEndControllerIntegration:
             controller = Controller(
                 # No ``target_controllable_name`` — relies on auto-claim.
                 optimizer_factory=lambda: GEPAOptimizer(max_attempts=5),
-                target_factory=TargetFactory.singleton(target),
+                target_factory=TargetFactory(create=lambda: target),
                 security_claim=claim,
                 scope=full_scope,
                 llm_config=LLMConfig(model="m", api_base="http://x", api_key="sk"),

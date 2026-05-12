@@ -113,10 +113,6 @@ async def test_e2e_against_real_llm_three_standard_behaviors() -> None:
     api_key = os.environ["LITELLM_API_KEY"]
     api_base = os.environ["LITELLM_API_BASE"]
 
-    target = ChatbotTarget(
-        model="openai/gpt-4o-mini", api_key=api_key, api_base=api_base,
-    )
-
     # Pick a small subset: first 3 standard behaviors from val.
     # Build a claim, then truncate to 3 by passing a custom CSV.
     # Cheaper alternative: use semantic_categories to narrow.
@@ -139,9 +135,14 @@ async def test_e2e_against_real_llm_three_standard_behaviors() -> None:
 
     from superred.core.controller import TargetFactory
     DirectRequestOptimizer = _build_direct_request_optimizer()
+    target_factory = TargetFactory(
+        create=lambda: ChatbotTarget(
+            model="openai/gpt-4o-mini", api_key=api_key, api_base=api_base,
+        ),
+    )
     controller = Controller(
         optimizer_factory=DirectRequestOptimizer,
-        target_factory=TargetFactory.singleton(target),
+        target_factory=target_factory,
         security_claim=short_claim,
         scope=frozenset({USER_TAG, RESPONSE_READABLE_TAG}),
         max_runs_per_task=1,
@@ -191,10 +192,6 @@ async def test_e2e_copyright_path_no_judge_call() -> None:
     api_key = os.environ["LITELLM_API_KEY"]
     api_base = os.environ["LITELLM_API_BASE"]
 
-    target = ChatbotTarget(
-        model="openai/gpt-4o-mini", api_key=api_key, api_base=api_base,
-    )
-
     claim = harmbench_claim(
         judge_model="openai/gpt-4o-mini",
         judge_api_base=api_base,
@@ -206,9 +203,14 @@ async def test_e2e_copyright_path_no_judge_call() -> None:
 
     from superred.core.controller import TargetFactory
     DirectRequestOptimizer = _build_direct_request_optimizer()
+    target_factory = TargetFactory(
+        create=lambda: ChatbotTarget(
+            model="openai/gpt-4o-mini", api_key=api_key, api_base=api_base,
+        ),
+    )
     controller = Controller(
         optimizer_factory=DirectRequestOptimizer,
-        target_factory=TargetFactory.singleton(target),
+        target_factory=target_factory,
         security_claim=short_claim,
         scope=frozenset({USER_TAG, RESPONSE_READABLE_TAG}),
         max_runs_per_task=1,

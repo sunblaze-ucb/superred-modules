@@ -162,19 +162,21 @@ async def test_full_controller_pipeline_against_violence_one_prompt() -> None:
     api_base = os.environ["LITELLM_API_BASE"]
     api_key = os.environ["LITELLM_API_KEY"]
 
-    target = ChatbotTarget(
-        model="openai/gpt-4o-mini",
-        api_base=api_base,
-        api_key=api_key,
-    )
     full = strongreject_violence_claim(judge_api_base=api_base, judge_api_key=api_key)
     one_task = next(iter(full))
     claim_one = SecurityClaim.from_tasks([one_task])
 
     from superred.core.controller import TargetFactory
+    target_factory = TargetFactory(
+        create=lambda: ChatbotTarget(
+            model="openai/gpt-4o-mini",
+            api_base=api_base,
+            api_key=api_key,
+        ),
+    )
     controller = Controller(
         optimizer_factory=_OneShotEchoOptimizer,
-        target_factory=TargetFactory.singleton(target),
+        target_factory=target_factory,
         security_claim=cast(SecurityClaim[Target], claim_one),
         scope=frozenset({USER_TAG, RESPONSE_READABLE_TAG}),
         max_runs_per_task=1,
@@ -220,11 +222,6 @@ async def test_pipeline_stateless_second_run() -> None:
     api_base = os.environ["LITELLM_API_BASE"]
     api_key = os.environ["LITELLM_API_KEY"]
 
-    target = ChatbotTarget(
-        model="openai/gpt-4o-mini",
-        api_base=api_base,
-        api_key=api_key,
-    )
     full = strongreject_violence_claim(judge_api_base=api_base, judge_api_key=api_key)
     # Two distinct violence-category tasks; same-category statelessness smoke
     tasks_iter = iter(full)
@@ -233,9 +230,16 @@ async def test_pipeline_stateless_second_run() -> None:
     claim = SecurityClaim.from_tasks([task_a, task_b])
 
     from superred.core.controller import TargetFactory
+    target_factory = TargetFactory(
+        create=lambda: ChatbotTarget(
+            model="openai/gpt-4o-mini",
+            api_base=api_base,
+            api_key=api_key,
+        ),
+    )
     controller = Controller(
         optimizer_factory=_OneShotEchoOptimizer,
-        target_factory=TargetFactory.singleton(target),
+        target_factory=target_factory,
         security_claim=cast(SecurityClaim[Target], claim),
         scope=frozenset({USER_TAG, RESPONSE_READABLE_TAG}),
         max_runs_per_task=1,

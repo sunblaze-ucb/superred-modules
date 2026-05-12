@@ -167,7 +167,6 @@ async def main() -> None:
         create=lambda: ChatbotTarget(
             model=TARGET_MODEL, api_key=api_key, api_base=api_base,
         ),
-        concurrency=8,
     )
     judge_cfg = LLMConfig(
         model=JUDGE_MODEL,
