@@ -116,6 +116,42 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+## Subset selection (pilot then full)
+
+`sorry_bench_claim` exposes two pre-defined halves of the benchmark via
+`subset="a"` / `subset="b"`. Each half is **220 prompts (5/category ×
+44 categories)**, stratified across the full taxonomy; the two halves
+are disjoint and together reconstruct the full 440-prompt benchmark.
+
+This is the cheap way to run a pilot first, look at the results, then
+fill in the rest with no overlap:
+
+```python
+# Step 1: pilot on half A (220 prompts, ~$0.50 in judge calls)
+claim_a = sorry_bench_claim(
+    target_model_id="gpt-4o-2024-05-13",
+    judge_llm_config=judge_cfg,
+    subset="a",
+)
+# ... run, inspect, decide whether to continue ...
+
+# Step 2: complete with half B (the other 220, no overlap)
+claim_b = sorry_bench_claim(
+    target_model_id="gpt-4o-2024-05-13",
+    judge_llm_config=judge_cfg,
+    subset="b",
+)
+```
+
+The split is by `question_id` parity (subset A = odd, subset B = even),
+which the dataset's `(question_id - 1) // 10 + 1 == category` invariant
+guarantees is perfectly balanced per category. `subset` composes with
+`categories` (the subset is taken from the surviving categories) and
+`prompts_per_category` (truncation runs after). It is ignored when
+`question_ids` is supplied. The exact id lists are exported as
+`SUBSET_A_QUESTION_IDS` / `SUBSET_B_QUESTION_IDS` for downstream
+analysis.
+
 ## Faithfulness anchor
 
 We benchmark against the paper's published number for `gpt-4o-2024-05-13`:
