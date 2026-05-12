@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gptfuzzer-optimizer"
+version = "0.1.0"
+description = "GPTFuzzer jailbreak optimizer for superred"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "superred>=0.1.0",
+    "torch",
+    "transformers",
+]
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-asyncio"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+pythonpath = ["src"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gptfuzzer_optimizer"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/gptfuzzer_optimizer/data/GPTFuzzer.csv" = "gptfuzzer_optimizer/data/GPTFuzzer.csv"
