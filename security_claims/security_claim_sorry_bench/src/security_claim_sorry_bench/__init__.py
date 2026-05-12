@@ -41,6 +41,9 @@ from security_claim_sorry_bench.factory import (
     DATASET_REPO_ID,
     DATASET_REVISION,
     DEFAULT_JUDGE_MODEL,
+    SUBSET_A_QUESTION_IDS,
+    SUBSET_B_QUESTION_IDS,
+    Subset,
     sorry_bench_claim,
 )
 from security_claim_sorry_bench.judge import (
@@ -60,6 +63,9 @@ __all__ = [
     "DATASET_REVISION",
     "DATASET_FILENAME",
     "DEFAULT_JUDGE_MODEL",
+    "SUBSET_A_QUESTION_IDS",
+    "SUBSET_B_QUESTION_IDS",
+    "Subset",
     # task
     "SorryBenchTask",
     # judge

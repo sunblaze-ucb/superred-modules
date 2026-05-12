@@ -3,9 +3,9 @@
 ``sorry_bench_claim(...)`` is the user-facing entry point. It loads the
 gated ``question.jsonl`` (either from a caller-supplied path or via HF
 Hub lazy-download), filters rows per the optional ``categories`` /
-``prompts_per_category`` / ``question_ids`` kwargs, and produces one
-:class:`SorryBenchTask` per surviving row, all bundled into a
-:class:`SecurityClaim`.
+``prompts_per_category`` / ``question_ids`` / ``subset`` kwargs, and
+produces one :class:`SorryBenchTask` per surviving row, all bundled
+into a :class:`SecurityClaim`.
 
 The dataset license (custom non-redistributable) forbids vendoring the
 prompts inside this package, so loading is **always** at runtime from
@@ -23,7 +23,7 @@ import logging
 import os
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from superred.core.interfaces.security_claim import SecurityClaim
 from superred.core.interfaces.target import Target
@@ -48,6 +48,27 @@ DATASET_REVISION: str = "612a4e1f45db8adf884fa62318ddf9fa1c6e75e9"
 DATASET_FILENAME: str = "question.jsonl"
 DEFAULT_JUDGE_MODEL: str = "gpt-4-1106-preview"
 
+# ---------------------------------------------------------------------------
+# Subset pinning. Two disjoint halves of the 440-prompt benchmark, each
+# evenly spread across all 44 categories (5 prompts/category each).
+#
+# The split uses ``question_id`` parity. The dataset invariant
+# ``(question_id - 1) // 10 + 1 == category`` (asserted in
+# ``test_factory.TestRowSchemaInvariant``) guarantees that each category
+# contributes exactly 5 odd and 5 even q_ids, so both subsets are
+# perfectly stratified by category and (by extension) by the 4 high-level
+# domains in ``CATEGORY_DOMAINS``.
+#
+# Use case: run subset A first as a cheaper pilot (220 prompts, ~half
+# the judge spend), inspect, then run subset B for the rest of the
+# benchmark with no overlap.
+# ---------------------------------------------------------------------------
+
+SUBSET_A_QUESTION_IDS: frozenset[int] = frozenset(range(1, 441, 2))
+SUBSET_B_QUESTION_IDS: frozenset[int] = frozenset(range(2, 441, 2))
+
+Subset = Literal["a", "b"]
+
 
 # ---------------------------------------------------------------------------
 # Public factory
@@ -64,6 +85,7 @@ def sorry_bench_claim(
     categories: list[int] | None = None,
     prompts_per_category: int | None = None,
     question_ids: list[int] | None = None,
+    subset: Subset | None = None,
 ) -> SecurityClaim[Target]:
     """Build a :class:`SecurityClaim` evaluating SORRY-Bench against a chatbot.
 
@@ -88,10 +110,22 @@ def sorry_bench_claim(
         categories: 1-indexed category ids to keep (e.g. ``[1, 5, 12]``).
             If ``None``, all 44 categories are included.
         prompts_per_category: Limit prompts per category (after the
-            category filter). If ``None``, all 10 per category are kept.
+            category and subset filters). If ``None``, all surviving
+            prompts per category are kept.
         question_ids: 1-indexed prompt ids to keep. If provided, this
-            overrides ``categories`` / ``prompts_per_category`` and
-            returns only the listed prompts.
+            overrides ``categories`` / ``prompts_per_category`` /
+            ``subset`` and returns only the listed prompts.
+        subset: Selects one of two disjoint halves, each evenly spread
+            across all 44 categories (5 prompts/category, 220 total).
+            ``"a"`` keeps odd ``question_id`` rows, ``"b"`` keeps even
+            ones; together they reconstruct the full 440-prompt
+            benchmark with no overlap. Composes with ``categories``
+            (the subset is applied to the surviving categories) and
+            ``prompts_per_category`` (the truncation is applied after).
+            Intended use: run subset ``"a"`` as a cheaper pilot, then
+            run ``"b"`` to cover the rest. Ignored when ``question_ids``
+            is supplied. See :data:`SUBSET_A_QUESTION_IDS` /
+            :data:`SUBSET_B_QUESTION_IDS` for the exact id lists.
 
     Returns:
         A :class:`SecurityClaim` bundling one :class:`SorryBenchTask`
@@ -119,6 +153,7 @@ def sorry_bench_claim(
         categories=categories,
         prompts_per_category=prompts_per_category,
         question_ids=question_ids,
+        subset=subset,
     )
     _warn_if_not_base_dataset(rows)
 
@@ -241,16 +276,19 @@ def _filter_rows(
     categories: list[int] | None,
     prompts_per_category: int | None,
     question_ids: list[int] | None,
+    subset: Subset | None,
 ) -> list[dict[str, Any]]:
-    """Apply the three optional filters from ``sorry_bench_claim`` kwargs.
+    """Apply the four optional filters from ``sorry_bench_claim`` kwargs.
 
     Filter precedence:
 
     1. ``question_ids`` is exclusive — if provided, only rows with a
        matching id survive (other filters ignored).
-    2. Otherwise: ``categories`` filters first (drop rows whose category
-       is not in the set), then ``prompts_per_category`` truncates each
-       surviving category by the lowest question_id.
+    2. Otherwise, in order: ``categories`` drops rows whose category is
+       not in the set; ``subset`` keeps the half whose ``question_id``
+       parity matches (``"a"`` = odd, ``"b"`` = even); finally
+       ``prompts_per_category`` truncates each surviving category by
+       the lowest ``question_id``.
 
     Note: the canonical dataset stores ``category`` as a numeric **string**
     (``"1"``..``"44"``); ``question_id`` is an int. This filter casts both
@@ -265,6 +303,16 @@ def _filter_rows(
     if categories is not None:
         wanted_cats = set(categories)
         rows_list = [r for r in rows_list if int(r["category"]) in wanted_cats]
+
+    if subset is not None:
+        wanted_subset_ids: frozenset[int]
+        if subset == "a":
+            wanted_subset_ids = SUBSET_A_QUESTION_IDS
+        elif subset == "b":
+            wanted_subset_ids = SUBSET_B_QUESTION_IDS
+        else:
+            raise ValueError(f"subset must be 'a', 'b', or None, got {subset!r}")
+        rows_list = [r for r in rows_list if int(r["question_id"]) in wanted_subset_ids]
 
     if prompts_per_category is not None:
         if prompts_per_category < 0:
@@ -327,4 +375,7 @@ __all__ = [
     "DATASET_REVISION",
     "DATASET_FILENAME",
     "DEFAULT_JUDGE_MODEL",
+    "SUBSET_A_QUESTION_IDS",
+    "SUBSET_B_QUESTION_IDS",
+    "Subset",
 ]

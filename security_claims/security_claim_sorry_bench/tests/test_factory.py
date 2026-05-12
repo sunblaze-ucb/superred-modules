@@ -19,6 +19,8 @@ from security_claim_sorry_bench.factory import (
     DATASET_FILENAME,
     DATASET_REPO_ID,
     DATASET_REVISION,
+    SUBSET_A_QUESTION_IDS,
+    SUBSET_B_QUESTION_IDS,
     _filter_rows,
     _load_dataset,
     sorry_bench_claim,
@@ -73,7 +75,11 @@ class TestFilterRows:
     def test_no_filter_keeps_all_rows(self, question_jsonl_path: str) -> None:
         rows = _load_dataset(question_jsonl_path)
         out = _filter_rows(
-            rows, categories=None, prompts_per_category=None, question_ids=None
+            rows,
+            categories=None,
+            prompts_per_category=None,
+            question_ids=None,
+            subset=None,
         )
         assert len(out) == 440
 
@@ -82,7 +88,11 @@ class TestFilterRows:
     ) -> None:
         rows = _load_dataset(question_jsonl_path)
         out = _filter_rows(
-            rows, categories=[1, 8, 42], prompts_per_category=None, question_ids=None
+            rows,
+            categories=[1, 8, 42],
+            prompts_per_category=None,
+            question_ids=None,
+            subset=None,
         )
         assert len(out) == 30  # 3 cats × 10 prompts each
         assert all(int(r["category"]) in {1, 8, 42} for r in out)
@@ -90,7 +100,11 @@ class TestFilterRows:
     def test_prompts_per_category_truncates(self, question_jsonl_path: str) -> None:
         rows = _load_dataset(question_jsonl_path)
         out = _filter_rows(
-            rows, categories=None, prompts_per_category=2, question_ids=None
+            rows,
+            categories=None,
+            prompts_per_category=2,
+            question_ids=None,
+            subset=None,
         )
         assert len(out) == 88  # 44 cats × 2
 
@@ -103,6 +117,7 @@ class TestFilterRows:
             categories=[8, 9, 20],
             prompts_per_category=3,
             question_ids=None,
+            subset=None,
         )
         assert len(out) == 9
 
@@ -113,6 +128,7 @@ class TestFilterRows:
             categories=[1, 2, 3],  # ignored when question_ids provided
             prompts_per_category=1,  # also ignored
             question_ids=[1, 50, 100, 440],
+            subset="a",  # also ignored
         )
         assert len(out) == 4
         ids = {int(r["question_id"]) for r in out}
@@ -124,7 +140,11 @@ class TestFilterRows:
         rows = _load_dataset(question_jsonl_path)
         with pytest.raises(ValueError, match="prompts_per_category must be >= 0"):
             _filter_rows(
-                rows, categories=None, prompts_per_category=-1, question_ids=None
+                rows,
+                categories=None,
+                prompts_per_category=-1,
+                question_ids=None,
+                subset=None,
             )
 
 
@@ -253,6 +273,209 @@ class TestFactory:
                 judge=RefusalRegexJudge(),
                 question_ids=[99999],  # no such id
             )
+
+
+class TestSubsetFilter:
+    """``subset="a" | "b"`` returns one of two disjoint, stratified halves.
+
+    Each subset is 220 prompts (5/category × 44 categories), and the two
+    halves together reconstruct the full 440-prompt benchmark. The split
+    is by ``question_id`` parity.
+    """
+
+    # -- the SUBSET_*_QUESTION_IDS constants themselves -----------------
+
+    def test_subset_constants_sizes(self) -> None:
+        assert len(SUBSET_A_QUESTION_IDS) == 220
+        assert len(SUBSET_B_QUESTION_IDS) == 220
+
+    def test_subset_constants_are_disjoint(self) -> None:
+        assert SUBSET_A_QUESTION_IDS.isdisjoint(SUBSET_B_QUESTION_IDS)
+
+    def test_subset_constants_union_covers_full_benchmark(self) -> None:
+        assert SUBSET_A_QUESTION_IDS | SUBSET_B_QUESTION_IDS == frozenset(range(1, 441))
+
+    def test_subset_a_is_odd_q_ids(self) -> None:
+        assert SUBSET_A_QUESTION_IDS == frozenset(range(1, 441, 2))
+
+    def test_subset_b_is_even_q_ids(self) -> None:
+        assert SUBSET_B_QUESTION_IDS == frozenset(range(2, 441, 2))
+
+    # -- _filter_rows behavior on the real dataset ----------------------
+
+    def test_subset_a_returns_220_rows(self, question_jsonl_path: str) -> None:
+        rows = _load_dataset(question_jsonl_path)
+        out = _filter_rows(
+            rows,
+            categories=None,
+            prompts_per_category=None,
+            question_ids=None,
+            subset="a",
+        )
+        assert len(out) == 220
+
+    def test_subset_b_returns_220_rows(self, question_jsonl_path: str) -> None:
+        rows = _load_dataset(question_jsonl_path)
+        out = _filter_rows(
+            rows,
+            categories=None,
+            prompts_per_category=None,
+            question_ids=None,
+            subset="b",
+        )
+        assert len(out) == 220
+
+    def test_subset_a_and_b_are_disjoint(self, question_jsonl_path: str) -> None:
+        rows = _load_dataset(question_jsonl_path)
+        out_a = _filter_rows(
+            rows,
+            categories=None,
+            prompts_per_category=None,
+            question_ids=None,
+            subset="a",
+        )
+        out_b = _filter_rows(
+            rows,
+            categories=None,
+            prompts_per_category=None,
+            question_ids=None,
+            subset="b",
+        )
+        ids_a = {int(r["question_id"]) for r in out_a}
+        ids_b = {int(r["question_id"]) for r in out_b}
+        assert ids_a.isdisjoint(ids_b)
+
+    def test_subset_a_and_b_union_covers_full(self, question_jsonl_path: str) -> None:
+        rows = _load_dataset(question_jsonl_path)
+        out_a = _filter_rows(
+            rows,
+            categories=None,
+            prompts_per_category=None,
+            question_ids=None,
+            subset="a",
+        )
+        out_b = _filter_rows(
+            rows,
+            categories=None,
+            prompts_per_category=None,
+            question_ids=None,
+            subset="b",
+        )
+        ids = {int(r["question_id"]) for r in (*out_a, *out_b)}
+        assert ids == set(range(1, 441))
+
+    def test_each_category_is_evenly_split(self, question_jsonl_path: str) -> None:
+        # Stratification invariant: each subset has exactly 5/10 prompts
+        # for every one of the 44 categories.
+        rows = _load_dataset(question_jsonl_path)
+        for label in ("a", "b"):
+            out = _filter_rows(
+                rows,
+                categories=None,
+                prompts_per_category=None,
+                question_ids=None,
+                subset=label,  # type: ignore[arg-type]
+            )
+            per_cat: dict[int, int] = {}
+            for r in out:
+                per_cat[int(r["category"])] = per_cat.get(int(r["category"]), 0) + 1
+            assert per_cat == {c: 5 for c in range(1, 45)}, (
+                f"subset={label!r} not evenly stratified: {per_cat}"
+            )
+
+    def test_subset_composes_with_categories(self, question_jsonl_path: str) -> None:
+        rows = _load_dataset(question_jsonl_path)
+        out = _filter_rows(
+            rows,
+            categories=[1, 2, 3],
+            prompts_per_category=None,
+            question_ids=None,
+            subset="a",
+        )
+        assert len(out) == 15  # 3 cats × 5 prompts per cat (subset a)
+        assert all(int(r["category"]) in {1, 2, 3} for r in out)
+        assert all(int(r["question_id"]) % 2 == 1 for r in out)
+
+    def test_subset_composes_with_prompts_per_category(
+        self, question_jsonl_path: str
+    ) -> None:
+        rows = _load_dataset(question_jsonl_path)
+        out = _filter_rows(
+            rows,
+            categories=None,
+            prompts_per_category=2,
+            question_ids=None,
+            subset="b",
+        )
+        assert len(out) == 88  # 44 cats × 2 (truncated from 5 in subset b)
+        assert all(int(r["question_id"]) % 2 == 0 for r in out)
+
+    def test_invalid_subset_value_raises(self, question_jsonl_path: str) -> None:
+        rows = _load_dataset(question_jsonl_path)
+        with pytest.raises(ValueError, match="subset must be 'a', 'b', or None"):
+            _filter_rows(
+                rows,
+                categories=None,
+                prompts_per_category=None,
+                question_ids=None,
+                subset="c",  # type: ignore[arg-type]
+            )
+
+
+class TestSubsetFactory:
+    """``sorry_bench_claim(subset=...)`` produces a balanced subset claim."""
+
+    def test_subset_a_claim_has_220_tasks(self, question_jsonl_path: str) -> None:
+        claim = sorry_bench_claim(
+            target_model_id="gpt-4o-mini",
+            dataset_path=question_jsonl_path,
+            judge=RefusalRegexJudge(),
+            subset="a",
+        )
+        tasks = list(claim)
+        assert len(tasks) == 220
+
+    def test_subset_b_claim_has_220_tasks(self, question_jsonl_path: str) -> None:
+        claim = sorry_bench_claim(
+            target_model_id="gpt-4o-mini",
+            dataset_path=question_jsonl_path,
+            judge=RefusalRegexJudge(),
+            subset="b",
+        )
+        tasks = list(claim)
+        assert len(tasks) == 220
+
+    def test_subsets_have_disjoint_question_ids(self, question_jsonl_path: str) -> None:
+        claim_a = sorry_bench_claim(
+            target_model_id="gpt-4o-mini",
+            dataset_path=question_jsonl_path,
+            judge=RefusalRegexJudge(),
+            subset="a",
+        )
+        claim_b = sorry_bench_claim(
+            target_model_id="gpt-4o-mini",
+            dataset_path=question_jsonl_path,
+            judge=RefusalRegexJudge(),
+            subset="b",
+        )
+        ids_a = {t.question_id for t in claim_a}
+        ids_b = {t.question_id for t in claim_b}
+        assert ids_a.isdisjoint(ids_b)
+        assert ids_a | ids_b == set(range(1, 441))
+
+    def test_subset_a_stratified_across_categories(
+        self, question_jsonl_path: str
+    ) -> None:
+        claim = sorry_bench_claim(
+            target_model_id="gpt-4o-mini",
+            dataset_path=question_jsonl_path,
+            judge=RefusalRegexJudge(),
+            subset="a",
+        )
+        per_cat: dict[int, int] = {}
+        for task in claim:
+            per_cat[task.category_id] = per_cat.get(task.category_id, 0) + 1
+        assert per_cat == {c: 5 for c in range(1, 45)}
 
 
 class TestPinnedConstants:
