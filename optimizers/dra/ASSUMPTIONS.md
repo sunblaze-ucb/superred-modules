@@ -47,15 +47,19 @@ When framework evaluation is available, `evaluation.success` is authoritative.
 A failed framework evaluation is not overturned by local DRA checks.
 
 When framework evaluation is not available but a target response is visible, the
-optimizer uses the official lightweight checks:
+optimizer first uses the official lightweight checks:
 
 - refusal-prefix check from the DRA code;
 - exact-match target-word coverage with threshold `em_t`.
 
-The official full experiment then uses an external HarmBench or GPT-4 judge. In
-SuperRed, that role is best represented by `RunEndEvent.evaluation`, because the
-controller owns task-specific judging. The local checks are therefore a fallback
-for response-visible/no-feedback threat models.
+The official full experiment then uses an external HarmBench or GPT-4 judge.
+When SuperRed feedback is available, that role is best represented by
+`RunEndEvent.evaluation`, because the controller owns task-specific judging.
+When feedback is not available but responses are visible, this optimizer uses
+the official GPT-style judge prompt as a fallback and only treats rating `10` as
+success, matching the released `gpt_judger.py` behavior. Callers can explicitly
+disable that fallback with `use_llm_judge_when_no_feedback=False` if they want
+only the lightweight GCG/EM gate.
 
 ## Deliberate Differences
 
@@ -64,6 +68,11 @@ This package does not require Detoxify by default, so it uses the official stati
 sensitive-word list unless callers provide their own token classifier. Installing
 the optional `detoxify` extra lets callers wire in a Detoxify-backed classifier
 without making every SuperRed install download a separate moderation model.
+
+The paper defines exact match more broadly than the released script: it allows
+word overlap or embedding similarity. The official public attack script only
+implements target-word coverage, so the optimizer follows the code path for
+comparability with the released implementation.
 
 The official scripts include raw Llama/Vicuna chat wrappers for direct local
 model inference. SuperRed targets own chat formatting, so this optimizer does

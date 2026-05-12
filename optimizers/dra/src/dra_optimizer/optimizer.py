@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import logging
-from random import Random
 from collections.abc import Callable, Iterable
+from random import Random
 
 from superred.core.interfaces.optimizer import Optimizer
 from superred.core.llm import LLMClient
@@ -23,7 +23,6 @@ from superred.core.types.events import (
 from superred.core.types.evaluation import EvaluationResult
 from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
-from superred.core.types.trajectory import ReadableTrajectory
 
 from dra_optimizer.builder import (
     OFFICIAL_SYSTEM_PROMPT,
@@ -33,6 +32,7 @@ from dra_optimizer.builder import (
     normalize_model_name,
 )
 from dra_optimizer.evaluator import DraCheckResult, jailbreak_check
+from dra_optimizer.judge import DraGptJudge
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,10 @@ class DraOptimizer(Optimizer):
         response_observable_names: Iterable[str] | None = None,
         target_controllable_name: str | None = None,
         use_system_prompt_when_available: bool = True,
+        use_llm_judge_when_no_feedback: bool = True,
+        judge_temperature: float = 0.0,
+        judge_top_p: float = 1.0,
+        judge_max_tokens: int = 10,
         max_no_signal_runs: int = 0,
         rng: Random | None = None,
         sensitive_token_detector: SensitiveTokenDetector | None = None,
@@ -83,6 +87,10 @@ class DraOptimizer(Optimizer):
         )
         self._target_controllable_name = target_controllable_name
         self._use_system_prompt_when_available = use_system_prompt_when_available
+        self._use_llm_judge_when_no_feedback = use_llm_judge_when_no_feedback
+        self._judge_temperature = judge_temperature
+        self._judge_top_p = judge_top_p
+        self._judge_max_tokens = judge_max_tokens
         self._max_no_signal_runs = max(0, max_no_signal_runs)
         self._rng = rng or Random()
         self._prompt_builder_factory = prompt_builder_factory
@@ -92,6 +100,7 @@ class DraOptimizer(Optimizer):
         self._model = "llama"
         self._system_prompt_writable = False
         self._prompt_builder: DraPromptBuilder | None = None
+        self._judge: DraGptJudge | None = None
 
         self._attempt = 0
         self._succeeded = False
@@ -101,7 +110,6 @@ class DraOptimizer(Optimizer):
         self._toxic_trunc = toxic_trunc
         self._benign_trunc = benign_trunc
 
-        self._trajectory: ReadableTrajectory | None = None
         self._primary_pre_controllable: Controllable | None = None
         self._primary_post_controllable: Controllable | None = None
         self._current_attack: DraPrompt | None = None
@@ -141,6 +149,12 @@ class DraOptimizer(Optimizer):
                 rng=self._rng,
                 sensitive_token_detector=self._sensitive_token_detector,
             )
+        self._judge = DraGptJudge(
+            llm=self.llm,
+            temperature=self._judge_temperature,
+            top_p=self._judge_top_p,
+            max_tokens=self._judge_max_tokens,
+        )
         self._attempt = 0
         self._succeeded = False
         self._best_score = 0.0
@@ -161,12 +175,11 @@ class DraOptimizer(Optimizer):
         if isinstance(event, ControllablePostCallEvent):
             return self._handle_post_call(event)
         if isinstance(event, RunEndEvent):
-            return self._handle_run_end(event)
+            return await self._handle_run_end(event)
         return EventResponse(event=event)
 
     def _handle_run_start(self, event: RunStartEvent) -> EventResponse:
         self._reset_run_state()
-        self._trajectory = event.trajectory
         if not self._succeeded and not self._stop_due_to_no_signal:
             self._prepare_attempt()
         return EventResponse(event=event)
@@ -237,7 +250,7 @@ class DraOptimizer(Optimizer):
         self._pending_post_answer = event.answer
         return ControllableNoInjection(event=event, controllable=event.controllable)
 
-    def _handle_run_end(self, event: RunEndEvent) -> RunEndResponse:
+    async def _handle_run_end(self, event: RunEndEvent) -> RunEndResponse:
         response = self._read_response_from_trajectory()
         if response is None:
             response = self._pending_post_answer
@@ -258,19 +271,19 @@ class DraOptimizer(Optimizer):
                 )
                 self._stop_due_to_no_signal = True
 
-        local_success = False
+        lightweight_success = False
         if response is not None:
             check = self._score_response(response)
             self._last_check = check
-            local_success = check.passed_official_lightweight_checks
+            lightweight_success = check.passed_official_lightweight_checks
             self._apply_retry_adjustment(check)
 
         if evaluation is not None:
             self._apply_evaluation(evaluation)
             if evaluation.success:
                 self._succeeded = True
-        elif local_success:
-            self._succeeded = True
+        elif lightweight_success:
+            self._succeeded = await self._judge_lightweight_success(response)
 
         if self._succeeded or self._stop_due_to_no_signal:
             return RunEndResponse(event=event, done=True)
@@ -294,7 +307,6 @@ class DraOptimizer(Optimizer):
         self._current_user_prompt = attack.user_prompt
 
     def _reset_run_state(self) -> None:
-        self._trajectory = None
         self._primary_pre_controllable = None
         self._primary_post_controllable = None
         self._current_attack = None
@@ -309,10 +321,11 @@ class DraOptimizer(Optimizer):
         self._last_check = None
 
     def _read_response_from_trajectory(self) -> str | None:
-        if self._trajectory is None:
+        trajectory = self.current_trajectory
+        if trajectory is None:
             return None
         recovered: str | None = None
-        for item in self._trajectory.drain():
+        for item in trajectory.drain():
             if not isinstance(item, ObservableEvent):
                 continue
             name = item.observable.name
@@ -339,6 +352,22 @@ class DraOptimizer(Optimizer):
             check.target_coverage,
         )
         return check
+
+    async def _judge_lightweight_success(self, response: str | None) -> bool:
+        if response is None:
+            return False
+        if not self._use_llm_judge_when_no_feedback:
+            return True
+        assert self._goal is not None
+        assert self._judge is not None
+        score = await self._judge.score(
+            goal=self._goal.description,
+            attack_prompt=self._current_user_prompt,
+            response=response,
+        )
+        self._best_score = max(self._best_score, score.normalized_score)
+        logger.info("DRA: official GPT judge rating=%d/10", score.rating)
+        return score.success
 
     def _apply_retry_adjustment(self, check: DraCheckResult) -> None:
         if not check.jailbroken_gcg:

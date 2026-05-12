@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 from superred.core.types.controllable import Controllable
 from superred.core.types.observable import Observable, ObservableValue
@@ -44,5 +44,14 @@ class FakeReadableTrajectory:
         return items
 
 
-def fake_llm() -> AsyncMock:
-    return AsyncMock()
+def mock_response(content: str | None) -> MagicMock:
+    resp = MagicMock()
+    resp.choices = [MagicMock()]
+    resp.choices[0].message.content = content
+    return resp
+
+
+def fake_llm(judge_response: str = "Rating: [[10]]") -> AsyncMock:
+    llm = AsyncMock()
+    llm.complete.return_value = mock_response(judge_response)
+    return llm
