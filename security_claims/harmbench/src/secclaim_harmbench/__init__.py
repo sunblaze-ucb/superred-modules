@@ -31,7 +31,8 @@ The judge defaults to reading ``LITELLM_API_BASE`` and
 Per-task metadata (``behavior_id``, ``functional_category``,
 ``semantic_category``, ``split``) is exposed on each :class:`HarmBenchTask`
 instance so post-run aggregation by any axis is a simple groupby over
-``result.threat_model_results[i].task_results``.
+``result.task_results`` (where ``result`` is the
+``ThreatModelResult`` returned by ``controller.run()``).
 """
 
 from __future__ import annotations

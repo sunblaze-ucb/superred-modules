@@ -21,12 +21,19 @@ a superred `SecurityClaim` against `ChatbotTarget`.
 import asyncio, os
 from chatbot_target import ChatbotTarget, USER_TAG, RESPONSE_READABLE_TAG
 from secclaim_harmbench import harmbench_standard_val
-from superred.core.controller import Controller
+from superred.core.controller import Controller, TargetFactory
 
 api_key = os.environ["LITELLM_API_KEY"]
 api_base = os.environ["LITELLM_API_BASE"]
 
-target = ChatbotTarget(model="openai/gpt-4o-mini", api_key=api_key, api_base=api_base)
+# Fresh ChatbotTarget per task; bump concurrency for parallel evaluation
+# (the chatbot wraps the LiteLLM proxy and is safe to call concurrently).
+target_factory = TargetFactory(
+    create=lambda: ChatbotTarget(
+        model="openai/gpt-4o-mini", api_key=api_key, api_base=api_base,
+    ),
+    concurrency=8,
+)
 
 # 41 standard val behaviors. For all 80 val behaviors (across 3 functional
 # categories) use `harmbench_val(...)`; for the 320-task test split use
@@ -43,12 +50,13 @@ from direct_request_optimizer import DirectRequestOptimizer
 
 controller = Controller(
     optimizer_factory=DirectRequestOptimizer,
-    target=target,
+    target_factory=target_factory,
     security_claim=claim,
+    scope=frozenset({USER_TAG, RESPONSE_READABLE_TAG}),
     max_runs_per_task=1,
     include_feedback=False,
 )
-result = asyncio.run(controller.run(scopes=[frozenset({USER_TAG, RESPONSE_READABLE_TAG})]))
+result = asyncio.run(controller.run())   # -> ThreatModelResult
 ```
 
 ## Installation
@@ -100,17 +108,20 @@ the composed factories use `SecurityClaim.from_claims` lazy chaining.
 `frozenset({USER_TAG, RESPONSE_READABLE_TAG})` (interactive black-box).
 HarmBench's threat model assumes the attacker injects the user message
 and observes the response. The claim itself does not pin a scope; the
-experiment script picks via `controller.run(scopes=...)`.
+experiment script picks the scope by passing it to the `Controller`
+constructor. To sweep multiple scopes, instantiate one `Controller` per
+scope and `asyncio.gather` them.
 
 ## Per-task metadata for post-run analysis
 
 Each `HarmBenchTask` exposes plain attributes so you can aggregate
-`result.threat_model_results[i].task_results` by any axis:
+`result.task_results` (the `ThreatModelResult` returned by
+`controller.run()`) by any axis:
 
 ```python
 from collections import defaultdict
 buckets: dict[tuple[str, str], list[bool]] = defaultdict(list)
-for tr in result.threat_model_results[0].task_results:
+for tr in result.task_results:
     t = tr.task
     buckets[("functional", t.functional_category)].append(tr.success)
     buckets[("semantic", t.semantic_category)].append(tr.success)

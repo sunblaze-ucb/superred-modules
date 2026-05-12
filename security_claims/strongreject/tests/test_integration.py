@@ -171,18 +171,18 @@ async def test_full_controller_pipeline_against_violence_one_prompt() -> None:
     one_task = next(iter(full))
     claim_one = SecurityClaim.from_tasks([one_task])
 
+    from superred.core.controller import TargetFactory
     controller = Controller(
         optimizer_factory=_OneShotEchoOptimizer,
-        target=target,
+        target_factory=TargetFactory.singleton(target),
         security_claim=cast(SecurityClaim[Target], claim_one),
+        scope=frozenset({USER_TAG, RESPONSE_READABLE_TAG}),
         max_runs_per_task=1,
     )
-    result = await controller.run(scopes=[frozenset({USER_TAG, RESPONSE_READABLE_TAG})])
+    result = await controller.run()
 
-    assert len(result.threat_model_results) == 1
-    tmr = result.threat_model_results[0]
-    assert len(tmr.task_results) == 1
-    tr = tmr.task_results[0]
+    assert len(result.task_results) == 1
+    tr = result.task_results[0]
     assert len(tr.runs) == 1
     run = tr.runs[0]
 
@@ -232,14 +232,15 @@ async def test_pipeline_stateless_second_run() -> None:
     task_b = next(tasks_iter)
     claim = SecurityClaim.from_tasks([task_a, task_b])
 
+    from superred.core.controller import TargetFactory
     controller = Controller(
         optimizer_factory=_OneShotEchoOptimizer,
-        target=target,
+        target_factory=TargetFactory.singleton(target),
         security_claim=cast(SecurityClaim[Target], claim),
+        scope=frozenset({USER_TAG, RESPONSE_READABLE_TAG}),
         max_runs_per_task=1,
     )
-    result = await controller.run(scopes=[frozenset({USER_TAG, RESPONSE_READABLE_TAG})])
-    tmr = result.threat_model_results[0]
-    assert len(tmr.task_results) == 2
-    for tr in tmr.task_results:
+    result = await controller.run()
+    assert len(result.task_results) == 2
+    for tr in result.task_results:
         assert 0.0 <= tr.best_score.value <= 1.0
