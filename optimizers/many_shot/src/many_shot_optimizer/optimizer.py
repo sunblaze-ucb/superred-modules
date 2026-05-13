@@ -24,7 +24,6 @@ from superred.core.types.events import (
 from superred.core.types.evaluation import EvaluationResult
 from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
-from superred.core.types.trajectory import ReadableTrajectory
 
 from many_shot_optimizer.evaluator import Evaluator
 from many_shot_optimizer.generator import ExampleGenerator
@@ -110,7 +109,6 @@ class ManyShotOptimizer(Optimizer):
         self._evaluator: Evaluator | None = None
         self._generator: ExampleGenerator | None = None
         self._primary_controllable: Controllable | None = None
-        self._trajectory: ReadableTrajectory | None = None
         self._examples: list[dict[str, str]] = []
         self._generated_examples: list[dict[str, str]] = []
 
@@ -174,7 +172,6 @@ class ManyShotOptimizer(Optimizer):
         self._current_user_prompt = build_final_user_prompt(
             objective=self._goal.description,
         )
-        self._trajectory = event.trajectory
         self._reset_run_state()
         logger.info("ManyShot: attempt %d, %d examples", self._attempt, len(examples))
         return EventResponse(event=event)
@@ -315,11 +312,11 @@ class ManyShotOptimizer(Optimizer):
 
     def _get_response_from_trajectory(self) -> str | None:
         """Best-effort response recovery from filtered trajectory."""
-        if self._trajectory is None:
+        if self.current_trajectory is None:
             return None
 
         recovered: str | None = None
-        for item in self._trajectory.drain():
+        for item in self.current_trajectory.drain():
             if not isinstance(item, ObservableEvent):
                 continue
             name = item.observable.name

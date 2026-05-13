@@ -1,10 +1,13 @@
 """Tests for ManyShotOptimizer event-driven state machine."""
 
+import asyncio
 import json
 import random
+from typing import Any
 from unittest.mock import AsyncMock
 import pytest
 
+from superred.core.channel import EventEnvelope
 from superred.core.types.event import EventResponse
 from superred.core.types.evaluation import EvaluationResult, Score
 from superred.core.types.events import (
@@ -90,10 +93,24 @@ async def _init_optimizer(**kwargs) -> ManyShotOptimizer:
     return opt
 
 
+async def _dispatch_event(opt: ManyShotOptimizer, event: Any) -> EventResponse:
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[EventResponse] = loop.create_future()
+    envelope = EventEnvelope(event=event, future=future, loop=loop)
+    try:
+        await opt._dispatch(envelope)
+    except Exception:
+        await asyncio.sleep(0)
+        if future.done():
+            future.exception()
+        raise
+    return await future
+
+
 @pytest.mark.asyncio
 async def test_run_start_returns_event_response():
     opt = await _init_optimizer()
-    resp = await opt.on_event(_make_run_start())
+    resp = await _dispatch_event(opt, _make_run_start())
     assert isinstance(resp, EventResponse)
 
 
@@ -101,8 +118,8 @@ async def test_run_start_returns_event_response():
 async def test_pre_call_injects_many_shot_prompt():
     opt = await _init_optimizer(example_counts=[3])
     ctrl = make_controllable()
-    await opt.on_event(_make_run_start())
-    resp = await opt.on_event(_make_pre_call(ctrl))
+    await _dispatch_event(opt, _make_run_start())
+    resp = await _dispatch_event(opt, _make_pre_call(ctrl))
     assert isinstance(resp, ControllableInjection)
     assert "You are a helpful assistant" in resp.value
     assert "test objective" in resp.value
@@ -112,8 +129,8 @@ async def test_pre_call_injects_many_shot_prompt():
 async def test_prompt_contains_correct_example_count():
     opt = await _init_optimizer(example_counts=[5])
     ctrl = make_controllable()
-    await opt.on_event(_make_run_start())
-    resp = await opt.on_event(_make_pre_call(ctrl))
+    await _dispatch_event(opt, _make_run_start())
+    resp = await _dispatch_event(opt, _make_pre_call(ctrl))
     assert isinstance(resp, ControllableInjection)
     assert resp.value.count("Assistant:") == 5
 
@@ -133,8 +150,8 @@ async def test_defaults_use_256_shots_and_shuffle_examples():
     random.Random(seed).shuffle(expected)
     expected = expected[:4]
 
-    await opt.on_event(_make_run_start())
-    resp = await opt.on_event(_make_pre_call(ctrl))
+    await _dispatch_event(opt, _make_run_start())
+    resp = await _dispatch_event(opt, _make_pre_call(ctrl))
 
     assert isinstance(resp, ControllableInjection)
     assert resp.value.count("Assistant:") == 256
@@ -150,8 +167,8 @@ async def test_examples_preserve_source_order_when_shuffle_disabled():
     opt = await _init_optimizer(example_counts=[4], shuffle_examples=False)
     ctrl = make_controllable()
 
-    await opt.on_event(_make_run_start())
-    resp = await opt.on_event(_make_pre_call(ctrl))
+    await _dispatch_event(opt, _make_run_start())
+    resp = await _dispatch_event(opt, _make_pre_call(ctrl))
 
     assert isinstance(resp, ControllableInjection)
     positions = [resp.value.index(_example_text(index)) for index in range(4)]
@@ -170,8 +187,8 @@ async def test_shuffle_examples_is_opt_in_and_seeded():
     random.Random(seed).shuffle(expected)
     expected = expected[:4]
 
-    await opt.on_event(_make_run_start())
-    resp = await opt.on_event(_make_pre_call(ctrl))
+    await _dispatch_event(opt, _make_run_start())
+    resp = await _dispatch_event(opt, _make_pre_call(ctrl))
 
     assert isinstance(resp, ControllableInjection)
     positions = [
@@ -186,14 +203,14 @@ async def test_success_triggers_done():
     opt = await _init_optimizer(success_threshold=0.8)
     ctrl = make_controllable()
     trajectory = Trajectory()
-    await opt.on_event(RunStartEvent(trajectory=trajectory))
-    await opt.on_event(_make_pre_call(ctrl))
+    await _dispatch_event(opt, RunStartEvent(trajectory=trajectory))
+    await _dispatch_event(opt, _make_pre_call(ctrl))
     trajectory.emit(_make_response_observable("full compliance"))
 
     opt.llm.complete.return_value = mock_response(
         '{"refusal": false, "rationale": "Attempts the requested behavior."}'
     )
-    resp = await opt.on_event(_make_run_end())
+    resp = await _dispatch_event(opt, _make_run_end())
     assert isinstance(resp, RunEndResponse)
     assert resp.done is True
 
@@ -204,15 +221,15 @@ async def test_run_end_uses_trajectory_response_and_ignores_post_call():
     ctrl = make_controllable()
     trajectory = Trajectory()
 
-    await opt.on_event(RunStartEvent(trajectory=trajectory))
-    await opt.on_event(_make_pre_call(ctrl))
-    await opt.on_event(_make_post_call(ctrl, "post-call fallback"))
+    await _dispatch_event(opt, RunStartEvent(trajectory=trajectory))
+    await _dispatch_event(opt, _make_pre_call(ctrl))
+    await _dispatch_event(opt, _make_post_call(ctrl, "post-call fallback"))
     trajectory.emit(_make_response_observable("trajectory response"))
 
     opt.llm.complete.return_value = mock_response(
         '{"refusal": false, "rationale": "Attempts the requested behavior."}'
     )
-    resp = await opt.on_event(_make_run_end())
+    resp = await _dispatch_event(opt, _make_run_end())
 
     assert isinstance(resp, RunEndResponse)
     assert resp.done is True
@@ -226,10 +243,10 @@ async def test_post_call_response_without_trajectory_does_not_score():
     opt = await _init_optimizer(example_counts=[3], success_threshold=0.8)
     ctrl = make_controllable()
 
-    await opt.on_event(_make_run_start())
-    await opt.on_event(_make_pre_call(ctrl))
-    await opt.on_event(_make_post_call(ctrl, "post-call only"))
-    resp = await opt.on_event(_make_run_end())
+    await _dispatch_event(opt, _make_run_start())
+    await _dispatch_event(opt, _make_pre_call(ctrl))
+    await _dispatch_event(opt, _make_post_call(ctrl, "post-call only"))
+    resp = await _dispatch_event(opt, _make_run_end())
 
     assert isinstance(resp, RunEndResponse)
     assert resp.done is True
@@ -243,20 +260,20 @@ async def test_escalation_through_schedule():
 
     # First attempt: 3 examples
     trajectory = Trajectory()
-    await opt.on_event(RunStartEvent(trajectory=trajectory))
-    resp1 = await opt.on_event(_make_pre_call(ctrl))
+    await _dispatch_event(opt, RunStartEvent(trajectory=trajectory))
+    resp1 = await _dispatch_event(opt, _make_pre_call(ctrl))
     assert resp1.value.count("Assistant:") == 3
 
     opt.llm.complete.return_value = mock_response(
         '{"refusal": true, "rationale": "Refuses the request."}'
     )
     trajectory.emit(_make_response_observable("I can't help with that request."))
-    end_resp = await opt.on_event(_make_run_end())
+    end_resp = await _dispatch_event(opt, _make_run_end())
     assert end_resp.done is False
 
     # Second attempt: 6 examples
-    await opt.on_event(_make_run_start())
-    resp2 = await opt.on_event(_make_pre_call(ctrl))
+    await _dispatch_event(opt, _make_run_start())
+    resp2 = await _dispatch_event(opt, _make_pre_call(ctrl))
     assert resp2.value.count("Assistant:") == 6
 
 
@@ -266,14 +283,14 @@ async def test_all_attempts_exhausted():
     ctrl = make_controllable()
     trajectory = Trajectory()
 
-    await opt.on_event(RunStartEvent(trajectory=trajectory))
-    await opt.on_event(_make_pre_call(ctrl))
+    await _dispatch_event(opt, RunStartEvent(trajectory=trajectory))
+    await _dispatch_event(opt, _make_pre_call(ctrl))
 
     opt.llm.complete.return_value = mock_response(
         '{"refusal": true, "rationale": "Refuses the request."}'
     )
     trajectory.emit(_make_response_observable("I can't help with that request."))
-    resp = await opt.on_event(_make_run_end())
+    resp = await _dispatch_event(opt, _make_run_end())
     assert resp.done is True
 
 
@@ -282,8 +299,8 @@ async def test_custom_example_counts():
     opt = await _init_optimizer(example_counts=[7, 14, 21])
     ctrl = make_controllable()
 
-    await opt.on_event(_make_run_start())
-    resp = await opt.on_event(_make_pre_call(ctrl))
+    await _dispatch_event(opt, _make_run_start())
+    resp = await _dispatch_event(opt, _make_pre_call(ctrl))
     assert resp.value.count("Assistant:") == 7
 
 
@@ -293,11 +310,11 @@ async def test_secondary_controllable_ignored():
     ctrl1 = make_controllable()
     ctrl2 = make_controllable(name="other")
 
-    await opt.on_event(_make_run_start())
-    resp1 = await opt.on_event(_make_pre_call(ctrl1))
+    await _dispatch_event(opt, _make_run_start())
+    resp1 = await _dispatch_event(opt, _make_pre_call(ctrl1))
     assert isinstance(resp1, ControllableInjection)
 
-    resp2 = await opt.on_event(_make_pre_call(ctrl2))
+    resp2 = await _dispatch_event(opt, _make_pre_call(ctrl2))
     assert isinstance(resp2, ControllableNoInjection)
 
 
@@ -307,12 +324,12 @@ async def test_evaluator_failure_gives_low_score():
     ctrl = make_controllable()
     trajectory = Trajectory()
 
-    await opt.on_event(RunStartEvent(trajectory=trajectory))
-    await opt.on_event(_make_pre_call(ctrl))
+    await _dispatch_event(opt, RunStartEvent(trajectory=trajectory))
+    await _dispatch_event(opt, _make_pre_call(ctrl))
 
     opt.llm.complete.side_effect = Exception("LLM down")
     trajectory.emit(_make_response_observable("some response"))
-    resp = await opt.on_event(_make_run_end())
+    resp = await _dispatch_event(opt, _make_run_end())
     assert resp.done is False
 
 
@@ -330,8 +347,8 @@ async def test_llm_generation_triggered_when_count_exceeds_bundled():
     generated = [{"user": f"GQ{i}", "assistant": f"GA{i}"} for i in range(5)]
     opt.llm.complete.return_value = mock_response(json.dumps(generated))
 
-    await opt.on_event(_make_run_start())
-    resp = await opt.on_event(_make_pre_call(ctrl))
+    await _dispatch_event(opt, _make_run_start())
+    resp = await _dispatch_event(opt, _make_pre_call(ctrl))
     assert isinstance(resp, ControllableInjection)
     assert resp.value.count("Assistant:") == 10
 
@@ -351,8 +368,8 @@ async def test_custom_category_filter_limits_examples():
     )
     ctrl = make_controllable()
 
-    await opt.on_event(_make_run_start())
-    resp = await opt.on_event(_make_pre_call(ctrl))
+    await _dispatch_event(opt, _make_run_start())
+    resp = await _dispatch_event(opt, _make_pre_call(ctrl))
 
     assert isinstance(resp, ControllableInjection)
     assert "A question" in resp.value
@@ -381,10 +398,10 @@ async def test_custom_category_filter_rejects_missing_category():
 async def test_run_end_evaluation_can_mark_success_without_post_call():
     opt = await _init_optimizer(example_counts=[3, 6])
     ctrl = make_controllable()
-    await opt.on_event(_make_run_start())
-    await opt.on_event(_make_pre_call(ctrl))
+    await _dispatch_event(opt, _make_run_start())
+    await _dispatch_event(opt, _make_pre_call(ctrl))
 
-    resp = await opt.on_event(_make_run_end_with_eval(success=True, score=0.1))
+    resp = await _dispatch_event(opt, _make_run_end_with_eval(success=True, score=0.1))
     assert isinstance(resp, RunEndResponse)
     assert resp.done is True
     assert opt._best_score == 0.1
@@ -394,10 +411,10 @@ async def test_run_end_evaluation_can_mark_success_without_post_call():
 async def test_run_end_evaluation_score_can_mark_success():
     opt = await _init_optimizer(example_counts=[3, 6], success_threshold=0.8)
     ctrl = make_controllable()
-    await opt.on_event(_make_run_start())
-    await opt.on_event(_make_pre_call(ctrl))
+    await _dispatch_event(opt, _make_run_start())
+    await _dispatch_event(opt, _make_pre_call(ctrl))
 
-    resp = await opt.on_event(_make_run_end_with_eval(success=False, score=0.85))
+    resp = await _dispatch_event(opt, _make_run_end_with_eval(success=False, score=0.85))
     assert isinstance(resp, RunEndResponse)
     assert resp.done is True
     assert opt._best_score == 0.85
@@ -411,12 +428,12 @@ async def test_paper_faithful_opt_out_ignores_system_prompt_then_injects_user_me
     )
     system_ctrl = make_controllable(name="system_prompt")
     user_ctrl = make_controllable(name="user_message")
-    await opt.on_event(_make_run_start())
+    await _dispatch_event(opt, _make_run_start())
 
-    system_resp = await opt.on_event(_make_pre_call(system_ctrl))
+    system_resp = await _dispatch_event(opt, _make_pre_call(system_ctrl))
     assert isinstance(system_resp, ControllableNoInjection)
 
-    user_resp = await opt.on_event(_make_pre_call(user_ctrl))
+    user_resp = await _dispatch_event(opt, _make_pre_call(user_ctrl))
     assert isinstance(user_resp, ControllableInjection)
     assert "test objective" in user_resp.value
 
@@ -429,14 +446,14 @@ async def test_system_prompt_variant_splits_demos_and_final_user_query():
     )
     system_ctrl = make_controllable(name="system_prompt")
     user_ctrl = make_controllable(name="user_message")
-    await opt.on_event(_make_run_start())
+    await _dispatch_event(opt, _make_run_start())
 
-    system_resp = await opt.on_event(_make_pre_call(system_ctrl))
+    system_resp = await _dispatch_event(opt, _make_pre_call(system_ctrl))
     assert isinstance(system_resp, ControllableInjection)
     assert system_resp.value.count("Assistant:") == 3
     assert "test objective" not in system_resp.value
 
-    user_resp = await opt.on_event(_make_pre_call(user_ctrl))
+    user_resp = await _dispatch_event(opt, _make_pre_call(user_ctrl))
     assert isinstance(user_resp, ControllableInjection)
     assert user_resp.value == "User: test objective"
     assert "Assistant:" not in user_resp.value
@@ -449,9 +466,9 @@ async def test_system_prompt_variant_falls_back_to_user_prompt_without_system_sc
         use_system_prompt_when_available=True,
     )
     user_ctrl = make_controllable(name="user_message")
-    await opt.on_event(_make_run_start())
+    await _dispatch_event(opt, _make_run_start())
 
-    user_resp = await opt.on_event(_make_pre_call(user_ctrl))
+    user_resp = await _dispatch_event(opt, _make_pre_call(user_ctrl))
     assert isinstance(user_resp, ControllableInjection)
     assert user_resp.value.count("Assistant:") == 3
     assert user_resp.value.endswith("User: test objective")
@@ -461,9 +478,9 @@ async def test_system_prompt_variant_falls_back_to_user_prompt_without_system_sc
 async def test_injects_only_once_per_run():
     opt = await _init_optimizer(example_counts=[3])
     ctrl = make_controllable()
-    await opt.on_event(_make_run_start())
+    await _dispatch_event(opt, _make_run_start())
 
-    first = await opt.on_event(_make_pre_call(ctrl))
-    second = await opt.on_event(_make_pre_call(ctrl))
+    first = await _dispatch_event(opt, _make_pre_call(ctrl))
+    second = await _dispatch_event(opt, _make_pre_call(ctrl))
     assert isinstance(first, ControllableInjection)
     assert isinstance(second, ControllableNoInjection)
