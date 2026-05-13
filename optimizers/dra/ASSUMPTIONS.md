@@ -58,6 +58,12 @@ optimizer first uses the official lightweight checks:
 - refusal-prefix check from the DRA code;
 - exact-match target-word coverage with threshold `em_t`.
 
+The public DRA code also computes an AutoDAN refusal-prefix check. This
+optimizer preserves that value on `DraCheckResult.jailbroken_autodan` and logs
+it for parity/debugging. It does not drive retry adjustment: the released attack
+loop adjusts `toxic_trunc` on the GCG refusal check and adjusts `benign_trunc`
+on the exact-match check.
+
 The official full experiment then uses an external HarmBench or GPT-4 judge.
 When SuperRed feedback is available, that role is best represented by
 `RunEndEvent.evaluation`, because the controller owns task-specific judging.
@@ -70,10 +76,11 @@ only the lightweight GCG/EM gate.
 ## Deliberate Differences
 
 The official scripts can call Detoxify to decide which guide words are sensitive.
-This package does not require Detoxify by default, so it uses the official static
-sensitive-word list unless callers provide their own token classifier. Installing
-the optional `detoxify` extra lets callers wire in a Detoxify-backed classifier
-without making every SuperRed install download a separate moderation model.
+This package keeps Detoxify as an optional extra because it brings a separate
+moderation-model dependency into every install. At runtime, the optimizer tries
+to use Detoxify automatically when it is installed and loadable. If it is not
+available, it falls back to the official static sensitive-word list. Callers can
+also pass an explicit token classifier.
 
 The paper defines exact match more broadly than the released script: it allows
 word overlap or embedding similarity. The official public attack script only

@@ -24,6 +24,7 @@ from superred.core.types.events import (
 from superred.core.types.goal import Goal
 from superred.core.types.llm import BudgetExhaustedError, LLMUsage
 
+import dra_optimizer.optimizer as optimizer_module
 from dra_optimizer.builder import OFFICIAL_SYSTEM_PROMPT
 from dra_optimizer.optimizer import DraOptimizer
 from tests.conftest import (
@@ -129,6 +130,45 @@ async def test_model_observable_selects_official_suffix_family() -> None:
     assert opt._model == "gpt-4o"
     assert opt._current_attack is not None
     assert opt._current_attack.model == "gpt-4o"
+
+
+@pytest.mark.asyncio
+async def test_default_sensitive_detector_prefers_detoxify_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    detector = lambda token: token == "alpha"
+    monkeypatch.setattr(
+        optimizer_module,
+        "try_create_detoxify_token_detector",
+        lambda: detector,
+    )
+
+    opt = await init_optimizer()
+
+    assert opt._prompt_builder is not None
+    assert opt._prompt_builder._sensitive_token_detector is detector
+
+
+@pytest.mark.asyncio
+async def test_explicit_sensitive_detector_overrides_detoxify(monkeypatch: pytest.MonkeyPatch) -> None:
+    explicit_detector = lambda token: token == "beta"
+    monkeypatch.setattr(
+        optimizer_module,
+        "try_create_detoxify_token_detector",
+        lambda: (lambda token: token == "alpha"),
+    )
+    opt = DraOptimizer(
+        rng=Random(9),
+        sensitive_token_detector=explicit_detector,
+    )
+
+    await opt.initialize(
+        goal=Goal(description="alpha beta"),
+        controllables=[make_controllable()],
+        observables=[],
+        llm_client=fake_llm("Rating: [[10]]"),
+    )
+
+    assert opt._prompt_builder is not None
+    assert opt._prompt_builder._sensitive_token_detector is explicit_detector
 
 
 @pytest.mark.asyncio

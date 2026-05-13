@@ -154,6 +154,15 @@ class DetoxifyTokenDetector:
         return bool(scores) and max(scores) >= self._threshold
 
 
+def try_create_detoxify_token_detector() -> SensitiveTokenDetector | None:
+    """Use the official Detoxify detector when the optional dependency is ready."""
+
+    try:
+        return DetoxifyTokenDetector()
+    except Exception:
+        return None
+
+
 @dataclass(frozen=True)
 class DraPrompt:
     """Generated DRA prompt and metadata for one attempt."""

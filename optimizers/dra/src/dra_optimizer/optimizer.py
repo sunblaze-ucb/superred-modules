@@ -31,6 +31,7 @@ from dra_optimizer.builder import (
     DraPromptBuilder,
     SensitiveTokenDetector,
     normalize_model_name,
+    try_create_detoxify_token_detector,
 )
 from dra_optimizer.evaluator import DraCheckResult, jailbreak_check
 from dra_optimizer.judge import DraGptJudge
@@ -65,6 +66,7 @@ class DraOptimizer(Optimizer):
         max_no_signal_runs: int = 0,
         rng: Random | None = None,
         sensitive_token_detector: SensitiveTokenDetector | None = None,
+        use_detoxify_when_available: bool = True,
         prompt_builder_factory: Callable[[Random], DraPromptBuilder] | None = None,
     ) -> None:
         super().__init__()
@@ -96,6 +98,7 @@ class DraOptimizer(Optimizer):
         self._rng = rng or Random()
         self._prompt_builder_factory = prompt_builder_factory
         self._sensitive_token_detector = sensitive_token_detector
+        self._use_detoxify_when_available = use_detoxify_when_available
 
         self._goal: Goal | None = None
         self._model = "llama"
@@ -154,9 +157,12 @@ class DraOptimizer(Optimizer):
         if self._prompt_builder_factory is not None:
             self._prompt_builder = self._prompt_builder_factory(self._rng)
         else:
+            detector = self._sensitive_token_detector
+            if detector is None and self._use_detoxify_when_available:
+                detector = try_create_detoxify_token_detector()
             self._prompt_builder = DraPromptBuilder(
                 rng=self._rng,
-                sensitive_token_detector=self._sensitive_token_detector,
+                sensitive_token_detector=detector,
             )
         self._judge = DraGptJudge(
             llm=self.llm,
