@@ -16,11 +16,13 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from superred.core.channel import EventEnvelope
 from superred.core.types.controllable import Controllable
 from superred.core.types.evaluation import EvaluationResult, Score
 from superred.core.types.events import (
@@ -211,6 +213,20 @@ def _stub_summarizer(
 # ---------------------------------------------------------------------------
 
 
+async def _dispatch_event(opt, event):
+    loop = asyncio.get_running_loop()
+    future = loop.create_future()
+    envelope = EventEnvelope(event=event, future=future, loop=loop)
+    try:
+        await opt._dispatch(envelope)
+    except Exception:
+        await asyncio.sleep(0)
+        if future.done():
+            future.exception()
+        raise
+    return await future
+
+
 class TestConstruction:
     def test_rejects_invalid_max_attempts(self) -> None:
         with pytest.raises(ValueError):
@@ -236,7 +252,7 @@ class TestRunStart:
     async def test_first_run_uses_warm_up_attacker(self) -> None:
         opt = await _init_optimizer()
         attacker = _stub_attacker(opt)
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         attacker.warm_up.assert_called_once()
         attacker.use_strategy.assert_not_called()
         attacker.find_new_strategy.assert_not_called()
@@ -250,7 +266,7 @@ class TestRunStart:
         opt._awaiting_post_call = True
         opt._pending_post_answer = "stale"
         opt._primary_pre_controllable = _user_ctrl()
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         assert opt._injected_this_run is False
         assert opt._awaiting_post_call is False
         assert opt._pending_post_answer is None
@@ -282,8 +298,8 @@ class TestRunStart:
         summarizer = _stub_summarizer(opt)
 
         traj = _FakeReadableTrajectory()
-        await opt.on_event(RunStartEvent(trajectory=traj))
-        await opt.on_event(
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj))
+        await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_user_ctrl(), request="r1",
             ),
@@ -293,7 +309,7 @@ class TestRunStart:
                 observable=_response_observable(), content="resp-1",
             ),
         )
-        await opt.on_event(
+        await _dispatch_event(opt,
             RunEndEvent(evaluation=None, security_domain=USER_TAG),
         )
 
@@ -316,9 +332,9 @@ class TestPreCall:
     async def test_pre_call_injects_attacker_prompt(self) -> None:
         opt = await _init_optimizer()
         _stub_attacker(opt, warm_up="ATTACK PROMPT")
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
-        resp = await opt.on_event(
+        resp = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=_user_ctrl(), request="r"),
         )
         assert isinstance(resp, ControllableInjection)
@@ -328,13 +344,13 @@ class TestPreCall:
     async def test_second_pre_call_in_same_run_returns_no_injection(self) -> None:
         opt = await _init_optimizer()
         _stub_attacker(opt)
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         ctrl = _user_ctrl()
-        first = await opt.on_event(
+        first = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=ctrl, request="r1"),
         )
         assert isinstance(first, ControllableInjection)
-        second = await opt.on_event(
+        second = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=ctrl, request="r2"),
         )
         assert isinstance(second, ControllableNoInjection)
@@ -343,16 +359,16 @@ class TestPreCall:
     async def test_locks_to_first_user_controllable(self) -> None:
         opt = await _init_optimizer()
         _stub_attacker(opt)
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         ctrl_user = _user_ctrl()
         ctrl_other = Controllable(
             name="other_user_channel", security_domain=USER_TAG,
         )
-        first = await opt.on_event(
+        first = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=ctrl_user, request="r1"),
         )
         assert isinstance(first, ControllableInjection)
-        second = await opt.on_event(
+        second = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=ctrl_other, request="r2"),
         )
         assert isinstance(second, ControllableNoInjection)
@@ -362,9 +378,9 @@ class TestPreCall:
         """ChatbotTarget shape: system_prompt PreCall before user_message loop."""
         opt = await _init_optimizer()
         _stub_attacker(opt)
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
-        sp_resp = await opt.on_event(
+        sp_resp = await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_system_prompt_ctrl(), request="seed",
             ),
@@ -372,7 +388,7 @@ class TestPreCall:
         assert isinstance(sp_resp, ControllableNoInjection)
         assert opt._primary_pre_controllable is None
 
-        user_resp = await opt.on_event(
+        user_resp = await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_user_ctrl(), request="seed",
             ),
@@ -393,15 +409,15 @@ class TestTargetControllableNameOverride:
             target_controllable_name="prompt_text",
         )
         _stub_attacker(opt)
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
-        wrong = await opt.on_event(
+        wrong = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=_user_ctrl(), request="x"),
         )
         assert isinstance(wrong, ControllableNoInjection)
 
         target = Controllable(name="prompt_text", security_domain=USER_TAG)
-        right = await opt.on_event(
+        right = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=target, request="x"),
         )
         assert isinstance(right, ControllableInjection)
@@ -417,15 +433,15 @@ class TestPostCall:
     async def test_post_call_records_answer(self) -> None:
         opt = await _init_optimizer()
         _stub_attacker(opt)
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
         ctrl = _user_ctrl()
-        pre = await opt.on_event(
+        pre = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=ctrl, request="seed"),
         )
         injected = pre.value  # type: ignore[attr-defined]
 
-        await opt.on_event(
+        await _dispatch_event(opt,
             ControllablePostCallEvent(
                 controllable=_response_ctrl(),
                 request=injected,
@@ -459,8 +475,8 @@ class TestRunEndScoring:
         # the summarizer fires immediately and the library gets its
         # first entry.
         traj1 = _FakeReadableTrajectory()
-        await opt.on_event(RunStartEvent(trajectory=traj1))
-        await opt.on_event(
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj1))
+        await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_user_ctrl(), request="r1",
             ),
@@ -470,7 +486,7 @@ class TestRunEndScoring:
                 observable=_response_observable(), content="resp-1",
             ),
         )
-        await opt.on_event(
+        await _dispatch_event(opt,
             RunEndEvent(evaluation=None, security_domain=USER_TAG),
         )
         assert summarizer.call_count == 1
@@ -481,8 +497,8 @@ class TestRunEndScoring:
         # strategy name, so add() merges (still len==1) and appends a
         # second example/score.
         traj2 = _FakeReadableTrajectory()
-        await opt.on_event(RunStartEvent(trajectory=traj2))
-        await opt.on_event(
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj2))
+        await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_user_ctrl(), request="r2",
             ),
@@ -492,7 +508,7 @@ class TestRunEndScoring:
                 observable=_response_observable(), content="resp-2",
             ),
         )
-        await opt.on_event(
+        await _dispatch_event(opt,
             RunEndEvent(evaluation=None, security_domain=USER_TAG),
         )
 
@@ -508,8 +524,8 @@ class TestRunEndScoring:
         _stub_summarizer(opt)
 
         traj = _FakeReadableTrajectory()
-        await opt.on_event(RunStartEvent(trajectory=traj))
-        await opt.on_event(
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj))
+        await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_user_ctrl(), request="r1",
             ),
@@ -519,7 +535,7 @@ class TestRunEndScoring:
                 observable=_response_observable(), content="r",
             ),
         )
-        end = await opt.on_event(
+        end = await _dispatch_event(opt,
             RunEndEvent(evaluation=None, security_domain=USER_TAG),
         )
         assert isinstance(end, RunEndResponse)
@@ -538,8 +554,8 @@ class TestRunEndScoring:
 
         for i in range(2):
             traj = _FakeReadableTrajectory()
-            await opt.on_event(RunStartEvent(trajectory=traj))
-            await opt.on_event(
+            await _dispatch_event(opt, RunStartEvent(trajectory=traj))
+            await _dispatch_event(opt,
                 ControllablePreCallEvent(
                     controllable=_user_ctrl(), request=f"r{i}",
                 ),
@@ -549,7 +565,7 @@ class TestRunEndScoring:
                     observable=_response_observable(), content=f"resp-{i}",
                 ),
             )
-            await opt.on_event(
+            await _dispatch_event(opt,
                 RunEndEvent(evaluation=None, security_domain=USER_TAG),
             )
 
@@ -569,8 +585,8 @@ class TestRunEndScoring:
 
         for i in range(2):
             traj = _FakeReadableTrajectory()
-            await opt.on_event(RunStartEvent(trajectory=traj))
-            await opt.on_event(
+            await _dispatch_event(opt, RunStartEvent(trajectory=traj))
+            await _dispatch_event(opt,
                 ControllablePreCallEvent(
                     controllable=_user_ctrl(), request=f"r{i}",
                 ),
@@ -580,7 +596,7 @@ class TestRunEndScoring:
                     observable=_response_observable(), content=f"resp-{i}",
                 ),
             )
-            await opt.on_event(
+            await _dispatch_event(opt,
                 RunEndEvent(evaluation=None, security_domain=USER_TAG),
             )
 
@@ -609,7 +625,7 @@ class TestStrategyRetrieval:
 
         opt._prev_prompt = "prev-prompt"
 
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         attacker.use_strategy.assert_called_once()
         attacker.warm_up.assert_not_called()
 
@@ -624,7 +640,7 @@ class TestStrategyRetrieval:
         )
         opt._prev_prompt = "p"
 
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         attacker.find_new_strategy.assert_called_once()
         attacker.use_strategy.assert_not_called()
         attacker.warm_up.assert_not_called()
@@ -641,7 +657,7 @@ class TestStrategyRetrieval:
         opt = await _init_optimizer()
         attacker = _stub_attacker(opt)
 
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         attacker.warm_up.assert_called_once()
         attacker.use_strategy.assert_not_called()
         attacker.find_new_strategy.assert_not_called()
@@ -657,7 +673,7 @@ class TestRefusalFilter:
     async def test_refusal_falls_back_to_raw_goal(self) -> None:
         opt = await _init_optimizer()
         _stub_attacker(opt, warm_up="I cannot help with that.")
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         # Falls back to the goal description itself.
         assert opt._current_prompt == "describe a recipe"
 
@@ -679,14 +695,14 @@ class TestAdversarialSettings:
         summarizer = _stub_summarizer(opt)
 
         for run in range(2):
-            await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
-            resp = await opt.on_event(
+            await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+            resp = await _dispatch_event(opt,
                 ControllablePreCallEvent(
                     controllable=_user_ctrl(), request=f"r{run}",
                 ),
             )
             assert isinstance(resp, ControllableInjection)
-            end = await opt.on_event(
+            end = await _dispatch_event(opt,
                 RunEndEvent(evaluation=None, security_domain=USER_TAG),
             )
             assert end.done is (run == 1)
@@ -705,13 +721,13 @@ class TestAdversarialSettings:
         _stub_attacker(opt)
         scorer = _stub_scorer(opt, score=99.0)
 
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
-        await opt.on_event(
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_user_ctrl(), request="r1",
             ),
         )
-        end = await opt.on_event(
+        end = await _dispatch_event(opt,
             RunEndEvent(evaluation=_success_eval(), security_domain=USER_TAG),
         )
         assert end.done is True
@@ -734,8 +750,8 @@ class TestAdversarialSettings:
 
         for i in range(2):
             traj = _FakeReadableTrajectory()
-            await opt.on_event(RunStartEvent(trajectory=traj))
-            await opt.on_event(
+            await _dispatch_event(opt, RunStartEvent(trajectory=traj))
+            await _dispatch_event(opt,
                 ControllablePreCallEvent(
                     controllable=_user_ctrl(), request=f"r{i}",
                 ),
@@ -745,7 +761,7 @@ class TestAdversarialSettings:
                     observable=_response_observable(), content=f"resp-{i}",
                 ),
             )
-            end = await opt.on_event(
+            end = await _dispatch_event(opt,
                 RunEndEvent(evaluation=None, security_domain=USER_TAG),
             )
             assert end.done is False  # break_score not hit, no eval
@@ -768,8 +784,8 @@ class TestAdversarialSettings:
         _stub_summarizer(opt)
 
         traj = _FakeReadableTrajectory()
-        await opt.on_event(RunStartEvent(trajectory=traj))
-        await opt.on_event(
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj))
+        await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_user_ctrl(), request="r1",
             ),
@@ -779,7 +795,7 @@ class TestAdversarialSettings:
                 observable=_response_observable(), content="resp",
             ),
         )
-        end = await opt.on_event(
+        end = await _dispatch_event(opt,
             RunEndEvent(evaluation=_success_eval(), security_domain=USER_TAG),
         )
         assert end.done is True  # external eval early-stops
@@ -788,8 +804,8 @@ class TestAdversarialSettings:
     async def test_failure_eval_does_not_signal_done(self) -> None:
         opt = await _init_optimizer(max_attempts=3)
         _stub_attacker(opt)
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
-        end = await opt.on_event(
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        end = await _dispatch_event(opt,
             RunEndEvent(evaluation=_failure_eval(), security_domain=USER_TAG),
         )
         assert end.done is False
@@ -809,13 +825,13 @@ class TestResponseSource:
         _stub_summarizer(opt)
 
         traj = _FakeReadableTrajectory()
-        await opt.on_event(RunStartEvent(trajectory=traj))
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj))
         ctrl = _user_ctrl()
-        pre = await opt.on_event(
+        pre = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=ctrl, request="r"),
         )
         injected = pre.value  # type: ignore[attr-defined]
-        await opt.on_event(
+        await _dispatch_event(opt,
             ControllablePostCallEvent(
                 controllable=_response_ctrl(),
                 request=injected, answer="from-postcall",
@@ -827,7 +843,7 @@ class TestResponseSource:
                 content="from-trajectory",
             ),
         )
-        await opt.on_event(
+        await _dispatch_event(opt,
             RunEndEvent(evaluation=None, security_domain=USER_TAG),
         )
 
@@ -841,19 +857,19 @@ class TestResponseSource:
         _stub_summarizer(opt)
 
         traj = _FakeReadableTrajectory()
-        await opt.on_event(RunStartEvent(trajectory=traj))
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj))
         ctrl = _user_ctrl()
-        pre = await opt.on_event(
+        pre = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=ctrl, request="r"),
         )
         injected = pre.value  # type: ignore[attr-defined]
-        await opt.on_event(
+        await _dispatch_event(opt,
             ControllablePostCallEvent(
                 controllable=_response_ctrl(),
                 request=injected, answer="postcall-reply",
             ),
         )
-        await opt.on_event(
+        await _dispatch_event(opt,
             RunEndEvent(evaluation=None, security_domain=USER_TAG),
         )
 
@@ -873,14 +889,14 @@ class TestNoSignalGuard:
         )
         _stub_attacker(opt)
 
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
-        end1 = await opt.on_event(
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        end1 = await _dispatch_event(opt,
             RunEndEvent(evaluation=None, security_domain=USER_TAG),
         )
         assert end1.done is False
 
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
-        end2 = await opt.on_event(
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        end2 = await _dispatch_event(opt,
             RunEndEvent(evaluation=None, security_domain=USER_TAG),
         )
         assert end2.done is True
@@ -901,8 +917,8 @@ class TestScorerFailure:
         _stub_summarizer(opt)
 
         traj = _FakeReadableTrajectory()
-        await opt.on_event(RunStartEvent(trajectory=traj))
-        await opt.on_event(
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj))
+        await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_user_ctrl(), request="r",
             ),
@@ -912,7 +928,7 @@ class TestScorerFailure:
                 observable=_response_observable(), content="resp",
             ),
         )
-        end = await opt.on_event(
+        end = await _dispatch_event(opt,
             RunEndEvent(evaluation=None, security_domain=USER_TAG),
         )
         assert isinstance(end, RunEndResponse)
@@ -936,9 +952,9 @@ class TestTargetRunIntegration:
         _stub_summarizer(opt)
 
         traj = _FakeReadableTrajectory()
-        await opt.on_event(RunStartEvent(trajectory=traj))
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj))
 
-        sp_resp = await opt.on_event(
+        sp_resp = await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_system_prompt_ctrl(),
                 request="default-system-prompt",
@@ -949,13 +965,13 @@ class TestTargetRunIntegration:
         user_ctrl = _user_ctrl()
         response_ctrl = _response_ctrl()
 
-        pre = await opt.on_event(
+        pre = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=user_ctrl, request="seed"),
         )
         assert isinstance(pre, ControllableInjection)
         assert pre.value == "JAILBREAK PROMPT"
 
-        await opt.on_event(
+        await _dispatch_event(opt,
             ControllablePostCallEvent(
                 controllable=response_ctrl,
                 request="JAILBREAK PROMPT",
@@ -970,12 +986,12 @@ class TestTargetRunIntegration:
         )
 
         # Single-turn: target tries another user_message PreCall -> NoInjection.
-        pre2 = await opt.on_event(
+        pre2 = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=user_ctrl, request="seed"),
         )
         assert isinstance(pre2, ControllableNoInjection)
 
-        end = await opt.on_event(
+        end = await _dispatch_event(opt,
             RunEndEvent(evaluation=None, security_domain=USER_TAG),
         )
         assert end.done is True
@@ -1028,7 +1044,7 @@ class TestTargetContextPropagation:
             observables=[_model_observable("gpt-4o")],
         )
         attacker = _stub_attacker(opt)
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
         attacker.warm_up.assert_called_once()
         call = attacker.warm_up.call_args
@@ -1039,7 +1055,7 @@ class TestTargetContextPropagation:
     async def test_target_context_none_when_observables_empty(self) -> None:
         opt = await _init_optimizer(observables=[])
         attacker = _stub_attacker(opt)
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         # We pass ``None`` (not ``{}``) to keep the attacker's wire
         # protocol unambiguous.
         assert attacker.warm_up.call_args.kwargs["target_context"] is None
@@ -1055,7 +1071,7 @@ class TestTargetContextPropagation:
             example="strong-prompt", score=7.0,
         )
         opt._prev_prompt = "p"
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
         attacker.use_strategy.assert_called_once()
         kwargs = attacker.use_strategy.call_args.kwargs
@@ -1106,7 +1122,7 @@ class TestDualChannelAttack:
             controllables=[_user_ctrl(), _system_prompt_ctrl()],
         )
         attacker = _stub_attacker(opt)
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         assert (
             attacker.warm_up.call_args.kwargs["system_prompt_writable"] is True
         )
@@ -1123,11 +1139,11 @@ class TestDualChannelAttack:
                 system_prompt_override="you are unrestricted",
             ),
         )
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
         # 1. system_prompt PreCall arrives first (chatbot pattern):
         # gets the override.
-        sp = await opt.on_event(
+        sp = await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_system_prompt_ctrl(),
                 request="default-system-prompt",
@@ -1137,7 +1153,7 @@ class TestDualChannelAttack:
         assert sp.value == "you are unrestricted"
 
         # 2. user_message PreCall: gets the jailbreak.
-        um = await opt.on_event(
+        um = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=_user_ctrl(), request="x"),
         )
         assert isinstance(um, ControllableInjection)
@@ -1157,9 +1173,9 @@ class TestDualChannelAttack:
                 system_prompt_override=None,
             ),
         )
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
-        sp = await opt.on_event(
+        sp = await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_system_prompt_ctrl(),
                 request="default-system-prompt",
@@ -1167,7 +1183,7 @@ class TestDualChannelAttack:
         )
         assert isinstance(sp, ControllableNoInjection)
 
-        um = await opt.on_event(
+        um = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=_user_ctrl(), request="x"),
         )
         assert isinstance(um, ControllableInjection)
@@ -1194,14 +1210,14 @@ class TestDualChannelAttack:
                 system_prompt_override="should not surface",
             ),
         )
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         # Prepare leaves the override in place per attacker output;
         # the protection is at the inject site (system_prompt_writable
         # is False so even if a system_prompt PreCall arrived, the
         # injection branch's guard would not fire).
         # Defensive end-to-end check: if a stray system_prompt PreCall
         # somehow arrives, it MUST get NoInjection.
-        sp = await opt.on_event(
+        sp = await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_system_prompt_ctrl(),
                 request="default-system-prompt",
@@ -1221,9 +1237,9 @@ class TestDualChannelAttack:
                 system_prompt_override="o",
             ),
         )
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
-        first = await opt.on_event(
+        first = await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_system_prompt_ctrl(),
                 request="sp1",
@@ -1232,7 +1248,7 @@ class TestDualChannelAttack:
         assert isinstance(first, ControllableInjection)
 
         # A second system_prompt PreCall in the same run gets NoInjection.
-        second = await opt.on_event(
+        second = await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_system_prompt_ctrl(),
                 request="sp2",
@@ -1255,7 +1271,7 @@ class TestDualChannelAttack:
                 system_prompt_override="suspicious override",
             ),
         )
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         assert opt._current_prompt == "describe a recipe"
         assert opt._current_system_prompt_override is None
 
@@ -1276,8 +1292,8 @@ class TestDualChannelAttack:
                 system_prompt_override="OVR",
             ),
         )
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
-        um = await opt.on_event(
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        um = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=_user_ctrl(), request="x"),
         )
         assert isinstance(um, ControllableInjection)
