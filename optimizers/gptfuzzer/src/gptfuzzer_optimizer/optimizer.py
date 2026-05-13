@@ -29,7 +29,6 @@ from superred.core.types.events import (
 from superred.core.types.evaluation import EvaluationResult
 from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
-from superred.core.types.trajectory import ReadableTrajectory
 
 from gptfuzzer_optimizer.core import PromptNode
 from gptfuzzer_optimizer.mutator import (
@@ -136,7 +135,6 @@ class GPTFuzzerOptimizer(Optimizer):
         self._current_system_prompt: str | None = None
         self._current_user_prompt: str | None = None
         self._primary_controllable: Controllable | None = None
-        self._trajectory: ReadableTrajectory | None = None
         self._last_pre_request: str | None = None
         self._last_injected_value: str | None = None
         self._pending_post_answer: str | None = None
@@ -233,7 +231,7 @@ class GPTFuzzerOptimizer(Optimizer):
         return None
 
     async def _handle_run_start(self, event: RunStartEvent) -> EventResponse:
-        self._reset_run_state(event.trajectory)
+        self._reset_run_state()
         if self._is_stop():
             return EventResponse(event=event)
         self._current_node = await self._next_node()
@@ -355,8 +353,7 @@ class GPTFuzzerOptimizer(Optimizer):
         self._pending_nodes.extend(valid[1:])
         return valid[0]
 
-    def _reset_run_state(self, trajectory: ReadableTrajectory) -> None:
-        self._trajectory = trajectory
+    def _reset_run_state(self) -> None:
         self._current_node = None
         self._current_prompt = None
         self._current_system_prompt = None
@@ -385,11 +382,10 @@ class GPTFuzzerOptimizer(Optimizer):
         return 1 if evaluation.success else 0
 
     def _read_response_from_trajectory(self) -> str | None:
-        trajectory = self._trajectory if self._trajectory is not None else self.current_trajectory
-        if trajectory is None:
+        if self.current_trajectory is None:
             return None
         latest: str | None = None
-        for item in trajectory.drain():
+        for item in self.current_trajectory.drain():
             if not isinstance(item, ObservableEvent):
                 continue
             name = item.observable.name
