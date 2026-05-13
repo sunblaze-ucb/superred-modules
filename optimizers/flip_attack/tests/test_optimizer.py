@@ -19,7 +19,6 @@ from superred.core.types.events import (
 )
 from superred.core.types.goal import Goal
 from superred.core.types.observable import Observable, ObservableValue
-from superred.core.types.security_domain import SecurityDomainTag
 from superred.core.types.trajectory import Trajectory
 
 from tests.conftest import DOMAIN, mock_response, make_controllable

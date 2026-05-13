@@ -22,7 +22,6 @@ from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
 
 from flip_attack_optimizer.evaluator import Evaluator
-from flip_attack_optimizer.flipper import FLIP_MODES
 from flip_attack_optimizer.prompts import build_attack_prompts
 
 logger = logging.getLogger(__name__)
