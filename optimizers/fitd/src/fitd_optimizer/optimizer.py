@@ -24,7 +24,6 @@ from superred.core.types.evaluation import EvaluationResult
 from superred.core.types.goal import Goal
 from superred.core.types.llm import BudgetExhaustedError
 from superred.core.types.observable import ObservableValue
-from superred.core.types.trajectory import ReadableTrajectory
 
 from fitd_optimizer.assistant import FITDAssistant
 from fitd_optimizer.prompts import (
@@ -139,7 +138,6 @@ class FITDOptimizer(Optimizer):
         self._can_write_system_prompt = False
         self._static_context = ""
 
-        self._trajectory: ReadableTrajectory | None = None
         self._primary_user_controllable: Controllable | None = None
         self._primary_post_controllable: Controllable | None = None
         self._system_prompt_handled = False
@@ -199,7 +197,6 @@ class FITDOptimizer(Optimizer):
 
     async def _handle_run_start(self, event: RunStartEvent) -> EventResponse:
         self._reset_run_state(clear_attempt_state=False)
-        self._trajectory = event.trajectory
         if not self._prompt_sequence:
             try:
                 self._prompt_sequence = await self._prepare_prompt_sequence()
@@ -559,7 +556,7 @@ class FITDOptimizer(Optimizer):
             self._attempt_done = True
 
     def _read_response_from_trajectory(self) -> str | None:
-        trajectory = self._trajectory or self.current_trajectory
+        trajectory = self.current_trajectory
         if trajectory is None:
             return None
         recovered: str | None = None
@@ -616,7 +613,6 @@ class FITDOptimizer(Optimizer):
             self._succeeded = True
 
     def _reset_run_state(self, *, clear_attempt_state: bool) -> None:
-        self._trajectory = None
         self._primary_user_controllable = None
         self._primary_post_controllable = None
         self._system_prompt_handled = False

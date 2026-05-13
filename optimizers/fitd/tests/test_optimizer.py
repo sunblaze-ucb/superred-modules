@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
 
+from superred.core.channel import EventEnvelope
+from superred.core.types.event import EventResponse
 from superred.core.types.evaluation import EvaluationResult, Score
 from superred.core.types.events import (
     ControllableInjection,
@@ -71,25 +75,39 @@ async def init_optimizer(
     return opt
 
 
+async def dispatch_event(opt: FITDOptimizer, event: Any) -> EventResponse:
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[EventResponse] = loop.create_future()
+    envelope = EventEnvelope(event=event, future=future, loop=loop)
+    try:
+        await opt._dispatch(envelope)
+    except Exception:
+        await asyncio.sleep(0)
+        if future.done():
+            future.exception()
+        raise
+    return await future
+
+
 @pytest.mark.asyncio
 async def test_first_turn_then_polish_turn_matches_official_flow() -> None:
     opt = await init_optimizer()
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
 
-    first = await opt.on_event(
+    first = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="original")
     )
     assert isinstance(first, ControllableInjection)
     assert first.value == "benign bridge"
 
-    await opt.on_event(
+    await dispatch_event(opt,
         ControllablePostCallEvent(
             controllable=make_controllable("response", MODEL_TAG),
             request=first.value,
             answer="benign answer",
         )
     )
-    second = await opt.on_event(
+    second = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="next")
     )
 
@@ -107,15 +125,15 @@ async def test_chatbot_target_shape_uses_system_prompt_without_stealing_user_loc
             make_controllable("user_message", USER_TAG),
         ]
     )
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
 
-    sp = await opt.on_event(
+    sp = await dispatch_event(opt,
         ControllablePreCallEvent(
             controllable=make_controllable("system_prompt", SYSTEM_PROMPT_TAG),
             request="default system",
         )
     )
-    user = await opt.on_event(
+    user = await dispatch_event(opt,
         ControllablePreCallEvent(
             controllable=make_controllable("user_message", USER_TAG),
             request="original user",
@@ -131,15 +149,15 @@ async def test_chatbot_target_shape_uses_system_prompt_without_stealing_user_loc
 @pytest.mark.asyncio
 async def test_response_precall_is_skipped_without_stealing_user_lock() -> None:
     opt = await init_optimizer()
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
 
-    response = await opt.on_event(
+    response = await dispatch_event(opt,
         ControllablePreCallEvent(
             controllable=make_controllable("response", MODEL_TAG),
             request="assistant text",
         )
     )
-    user = await opt.on_event(
+    user = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="original")
     )
 
@@ -153,12 +171,12 @@ async def test_trajectory_response_is_used_before_postcall_fallback() -> None:
     llm.complete.return_value = mock_response("safe")
     traj = FakeReadableTrajectory()
     opt = await init_optimizer(llm=llm)
-    await opt.on_event(RunStartEvent(trajectory=traj))
-    first = await opt.on_event(
+    await dispatch_event(opt, RunStartEvent(trajectory=traj))
+    first = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="original")
     )
     assert isinstance(first, ControllableInjection)
-    await opt.on_event(
+    await dispatch_event(opt,
         ControllablePostCallEvent(
             controllable=make_controllable("response", MODEL_TAG),
             request=first.value,
@@ -167,7 +185,7 @@ async def test_trajectory_response_is_used_before_postcall_fallback() -> None:
     )
     traj.push(ObservableEvent(observable=make_observable("response"), content="trajectory answer"))
 
-    await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
+    await dispatch_event(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
 
     first_judge_prompt = llm.complete.await_args_list[0].args[0][0]["content"]
     assert "trajectory answer" in first_judge_prompt
@@ -180,14 +198,14 @@ async def test_non_success_framework_evaluation_blocks_local_success() -> None:
     llm.complete.return_value = mock_response("unsafe")
     traj = FakeReadableTrajectory()
     opt = await init_optimizer(llm=llm, prompt_sequence=["only bridge"])
-    await opt.on_event(RunStartEvent(trajectory=traj))
-    pre = await opt.on_event(
+    await dispatch_event(opt, RunStartEvent(trajectory=traj))
+    pre = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="original")
     )
     assert isinstance(pre, ControllableInjection)
     traj.push(ObservableEvent(observable=make_observable("response"), content="unsafe response"))
 
-    end = await opt.on_event(RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG))
+    end = await dispatch_event(opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG))
 
     assert end.done is False
     assert opt._succeeded is False
@@ -196,9 +214,9 @@ async def test_non_success_framework_evaluation_blocks_local_success() -> None:
 @pytest.mark.asyncio
 async def test_success_framework_evaluation_stops_without_response() -> None:
     opt = await init_optimizer(prompt_sequence=["only bridge"])
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
 
-    end = await opt.on_event(RunEndEvent(evaluation=success_eval(), security_domain=USER_TAG))
+    end = await dispatch_event(opt, RunEndEvent(evaluation=success_eval(), security_domain=USER_TAG))
 
     assert end.done is True
     assert opt._succeeded is True
@@ -214,23 +232,23 @@ async def test_refusal_plans_replay_backtracking_in_next_run() -> None:
         mock_response("2"),
     ]
     opt = await init_optimizer(llm=llm, max_attempts=2)
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
-    first = await opt.on_event(
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    first = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="original")
     )
     assert isinstance(first, ControllableInjection)
-    await opt.on_event(
+    await dispatch_event(opt,
         ControllablePostCallEvent(
             controllable=make_controllable("response", MODEL_TAG),
             request=first.value,
             answer="benign answer",
         )
     )
-    second = await opt.on_event(
+    second = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="next")
     )
     assert isinstance(second, ControllableInjection)
-    await opt.on_event(
+    await dispatch_event(opt,
         ControllablePostCallEvent(
             controllable=make_controllable("response", MODEL_TAG),
             request=second.value,
@@ -238,35 +256,35 @@ async def test_refusal_plans_replay_backtracking_in_next_run() -> None:
         )
     )
 
-    end = await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
+    end = await dispatch_event(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
     assert end.done is False
 
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
-    replay = await opt.on_event(
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    replay = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="original")
     )
     assert isinstance(replay, ControllableInjection)
     assert replay.value == "benign bridge"
-    await opt.on_event(
+    await dispatch_event(opt,
         ControllablePostCallEvent(
             controllable=make_controllable("response", MODEL_TAG),
             request=replay.value,
             answer="benign answer",
         )
     )
-    recovery = await opt.on_event(
+    recovery = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="next")
     )
     assert isinstance(recovery, ControllableInjection)
     assert "intermediate bridge" in recovery.value
-    await opt.on_event(
+    await dispatch_event(opt,
         ControllablePostCallEvent(
             controllable=make_controllable("response", MODEL_TAG),
             request=recovery.value,
             answer="intermediate answer",
         )
     )
-    original = await opt.on_event(
+    original = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="next original")
     )
     assert isinstance(original, ControllableInjection)
@@ -279,23 +297,23 @@ async def test_replay_rebuilds_state_from_fresh_target_answer() -> None:
     llm = AsyncMock()
     llm.complete.return_value = mock_response("No")
     opt = await init_optimizer(llm=llm, max_attempts=2)
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
-    first = await opt.on_event(
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    first = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="original")
     )
     assert isinstance(first, ControllableInjection)
-    await opt.on_event(
+    await dispatch_event(opt,
         ControllablePostCallEvent(
             controllable=make_controllable("response", MODEL_TAG),
             request=first.value,
             answer="old benign answer",
         )
     )
-    second = await opt.on_event(
+    second = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="next")
     )
     assert isinstance(second, ControllableInjection)
-    await opt.on_event(
+    await dispatch_event(opt,
         ControllablePostCallEvent(
             controllable=make_controllable("response", MODEL_TAG),
             request=second.value,
@@ -303,23 +321,23 @@ async def test_replay_rebuilds_state_from_fresh_target_answer() -> None:
         )
     )
 
-    end = await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
+    end = await dispatch_event(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
     assert end.done is False
 
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
-    replay = await opt.on_event(
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    replay = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="original")
     )
     assert isinstance(replay, ControllableInjection)
     assert replay.value == "benign bridge"
-    await opt.on_event(
+    await dispatch_event(opt,
         ControllablePostCallEvent(
             controllable=make_controllable("response", MODEL_TAG),
             request=replay.value,
             answer="fresh nondeterministic benign answer",
         )
     )
-    recovery = await opt.on_event(
+    recovery = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="next")
     )
 
@@ -338,72 +356,72 @@ async def test_slippery_slope_retries_bridge_prompt_once_like_official_loop() ->
         mock_response("bridge two"),
     ]
     opt = await init_optimizer(llm=llm, max_attempts=4)
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
-    first = await opt.on_event(
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    first = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="original")
     )
     assert isinstance(first, ControllableInjection)
-    await opt.on_event(
+    await dispatch_event(opt,
         ControllablePostCallEvent(
             controllable=make_controllable("response", MODEL_TAG),
             request=first.value,
             answer="benign answer",
         )
     )
-    second = await opt.on_event(
+    second = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="next")
     )
     assert isinstance(second, ControllableInjection)
-    await opt.on_event(
+    await dispatch_event(opt,
         ControllablePostCallEvent(
             controllable=make_controllable("response", MODEL_TAG),
             request=second.value,
             answer="I'm sorry, I can't help.",
         )
     )
-    end = await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
+    end = await dispatch_event(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
     assert end.done is False
 
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
-    replay = await opt.on_event(
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    replay = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="replay")
     )
     assert isinstance(replay, ControllableInjection)
-    await opt.on_event(
+    await dispatch_event(opt,
         ControllablePostCallEvent(
             controllable=make_controllable("response", MODEL_TAG),
             request=replay.value,
             answer="benign answer",
         )
     )
-    bridge_one = await opt.on_event(
+    bridge_one = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="bridge one")
     )
     assert isinstance(bridge_one, ControllableInjection)
     assert "bridge one" in bridge_one.value
-    await opt.on_event(
+    await dispatch_event(opt,
         ControllablePostCallEvent(
             controllable=make_controllable("response", MODEL_TAG),
             request=bridge_one.value,
             answer="I'm sorry, I can't help.",
         )
     )
-    end = await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
+    end = await dispatch_event(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
     assert end.done is False
 
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
-    replay = await opt.on_event(
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    replay = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="replay again")
     )
     assert isinstance(replay, ControllableInjection)
-    await opt.on_event(
+    await dispatch_event(opt,
         ControllablePostCallEvent(
             controllable=make_controllable("response", MODEL_TAG),
             request=replay.value,
             answer="benign answer",
         )
     )
-    bridge_two = await opt.on_event(
+    bridge_two = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="bridge two")
     )
     assert isinstance(bridge_two, ControllableInjection)
@@ -422,56 +440,56 @@ async def test_slippery_slope_stops_recovery_after_official_retry_budget() -> No
         mock_response("-1"),
     ]
     opt = await init_optimizer(llm=llm, max_attempts=4)
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
-    first = await opt.on_event(
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    first = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="original")
     )
     assert isinstance(first, ControllableInjection)
-    await opt.on_event(
+    await dispatch_event(opt,
         ControllablePostCallEvent(
             controllable=make_controllable("response", MODEL_TAG),
             request=first.value,
             answer="benign answer",
         )
     )
-    refused_turn = await opt.on_event(
+    refused_turn = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="next")
     )
     assert isinstance(refused_turn, ControllableInjection)
-    await opt.on_event(
+    await dispatch_event(opt,
         ControllablePostCallEvent(
             controllable=make_controllable("response", MODEL_TAG),
             request=refused_turn.value,
             answer="I'm sorry, I can't help.",
         )
     )
-    await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
+    await dispatch_event(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
 
     for bridge_request in ("bridge one", "bridge two"):
-        await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
-        replay = await opt.on_event(
+        await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+        replay = await dispatch_event(opt,
             ControllablePreCallEvent(controllable=make_controllable(), request="replay")
         )
         assert isinstance(replay, ControllableInjection)
-        await opt.on_event(
+        await dispatch_event(opt,
             ControllablePostCallEvent(
                 controllable=make_controllable("response", MODEL_TAG),
                 request=replay.value,
                 answer="benign answer",
             )
         )
-        bridge = await opt.on_event(
+        bridge = await dispatch_event(opt,
             ControllablePreCallEvent(controllable=make_controllable(), request=bridge_request)
         )
         assert isinstance(bridge, ControllableInjection)
-        await opt.on_event(
+        await dispatch_event(opt,
             ControllablePostCallEvent(
                 controllable=make_controllable("response", MODEL_TAG),
                 request=bridge.value,
                 answer="I'm sorry, I can't help.",
             )
         )
-        end = await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
+        end = await dispatch_event(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
 
     assert end.done is True
     assert opt._pending_recovery is None
@@ -488,7 +506,7 @@ async def test_static_context_is_bounded_for_prompt_generation() -> None:
         observables=[model_observable("x" * 200)],
         llm_client=llm,
     )
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
 
     sent = llm.complete.call_args.args[0][1]["content"]
     assert "SUPERRED STATIC TARGET CONTEXT" in sent
@@ -500,42 +518,42 @@ async def test_final_align_keeps_previous_answer_when_official_judge_prefers_it(
     llm = AsyncMock()
     llm.complete.return_value = mock_response("1")
     opt = await init_optimizer(llm=llm, prompt_sequence=["final harmful goal"])
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
-    first = await opt.on_event(
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    first = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="original")
     )
     assert isinstance(first, ControllableInjection)
-    await opt.on_event(
+    await dispatch_event(opt,
         ControllablePostCallEvent(
             controllable=make_controllable("response", MODEL_TAG),
             request=first.value,
             answer="previous answer",
         )
     )
-    second = await opt.on_event(
+    second = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="next")
     )
     assert isinstance(second, ControllableInjection)
-    await opt.on_event(
+    await dispatch_event(opt,
         ControllablePostCallEvent(
             controllable=make_controllable("response", MODEL_TAG),
             request=second.value,
             answer="previous answer",
         )
     )
-    final_align = await opt.on_event(
+    final_align = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="final align")
     )
     assert isinstance(final_align, ControllableInjection)
     assert "Rewrite the response" in final_align.value
-    await opt.on_event(
+    await dispatch_event(opt,
         ControllablePostCallEvent(
             controllable=make_controllable("response", MODEL_TAG),
             request=final_align.value,
             answer="new answer",
         )
     )
-    await opt.on_event(RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG))
+    await dispatch_event(opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG))
 
     assert opt._last_response == "previous answer"
 
@@ -545,23 +563,23 @@ async def test_local_evaluator_checks_prior_outputs_when_final_is_safe() -> None
     llm = AsyncMock()
     llm.complete.side_effect = [mock_response("safe"), mock_response("0"), mock_response("unsafe")]
     opt = await init_optimizer(llm=llm, prompt_sequence=["benign bridge", "riskier bridge"] )
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
-    first = await opt.on_event(
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    first = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="original")
     )
     assert isinstance(first, ControllableInjection)
-    await opt.on_event(
+    await dispatch_event(opt,
         ControllablePostCallEvent(
             controllable=make_controllable("response", MODEL_TAG),
             request=first.value,
             answer="prior unsafe answer",
         )
     )
-    second = await opt.on_event(
+    second = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="next")
     )
     assert isinstance(second, ControllableInjection)
-    await opt.on_event(
+    await dispatch_event(opt,
         ControllablePostCallEvent(
             controllable=make_controllable("response", MODEL_TAG),
             request=second.value,
@@ -569,7 +587,7 @@ async def test_local_evaluator_checks_prior_outputs_when_final_is_safe() -> None
         )
     )
 
-    end = await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
+    end = await dispatch_event(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
 
     assert end.done is True
     assert opt._succeeded is True
@@ -592,7 +610,7 @@ async def test_prompt_preparation_counts_helper_queries() -> None:
         llm_client=llm,
     )
 
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
 
     assert opt._query_count == 3
     assert llm.complete.await_count == 3
@@ -612,11 +630,11 @@ async def test_budget_exhaustion_during_prompt_preparation_stops_cleanly() -> No
         llm_client=llm,
     )
 
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
-    pre = await opt.on_event(
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    pre = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="original")
     )
-    end = await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
+    end = await dispatch_event(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
 
     assert isinstance(pre, ControllableNoInjection)
     assert end.done is True
