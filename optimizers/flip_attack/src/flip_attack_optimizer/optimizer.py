@@ -20,7 +20,6 @@ from superred.core.types.events import (
 )
 from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
-from superred.core.types.trajectory import ReadableTrajectory
 
 from flip_attack_optimizer.evaluator import Evaluator
 from flip_attack_optimizer.flipper import FLIP_MODES
@@ -73,7 +72,6 @@ class FlipAttackOptimizer(Optimizer):
         self._evaluator: Evaluator | None = None
         self._primary_controllable: Controllable | None = None
         self._primary_post_controllable: Controllable | None = None
-        self._trajectory: ReadableTrajectory | None = None
         self._victim_llm: str = ""
 
         # Per-run state
@@ -131,7 +129,6 @@ class FlipAttackOptimizer(Optimizer):
     def _handle_run_start(self, event: RunStartEvent) -> EventResponse:
         if self._attempt > 0 and not self._succeeded:
             self._prepare_attempt()
-        self._trajectory = event.trajectory
         self._reset_run_state()
         return EventResponse(event=event)
 
@@ -296,11 +293,12 @@ class FlipAttackOptimizer(Optimizer):
 
     def _get_response_from_trajectory(self) -> str | None:
         """Best-effort response recovery from filtered trajectory."""
-        if self._trajectory is None:
+        trajectory = self.current_trajectory
+        if trajectory is None:
             return None
 
         recovered: str | None = None
-        for item in self._trajectory.drain():
+        for item in trajectory.drain():
             if not isinstance(item, ObservableEvent):
                 continue
             name = item.observable.name
