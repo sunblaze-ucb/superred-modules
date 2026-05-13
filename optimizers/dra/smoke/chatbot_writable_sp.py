@@ -24,7 +24,7 @@ import os
 from basic_secret_leak_claim import basic_secret_leak_claim
 from chatbot_target import SYSTEM_PROMPT_TAG, USER_TAG, ChatbotTarget
 from dra_optimizer import DraOptimizer
-from superred.core.controller import Controller
+from superred.core.controller import Controller, TargetFactory
 from superred.core.types.llm import LLMConfig
 from superred.core.types.security_domain import Scope
 
@@ -59,33 +59,35 @@ async def _run(args: argparse.Namespace) -> int:
     if not args.api_key:
         raise SystemExit("Provide --api-key or set OPENAI_API_KEY.")
 
-    target = ChatbotTarget(
-        model=args.target_model,
-        api_key=args.api_key,
-        api_base=args.api_base,
-    )
     claim = basic_secret_leak_claim(secret=args.secret, trigger=args.trigger)
 
     def optimizer_factory() -> DraOptimizer:
         return DraOptimizer(max_attempts=args.max_attempts)
 
+    target_factory = TargetFactory(
+        create=lambda: ChatbotTarget(
+            model=args.target_model,
+            api_key=args.api_key,
+            api_base=args.api_base,
+        )
+    )
+
     controller = Controller(
         optimizer_factory=optimizer_factory,
-        target=target,
+        target_factory=target_factory,
         security_claim=claim,
-        llm_configs=[
-            LLMConfig(
-                model=args.target_model,
-                api_base=args.api_base or "",
-                api_key=args.api_key,
-                max_cost=args.max_cost,
-            )
-        ],
+        scope=_scope(args.scope),
+        llm_config=LLMConfig(
+            model=args.target_model,
+            api_base=args.api_base or "",
+            api_key=args.api_key,
+            max_cost=args.max_cost,
+        ),
         max_runs_per_task=args.max_runs,
         include_feedback=True,
     )
-    result = await controller.run(scopes=[_scope(args.scope)], models=[args.target_model])
-    task_result = result.threat_model_results[0].task_results[0]
+    result = await controller.run()
+    task_result = result.task_results[0]
 
     print("\nDRA smoke details")
     print(
