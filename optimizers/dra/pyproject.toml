@@ -7,11 +7,10 @@ name = "dra-optimizer"
 version = "0.1.0"
 description = "Disguise and Reconstruction Attack (DRA) optimizer for superred"
 requires-python = ">=3.11,<3.14"
-dependencies = ["superred>=0.1.0"]
+dependencies = ["superred>=0.1.0", "detoxify==0.5.1"]
 
 [project.optional-dependencies]
 test = ["pytest", "pytest-asyncio"]
-detoxify = ["detoxify"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"

@@ -134,7 +134,9 @@ async def test_model_observable_selects_official_suffix_family() -> None:
 
 @pytest.mark.asyncio
 async def test_default_sensitive_detector_prefers_detoxify_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
-    detector = lambda token: token == "alpha"
+    def detector(token: str) -> bool:
+        return token == "alpha"
+
     monkeypatch.setattr(
         optimizer_module,
         "try_create_detoxify_token_detector",
@@ -149,7 +151,9 @@ async def test_default_sensitive_detector_prefers_detoxify_when_available(monkey
 
 @pytest.mark.asyncio
 async def test_explicit_sensitive_detector_overrides_detoxify(monkeypatch: pytest.MonkeyPatch) -> None:
-    explicit_detector = lambda token: token == "beta"
+    def explicit_detector(token: str) -> bool:
+        return token == "beta"
+
     monkeypatch.setattr(
         optimizer_module,
         "try_create_detoxify_token_detector",
