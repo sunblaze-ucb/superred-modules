@@ -63,13 +63,36 @@ class FITDAssistant:
             return [benign_prompt, *steps, target_prompt]
         raise ValueError("FITD prompt transformation failed after all retry attempts")
 
-    async def soften_prompt(self, prompt: str) -> str:
+    async def soften_prompt(self, prompt: str, *, max_attempts: int = 10) -> str:
+        candidate = prompt
+        for _ in range(max(1, max_attempts)):
+            response = await self._llm.complete(
+                [{"role": "user", "content": prompts.CHANGE_PROMPT_TEMPLATE.format(prompt=prompt)}],
+                max_tokens=300,
+                temperature=1.0,
+            )
+            text = _extract_content(response).strip()
+            if not text or prompts.is_refusal(text):
+                continue
+            candidate = await self.align_sentence_structure(prompt, text)
+            if candidate and not prompts.is_refusal(candidate):
+                return candidate
+        return candidate
+
+    async def align_sentence_structure(self, reference_prompt: str, candidate_prompt: str) -> str:
         response = await self._llm.complete(
-            [{"role": "user", "content": prompts.CHANGE_PROMPT_TEMPLATE.format(prompt=prompt)}],
-            max_tokens=300,
-            temperature=1.0,
+            [
+                {"role": "assistant", "content": "You are a language model assistant."},
+                {
+                    "role": "user",
+                    "content": prompts.ALIGN_SENTENCE_STRUCTURE_TEMPLATE.format(
+                        prompt1=reference_prompt,
+                        prompt2=candidate_prompt,
+                    ),
+                },
+            ]
         )
-        return _extract_content(response).strip() or prompt
+        return _extract_content(response).strip() or candidate_prompt
 
     async def generate_intermediate_prompt(self, sentence1: str, sentence2: str) -> str:
         prompt = prompts.GENERATE_INTERMEDIATE_PROMPT_TEMPLATE.format(

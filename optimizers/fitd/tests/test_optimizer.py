@@ -329,6 +329,155 @@ async def test_replay_rebuilds_state_from_fresh_target_answer() -> None:
 
 
 @pytest.mark.asyncio
+async def test_slippery_slope_retries_bridge_prompt_once_like_official_loop() -> None:
+    llm = AsyncMock()
+    llm.complete.side_effect = [
+        mock_response("Yes"),
+        mock_response("bridge one"),
+        mock_response("Yes"),
+        mock_response("bridge two"),
+    ]
+    opt = await init_optimizer(llm=llm, max_attempts=4)
+    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    first = await opt.on_event(
+        ControllablePreCallEvent(controllable=make_controllable(), request="original")
+    )
+    assert isinstance(first, ControllableInjection)
+    await opt.on_event(
+        ControllablePostCallEvent(
+            controllable=make_controllable("response", MODEL_TAG),
+            request=first.value,
+            answer="benign answer",
+        )
+    )
+    second = await opt.on_event(
+        ControllablePreCallEvent(controllable=make_controllable(), request="next")
+    )
+    assert isinstance(second, ControllableInjection)
+    await opt.on_event(
+        ControllablePostCallEvent(
+            controllable=make_controllable("response", MODEL_TAG),
+            request=second.value,
+            answer="I'm sorry, I can't help.",
+        )
+    )
+    end = await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
+    assert end.done is False
+
+    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    replay = await opt.on_event(
+        ControllablePreCallEvent(controllable=make_controllable(), request="replay")
+    )
+    assert isinstance(replay, ControllableInjection)
+    await opt.on_event(
+        ControllablePostCallEvent(
+            controllable=make_controllable("response", MODEL_TAG),
+            request=replay.value,
+            answer="benign answer",
+        )
+    )
+    bridge_one = await opt.on_event(
+        ControllablePreCallEvent(controllable=make_controllable(), request="bridge one")
+    )
+    assert isinstance(bridge_one, ControllableInjection)
+    assert "bridge one" in bridge_one.value
+    await opt.on_event(
+        ControllablePostCallEvent(
+            controllable=make_controllable("response", MODEL_TAG),
+            request=bridge_one.value,
+            answer="I'm sorry, I can't help.",
+        )
+    )
+    end = await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
+    assert end.done is False
+
+    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    replay = await opt.on_event(
+        ControllablePreCallEvent(controllable=make_controllable(), request="replay again")
+    )
+    assert isinstance(replay, ControllableInjection)
+    await opt.on_event(
+        ControllablePostCallEvent(
+            controllable=make_controllable("response", MODEL_TAG),
+            request=replay.value,
+            answer="benign answer",
+        )
+    )
+    bridge_two = await opt.on_event(
+        ControllablePreCallEvent(controllable=make_controllable(), request="bridge two")
+    )
+    assert isinstance(bridge_two, ControllableInjection)
+    assert "bridge two" in bridge_two.value
+
+
+@pytest.mark.asyncio
+async def test_slippery_slope_stops_recovery_after_official_retry_budget() -> None:
+    llm = AsyncMock()
+    llm.complete.side_effect = [
+        mock_response("Yes"),
+        mock_response("bridge one"),
+        mock_response("Yes"),
+        mock_response("bridge two"),
+        mock_response("safe"),
+        mock_response("-1"),
+    ]
+    opt = await init_optimizer(llm=llm, max_attempts=4)
+    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    first = await opt.on_event(
+        ControllablePreCallEvent(controllable=make_controllable(), request="original")
+    )
+    assert isinstance(first, ControllableInjection)
+    await opt.on_event(
+        ControllablePostCallEvent(
+            controllable=make_controllable("response", MODEL_TAG),
+            request=first.value,
+            answer="benign answer",
+        )
+    )
+    refused_turn = await opt.on_event(
+        ControllablePreCallEvent(controllable=make_controllable(), request="next")
+    )
+    assert isinstance(refused_turn, ControllableInjection)
+    await opt.on_event(
+        ControllablePostCallEvent(
+            controllable=make_controllable("response", MODEL_TAG),
+            request=refused_turn.value,
+            answer="I'm sorry, I can't help.",
+        )
+    )
+    await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
+
+    for bridge_request in ("bridge one", "bridge two"):
+        await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+        replay = await opt.on_event(
+            ControllablePreCallEvent(controllable=make_controllable(), request="replay")
+        )
+        assert isinstance(replay, ControllableInjection)
+        await opt.on_event(
+            ControllablePostCallEvent(
+                controllable=make_controllable("response", MODEL_TAG),
+                request=replay.value,
+                answer="benign answer",
+            )
+        )
+        bridge = await opt.on_event(
+            ControllablePreCallEvent(controllable=make_controllable(), request=bridge_request)
+        )
+        assert isinstance(bridge, ControllableInjection)
+        await opt.on_event(
+            ControllablePostCallEvent(
+                controllable=make_controllable("response", MODEL_TAG),
+                request=bridge.value,
+                answer="I'm sorry, I can't help.",
+            )
+        )
+        end = await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
+
+    assert end.done is True
+    assert opt._pending_recovery is None
+
+
+@pytest.mark.asyncio
 async def test_static_context_is_bounded_for_prompt_generation() -> None:
     llm = AsyncMock()
     llm.complete.return_value = mock_response("**Step 1**: bridge")
@@ -432,6 +581,7 @@ async def test_prompt_preparation_counts_helper_queries() -> None:
     llm = AsyncMock()
     llm.complete.side_effect = [
         mock_response("benign bridge"),
+        mock_response("aligned benign bridge"),
         mock_response("**Step 1**: generated bridge"),
     ]
     opt = FITDOptimizer(level=1)
@@ -444,7 +594,8 @@ async def test_prompt_preparation_counts_helper_queries() -> None:
 
     await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
 
-    assert opt._query_count == 2
+    assert opt._query_count == 3
+    assert llm.complete.await_count == 3
 
 
 @pytest.mark.asyncio

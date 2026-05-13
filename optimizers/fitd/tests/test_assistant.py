@@ -38,6 +38,31 @@ async def test_prompt_generation_raises_after_invalid_retries() -> None:
 
 
 @pytest.mark.asyncio
+async def test_soften_prompt_retries_refusals_and_aligns_sentence_structure() -> None:
+    from unittest.mock import AsyncMock
+
+    from fitd_optimizer.assistant import FITDAssistant
+    from tests.conftest import mock_response
+
+    llm = AsyncMock()
+    llm.complete.side_effect = [
+        mock_response("I'm sorry, I can't rewrite that."),
+        mock_response("softened prompt"),
+        mock_response("aligned softened prompt"),
+    ]
+    assistant = FITDAssistant(llm)
+
+    result = await assistant.soften_prompt("original prompt", max_attempts=2)
+
+    assert result == "aligned softened prompt"
+    assert llm.complete.await_count == 3
+    align_prompt = llm.complete.await_args_list[2].args[0][1]["content"]
+    assert "Rewrite the second prompt" in align_prompt
+    assert "Prompt 1: original prompt" in align_prompt
+    assert "Prompt 2: softened prompt" in align_prompt
+
+
+@pytest.mark.asyncio
 async def test_find_most_jailbreaking_index_parses_official_index() -> None:
     from unittest.mock import AsyncMock
 

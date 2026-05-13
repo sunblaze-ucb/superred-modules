@@ -53,6 +53,9 @@ class ActiveTurn:
     user_prompt: str
     level_prompt: str | None = None
     previous_level_prompt: str | None = None
+    recovery_kind: RecoveryKind | None = None
+    recovery_attempt: int = 0
+    retry_original_after_success: bool = False
     is_replay: bool = False
     cached_answer: str | None = None
 
@@ -64,6 +67,9 @@ class AcceptedTurn:
     answer: str
     level_prompt: str | None = None
     previous_level_prompt: str | None = None
+    recovery_kind: RecoveryKind | None = None
+    recovery_attempt: int = 0
+    retry_original_after_success: bool = False
 
 
 @dataclass
@@ -72,6 +78,7 @@ class RecoveryPlan:
     level_index: int
     level_prompt: str | None = None
     retry_original_after_success: bool = False
+    recovery_attempt: int = 0
 
 
 class FITDOptimizer(Optimizer):
@@ -93,6 +100,8 @@ class FITDOptimizer(Optimizer):
         max_attempts: int = 5,
         control_history: bool = False,
         max_history_length: int = 22,
+        max_soften_retries: int = 10,
+        max_slippery_retries: int = 2,
         use_system_prompt_when_available: bool = True,
         response_observable_names: set[str] | None = None,
         static_context_budget: int = _STATIC_CONTEXT_BUDGET,
@@ -104,6 +113,10 @@ class FITDOptimizer(Optimizer):
             raise ValueError("max_queries must be >= 1")
         if max_attempts < 1:
             raise ValueError("max_attempts must be >= 1")
+        if max_soften_retries < 1:
+            raise ValueError("max_soften_retries must be >= 1")
+        if max_slippery_retries < 1:
+            raise ValueError("max_slippery_retries must be >= 1")
         if prompt_sequence is not None and not prompt_sequence:
             raise ValueError("prompt_sequence must not be empty")
         self._configured_prompt_sequence = list(prompt_sequence) if prompt_sequence is not None else None
@@ -113,6 +126,8 @@ class FITDOptimizer(Optimizer):
         self._max_attempts = max_attempts
         self._control_history = control_history
         self._max_history_length = max_history_length
+        self._max_soften_retries = max_soften_retries
+        self._max_slippery_retries = max_slippery_retries
         self._use_system_prompt_when_available = use_system_prompt_when_available
         self._response_observable_names = response_observable_names or set(
             _DEFAULT_RESPONSE_OBSERVABLE_NAMES
@@ -147,7 +162,6 @@ class FITDOptimizer(Optimizer):
         self._active_turn: ActiveTurn | None = None
         self._awaiting_response = False
         self._final_align_sent = False
-        self._retry_original_after_intermediate = False
 
     async def initialize(
         self,
@@ -288,8 +302,11 @@ class FITDOptimizer(Optimizer):
             return sequence
         benign = self._configured_benign_prompt
         if benign is None:
-            benign = await self._assistant.soften_prompt(target)
-            self._record_helper_query()
+            benign = await self._assistant.soften_prompt(
+                target,
+                max_attempts=self._max_soften_retries,
+            )
+            self._record_helper_query(2)
         sequence = await self._assistant.generate_prompt_sequence(
             target_prompt=target,
             benign_prompt=benign,
@@ -306,6 +323,9 @@ class FITDOptimizer(Optimizer):
                 user_prompt=replay.user_prompt,
                 level_prompt=replay.level_prompt,
                 previous_level_prompt=replay.previous_level_prompt,
+                recovery_kind=replay.recovery_kind,
+                recovery_attempt=replay.recovery_attempt,
+                retry_original_after_success=replay.retry_original_after_success,
                 is_replay=True,
                 cached_answer=replay.answer,
             )
@@ -316,18 +336,26 @@ class FITDOptimizer(Optimizer):
             if recovery.kind == "retry_initial" and recovery.level_prompt is not None:
                 self._prompt_sequence[0] = recovery.level_prompt
                 self._level_index = 0
-                return ActiveTurn(kind="initial", user_prompt=recovery.level_prompt, level_prompt=recovery.level_prompt)
+                return ActiveTurn(
+                    kind="initial",
+                    user_prompt=recovery.level_prompt,
+                    level_prompt=recovery.level_prompt,
+                    recovery_kind="retry_initial",
+                    recovery_attempt=recovery.recovery_attempt,
+                )
             if recovery.kind == "align" and self._last_level_prompt is not None and self._last_response is not None:
                 prompt = build_align_prompt(self._last_level_prompt, self._last_response)
                 return ActiveTurn(kind="align", user_prompt=prompt, level_prompt=self._last_level_prompt)
             if recovery.kind == "slippery" and recovery.level_prompt is not None and self._last_level_prompt is not None:
                 prompt = build_polish_prompt(self._last_level_prompt, recovery.level_prompt)
-                self._retry_original_after_intermediate = recovery.retry_original_after_success
                 return ActiveTurn(
                     kind="polish",
                     user_prompt=prompt,
                     level_prompt=recovery.level_prompt,
                     previous_level_prompt=self._last_level_prompt,
+                    recovery_kind="slippery",
+                    recovery_attempt=recovery.recovery_attempt,
+                    retry_original_after_success=recovery.retry_original_after_success,
                 )
 
         if self._level_index >= len(self._prompt_sequence):
@@ -374,9 +402,8 @@ class FITDOptimizer(Optimizer):
         self._record_accepted_turn(turn, answer)
 
         if turn.kind in {"initial", "polish"} and turn.level_prompt is not None:
-            if turn.kind == "polish" and self._retry_original_after_intermediate:
+            if turn.kind == "polish" and turn.retry_original_after_success:
                 await self._accept_intermediate_recovery(answer, turn)
-                self._retry_original_after_intermediate = False
             else:
                 self._last_response = answer
                 self._outputs.append(answer)
@@ -403,6 +430,9 @@ class FITDOptimizer(Optimizer):
             answer=answer,
             level_prompt=turn.level_prompt,
             previous_level_prompt=turn.previous_level_prompt,
+            recovery_kind=turn.recovery_kind,
+            recovery_attempt=turn.recovery_attempt,
+            retry_original_after_success=turn.retry_original_after_success,
         )
         self._accepted_user_prompts.append(turn.user_prompt)
         self._accepted_turns.append(accepted)
@@ -446,14 +476,34 @@ class FITDOptimizer(Optimizer):
     async def _handle_refusal(self, turn: ActiveTurn) -> None:
         assert self._assistant is not None
         if turn.kind == "initial" and turn.level_prompt is not None:
-            softened = await self._assistant.soften_prompt(turn.level_prompt)
-            self._record_helper_query()
+            if (
+                turn.recovery_kind == "retry_initial"
+                and turn.recovery_attempt >= self._max_soften_retries
+            ):
+                self._pending_recovery = None
+                self._replay_turns = list(self._accepted_turns)
+                self._attempt_done = True
+                return
+            softened = await self._assistant.soften_prompt(
+                turn.level_prompt,
+                max_attempts=self._max_soften_retries,
+            )
+            self._record_helper_query(2)
             self._pending_recovery = RecoveryPlan(
                 kind="retry_initial",
                 level_index=0,
                 level_prompt=softened,
+                recovery_attempt=turn.recovery_attempt + 1,
             )
         elif self._last_level_prompt is not None and self._last_response is not None:
+            if (
+                turn.recovery_kind == "slippery"
+                and turn.recovery_attempt >= self._max_slippery_retries
+            ):
+                self._pending_recovery = None
+                self._replay_turns = list(self._accepted_turns)
+                self._attempt_done = True
+                return
             is_aligned = await self._assistant.detect_align(self._last_level_prompt, self._last_response)
             self._record_helper_query()
             if is_aligned and turn.level_prompt is not None:
@@ -467,6 +517,7 @@ class FITDOptimizer(Optimizer):
                     level_index=self._level_index,
                     level_prompt=intermediate,
                     retry_original_after_success=True,
+                    recovery_attempt=turn.recovery_attempt + 1,
                 )
             else:
                 self._pending_recovery = RecoveryPlan(kind="align", level_index=self._level_index)
@@ -585,7 +636,6 @@ class FITDOptimizer(Optimizer):
             self._replay_turns = []
             self._pending_recovery = None
             self._final_align_sent = False
-            self._retry_original_after_intermediate = False
         elif self._attempt_done and self._pending_recovery is not None:
             self._attempt_done = False
             self._primary_user_controllable = None
@@ -599,7 +649,6 @@ class FITDOptimizer(Optimizer):
             self._accepted_user_prompts = []
             self._accepted_turns = []
             self._final_align_sent = False
-            self._retry_original_after_intermediate = False
 
 
 def _build_static_context(observables: list[ObservableValue], budget: int) -> str:

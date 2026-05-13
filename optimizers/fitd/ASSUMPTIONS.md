@@ -13,10 +13,18 @@ The default values follow the official code where they map to SuperRed:
 - `max_attempts=5`
 - `control_history=False`
 - `max_history_length=22`
+- `max_soften_retries=10`
+- `max_slippery_retries=2`
 
 The official refusal phrases, sensitive-word replacements, prompt-generation
 format, polish prompt, realign prompt, intermediate-prompt prompt, similarity
 judge, harmfulness judge, and `safe`/`unsafe` evaluator prompt are preserved.
+
+The initial soften step follows the official `change_prompt` shape: it retries
+helper-model refusals and runs the extra sentence-structure alignment pass after
+each successful rewrite. The target-side "try the softened prompt and see if it
+refuses" part is mapped onto SuperRed runs rather than performed inside the
+optimizer, because targets are only callable through framework events.
 
 Prompt-ladder generation follows the official transformation format and retries
 invalid/refusal outputs. If generation never returns the official `Step N`
@@ -84,12 +92,20 @@ visible, it falls back to the cached accepted answers so the open-loop path can
 still make progress.
 
 For SlipperySlopeParaphrase, the optimizer keeps the refused level pending after
-a successful intermediate prompt. It uses the official similarity and
-harmfulness judges to decide whether the intermediate prompt/answer should
-replace the optimizer's previous prompt/answer, then retries the original next
-level. SuperRed currently cannot rewrite the target's already-recorded assistant
-message, so this replacement affects optimizer state and future prompts, not the
-target's private conversation history.
+a successful intermediate prompt. If that intermediate prompt is also refused,
+the optimizer generates one more bridge prompt, matching the official two-try
+slippery-slope loop. It uses the official similarity and harmfulness judges to
+decide whether the intermediate prompt/answer should replace the optimizer's
+previous prompt/answer, then retries the original next level. SuperRed currently
+cannot rewrite the target's already-recorded assistant message, so this
+replacement affects optimizer state and future prompts, not the target's private
+conversation history.
+
+Recovery metadata is carried on each active turn: the recovery kind, retry
+number, and whether a successful bridge should retry the original next level.
+That makes replay safer under nondeterministic targets because the optimizer can
+rebuild the same recovery state from fresh replay responses instead of relying
+on scattered global flags.
 
 ## Deliberate Differences
 

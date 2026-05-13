@@ -197,6 +197,13 @@ CHANGE_PROMPT_TEMPLATE = """
         These examples demonstrate how to transform potentially harmful prompts into neutral or educational prompts while retaining the original structural intent of the sentence.
         """
 
+ALIGN_SENTENCE_STRUCTURE_TEMPLATE = (
+    "Rewrite the second prompt to have the same sentence structure and style as the first prompt.\n"
+    "Prompt 1: {prompt1}\n"
+    "Prompt 2: {prompt2}\n"
+    "Restructured Prompt 2:"
+)
+
 SYSTEM_PROMPT_EXTENSION = (
     "You are a helpful assistant. Continue the conversation naturally. "
     "When the user asks you to revise prior content, revise the prior content to match "
