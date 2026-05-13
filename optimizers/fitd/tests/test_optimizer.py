@@ -275,6 +275,60 @@ async def test_refusal_plans_replay_backtracking_in_next_run() -> None:
 
 
 @pytest.mark.asyncio
+async def test_replay_rebuilds_state_from_fresh_target_answer() -> None:
+    llm = AsyncMock()
+    llm.complete.return_value = mock_response("No")
+    opt = await init_optimizer(llm=llm, max_attempts=2)
+    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    first = await opt.on_event(
+        ControllablePreCallEvent(controllable=make_controllable(), request="original")
+    )
+    assert isinstance(first, ControllableInjection)
+    await opt.on_event(
+        ControllablePostCallEvent(
+            controllable=make_controllable("response", MODEL_TAG),
+            request=first.value,
+            answer="old benign answer",
+        )
+    )
+    second = await opt.on_event(
+        ControllablePreCallEvent(controllable=make_controllable(), request="next")
+    )
+    assert isinstance(second, ControllableInjection)
+    await opt.on_event(
+        ControllablePostCallEvent(
+            controllable=make_controllable("response", MODEL_TAG),
+            request=second.value,
+            answer="I'm sorry, I can't help.",
+        )
+    )
+
+    end = await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
+    assert end.done is False
+
+    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    replay = await opt.on_event(
+        ControllablePreCallEvent(controllable=make_controllable(), request="original")
+    )
+    assert isinstance(replay, ControllableInjection)
+    assert replay.value == "benign bridge"
+    await opt.on_event(
+        ControllablePostCallEvent(
+            controllable=make_controllable("response", MODEL_TAG),
+            request=replay.value,
+            answer="fresh nondeterministic benign answer",
+        )
+    )
+    recovery = await opt.on_event(
+        ControllablePreCallEvent(controllable=make_controllable(), request="next")
+    )
+
+    assert isinstance(recovery, ControllableInjection)
+    assert "fresh nondeterministic benign answer" in recovery.value
+    assert "old benign answer" not in recovery.value
+
+
+@pytest.mark.asyncio
 async def test_static_context_is_bounded_for_prompt_generation() -> None:
     llm = AsyncMock()
     llm.complete.return_value = mock_response("**Step 1**: bridge")

@@ -43,7 +43,7 @@ _DEFAULT_RESPONSE_OBSERVABLE_NAMES = frozenset({"response", "model_response", "a
 _RESPONSE_NAME_HINTS = ("response", "assistant", "reply", "output", "completion")
 _STATIC_CONTEXT_BUDGET = 3000
 
-TurnKind = Literal["initial", "polish", "align", "final_align", "replay"]
+TurnKind = Literal["initial", "polish", "align", "final_align"]
 RecoveryKind = Literal["align", "slippery", "retry_initial"]
 
 
@@ -51,6 +51,17 @@ RecoveryKind = Literal["align", "slippery", "retry_initial"]
 class ActiveTurn:
     kind: TurnKind
     user_prompt: str
+    level_prompt: str | None = None
+    previous_level_prompt: str | None = None
+    is_replay: bool = False
+    cached_answer: str | None = None
+
+
+@dataclass(frozen=True)
+class AcceptedTurn:
+    kind: TurnKind
+    user_prompt: str
+    answer: str
     level_prompt: str | None = None
     previous_level_prompt: str | None = None
 
@@ -130,7 +141,8 @@ class FITDOptimizer(Optimizer):
         self._last_response: str | None = None
         self._outputs: list[str] = []
         self._accepted_user_prompts: list[str] = []
-        self._replay_prompts: list[str] = []
+        self._accepted_turns: list[AcceptedTurn] = []
+        self._replay_turns: list[AcceptedTurn] = []
         self._pending_recovery: RecoveryPlan | None = None
         self._active_turn: ActiveTurn | None = None
         self._awaiting_response = False
@@ -206,7 +218,7 @@ class FITDOptimizer(Optimizer):
 
         await self._consume_visible_answer()
         if self._awaiting_response:
-            self._advance_without_visible_answer()
+            await self._advance_without_visible_answer()
 
         if self._succeeded or self._attempt_done:
             return ControllableNoInjection(event=event, controllable=event.controllable)
@@ -239,7 +251,7 @@ class FITDOptimizer(Optimizer):
     async def _handle_run_end(self, event: RunEndEvent) -> RunEndResponse:
         await self._consume_visible_answer()
         if self._awaiting_response:
-            self._advance_without_visible_answer()
+            await self._advance_without_visible_answer()
 
         if event.evaluation is not None:
             self._apply_evaluation(event.evaluation)
@@ -287,9 +299,16 @@ class FITDOptimizer(Optimizer):
         return sequence
 
     async def _next_turn(self) -> ActiveTurn | None:
-        if self._replay_prompts:
-            user_prompt = self._replay_prompts.pop(0)
-            return ActiveTurn(kind="replay", user_prompt=user_prompt)
+        if self._replay_turns:
+            replay = self._replay_turns.pop(0)
+            return ActiveTurn(
+                kind=replay.kind,
+                user_prompt=replay.user_prompt,
+                level_prompt=replay.level_prompt,
+                previous_level_prompt=replay.previous_level_prompt,
+                is_replay=True,
+                cached_answer=replay.answer,
+            )
 
         if self._pending_recovery is not None:
             recovery = self._pending_recovery
@@ -348,14 +367,11 @@ class FITDOptimizer(Optimizer):
         self._awaiting_response = False
         self._active_turn = None
 
-        if turn.kind == "replay":
-            return
-
         if is_refusal(answer):
             await self._handle_refusal(turn)
             return
 
-        self._accepted_user_prompts.append(turn.user_prompt)
+        self._record_accepted_turn(turn, answer)
 
         if turn.kind in {"initial", "polish"} and turn.level_prompt is not None:
             if turn.kind == "polish" and self._retry_original_after_intermediate:
@@ -376,9 +392,20 @@ class FITDOptimizer(Optimizer):
 
         if self._control_history and len(self._accepted_user_prompts) > self._max_history_length:
             self._accepted_user_prompts = self._accepted_user_prompts[-self._max_history_length :]
+            self._accepted_turns = self._accepted_turns[-self._max_history_length :]
         if self._query_count >= self._max_queries:
             self._attempt_done = True
 
+    def _record_accepted_turn(self, turn: ActiveTurn, answer: str) -> None:
+        accepted = AcceptedTurn(
+            kind=turn.kind,
+            user_prompt=turn.user_prompt,
+            answer=answer,
+            level_prompt=turn.level_prompt,
+            previous_level_prompt=turn.previous_level_prompt,
+        )
+        self._accepted_user_prompts.append(turn.user_prompt)
+        self._accepted_turns.append(accepted)
 
     async def _accept_intermediate_recovery(self, answer: str, turn: ActiveTurn) -> None:
         assert self._assistant is not None
@@ -446,7 +473,7 @@ class FITDOptimizer(Optimizer):
         else:
             self._pending_recovery = None
 
-        self._replay_prompts = list(self._accepted_user_prompts)
+        self._replay_turns = list(self._accepted_turns)
         self._attempt_done = True
 
     async def _maybe_keep_more_harmful_answer(self, answer: str, level_prompt: str | None) -> None:
@@ -462,14 +489,15 @@ class FITDOptimizer(Optimizer):
             self._outputs[-1] = answer
             self._last_response = answer
 
-    def _advance_without_visible_answer(self) -> None:
+    async def _advance_without_visible_answer(self) -> None:
         if self._active_turn is None:
             return
         turn = self._active_turn
+        if turn.is_replay and turn.cached_answer is not None:
+            await self._process_answer(turn.cached_answer)
+            return
         self._awaiting_response = False
         self._active_turn = None
-        if turn.kind == "replay":
-            return
         self._accepted_user_prompts.append(turn.user_prompt)
         if turn.kind in {"initial", "polish"} and turn.level_prompt is not None:
             self._last_level_prompt = turn.level_prompt
@@ -553,7 +581,8 @@ class FITDOptimizer(Optimizer):
             self._last_response = None
             self._outputs = []
             self._accepted_user_prompts = []
-            self._replay_prompts = []
+            self._accepted_turns = []
+            self._replay_turns = []
             self._pending_recovery = None
             self._final_align_sent = False
             self._retry_original_after_intermediate = False
@@ -563,6 +592,14 @@ class FITDOptimizer(Optimizer):
             self._primary_post_controllable = None
             self._active_turn = None
             self._awaiting_response = False
+            self._level_index = 0
+            self._last_level_prompt = None
+            self._last_response = None
+            self._outputs = []
+            self._accepted_user_prompts = []
+            self._accepted_turns = []
+            self._final_align_sent = False
+            self._retry_original_after_intermediate = False
 
 
 def _build_static_context(observables: list[ObservableValue], budget: int) -> str:

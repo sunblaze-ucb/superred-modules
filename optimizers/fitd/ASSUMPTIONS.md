@@ -74,7 +74,14 @@ continuing. SuperRed targets do not expose an in-place history pop primitive.
 To avoid continuing from poisoned history, this optimizer stops the current run
 when it sees a refusal, then replays the accepted prefix in the next run before
 sending the recovery prompt. This matches the paper's backtracking intent as
-closely as SuperRed allows. It works best when the target is deterministic.
+closely as SuperRed allows.
+
+`ChatbotTarget` no longer forces deterministic decoding. Replay therefore
+cannot assume the target will produce byte-identical answers. During replay, the
+optimizer rebuilds its state from the fresh target responses when those
+responses are visible on the trajectory or PostCall event. If responses are not
+visible, it falls back to the cached accepted answers so the open-loop path can
+still make progress.
 
 For SlipperySlopeParaphrase, the optimizer keeps the refused level pending after
 a successful intermediate prompt. It uses the official similarity and
