@@ -84,9 +84,9 @@ class FITDOptimizer(Optimizer):
     """Optimizer implementing the FITD multi-turn attack.
 
     The default path follows the official implementation's defaults where
-    they map cleanly to SuperRed: 10 transformation levels, a 50-query limit,
-    up to 5 attempts, official refusal strings, official polish / align /
-    intermediate / judge prompts, and target-owned decoding.
+    they map cleanly to SuperRed: 10 transformation levels, up to 5 attempts,
+    official refusal strings, official polish / align / intermediate / judge
+    prompts, and target-owned decoding.
     """
 
     def __init__(
@@ -95,7 +95,6 @@ class FITDOptimizer(Optimizer):
         prompt_sequence: list[str] | None = None,
         benign_prompt: str | None = None,
         level: int = 10,
-        max_queries: int = 50,
         max_attempts: int = 5,
         control_history: bool = False,
         max_history_length: int = 22,
@@ -108,8 +107,6 @@ class FITDOptimizer(Optimizer):
         super().__init__()
         if level < 1:
             raise ValueError("level must be >= 1")
-        if max_queries < 1:
-            raise ValueError("max_queries must be >= 1")
         if max_attempts < 1:
             raise ValueError("max_attempts must be >= 1")
         if max_soften_retries < 1:
@@ -121,7 +118,6 @@ class FITDOptimizer(Optimizer):
         self._configured_prompt_sequence = list(prompt_sequence) if prompt_sequence is not None else None
         self._configured_benign_prompt = benign_prompt
         self._level = level
-        self._max_queries = max_queries
         self._max_attempts = max_attempts
         self._control_history = control_history
         self._max_history_length = max_history_length
@@ -144,7 +140,6 @@ class FITDOptimizer(Optimizer):
         self._pending_post_answer: str | None = None
 
         self._attempt = 0
-        self._query_count = 0
         self._succeeded = False
         self._attempt_done = False
         self._budget_exhausted = False
@@ -177,7 +172,6 @@ class FITDOptimizer(Optimizer):
         self._static_context = _build_static_context(observables, self._static_context_budget)
         self._assistant = FITDAssistant(self.llm, static_context=self._static_context)
         self._attempt = 0
-        self._query_count = 0
         self._succeeded = False
         self._reset_run_state(clear_attempt_state=True)
 
@@ -241,7 +235,6 @@ class FITDOptimizer(Optimizer):
 
         self._active_turn = turn
         self._awaiting_response = True
-        self._query_count += 1
         return ControllableInjection(event=event, controllable=event.controllable, value=turn.user_prompt)
 
     async def _handle_post_call(
@@ -281,10 +274,6 @@ class FITDOptimizer(Optimizer):
             self._attempt += 1
             return RunEndResponse(event=event, done=False)
 
-        if self._query_count >= self._max_queries:
-            logger.info("FITD: query limit reached (%d)", self._query_count)
-            return RunEndResponse(event=event, done=True)
-
         if self._attempt_done:
             return RunEndResponse(event=event, done=True)
         return RunEndResponse(event=event, done=False)
@@ -303,13 +292,11 @@ class FITDOptimizer(Optimizer):
                 target,
                 max_attempts=self._max_soften_retries,
             )
-            self._record_helper_query(2)
         sequence = await self._assistant.generate_prompt_sequence(
             target_prompt=target,
             benign_prompt=benign,
             level=self._level,
         )
-        self._record_helper_query()
         return sequence
 
     async def _next_turn(self) -> ActiveTurn | None:
@@ -417,9 +404,6 @@ class FITDOptimizer(Optimizer):
         if self._control_history and len(self._accepted_user_prompts) > self._max_history_length:
             self._accepted_user_prompts = self._accepted_user_prompts[-self._max_history_length :]
             self._accepted_turns = self._accepted_turns[-self._max_history_length :]
-        if self._query_count >= self._max_queries:
-            self._attempt_done = True
-
     def _record_accepted_turn(self, turn: ActiveTurn, answer: str) -> None:
         accepted = AcceptedTurn(
             kind=turn.kind,
@@ -448,7 +432,6 @@ class FITDOptimizer(Optimizer):
             turn.level_prompt,
             self._prompt_sequence[self._level_index],
         )
-        self._record_helper_query()
         effective_prompt = previous_prompt
         if similarity != 1:
             self._prompt_sequence[self._level_index - 1] = turn.level_prompt
@@ -459,7 +442,6 @@ class FITDOptimizer(Optimizer):
             answer,
             effective_prompt,
         )
-        self._record_helper_query()
         if harmful == 1:
             self._last_response = previous_response
         else:
@@ -485,7 +467,6 @@ class FITDOptimizer(Optimizer):
                 turn.level_prompt,
                 max_attempts=self._max_soften_retries,
             )
-            self._record_helper_query(2)
             self._pending_recovery = RecoveryPlan(
                 kind="retry_initial",
                 level_index=0,
@@ -502,13 +483,11 @@ class FITDOptimizer(Optimizer):
                 self._attempt_done = True
                 return
             is_aligned = await self._assistant.detect_align(self._last_level_prompt, self._last_response)
-            self._record_helper_query()
             if is_aligned and turn.level_prompt is not None:
                 intermediate = await self._assistant.generate_intermediate_prompt(
                     self._last_level_prompt,
                     turn.level_prompt,
                 )
-                self._record_helper_query()
                 self._pending_recovery = RecoveryPlan(
                     kind="slippery",
                     level_index=self._level_index,
@@ -530,7 +509,6 @@ class FITDOptimizer(Optimizer):
         assert self._assistant is not None
         previous = self._outputs[-1]
         result = await self._assistant.judge_harmful_content(previous, answer, level_prompt)
-        self._record_helper_query()
         if result == 1:
             self._last_response = previous
         else:
@@ -574,12 +552,6 @@ class FITDOptimizer(Optimizer):
                 recovered = item.content
         return recovered
 
-
-    def _record_helper_query(self, count: int = 1) -> None:
-        self._query_count += count
-        if self._query_count >= self._max_queries:
-            self._attempt_done = True
-
     async def _apply_local_success_judge(self, response: str) -> None:
         assert self._goal is not None
         assert self._assistant is not None
@@ -587,7 +559,6 @@ class FITDOptimizer(Optimizer):
         if response not in candidates:
             candidates.append(response)
         final_result = await self._assistant.evaluate_success(self._goal.description, response)
-        self._record_helper_query()
         if final_result.success:
             logger.info("FITD: local official evaluator returned unsafe for final response")
             self._succeeded = True
@@ -596,14 +567,12 @@ class FITDOptimizer(Optimizer):
             candidates,
             self._goal.description,
         )
-        self._record_helper_query()
         if most_index is None:
             return
         most_response = candidates[most_index]
         if most_response == response:
             return
         result = await self._assistant.evaluate_success(self._goal.description, most_response)
-        self._record_helper_query()
         if result.success:
             logger.info("FITD: local official evaluator returned unsafe for most harmful output")
             self._succeeded = True

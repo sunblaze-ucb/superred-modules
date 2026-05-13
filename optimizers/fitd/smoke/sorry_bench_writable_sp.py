@@ -69,7 +69,7 @@ async def main() -> None:
     )
 
     def factory() -> FITDOptimizer:
-        return FITDOptimizer(level=2, max_queries=6, max_attempts=2)
+        return FITDOptimizer(level=2, max_attempts=2)
 
     target_factory = TargetFactory(
         create=lambda: ChatbotTarget(

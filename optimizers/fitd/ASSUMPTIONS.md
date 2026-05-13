@@ -9,7 +9,6 @@ implementation keeps that shape instead of turning FITD into a single prompt.
 The default values follow the official code where they map to SuperRed:
 
 - `level=10`
-- `max_queries=50`
 - `max_attempts=5`
 - `control_history=False`
 - `max_history_length=22`
@@ -68,11 +67,11 @@ If neither responses nor feedback are visible, FITD runs open-loop through the
 prompt ladder. It cannot detect refusals or do realign/paraphrase recovery in
 that threat model, but it still exercises the user-message capability.
 
-`max_queries` counts target turns plus helper-LLM calls made during recovery and
-local evaluation. This is close to the official script's `total_query` counter,
-while SuperRed's LLM budget remains the hard cost control. Prompt-ladder
-generation happens before target interaction and is governed by the attacker LLM
-budget rather than this target-loop query counter.
+The official script also has a `num_limit` query counter because it directly
+owns target and helper-model calls. SuperRed already has framework-level LLM
+budgeting, and this optimizer's loops are bounded by `level`, `max_attempts`,
+`max_soften_retries`, and `max_slippery_retries`. To avoid a second, inaccurate
+shadow budget, this optimizer does not expose a separate `max_queries` knob.
 
 ## Refusal Backtracking
 

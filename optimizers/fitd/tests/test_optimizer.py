@@ -595,7 +595,7 @@ async def test_local_evaluator_checks_prior_outputs_when_final_is_safe() -> None
 
 
 @pytest.mark.asyncio
-async def test_prompt_preparation_counts_helper_queries() -> None:
+async def test_prompt_preparation_uses_helper_llm_without_shadow_query_counter() -> None:
     llm = AsyncMock()
     llm.complete.side_effect = [
         mock_response("benign bridge"),
@@ -612,7 +612,6 @@ async def test_prompt_preparation_counts_helper_queries() -> None:
 
     await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
 
-    assert opt._query_count == 3
     assert llm.complete.await_count == 3
 
 
