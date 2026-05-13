@@ -93,16 +93,16 @@ async def test_generates_one_candidate_per_stream_before_advancing_iteration() -
     ]
     opt = await init_optimizer(llm=llm, n_streams=2, n_iterations=1)
 
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
-    first = await opt.on_event(
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    first = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="u")
     )
-    end1 = await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
-    second = await opt.on_event(
+    end1 = await dispatch_event(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    second = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="u")
     )
-    end2 = await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
+    end2 = await dispatch_event(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
 
     assert isinstance(first, ControllableInjection)
     assert isinstance(second, ControllableInjection)
@@ -120,15 +120,15 @@ async def test_system_prompt_precall_does_not_steal_user_lock_when_not_writable(
         '{"improvement": "better", "prompt": "this attack prompt has enough words"}'
     )
     opt = await init_optimizer(llm=llm, controllables=[make_controllable("user_message", USER_TAG)])
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
 
-    sp = await opt.on_event(
+    sp = await dispatch_event(opt,
         ControllablePreCallEvent(
             controllable=make_controllable("system_prompt", SYSTEM_PROMPT_TAG),
             request="default",
         )
     )
-    user = await opt.on_event(
+    user = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="user message")
     )
 
@@ -150,15 +150,15 @@ async def test_writable_system_prompt_extension_injects_non_empty_system_prompt(
             make_controllable("user_message", USER_TAG),
         ],
     )
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
 
-    sp = await opt.on_event(
+    sp = await dispatch_event(opt,
         ControllablePreCallEvent(
             controllable=make_controllable("system_prompt", SYSTEM_PROMPT_TAG),
             request="default",
         )
     )
-    user = await opt.on_event(
+    user = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="user message")
     )
 
@@ -181,15 +181,15 @@ async def test_blank_system_prompt_extension_is_skipped() -> None:
             make_controllable("user_message", USER_TAG),
         ],
     )
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
 
-    sp = await opt.on_event(
+    sp = await dispatch_event(opt,
         ControllablePreCallEvent(
             controllable=make_controllable("system_prompt", SYSTEM_PROMPT_TAG),
             request="default",
         )
     )
-    user = await opt.on_event(
+    user = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="user message")
     )
 
@@ -202,15 +202,15 @@ async def test_response_precall_is_skipped_without_stealing_user_lock() -> None:
     llm = AsyncMock()
     llm.complete.return_value = mock_response('{"improvement": "better", "prompt": "attack"}')
     opt = await init_optimizer(llm=llm)
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
 
-    response_pre = await opt.on_event(
+    response_pre = await dispatch_event(opt,
         ControllablePreCallEvent(
             controllable=make_controllable("response", MODEL_TAG),
             request="assistant answer",
         )
     )
-    user = await opt.on_event(
+    user = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="user message")
     )
 
@@ -227,11 +227,11 @@ async def test_trajectory_response_is_used_before_postcall_fallback() -> None:
     traj = FakeReadableTrajectory()
     opt = await init_optimizer(llm=llm, n_streams=1, n_iterations=1, judge_method="gcg")
     await dispatch_event(opt, RunStartEvent(trajectory=traj))
-    pre = await opt.on_event(
+    pre = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="u")
     )
     assert isinstance(pre, ControllableInjection)
-    await opt.on_event(
+    await dispatch_event(opt,
         ControllablePostCallEvent(
             controllable=make_controllable("response", MODEL_TAG),
             request=pre.value,
@@ -264,7 +264,7 @@ async def test_framework_failure_caps_local_judge_success_when_response_visible(
     traj = FakeReadableTrajectory()
     opt = await init_optimizer(llm=llm, n_streams=1, n_iterations=2, judge_method="gcg")
     await dispatch_event(opt, RunStartEvent(trajectory=traj))
-    await opt.on_event(ControllablePreCallEvent(controllable=make_controllable(), request="u"))
+    await dispatch_event(opt, ControllablePreCallEvent(controllable=make_controllable(), request="u"))
     traj.push(
         ObservableEvent(
             observable=make_observable("response"),
@@ -288,10 +288,10 @@ async def test_framework_failure_with_max_primary_score_does_not_count_as_succes
     llm = AsyncMock()
     llm.complete.return_value = mock_response('{"improvement": "better", "prompt": "attack"}')
     opt = await init_optimizer(llm=llm, n_streams=1, n_iterations=2)
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
-    await opt.on_event(ControllablePreCallEvent(controllable=make_controllable(), request="u"))
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, ControllablePreCallEvent(controllable=make_controllable(), request="u"))
 
-    end = await opt.on_event(RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG))
+    end = await dispatch_event(opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG))
 
     assert end.done is False
     assert opt._succeeded is False
@@ -303,10 +303,10 @@ async def test_framework_success_is_authoritative_without_response() -> None:
     llm = AsyncMock()
     llm.complete.return_value = mock_response('{"improvement": "better", "prompt": "attack"}')
     opt = await init_optimizer(llm=llm, n_streams=1, n_iterations=3)
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
-    await opt.on_event(ControllablePreCallEvent(controllable=make_controllable(), request="u"))
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, ControllablePreCallEvent(controllable=make_controllable(), request="u"))
 
-    end = await opt.on_event(RunEndEvent(evaluation=success_eval(), security_domain=USER_TAG))
+    end = await dispatch_event(opt, RunEndEvent(evaluation=success_eval(), security_domain=USER_TAG))
 
     assert end.done is True
     assert opt._succeeded is True
@@ -325,7 +325,7 @@ async def test_static_context_is_added_to_attacker_prompt_with_budget() -> None:
         ],
     )
 
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
 
     attacker_system = llm.complete.call_args.args[0][0]["content"]
     assert "SUPERRED STATIC TARGET CONTEXT" in attacker_system
@@ -340,4 +340,4 @@ async def test_budget_errors_propagate_from_attacker_generation() -> None:
     opt = await init_optimizer(llm=llm)
 
     with pytest.raises(BudgetExhaustedError):
-        await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+        await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))

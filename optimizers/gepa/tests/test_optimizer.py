@@ -18,11 +18,13 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from superred.core.channel import EventEnvelope
 from superred.core.types.controllable import Controllable
 from superred.core.types.evaluation import EvaluationResult, Score
 from superred.core.types.events import (
@@ -147,6 +149,20 @@ def _refl(text: str) -> ReflectionResult:
 # ---------------------------------------------------------------------------
 
 
+async def _dispatch_event(opt, event):
+    loop = asyncio.get_running_loop()
+    future = loop.create_future()
+    envelope = EventEnvelope(event=event, future=future, loop=loop)
+    try:
+        await opt._dispatch(envelope)
+    except Exception:
+        await asyncio.sleep(0)
+        if future.done():
+            future.exception()
+        raise
+    return await future
+
+
 class TestConstruction:
     def test_rejects_invalid_max_attempts(self) -> None:
         with pytest.raises(ValueError):
@@ -185,7 +201,7 @@ class TestRunStart:
     @pytest.mark.asyncio
     async def test_first_run_picks_seed(self) -> None:
         opt = await _init_optimizer()
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         assert opt._current is opt._pool[0]
         assert opt._current_is_fresh is False
 
@@ -193,7 +209,7 @@ class TestRunStart:
     async def test_pending_proposal_wins_when_present(self) -> None:
         opt = await _init_optimizer()
         # Manually plant a pending mutation to verify selection rule.
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         # Roll out the seed first.
         await _roll_out_one(opt, eval_=_failure_eval(0.2))
 
@@ -203,7 +219,7 @@ class TestRunStart:
 
         opt._pending = _Candidate(prompt="proposed", parent_idx=0)
 
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         assert opt._current is not None
         assert opt._current.prompt == "proposed"
         assert opt._current_is_fresh is True
@@ -219,9 +235,9 @@ class TestPreCall:
     @pytest.mark.asyncio
     async def test_pre_call_injects_current_candidate_prompt(self) -> None:
         opt = await _init_optimizer()
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
-        resp = await opt.on_event(
+        resp = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=_user_ctrl(), request="seed"),
         )
         assert isinstance(resp, ControllableInjection)
@@ -230,13 +246,13 @@ class TestPreCall:
     @pytest.mark.asyncio
     async def test_only_first_pre_call_per_run_gets_injected(self) -> None:
         opt = await _init_optimizer()
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         ctrl = _user_ctrl()
 
-        first = await opt.on_event(
+        first = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=ctrl, request="r1"),
         )
-        second = await opt.on_event(
+        second = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=ctrl, request="r2"),
         )
 
@@ -246,14 +262,14 @@ class TestPreCall:
     @pytest.mark.asyncio
     async def test_locks_to_first_user_controllable(self) -> None:
         opt = await _init_optimizer()
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         ctrl_a = _user_ctrl("user_message")
         ctrl_b = Controllable(name="another_user_channel", security_domain=USER_TAG)
 
-        first = await opt.on_event(
+        first = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=ctrl_a, request="r1"),
         )
-        second = await opt.on_event(
+        second = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=ctrl_b, request="r2"),
         )
         assert isinstance(first, ControllableInjection)
@@ -265,9 +281,9 @@ class TestPreCall:
         self,
     ) -> None:
         opt = await _init_optimizer()
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
-        sp_resp = await opt.on_event(
+        sp_resp = await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_system_prompt_ctrl(), request="seed",
             ),
@@ -275,7 +291,7 @@ class TestPreCall:
         assert isinstance(sp_resp, ControllableNoInjection)
         assert opt._primary_pre_controllable is None
 
-        user_resp = await opt.on_event(
+        user_resp = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=_user_ctrl(), request="seed"),
         )
         assert isinstance(user_resp, ControllableInjection)
@@ -291,13 +307,13 @@ class TestPostCall:
     @pytest.mark.asyncio
     async def test_post_call_pairs_by_controllable_identity(self) -> None:
         opt = await _init_optimizer()
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         ctrl = _user_ctrl()
 
-        await opt.on_event(
+        await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=ctrl, request="r1"),
         )
-        resp = await opt.on_event(
+        resp = await _dispatch_event(opt,
             ControllablePostCallEvent(
                 controllable=ctrl, request="r1", answer="hello",
             ),
@@ -310,13 +326,13 @@ class TestPostCall:
     @pytest.mark.asyncio
     async def test_post_call_pairs_by_request_match(self) -> None:
         opt = await _init_optimizer()
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
-        await opt.on_event(
+        await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=_user_ctrl(), request="r1"),
         )
         # PostCall on a different controllable but with matching pre-request.
-        await opt.on_event(
+        await _dispatch_event(opt,
             ControllablePostCallEvent(
                 controllable=_response_ctrl(), request="r1", answer="hi",
             ),
@@ -326,13 +342,13 @@ class TestPostCall:
     @pytest.mark.asyncio
     async def test_post_call_pairs_by_injected_value_match(self) -> None:
         opt = await _init_optimizer()
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
-        await opt.on_event(
+        await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=_user_ctrl(), request="seed"),
         )
         # PostCall whose request equals the injected value (request after rewrite).
-        await opt.on_event(
+        await _dispatch_event(opt,
             ControllablePostCallEvent(
                 controllable=_response_ctrl(),
                 request="achieve target X",
@@ -344,12 +360,12 @@ class TestPostCall:
     @pytest.mark.asyncio
     async def test_post_call_without_match_is_ignored(self) -> None:
         opt = await _init_optimizer()
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
-        await opt.on_event(
+        await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=_user_ctrl(), request="r1"),
         )
-        await opt.on_event(
+        await _dispatch_event(opt,
             ControllablePostCallEvent(
                 controllable=_response_ctrl(),
                 request="something_else",
@@ -383,9 +399,9 @@ async def _roll_out_one(
         response_ctrl = _response_ctrl()
 
     traj = _FakeReadableTrajectory()
-    await opt.on_event(RunStartEvent(trajectory=traj))
+    await _dispatch_event(opt, RunStartEvent(trajectory=traj))
 
-    await opt.on_event(
+    await _dispatch_event(opt,
         ControllablePreCallEvent(controllable=user_ctrl, request="seed"),
     )
 
@@ -397,7 +413,7 @@ async def _roll_out_one(
             ),
         )
 
-    end = await opt.on_event(
+    end = await _dispatch_event(opt,
         RunEndEvent(evaluation=eval_, security_domain=USER_TAG),
     )
     assert isinstance(end, RunEndResponse)
@@ -594,7 +610,7 @@ class TestReflectionFailure:
             opt._reflector, "propose", new=AsyncMock(return_value=None),
         ):
             await _roll_out_one(opt, eval_=_failure_eval(0.3))
-            await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+            await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         assert opt._current is opt._pool[0]
         assert opt._current_is_fresh is False
 
@@ -610,9 +626,9 @@ class TestTargetRunIntegration:
         """ChatbotTarget shape: [system_prompt PreCall][user_message loop]."""
         opt = await _init_optimizer(max_attempts=2)
         traj = _FakeReadableTrajectory()
-        await opt.on_event(RunStartEvent(trajectory=traj))
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj))
 
-        sp_resp = await opt.on_event(
+        sp_resp = await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_system_prompt_ctrl(),
                 request="default-system-prompt",
@@ -623,13 +639,13 @@ class TestTargetRunIntegration:
         user_ctrl = _user_ctrl()
         response_ctrl = _response_ctrl()
 
-        pre = await opt.on_event(
+        pre = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=user_ctrl, request="seed"),
         )
         assert isinstance(pre, ControllableInjection)
         assert pre.value == "achieve target X"
 
-        await opt.on_event(
+        await _dispatch_event(opt,
             ControllablePostCallEvent(
                 controllable=response_ctrl,
                 request="achieve target X",
@@ -646,7 +662,7 @@ class TestTargetRunIntegration:
         with patch.object(
             opt._reflector, "propose", new=AsyncMock(return_value=_refl("M1")),
         ):
-            end = await opt.on_event(
+            end = await _dispatch_event(opt,
                 RunEndEvent(evaluation=_success_eval(0.95), security_domain=USER_TAG),
             )
         assert end.done is True
@@ -816,8 +832,8 @@ class TestTargetControllableName:
     async def test_default_skips_system_prompt_pre_call(self) -> None:
         """Sanity: the default (unset) preserves the original behavior."""
         opt = await _init_optimizer()
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
-        sp_resp = await opt.on_event(
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        sp_resp = await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_system_prompt_ctrl(),
                 request="default-system-prompt",
@@ -838,9 +854,9 @@ class TestTargetControllableName:
             observables=[],
             llm_client=_empty_llm(),
         )
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
-        sp_resp = await opt.on_event(
+        sp_resp = await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_system_prompt_ctrl(),
                 request="default-system-prompt",
@@ -851,7 +867,7 @@ class TestTargetControllableName:
 
         # Subsequent user_message PreCall in the same run is rejected
         # because we're locked onto system_prompt.
-        user_resp = await opt.on_event(
+        user_resp = await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_user_ctrl(),
                 request="next-turn",
@@ -873,8 +889,8 @@ class TestTargetControllableName:
         )
         assert opt._target_controllable_name == "system_prompt"
 
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
-        sp_resp = await opt.on_event(
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        sp_resp = await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_system_prompt_ctrl(),
                 request="default-system-prompt",
@@ -885,7 +901,7 @@ class TestTargetControllableName:
 
         # Subsequent user_message PreCall is rejected — auto-claim
         # locks injection to system_prompt just like the explicit knob.
-        user_resp = await opt.on_event(
+        user_resp = await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_user_ctrl(), request="next",
             ),
@@ -927,10 +943,10 @@ class TestTargetControllableName:
             observables=[],
             llm_client=_empty_llm(),
         )
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
         # Different name -> ignored.
-        other = await opt.on_event(
+        other = await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_user_ctrl(name="extra_input"),
                 request="x",
@@ -939,7 +955,7 @@ class TestTargetControllableName:
         assert isinstance(other, ControllableNoInjection)
 
         # Configured target -> injected.
-        target = await opt.on_event(
+        target = await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_user_ctrl(),
                 request="x",

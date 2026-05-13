@@ -52,7 +52,6 @@ from superred.core.types.events import (
 )
 from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
-from superred.core.types.trajectory import ReadableTrajectory
 
 from autodan_turbo_optimizer.attacker import Attacker, AttackerOutput
 from autodan_turbo_optimizer.library import StrategyLibrary
@@ -179,7 +178,6 @@ class AutoDANTurboOptimizer(Optimizer):
         # Per-run state (reset in _reset_run_state).
         self._current_prompt: str = ""
         self._current_system_prompt_override: str | None = None
-        self._trajectory: ReadableTrajectory | None = None
         self._primary_pre_controllable: Controllable | None = None
         self._primary_post_controllable: Controllable | None = None
         self._injected_this_run: bool = False
@@ -302,7 +300,6 @@ class AutoDANTurboOptimizer(Optimizer):
 
     async def _handle_run_start(self, event: RunStartEvent) -> EventResponse:
         self._reset_run_state()
-        self._trajectory = event.trajectory
         await self._prepare_attempt()
         return EventResponse(event=event)
 
@@ -479,7 +476,6 @@ class AutoDANTurboOptimizer(Optimizer):
     def _reset_run_state(self) -> None:
         self._current_prompt = ""
         self._current_system_prompt_override = None
-        self._trajectory = None
         self._primary_pre_controllable = None
         self._primary_post_controllable = None
         self._injected_this_run = False
@@ -582,10 +578,10 @@ class AutoDANTurboOptimizer(Optimizer):
         )
 
     def _read_response_from_trajectory(self) -> str | None:
-        if self._trajectory is None:
+        if self.current_trajectory is None:
             return None
         latest: str | None = None
-        for item in self._trajectory.drain():
+        for item in self.current_trajectory.drain():
             if not isinstance(item, ObservableEvent):
                 continue
             name = item.observable.name

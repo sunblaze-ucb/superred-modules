@@ -65,5 +65,11 @@ async def dispatch_event(optimizer: Optimizer, event: Event) -> EventResponse:
     loop = asyncio.get_running_loop()
     future: asyncio.Future[EventResponse] = loop.create_future()
     envelope = EventEnvelope(event=event, future=future, loop=loop)
-    await optimizer._dispatch(envelope)
+    try:
+        await optimizer._dispatch(envelope)
+    except Exception:
+        await asyncio.sleep(0)
+        if future.done():
+            future.exception()
+        raise
     return await future

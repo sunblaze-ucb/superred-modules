@@ -22,7 +22,6 @@ from superred.core.types.events import (
 from superred.core.types.evaluation import EvaluationResult
 from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
-from superred.core.types.trajectory import ReadableTrajectory
 
 from code_chameleon_optimizer.evaluator import Evaluator
 from code_chameleon_optimizer.prompts import AttackPrompt, build_attack_prompt
@@ -87,7 +86,6 @@ class CodeChameleonOptimizer(Optimizer):
         self._consecutive_no_signal_runs = 0
         self._stop_due_to_no_signal = False
 
-        self._trajectory: ReadableTrajectory | None = None
         self._primary_pre_controllable: Controllable | None = None
         self._primary_post_controllable: Controllable | None = None
         self._current_attack: AttackPrompt | None = None
@@ -156,7 +154,6 @@ class CodeChameleonOptimizer(Optimizer):
 
     def _handle_run_start(self, event: RunStartEvent) -> EventResponse:
         self._reset_run_state()
-        self._trajectory = event.trajectory
         self._prepare_attempt()
         return EventResponse(event=event)
 
@@ -286,7 +283,6 @@ class CodeChameleonOptimizer(Optimizer):
         self._current_user_prompt = attack.user_prompt
 
     def _reset_run_state(self) -> None:
-        self._trajectory = None
         self._primary_pre_controllable = None
         self._primary_post_controllable = None
         self._current_attack = None
@@ -301,10 +297,10 @@ class CodeChameleonOptimizer(Optimizer):
         self._pending_post_answer = None
 
     def _read_response_from_trajectory(self) -> str | None:
-        if self._trajectory is None:
+        if self.current_trajectory is None:
             return None
         recovered: str | None = None
-        for item in self._trajectory.drain():
+        for item in self.current_trajectory.drain():
             if not isinstance(item, ObservableEvent):
                 continue
             name = item.observable.name

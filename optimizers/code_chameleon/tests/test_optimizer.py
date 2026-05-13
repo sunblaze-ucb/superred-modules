@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
 
+from superred.core.channel import EventEnvelope
 from superred.core.types.evaluation import EvaluationResult, Score
 from superred.core.types.events import (
     ControllableInjection,
@@ -71,10 +73,24 @@ async def init_optimizer(
     return opt
 
 
+async def _dispatch_event(opt, event):
+    loop = asyncio.get_running_loop()
+    future = loop.create_future()
+    envelope = EventEnvelope(event=event, future=future, loop=loop)
+    try:
+        await opt._dispatch(envelope)
+    except Exception:
+        await asyncio.sleep(0)
+        if future.done():
+            future.exception()
+        raise
+    return await future
+
+
 @pytest.mark.asyncio
 async def test_default_rule_is_binary_tree_without_model_observable() -> None:
     opt = await init_optimizer()
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await _dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
     assert opt._current_encrypt_rule == "binary_tree"
     assert "The encrypted_problem you need to solve is:" in opt._current_user_prompt
 
@@ -86,7 +102,7 @@ async def test_model_observable_does_not_change_the_chosen_encrypt_rule() -> Non
     from tests.conftest import model_observable
 
     opt = await init_optimizer(observables=[model_observable("Llama-2-70b-chat")])
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await _dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
     assert opt._current_encrypt_rule == "binary_tree"
 
 
@@ -98,7 +114,7 @@ async def test_explicit_rule_wins_over_model_observable() -> None:
         encrypt_rules=["reverse"],
         observables=[model_observable("Llama-2-70b-chat")],
     )
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await _dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
     assert opt._current_encrypt_rule == "reverse"
 
 
@@ -110,15 +126,15 @@ async def test_chatbot_target_shape_injects_system_prompt_then_user_prompt() -> 
             make_controllable("user_message", USER_TAG),
         ],
     )
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await _dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
 
-    sp = await opt.on_event(
+    sp = await _dispatch_event(opt,
         ControllablePreCallEvent(
             controllable=make_controllable("system_prompt", SYSTEM_PROMPT_TAG),
             request="default",
         )
     )
-    user = await opt.on_event(
+    user = await _dispatch_event(opt,
         ControllablePreCallEvent(
             controllable=make_controllable("user_message", USER_TAG),
             request="user message",
@@ -135,15 +151,15 @@ async def test_chatbot_target_shape_injects_system_prompt_then_user_prompt() -> 
 @pytest.mark.asyncio
 async def test_system_prompt_precall_does_not_steal_lock_when_not_writable() -> None:
     opt = await init_optimizer(controllables=[make_controllable("user_message", USER_TAG)])
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await _dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
 
-    sp = await opt.on_event(
+    sp = await _dispatch_event(opt,
         ControllablePreCallEvent(
             controllable=make_controllable("system_prompt", SYSTEM_PROMPT_TAG),
             request="default",
         )
     )
-    user = await opt.on_event(
+    user = await _dispatch_event(opt,
         ControllablePreCallEvent(
             controllable=make_controllable("user_message", USER_TAG),
             request="user message",
@@ -157,13 +173,13 @@ async def test_system_prompt_precall_does_not_steal_lock_when_not_writable() -> 
 @pytest.mark.asyncio
 async def test_response_precall_is_skipped_without_stealing_user_lock() -> None:
     opt = await init_optimizer()
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await _dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
 
     response_ctrl = make_controllable("response", MODEL_TAG)
-    response_pre = await opt.on_event(
+    response_pre = await _dispatch_event(opt,
         ControllablePreCallEvent(controllable=response_ctrl, request="assistant answer")
     )
-    user = await opt.on_event(
+    user = await _dispatch_event(opt,
         ControllablePreCallEvent(
             controllable=make_controllable("user_message", USER_TAG),
             request="user message",
@@ -180,12 +196,12 @@ async def test_trajectory_response_is_scored_before_postcall_fallback() -> None:
     llm.complete.return_value = mock_response("#thescore: 5")
     traj = FakeReadableTrajectory()
     opt = await init_optimizer(llm=llm)
-    await opt.on_event(RunStartEvent(trajectory=traj))
-    pre = await opt.on_event(
+    await _dispatch_event(opt, RunStartEvent(trajectory=traj))
+    pre = await _dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="user message")
     )
     assert isinstance(pre, ControllableInjection)
-    await opt.on_event(
+    await _dispatch_event(opt,
         ControllablePostCallEvent(
             controllable=make_controllable("response", MODEL_TAG),
             request=pre.value,
@@ -199,7 +215,7 @@ async def test_trajectory_response_is_scored_before_postcall_fallback() -> None:
         )
     )
 
-    end = await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
+    end = await _dispatch_event(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
 
     assert isinstance(end, RunEndResponse)
     assert end.done is True
@@ -212,12 +228,12 @@ async def test_postcall_answer_is_used_when_trajectory_response_is_not_visible()
     llm = AsyncMock()
     llm.complete.return_value = mock_response("#thescore: 5")
     opt = await init_optimizer(llm=llm)
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
-    pre = await opt.on_event(
+    await _dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    pre = await _dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="user message")
     )
     assert isinstance(pre, ControllableInjection)
-    await opt.on_event(
+    await _dispatch_event(opt,
         ControllablePostCallEvent(
             controllable=make_controllable("response", MODEL_TAG),
             request=pre.value,
@@ -225,7 +241,7 @@ async def test_postcall_answer_is_used_when_trajectory_response_is_not_visible()
         )
     )
 
-    end = await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
+    end = await _dispatch_event(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
 
     assert end.done is True
     assert "postcall answer" in llm.complete.call_args.args[0][0]["content"]
@@ -238,12 +254,12 @@ async def test_non_success_framework_evaluation_blocks_internal_success() -> Non
     traj = FakeReadableTrajectory()
     traj.push(ObservableEvent(observable=make_observable("response"), content="unsafe answer"))
     opt = await init_optimizer(llm=llm, encrypt_rules=["reverse", "binary_tree"])
-    await opt.on_event(RunStartEvent(trajectory=traj))
-    await opt.on_event(
+    await _dispatch_event(opt, RunStartEvent(trajectory=traj))
+    await _dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="user message")
     )
 
-    end = await opt.on_event(RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG))
+    end = await _dispatch_event(opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG))
 
     assert end.done is False
     assert opt._succeeded is False
@@ -252,9 +268,9 @@ async def test_non_success_framework_evaluation_blocks_internal_success() -> Non
 @pytest.mark.asyncio
 async def test_success_framework_evaluation_stops_without_response() -> None:
     opt = await init_optimizer(encrypt_rules=["reverse", "binary_tree"])
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await _dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
 
-    end = await opt.on_event(RunEndEvent(evaluation=success_eval(), security_domain=USER_TAG))
+    end = await _dispatch_event(opt, RunEndEvent(evaluation=success_eval(), security_domain=USER_TAG))
 
     assert end.done is True
     assert opt._succeeded is True
@@ -264,10 +280,10 @@ async def test_success_framework_evaluation_stops_without_response() -> None:
 async def test_blind_scope_runs_configured_rule_schedule_without_guessing_success() -> None:
     opt = await init_optimizer(encrypt_rules=["reverse", "binary_tree"])
 
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
-    first = await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
-    second = await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
+    await _dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    first = await _dispatch_event(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
+    await _dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    second = await _dispatch_event(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
 
     assert first.done is False
     assert second.done is True
@@ -277,9 +293,9 @@ async def test_blind_scope_runs_configured_rule_schedule_without_guessing_succes
 @pytest.mark.asyncio
 async def test_no_signal_guard_can_stop_blind_scopes() -> None:
     opt = await init_optimizer(encrypt_rules=["reverse", "binary_tree"], max_no_signal_runs=1)
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await _dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
 
-    end = await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
+    end = await _dispatch_event(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
 
     assert end.done is True
     assert opt._stop_due_to_no_signal is True

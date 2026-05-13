@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from superred.core.channel import EventEnvelope
 from superred.core.types.evaluation import EvaluationResult, Score
 from superred.core.types.events import (
     ControllableInjection,
@@ -80,14 +82,28 @@ async def init_optimizer(
     return opt
 
 
+async def _dispatch_event(opt, event):
+    loop = asyncio.get_running_loop()
+    future = loop.create_future()
+    envelope = EventEnvelope(event=event, future=future, loop=loop)
+    try:
+        await opt._dispatch(envelope)
+    except Exception:
+        await asyncio.sleep(0)
+        if future.done():
+            future.exception()
+        raise
+    return await future
+
+
 @pytest.mark.asyncio
 async def test_run_start_mutates_seed_and_precall_injects_synthesized_prompt() -> None:
     llm = AsyncMock()
     llm.complete.return_value = mock_response("mutated [INSERT PROMPT HERE]. ")
     opt = await init_optimizer(llm=llm)
 
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
-    resp = await opt.on_event(
+    await _dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    resp = await _dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="user message")
     )
 
@@ -109,15 +125,15 @@ async def test_system_prompt_precall_uses_writable_system_prompt_then_user_messa
             make_controllable("user_message", USER_TAG),
         ],
     )
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await _dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
 
-    sp = await opt.on_event(
+    sp = await _dispatch_event(opt,
         ControllablePreCallEvent(
             controllable=make_controllable("system_prompt", SYSTEM_PROMPT_TAG),
             request="default",
         )
     )
-    user = await opt.on_event(
+    user = await _dispatch_event(opt,
         ControllablePreCallEvent(
             controllable=make_controllable("user_message", USER_TAG),
             request="user message",
@@ -149,15 +165,15 @@ async def test_system_prompt_precall_can_be_disabled_for_paper_user_channel() ->
         observables=[],
         llm_client=llm,
     )
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await _dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
 
-    sp = await opt.on_event(
+    sp = await _dispatch_event(opt,
         ControllablePreCallEvent(
             controllable=make_controllable("system_prompt", SYSTEM_PROMPT_TAG),
             request="default",
         )
     )
-    user = await opt.on_event(
+    user = await _dispatch_event(opt,
         ControllablePreCallEvent(
             controllable=make_controllable("user_message", USER_TAG),
             request="user message",
@@ -180,7 +196,7 @@ async def test_static_observables_are_passed_to_mutator_as_bounded_context() -> 
         ],
     )
 
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await _dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
 
     mutation_prompt = llm.complete.call_args.args[0][0]["content"]
     assert "SUPERRED TARGET CONTEXT" in mutation_prompt
@@ -194,12 +210,12 @@ async def test_trajectory_response_wins_over_postcall_fallback_and_success_adds_
     llm.complete.return_value = mock_response("mutated [INSERT PROMPT HERE]. ")
     traj = FakeReadableTrajectory()
     opt = await init_optimizer(llm=llm, max_jailbreak=2)
-    await opt.on_event(RunStartEvent(trajectory=traj))
-    pre = await opt.on_event(
+    await _dispatch_event(opt, RunStartEvent(trajectory=traj))
+    pre = await _dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="user message")
     )
     assert isinstance(pre, ControllableInjection)
-    await opt.on_event(
+    await _dispatch_event(opt,
         ControllablePostCallEvent(
             controllable=make_controllable("response", MODEL_TAG),
             request=pre.value,
@@ -208,7 +224,7 @@ async def test_trajectory_response_wins_over_postcall_fallback_and_success_adds_
     )
     traj.push(ObservableEvent(observable=make_observable("response"), content="trajectory answer"))
 
-    end = await opt.on_event(RunEndEvent(evaluation=success_eval(), security_domain=USER_TAG))
+    end = await _dispatch_event(opt, RunEndEvent(evaluation=success_eval(), security_domain=USER_TAG))
 
     assert isinstance(end, RunEndResponse)
     assert end.done is False
@@ -223,12 +239,12 @@ async def test_non_success_framework_evaluation_does_not_retain_seed_even_with_s
     llm = AsyncMock()
     llm.complete.return_value = mock_response("mutated [INSERT PROMPT HERE]. ")
     opt = await init_optimizer(llm=llm)
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
-    await opt.on_event(
+    await _dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await _dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="user message")
     )
 
-    end = await opt.on_event(RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG))
+    end = await _dispatch_event(opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG))
 
     assert end.done is False
     assert len(opt._prompt_nodes) == 1
@@ -244,14 +260,14 @@ async def test_response_visible_run_uses_configured_predictor_when_no_framework_
     llm.complete.return_value = mock_response("mutated [INSERT PROMPT HERE]. ")
     traj = FakeReadableTrajectory()
     opt = await init_optimizer(llm=llm, max_jailbreak=2, predictor=predictor)
-    await opt.on_event(RunStartEvent(trajectory=traj))
-    pre = await opt.on_event(
+    await _dispatch_event(opt, RunStartEvent(trajectory=traj))
+    pre = await _dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="user message")
     )
     assert isinstance(pre, ControllableInjection)
     traj.push(ObservableEvent(observable=make_observable("response"), content="target answer"))
 
-    await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
+    await _dispatch_event(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
 
     predictor.predict.assert_called_once_with(["target answer"])
     assert opt._current_node is not None
@@ -263,9 +279,9 @@ async def test_no_signal_guard_can_stop_blind_scopes() -> None:
     llm = AsyncMock()
     llm.complete.return_value = mock_response("mutated [INSERT PROMPT HERE]. ")
     opt = await init_optimizer(llm=llm, max_no_signal_runs=1, max_query=10)
-    await opt.on_event(RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await _dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
 
-    end = await opt.on_event(RunEndEvent(evaluation=None, security_domain=USER_TAG))
+    end = await _dispatch_event(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
 
     assert end.done is True
     assert opt._stop_due_to_no_signal is True

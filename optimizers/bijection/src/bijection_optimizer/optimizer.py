@@ -53,7 +53,6 @@ from superred.core.types.events import (
 )
 from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
-from superred.core.types.trajectory import ReadableTrajectory
 
 from bijection_optimizer.bijection import Bijection, generate_bijection
 from bijection_optimizer.prompts import (
@@ -215,16 +214,10 @@ class BijectionOptimizer(Optimizer):
         self._consecutive_no_signal_runs: int = 0
         self._stop_due_to_no_signal: bool = False
 
-        # Per-run state (reset in _reset_run_state). We hold a local
-        # ``_trajectory`` reference (mirroring GOAT / FlipAttack /
-        # Crescendo / ManyShot) so unit tests can drive ``on_event``
-        # directly without standing up the full ``_dispatch`` /
-        # envelope machinery; the base class's ``_current_trajectory``
-        # would only be set when going through ``_dispatch``.
+        # Per-run state (reset in _reset_run_state).
         self._current_bijection: Bijection | None = None
         self._current_user_message: str = ""
         self._current_system_prompt: str = ""
-        self._trajectory: ReadableTrajectory | None = None
         self._primary_pre_controllable: Controllable | None = None
         self._primary_post_controllable: Controllable | None = None
         self._injected_this_run: bool = False
@@ -333,7 +326,6 @@ class BijectionOptimizer(Optimizer):
 
     def _handle_run_start(self, event: RunStartEvent) -> EventResponse:
         self._reset_run_state()
-        self._trajectory = event.trajectory
         self._prepare_attempt()
         return EventResponse(event=event)
 
@@ -469,7 +461,6 @@ class BijectionOptimizer(Optimizer):
         self._current_bijection = None
         self._current_user_message = ""
         self._current_system_prompt = ""
-        self._trajectory = None
         self._primary_pre_controllable = None
         self._primary_post_controllable = None
         self._injected_this_run = False
@@ -511,10 +502,10 @@ class BijectionOptimizer(Optimizer):
             )
 
     def _read_response_from_trajectory(self) -> str | None:
-        if self._trajectory is None:
+        if self.current_trajectory is None:
             return None
         latest: str | None = None
-        for item in self._trajectory.drain():
+        for item in self.current_trajectory.drain():
             if not isinstance(item, ObservableEvent):
                 continue
             name = item.observable.name
