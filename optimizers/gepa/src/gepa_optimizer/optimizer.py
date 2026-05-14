@@ -70,7 +70,6 @@ from superred.core.types.events import (
 )
 from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
-from superred.core.types.trajectory import ReadableTrajectory
 
 from gepa_optimizer.reflector import Reflector, RolloutRecord
 
@@ -212,7 +211,6 @@ class GEPAOptimizer(Optimizer):
         # Per-run state (reset in _reset_run_state).
         self._current: _Candidate | None = None
         self._current_is_fresh: bool = False
-        self._trajectory: ReadableTrajectory | None = None
         self._primary_pre_controllable: Controllable | None = None
         self._primary_post_controllable: Controllable | None = None
         self._injected_this_run: bool = False
@@ -274,7 +272,6 @@ class GEPAOptimizer(Optimizer):
 
     def _handle_run_start(self, event: RunStartEvent) -> EventResponse:
         self._reset_run_state()
-        self._trajectory = event.trajectory
         self._current, self._current_is_fresh = self._select_current_candidate()
         return EventResponse(event=event)
 
@@ -434,7 +431,6 @@ class GEPAOptimizer(Optimizer):
     def _reset_run_state(self) -> None:
         self._current = None
         self._current_is_fresh = False
-        self._trajectory = None
         self._primary_pre_controllable = None
         self._primary_post_controllable = None
         self._injected_this_run = False
@@ -471,10 +467,10 @@ class GEPAOptimizer(Optimizer):
         return best
 
     def _read_response_from_trajectory(self) -> str | None:
-        if self._trajectory is None:
+        if self.current_trajectory is None:
             return None
         latest: str | None = None
-        for item in self._trajectory.drain():
+        for item in self.current_trajectory.drain():
             if not isinstance(item, ObservableEvent):
                 continue
             name = item.observable.name
