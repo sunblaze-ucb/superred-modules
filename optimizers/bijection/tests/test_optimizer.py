@@ -14,11 +14,13 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
+from superred.core.channel import EventEnvelope
 from superred.core.types.controllable import Controllable
 from superred.core.types.evaluation import EvaluationResult, Score
 from superred.core.types.events import (
@@ -163,6 +165,20 @@ def _failure_eval(score: float = 0.1) -> EvaluationResult:
 # ---------------------------------------------------------------------------
 # Construction validation
 # ---------------------------------------------------------------------------
+
+
+async def _dispatch_event(opt, event):
+    loop = asyncio.get_running_loop()
+    future = loop.create_future()
+    envelope = EventEnvelope(event=event, future=future, loop=loop)
+    try:
+        await opt._dispatch(envelope)
+    except Exception:
+        await asyncio.sleep(0)
+        if future.done():
+            future.exception()
+        raise
+    return await future
 
 
 class TestConstruction:
@@ -316,7 +332,7 @@ class TestRunStart:
     @pytest.mark.asyncio
     async def test_run_start_prepares_bijection_and_prompt(self) -> None:
         opt = await _init_optimizer()
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         assert opt._current_bijection is not None
         assert opt._current_user_message
         # Default scope (user_message only) keeps the intro inside the
@@ -331,7 +347,7 @@ class TestRunStart:
         opt._pending_post_answer = "stale"
         opt._primary_pre_controllable = _user_ctrl()
 
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
         assert opt._injected_this_run is False
         assert opt._awaiting_post_call is False
@@ -348,8 +364,8 @@ class TestPreCall:
     @pytest.mark.asyncio
     async def test_pre_call_injects_bijection_prompt(self) -> None:
         opt = await _init_optimizer(num_teaching_shots=2)
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
-        resp = await opt.on_event(
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        resp = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=_user_ctrl(), request="seed"),
         )
         assert isinstance(resp, ControllableInjection)
@@ -363,14 +379,14 @@ class TestPreCall:
     async def test_second_pre_call_in_same_run_returns_no_injection(self) -> None:
         """Single-turn: only the first user-message PreCall is injected."""
         opt = await _init_optimizer()
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         ctrl = _user_ctrl()
-        first = await opt.on_event(
+        first = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=ctrl, request="r1"),
         )
         assert isinstance(first, ControllableInjection)
 
-        second = await opt.on_event(
+        second = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=ctrl, request="r2"),
         )
         assert isinstance(second, ControllableNoInjection)
@@ -378,18 +394,18 @@ class TestPreCall:
     @pytest.mark.asyncio
     async def test_locks_to_first_user_controllable(self) -> None:
         opt = await _init_optimizer()
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         ctrl_user = _user_ctrl()
         ctrl_other = Controllable(
             name="other_user_channel", security_domain=USER_TAG,
         )
 
-        first = await opt.on_event(
+        first = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=ctrl_user, request="r1"),
         )
         assert isinstance(first, ControllableInjection)
 
-        second = await opt.on_event(
+        second = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=ctrl_other, request="r2"),
         )
         assert isinstance(second, ControllableNoInjection)
@@ -401,9 +417,9 @@ class TestPreCall:
     ) -> None:
         """ChatbotTarget shape: system_prompt PreCall before user_message loop."""
         opt = await _init_optimizer()  # default: user_message only in scope
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
-        sp_resp = await opt.on_event(
+        sp_resp = await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_system_prompt_ctrl(), request="seed",
             ),
@@ -413,7 +429,7 @@ class TestPreCall:
         # become the primary.
         assert opt._primary_pre_controllable is None
 
-        user_resp = await opt.on_event(
+        user_resp = await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_user_ctrl(), request="seed",
             ),
@@ -432,9 +448,9 @@ class TestTwoChannelSplit:
         opt = await _init_optimizer(
             controllables=[_user_ctrl(), _system_prompt_ctrl()],
         )
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
-        sp_resp = await opt.on_event(
+        sp_resp = await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_system_prompt_ctrl(), request="default-sp",
             ),
@@ -443,7 +459,7 @@ class TestTwoChannelSplit:
         assert "Language Alpha" in sp_resp.value
         assert "alphabet map" in sp_resp.value
 
-        user_resp = await opt.on_event(
+        user_resp = await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_user_ctrl(), request="seed",
             ),
@@ -468,9 +484,9 @@ class TestTargetControllableNameOverride:
             controllables=[_user_ctrl(), _system_prompt_ctrl()],
             target_controllable_name="prompt_text",
         )
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
-        wrong_resp = await opt.on_event(
+        wrong_resp = await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_user_ctrl(), request="x",
             ),
@@ -478,7 +494,7 @@ class TestTargetControllableNameOverride:
         assert isinstance(wrong_resp, ControllableNoInjection)
 
         target = Controllable(name="prompt_text", security_domain=USER_TAG)
-        right_resp = await opt.on_event(
+        right_resp = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=target, request="x"),
         )
         assert isinstance(right_resp, ControllableInjection)
@@ -496,16 +512,16 @@ class TestPostCall:
     @pytest.mark.asyncio
     async def test_post_call_records_answer(self) -> None:
         opt = await _init_optimizer()
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
         ctrl = _user_ctrl()
-        pre = await opt.on_event(
+        pre = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=ctrl, request="seed"),
         )
         injected_value = pre.value  # type: ignore[attr-defined]
 
         post_ctrl = _response_ctrl()
-        await opt.on_event(
+        await _dispatch_event(opt,
             ControllablePostCallEvent(
                 controllable=post_ctrl,
                 request=injected_value,
@@ -517,9 +533,9 @@ class TestPostCall:
     @pytest.mark.asyncio
     async def test_post_call_unrelated_controllable_ignored(self) -> None:
         opt = await _init_optimizer()
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
-        await opt.on_event(
+        await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_user_ctrl(), request="seed",
             ),
@@ -529,7 +545,7 @@ class TestPostCall:
         # ``seed`` and isn't the injected value -> all 3 pairing rules
         # fail and the answer must be ignored.
         unrelated = Controllable(name="other", security_domain=USER_TAG)
-        await opt.on_event(
+        await _dispatch_event(opt,
             ControllablePostCallEvent(
                 controllable=unrelated,
                 request="totally-unrelated",
@@ -548,9 +564,9 @@ class TestRunEnd:
     @pytest.mark.asyncio
     async def test_success_eval_signals_done(self) -> None:
         opt = await _init_optimizer(max_attempts=10)
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
-        end_resp = await opt.on_event(
+        end_resp = await _dispatch_event(opt,
             RunEndEvent(evaluation=_success_eval(), security_domain=USER_TAG),
         )
         assert isinstance(end_resp, RunEndResponse)
@@ -560,8 +576,8 @@ class TestRunEnd:
     @pytest.mark.asyncio
     async def test_failure_eval_does_not_signal_done(self) -> None:
         opt = await _init_optimizer(max_attempts=3)
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
-        end = await opt.on_event(
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        end = await _dispatch_event(opt,
             RunEndEvent(evaluation=_failure_eval(), security_domain=USER_TAG),
         )
         assert end.done is False
@@ -570,8 +586,8 @@ class TestRunEnd:
     async def test_no_evaluation_continues_until_max_attempts(self) -> None:
         opt = await _init_optimizer(max_attempts=3)
         for expected_done in (False, False, True):
-            await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
-            end = await opt.on_event(
+            await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+            end = await _dispatch_event(opt,
                 RunEndEvent(evaluation=None, security_domain=USER_TAG),
             )
             assert end.done is expected_done
@@ -580,14 +596,14 @@ class TestRunEnd:
     async def test_fresh_bijection_per_attempt(self) -> None:
         opt = await _init_optimizer(max_attempts=2, seed=2024)
 
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         bj_a = opt._current_bijection
         assert bj_a is not None
-        await opt.on_event(
+        await _dispatch_event(opt,
             RunEndEvent(evaluation=None, security_domain=USER_TAG),
         )
 
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         bj_b = opt._current_bijection
         assert bj_b is not None
         # Same seed feeds an RNG that advances between draws → different
@@ -598,8 +614,8 @@ class TestRunEnd:
     async def test_deterministic_with_same_seed(self) -> None:
         opt_a = await _init_optimizer(seed=7)
         opt_b = await _init_optimizer(seed=7)
-        await opt_a.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
-        await opt_b.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt_a, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt_b, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         assert opt_a._current_bijection is not None
         assert opt_b._current_bijection is not None
         assert opt_a._current_bijection.mapping == opt_b._current_bijection.mapping
@@ -624,14 +640,14 @@ class TestAdversarialSettings:
         """No responses, no feedback. Each run injects, no early-stop."""
         opt = await _init_optimizer(max_attempts=2)
         for run in range(2):
-            await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
-            resp = await opt.on_event(
+            await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+            resp = await _dispatch_event(opt,
                 ControllablePreCallEvent(
                     controllable=_user_ctrl(), request=f"r{run}",
                 ),
             )
             assert isinstance(resp, ControllableInjection)
-            end = await opt.on_event(
+            end = await _dispatch_event(opt,
                 RunEndEvent(evaluation=None, security_domain=USER_TAG),
             )
             assert end.done is (run == 1)  # only the last attempt is "done"
@@ -639,13 +655,13 @@ class TestAdversarialSettings:
     @pytest.mark.asyncio
     async def test_setting_2_user_query_plus_feedback_early_stops(self) -> None:
         opt = await _init_optimizer(max_attempts=10)
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
-        await opt.on_event(
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_user_ctrl(), request="r1",
             ),
         )
-        end = await opt.on_event(
+        end = await _dispatch_event(opt,
             RunEndEvent(evaluation=_success_eval(), security_domain=USER_TAG),
         )
         assert end.done is True
@@ -656,8 +672,8 @@ class TestAdversarialSettings:
         """Responses present on trajectory, no eval. No early-stop."""
         opt = await _init_optimizer(max_attempts=2)
         traj = _FakeReadableTrajectory()
-        await opt.on_event(RunStartEvent(trajectory=traj))
-        await opt.on_event(
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj))
+        await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_user_ctrl(), request="r1",
             ),
@@ -668,7 +684,7 @@ class TestAdversarialSettings:
                 content="encoded reply",
             ),
         )
-        end = await opt.on_event(
+        end = await _dispatch_event(opt,
             RunEndEvent(evaluation=None, security_domain=USER_TAG),
         )
         assert end.done is False
@@ -677,8 +693,8 @@ class TestAdversarialSettings:
     async def test_setting_4_full_access(self) -> None:
         opt = await _init_optimizer(max_attempts=10)
         traj = _FakeReadableTrajectory()
-        await opt.on_event(RunStartEvent(trajectory=traj))
-        await opt.on_event(
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj))
+        await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_user_ctrl(), request="r1",
             ),
@@ -689,7 +705,7 @@ class TestAdversarialSettings:
                 content="encoded reply",
             ),
         )
-        end = await opt.on_event(
+        end = await _dispatch_event(opt,
             RunEndEvent(evaluation=_success_eval(), security_domain=USER_TAG),
         )
         assert end.done is True
@@ -709,25 +725,25 @@ class TestNoSignalGuard:
         )
 
         # Run 1: nothing visible.
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
-        await opt.on_event(
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_user_ctrl(), request="r1",
             ),
         )
-        end1 = await opt.on_event(
+        end1 = await _dispatch_event(opt,
             RunEndEvent(evaluation=None, security_domain=USER_TAG),
         )
         assert end1.done is False
 
         # Run 2: still nothing visible -> hit the guard.
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
-        await opt.on_event(
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_user_ctrl(), request="r1",
             ),
         )
-        end2 = await opt.on_event(
+        end2 = await _dispatch_event(opt,
             RunEndEvent(evaluation=None, security_domain=USER_TAG),
         )
         assert end2.done is True
@@ -740,20 +756,20 @@ class TestNoSignalGuard:
         )
 
         # Run 1: blind.
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
-        await opt.on_event(
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_user_ctrl(), request="r1",
             ),
         )
-        await opt.on_event(
+        await _dispatch_event(opt,
             RunEndEvent(evaluation=None, security_domain=USER_TAG),
         )
 
         # Run 2: response present -> counter resets.
         traj2 = _FakeReadableTrajectory()
-        await opt.on_event(RunStartEvent(trajectory=traj2))
-        await opt.on_event(
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj2))
+        await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_user_ctrl(), request="r2",
             ),
@@ -763,18 +779,18 @@ class TestNoSignalGuard:
                 observable=_response_observable(), content="seen",
             ),
         )
-        await opt.on_event(
+        await _dispatch_event(opt,
             RunEndEvent(evaluation=None, security_domain=USER_TAG),
         )
 
         # Run 3: blind again -> counter is back at 1, not 3.
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
-        await opt.on_event(
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_user_ctrl(), request="r3",
             ),
         )
-        end3 = await opt.on_event(
+        end3 = await _dispatch_event(opt,
             RunEndEvent(evaluation=None, security_domain=USER_TAG),
         )
         assert end3.done is False
@@ -791,10 +807,10 @@ class TestTargetRunIntegration:
         """ChatbotTarget shape: system_prompt PreCall, then user_message PreCall."""
         opt = await _init_optimizer(max_attempts=1, seed=1)
         traj = _FakeReadableTrajectory()
-        await opt.on_event(RunStartEvent(trajectory=traj))
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj))
 
         # 1. system_prompt PreCall before the loop (out of scope) -> skipped.
-        sp_resp = await opt.on_event(
+        sp_resp = await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_system_prompt_ctrl(),
                 request="default-system-prompt",
@@ -806,7 +822,7 @@ class TestTargetRunIntegration:
         response_ctrl = _response_ctrl()
 
         # 2. First user_message PreCall -> bijection prompt.
-        pre1 = await opt.on_event(
+        pre1 = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=user_ctrl, request="seed"),
         )
         assert isinstance(pre1, ControllableInjection)
@@ -815,7 +831,7 @@ class TestTargetRunIntegration:
         assert "Language Alpha" in bijection_prompt
 
         # 3. PostCall delivers (encoded) reply.
-        await opt.on_event(
+        await _dispatch_event(opt,
             ControllablePostCallEvent(
                 controllable=response_ctrl,
                 request=bijection_prompt,
@@ -830,13 +846,13 @@ class TestTargetRunIntegration:
         )
 
         # 4. Target tries another user_message PreCall -> NoInjection (single-turn).
-        pre2 = await opt.on_event(
+        pre2 = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=user_ctrl, request="seed"),
         )
         assert isinstance(pre2, ControllableNoInjection)
 
         # 5. RunEnd with success.
-        end = await opt.on_event(
+        end = await _dispatch_event(opt,
             RunEndEvent(evaluation=_success_eval(), security_domain=USER_TAG),
         )
         assert end.done is True
@@ -851,9 +867,9 @@ class TestTargetRunIntegration:
             seed=2,
         )
         traj = _FakeReadableTrajectory()
-        await opt.on_event(RunStartEvent(trajectory=traj))
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj))
 
-        sp_resp = await opt.on_event(
+        sp_resp = await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_system_prompt_ctrl(),
                 request="default-system-prompt",
@@ -863,14 +879,14 @@ class TestTargetRunIntegration:
         assert "Language Alpha" in sp_resp.value
         # Intro carries the alphabet map; user-message must not duplicate it.
 
-        pre = await opt.on_event(
+        pre = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=_user_ctrl(), request="seed"),
         )
         assert isinstance(pre, ControllableInjection)
         assert "You are about to learn a new language" not in pre.value
         assert MULTITURN_INDICATOR in pre.value
 
-        end = await opt.on_event(
+        end = await _dispatch_event(opt,
             RunEndEvent(evaluation=_success_eval(), security_domain=USER_TAG),
         )
         assert end.done is True
@@ -887,9 +903,9 @@ class TestTargetRunIntegration:
         trajectory = Trajectory(filtered_scope=frozenset({RESPONSE_TAG}))
         opt = await _init_optimizer(max_attempts=2, max_no_signal_runs=0, seed=7)
 
-        await opt.on_event(RunStartEvent(trajectory=trajectory.filtered))
+        await _dispatch_event(opt, RunStartEvent(trajectory=trajectory.filtered))
 
-        await opt.on_event(
+        await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_user_ctrl(), request="r1",
             ),
@@ -902,7 +918,7 @@ class TestTargetRunIntegration:
             ),
         )
 
-        end1 = await opt.on_event(
+        end1 = await _dispatch_event(opt,
             RunEndEvent(evaluation=None, security_domain=USER_TAG),
         )
         assert end1.done is False
