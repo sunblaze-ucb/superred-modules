@@ -135,10 +135,15 @@ class GOATOptimizer(Optimizer):
         if not self._attacks:
             raise ValueError("attacks must contain at least one Attack")
         self._attacker_temperature = attacker_temperature
-        self._response_observable_names: frozenset[str] = frozenset(
-            response_observable_names
+        configured_response_names = (
+            tuple(response_observable_names)
             if response_observable_names is not None
-            else _DEFAULT_RESPONSE_OBSERVABLE_NAMES
+            else tuple(_DEFAULT_RESPONSE_OBSERVABLE_NAMES)
+        )
+        self._response_observable_names: frozenset[str] = frozenset(
+            name
+            for configured in configured_response_names
+            for name in (configured, configured.lower())
         )
         self._max_no_response_runs = max(0, max_no_response_runs)
         self._use_system_prompt_when_available = use_system_prompt_when_available
@@ -443,19 +448,6 @@ class GOATOptimizer(Optimizer):
                     lines.append(f"- observable.{value.observable.name}: {text.strip()}")
             if len(lines) > 1:
                 sections.append("\n".join(lines))
-
-        extra_controllables = [
-            controllable
-            for controllable in controllables
-            if controllable.name not in {"user_message", _SYSTEM_PROMPT_NAME}
-        ]
-        if extra_controllables:
-            lines = ["SUPERRED EXTRA WRITABLE CONTROLLABLES:"]
-            lines.extend(
-                f"- controllable.{controllable.name}: writable"
-                for controllable in extra_controllables
-            )
-            sections.append("\n".join(lines))
 
         if can_write_system_prompt:
             sections.append(

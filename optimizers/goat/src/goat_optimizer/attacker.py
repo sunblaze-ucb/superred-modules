@@ -73,6 +73,8 @@ class Attacker:
             optimizer with ``attacks=(SOME_ATTACK,)``.
         temperature: Sampling temperature for the attacker LLM
             (default 1.0 to encourage strategy variety).
+        static_context: Optional bounded SuperRed capability context
+            inserted before the JSON output contract.
     """
 
     def __init__(
@@ -98,9 +100,8 @@ class Attacker:
             goal=self._goal,
             attack_block=attack_block,
             stacked=len(self._attacks) > 1,
+            static_context=self._static_context,
         )
-        if self._static_context:
-            self._system_prompt = f"{self._system_prompt}\n\n{self._static_context}"
 
         # Attacker conversation history C_A (Algorithm 1, line 7).
         # Only committed on successful parse, matching the Crescendo

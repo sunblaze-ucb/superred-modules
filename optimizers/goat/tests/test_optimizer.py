@@ -204,6 +204,25 @@ class TestRunStart:
         assert "gpt-4.1-mini" in opt._attacker.system_prompt
 
     @pytest.mark.asyncio
+    async def test_static_context_is_bounded(self) -> None:
+        model_observable = Observable(
+            name="target_model",
+            security_domain=SYSTEM_PROMPT_TAG,
+            description="Target model identifier",
+        )
+        opt = GOATOptimizer(static_context_max_chars=64)
+        await opt.initialize(
+            goal=Goal(description="test goal"),
+            controllables=[_user_ctrl()],
+            observables=[ObservableValue(model_observable, "x" * 200)],
+            llm_client=_empty_llm(),
+        )
+
+        assert opt._static_context is not None
+        assert len(opt._static_context) <= 64
+        assert "[truncated]" in opt._static_context
+
+    @pytest.mark.asyncio
     async def test_run_start_resets_per_attempt_state(self) -> None:
         opt = await _init_optimizer()
         opt._turn = 5
@@ -478,6 +497,49 @@ class TestResponseRecovery:
         assert (
             attacker_mock.call_args_list[1].kwargs["prev_response"]
             == "postcall-reply"
+        )
+
+    @pytest.mark.asyncio
+    async def test_response_observable_names_are_case_normalized(self) -> None:
+        opt = GOATOptimizer(
+            max_turns=2,
+            max_attempts=1,
+            response_observable_names=["Assistant_Response"],
+        )
+        await opt.initialize(
+            goal=Goal(description="test goal"),
+            controllables=[_user_ctrl()],
+            observables=[],
+            llm_client=_empty_llm(),
+        )
+        traj = _FakeReadableTrajectory()
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj))
+
+        attacker_mock = AsyncMock(
+            side_effect=[
+                AttackerTurn("o", "t", "s", "p1"),
+                AttackerTurn("o", "t", "s", "p2"),
+            ],
+        )
+        with patch.object(opt._attacker, "next_turn", new=attacker_mock):
+            await _dispatch_event(
+                opt,
+                ControllablePreCallEvent(controllable=_user_ctrl(), request="r1"),
+            )
+            traj.push(
+                ObservableEvent(
+                    observable=_response_observable("assistant_response"),
+                    content="case-normalized-response",
+                ),
+            )
+            await _dispatch_event(
+                opt,
+                ControllablePreCallEvent(controllable=_user_ctrl(), request="r2"),
+            )
+
+        assert (
+            attacker_mock.call_args_list[1].kwargs["prev_response"]
+            == "case-normalized-response"
         )
 
     @pytest.mark.asyncio
