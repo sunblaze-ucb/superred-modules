@@ -6,7 +6,7 @@ Covers:
 * Trajectory-first response recovery; PostCall fallback; empty-M fallback.
 * Cross-attempt: fresh attacker per run.
 * Early-stop on ``RunEndEvent.evaluation.success``.
-* ``system_prompt`` PreCall doesn't steal the primary-controllable lock.
+* writable ``system_prompt`` PreCall is used without stealing the primary lock.
 * All four adversarial information-access settings.
 * Benign fallback on attacker parse failure.
 """
@@ -33,7 +33,7 @@ from superred.core.types.events import (
     RunStartEvent,
 )
 from superred.core.types.goal import Goal
-from superred.core.types.observable import Observable
+from superred.core.types.observable import Observable, ObservableValue
 from superred.core.types.security_domain import SecurityDomainTag
 
 from goat_optimizer.attacker import AttackerParseError, AttackerTurn
@@ -104,6 +104,8 @@ async def _init_optimizer(
     max_attempts: int = 1,
     attacks=None,
     max_no_response_runs: int = 0,
+    controllables: list[Controllable] | None = None,
+    observables: list[ObservableValue] | None = None,
 ) -> GOATOptimizer:
     opt = GOATOptimizer(
         max_turns=max_turns,
@@ -113,8 +115,8 @@ async def _init_optimizer(
     )
     await opt.initialize(
         goal=Goal(description="test goal"),
-        controllables=[_user_ctrl()],
-        observables=[],
+        controllables=controllables if controllables is not None else [_user_ctrl()],
+        observables=observables if observables is not None else [],
         llm_client=_empty_llm(),
     )
     return opt
@@ -184,6 +186,24 @@ class TestRunStart:
         assert opt._attacker is not None
 
     @pytest.mark.asyncio
+    async def test_static_observables_are_added_to_attacker_prompt(self) -> None:
+        model_observable = Observable(
+            name="target_model",
+            security_domain=SYSTEM_PROMPT_TAG,
+            description="Target model identifier",
+        )
+        opt = await _init_optimizer(
+            observables=[ObservableValue(model_observable, "gpt-4.1-mini")]
+        )
+
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+
+        assert opt._attacker is not None
+        assert "SUPERRED STATIC TARGET CONTEXT" in opt._attacker.system_prompt
+        assert "target_model" in opt._attacker.system_prompt
+        assert "gpt-4.1-mini" in opt._attacker.system_prompt
+
+    @pytest.mark.asyncio
     async def test_run_start_resets_per_attempt_state(self) -> None:
         opt = await _init_optimizer()
         opt._turn = 5
@@ -249,15 +269,16 @@ class TestPreCall:
         assert opt._primary_pre_controllable == ctrl_user
 
     @pytest.mark.asyncio
-    async def test_system_prompt_pre_call_does_not_steal_primary_lock(self) -> None:
-        """A pre-loop system_prompt PreCall must not lock out user_message.
+    async def test_writable_system_prompt_injects_without_stealing_primary_lock(self) -> None:
+        """A pre-loop system_prompt PreCall should use the capability when scoped.
 
         ChatbotTarget shape: emits ``system_prompt`` PreCall before the
-        ``user_message`` loop. GOAT skips ``system_prompt`` so the
+        ``user_message`` loop. GOAT injects a target-side system prompt
+        extension when writable, without locking that slot, so the
         first user_message PreCall can still become the primary
         injection channel.
         """
-        opt = await _init_optimizer()
+        opt = await _init_optimizer(controllables=[_system_prompt_ctrl(), _user_ctrl()])
         await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
         sp_resp = await _dispatch_event(opt,
@@ -265,7 +286,9 @@ class TestPreCall:
                 controllable=_system_prompt_ctrl(), request="seed",
             ),
         )
-        assert isinstance(sp_resp, ControllableNoInjection)
+        assert isinstance(sp_resp, ControllableInjection)
+        assert sp_resp.value.startswith("seed")
+        assert "authorized red-team evaluation" in sp_resp.value
         assert opt._primary_pre_controllable is None
 
         with patch.object(
@@ -280,6 +303,22 @@ class TestPreCall:
             )
         assert isinstance(user_resp, ControllableInjection)
         assert user_resp.value == "PAYLOAD"
+
+    @pytest.mark.asyncio
+    async def test_unscoped_system_prompt_pre_call_is_skipped_without_locking(self) -> None:
+        opt = await _init_optimizer(controllables=[_user_ctrl()])
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+
+        sp_resp = await _dispatch_event(
+            opt,
+            ControllablePreCallEvent(
+                controllable=_system_prompt_ctrl(),
+                request="seed",
+            ),
+        )
+
+        assert isinstance(sp_resp, ControllableNoInjection)
+        assert opt._primary_pre_controllable is None
 
     @pytest.mark.asyncio
     async def test_pre_call_after_max_turns_returns_no_injection(self) -> None:
