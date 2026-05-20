@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agentdojo-target"
+version = "0.1.0"
+description = "AgentDojo composite target for superred: union of all four v1 suites with on-demand event-based injection and tool-catalog controllable surface"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "superred>=0.1.0",
+    "agentdojo>=0.1.35",
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=6.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentdojo_target"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "--strict-markers"
+testpaths = ["tests"]
+markers = [
+    "faithfulness: per-PR faithfulness smoke (12 pairs)",
+    "faithfulness_full: full 629-case cross-product (nightly/pre-release only)",
+]
+# tests/faithfulness/ holds long-running comparison tests against AgentDojo
+# upstream; both markers are off by default. Run with `pytest -m faithfulness`
+# or `pytest -m faithfulness_full` explicitly.
+
+[tool.coverage.report]
+fail_under = 90
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "\\.\\.\\.",
+]
+
+[tool.mypy]
+strict = true
+python_version = "3.13"
+
+[[tool.mypy.overrides]]
+module = ["agentdojo.*"]
+ignore_missing_imports = true
