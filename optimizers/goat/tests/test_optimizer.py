@@ -6,18 +6,20 @@ Covers:
 * Trajectory-first response recovery; PostCall fallback; empty-M fallback.
 * Cross-attempt: fresh attacker per run.
 * Early-stop on ``RunEndEvent.evaluation.success``.
-* ``system_prompt`` PreCall doesn't steal the primary-controllable lock.
+* writable ``system_prompt`` PreCall is used without stealing the primary lock.
 * All four adversarial information-access settings.
 * Benign fallback on attacker parse failure.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from superred.core.channel import EventEnvelope
 from superred.core.types.controllable import Controllable
 from superred.core.types.evaluation import EvaluationResult, Score
 from superred.core.types.events import (
@@ -31,7 +33,7 @@ from superred.core.types.events import (
     RunStartEvent,
 )
 from superred.core.types.goal import Goal
-from superred.core.types.observable import Observable
+from superred.core.types.observable import Observable, ObservableValue
 from superred.core.types.security_domain import SecurityDomainTag
 
 from goat_optimizer.attacker import AttackerParseError, AttackerTurn
@@ -102,6 +104,8 @@ async def _init_optimizer(
     max_attempts: int = 1,
     attacks=None,
     max_no_response_runs: int = 0,
+    controllables: list[Controllable] | None = None,
+    observables: list[ObservableValue] | None = None,
 ) -> GOATOptimizer:
     opt = GOATOptimizer(
         max_turns=max_turns,
@@ -111,8 +115,8 @@ async def _init_optimizer(
     )
     await opt.initialize(
         goal=Goal(description="test goal"),
-        controllables=[_user_ctrl()],
-        observables=[],
+        controllables=controllables if controllables is not None else [_user_ctrl()],
+        observables=observables if observables is not None else [],
         llm_client=_empty_llm(),
     )
     return opt
@@ -141,6 +145,20 @@ def _failure_eval(score: float = 0.1) -> EvaluationResult:
 # ---------------------------------------------------------------------------
 
 
+async def _dispatch_event(opt, event):
+    loop = asyncio.get_running_loop()
+    future = loop.create_future()
+    envelope = EventEnvelope(event=event, future=future, loop=loop)
+    try:
+        await opt._dispatch(envelope)
+    except Exception:
+        await asyncio.sleep(0)
+        if future.done():
+            future.exception()
+        raise
+    return await future
+
+
 class TestConstruction:
     def test_rejects_invalid_max_turns(self) -> None:
         with pytest.raises(ValueError):
@@ -164,8 +182,45 @@ class TestRunStart:
     @pytest.mark.asyncio
     async def test_run_start_constructs_attacker(self) -> None:
         opt = await _init_optimizer()
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         assert opt._attacker is not None
+
+    @pytest.mark.asyncio
+    async def test_static_observables_are_added_to_attacker_prompt(self) -> None:
+        model_observable = Observable(
+            name="target_model",
+            security_domain=SYSTEM_PROMPT_TAG,
+            description="Target model identifier",
+        )
+        opt = await _init_optimizer(
+            observables=[ObservableValue(model_observable, "gpt-4.1-mini")]
+        )
+
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+
+        assert opt._attacker is not None
+        assert "SUPERRED STATIC TARGET CONTEXT" in opt._attacker.system_prompt
+        assert "target_model" in opt._attacker.system_prompt
+        assert "gpt-4.1-mini" in opt._attacker.system_prompt
+
+    @pytest.mark.asyncio
+    async def test_static_context_is_bounded(self) -> None:
+        model_observable = Observable(
+            name="target_model",
+            security_domain=SYSTEM_PROMPT_TAG,
+            description="Target model identifier",
+        )
+        opt = GOATOptimizer(static_context_max_chars=64)
+        await opt.initialize(
+            goal=Goal(description="test goal"),
+            controllables=[_user_ctrl()],
+            observables=[ObservableValue(model_observable, "x" * 200)],
+            llm_client=_empty_llm(),
+        )
+
+        assert opt._static_context is not None
+        assert len(opt._static_context) <= 64
+        assert "[truncated]" in opt._static_context
 
     @pytest.mark.asyncio
     async def test_run_start_resets_per_attempt_state(self) -> None:
@@ -174,7 +229,7 @@ class TestRunStart:
         opt._attempt_done = True
         opt._last_injected_value = "stale"
 
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
         assert opt._turn == 0
         assert opt._attempt_done is False
@@ -190,14 +245,14 @@ class TestPreCall:
     @pytest.mark.asyncio
     async def test_pre_call_injects_attacker_response(self) -> None:
         opt = await _init_optimizer()
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
         with patch.object(
             opt._attacker, "next_turn", new=AsyncMock(
                 return_value=AttackerTurn("o", "t", "s", "ATTACK PROMPT"),
             ),
         ):
-            resp = await opt.on_event(
+            resp = await _dispatch_event(opt,
                 ControllablePreCallEvent(controllable=_user_ctrl(), request="seed"),
             )
 
@@ -210,7 +265,7 @@ class TestPreCall:
     async def test_locks_to_first_user_controllable(self) -> None:
         """After locking, other (non-system_prompt) controllables are ignored."""
         opt = await _init_optimizer()
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         ctrl_user = _user_ctrl()
         ctrl_other = Controllable(
             name="other_user_channel", security_domain=USER_TAG,
@@ -221,35 +276,38 @@ class TestPreCall:
                 return_value=AttackerTurn("o", "t", "s", "first payload"),
             ),
         ):
-            first = await opt.on_event(
+            first = await _dispatch_event(opt,
                 ControllablePreCallEvent(controllable=ctrl_user, request="r1"),
             )
         assert isinstance(first, ControllableInjection)
 
-        second = await opt.on_event(
+        second = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=ctrl_other, request="r2"),
         )
         assert isinstance(second, ControllableNoInjection)
         assert opt._primary_pre_controllable == ctrl_user
 
     @pytest.mark.asyncio
-    async def test_system_prompt_pre_call_does_not_steal_primary_lock(self) -> None:
-        """A pre-loop system_prompt PreCall must not lock out user_message.
+    async def test_writable_system_prompt_injects_without_stealing_primary_lock(self) -> None:
+        """A pre-loop system_prompt PreCall should use the capability when scoped.
 
         ChatbotTarget shape: emits ``system_prompt`` PreCall before the
-        ``user_message`` loop. GOAT skips ``system_prompt`` so the
+        ``user_message`` loop. GOAT injects a target-side system prompt
+        extension when writable, without locking that slot, so the
         first user_message PreCall can still become the primary
         injection channel.
         """
-        opt = await _init_optimizer()
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        opt = await _init_optimizer(controllables=[_system_prompt_ctrl(), _user_ctrl()])
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
-        sp_resp = await opt.on_event(
+        sp_resp = await _dispatch_event(opt,
             ControllablePreCallEvent(
                 controllable=_system_prompt_ctrl(), request="seed",
             ),
         )
-        assert isinstance(sp_resp, ControllableNoInjection)
+        assert isinstance(sp_resp, ControllableInjection)
+        assert sp_resp.value.startswith("seed")
+        assert "authorized red-team evaluation" in sp_resp.value
         assert opt._primary_pre_controllable is None
 
         with patch.object(
@@ -257,7 +315,7 @@ class TestPreCall:
                 return_value=AttackerTurn("o", "t", "s", "PAYLOAD"),
             ),
         ):
-            user_resp = await opt.on_event(
+            user_resp = await _dispatch_event(opt,
                 ControllablePreCallEvent(
                     controllable=_user_ctrl(), request="seed",
                 ),
@@ -266,9 +324,25 @@ class TestPreCall:
         assert user_resp.value == "PAYLOAD"
 
     @pytest.mark.asyncio
+    async def test_unscoped_system_prompt_pre_call_is_skipped_without_locking(self) -> None:
+        opt = await _init_optimizer(controllables=[_user_ctrl()])
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+
+        sp_resp = await _dispatch_event(
+            opt,
+            ControllablePreCallEvent(
+                controllable=_system_prompt_ctrl(),
+                request="seed",
+            ),
+        )
+
+        assert isinstance(sp_resp, ControllableNoInjection)
+        assert opt._primary_pre_controllable is None
+
+    @pytest.mark.asyncio
     async def test_pre_call_after_max_turns_returns_no_injection(self) -> None:
         opt = await _init_optimizer(max_turns=1)
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         ctrl = _user_ctrl()
 
         with patch.object(
@@ -276,11 +350,11 @@ class TestPreCall:
                 return_value=AttackerTurn("o", "t", "s", "p1"),
             ),
         ):
-            await opt.on_event(
+            await _dispatch_event(opt,
                 ControllablePreCallEvent(controllable=ctrl, request="r1"),
             )
 
-        resp = await opt.on_event(
+        resp = await _dispatch_event(opt,
             ControllablePreCallEvent(controllable=ctrl, request="r2"),
         )
         assert isinstance(resp, ControllableNoInjection)
@@ -299,7 +373,7 @@ class TestMultiTurn:
     ) -> None:
         opt = await _init_optimizer(max_turns=3)
         traj = _FakeReadableTrajectory()
-        await opt.on_event(RunStartEvent(trajectory=traj))
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj))
 
         ctrl = _user_ctrl()
         post_ctrl = _response_ctrl()
@@ -312,15 +386,15 @@ class TestMultiTurn:
         )
 
         with patch.object(opt._attacker, "next_turn", new=attacker_mock):
-            await opt.on_event(
+            await _dispatch_event(opt,
                 ControllablePreCallEvent(controllable=ctrl, request="seed"),
             )
-            await opt.on_event(
+            await _dispatch_event(opt,
                 ControllablePostCallEvent(
                     controllable=post_ctrl, request="p1", answer="reply-1",
                 ),
             )
-            await opt.on_event(
+            await _dispatch_event(opt,
                 ControllablePreCallEvent(controllable=ctrl, request="seed"),
             )
             assert (
@@ -330,17 +404,17 @@ class TestMultiTurn:
                 attacker_mock.call_args_list[1].kwargs["prev_response"] == "reply-1"
             )
 
-            await opt.on_event(
+            await _dispatch_event(opt,
                 ControllablePostCallEvent(
                     controllable=post_ctrl, request="p2", answer="reply-2",
                 ),
             )
-            await opt.on_event(
+            await _dispatch_event(opt,
                 ControllablePreCallEvent(controllable=ctrl, request="seed"),
             )
 
             # Turn 4 hits max_turns.
-            resp4 = await opt.on_event(
+            resp4 = await _dispatch_event(opt,
                 ControllablePreCallEvent(controllable=ctrl, request="seed"),
             )
             assert isinstance(resp4, ControllableNoInjection)
@@ -357,7 +431,7 @@ class TestResponseRecovery:
     async def test_trajectory_observable_preferred_over_postcall(self) -> None:
         opt = await _init_optimizer(max_turns=3)
         traj = _FakeReadableTrajectory()
-        await opt.on_event(RunStartEvent(trajectory=traj))
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj))
 
         ctrl = _user_ctrl()
         post_ctrl = _response_ctrl()
@@ -369,10 +443,10 @@ class TestResponseRecovery:
         )
 
         with patch.object(opt._attacker, "next_turn", new=attacker_mock):
-            await opt.on_event(
+            await _dispatch_event(opt,
                 ControllablePreCallEvent(controllable=ctrl, request="r1"),
             )
-            await opt.on_event(
+            await _dispatch_event(opt,
                 ControllablePostCallEvent(
                     controllable=post_ctrl, request="p1", answer="from-postcall",
                 ),
@@ -383,7 +457,7 @@ class TestResponseRecovery:
                     content="from-trajectory",
                 ),
             )
-            await opt.on_event(
+            await _dispatch_event(opt,
                 ControllablePreCallEvent(controllable=ctrl, request="r2"),
             )
 
@@ -396,7 +470,7 @@ class TestResponseRecovery:
     async def test_postcall_used_when_no_trajectory_observable(self) -> None:
         opt = await _init_optimizer(max_turns=3)
         traj = _FakeReadableTrajectory()
-        await opt.on_event(RunStartEvent(trajectory=traj))
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj))
 
         ctrl = _user_ctrl()
         post_ctrl = _response_ctrl()
@@ -408,15 +482,15 @@ class TestResponseRecovery:
         )
 
         with patch.object(opt._attacker, "next_turn", new=attacker_mock):
-            await opt.on_event(
+            await _dispatch_event(opt,
                 ControllablePreCallEvent(controllable=ctrl, request="r1"),
             )
-            await opt.on_event(
+            await _dispatch_event(opt,
                 ControllablePostCallEvent(
                     controllable=post_ctrl, request="p1", answer="postcall-reply",
                 ),
             )
-            await opt.on_event(
+            await _dispatch_event(opt,
                 ControllablePreCallEvent(controllable=ctrl, request="r2"),
             )
 
@@ -426,10 +500,53 @@ class TestResponseRecovery:
         )
 
     @pytest.mark.asyncio
+    async def test_response_observable_names_are_case_normalized(self) -> None:
+        opt = GOATOptimizer(
+            max_turns=2,
+            max_attempts=1,
+            response_observable_names=["Assistant_Response"],
+        )
+        await opt.initialize(
+            goal=Goal(description="test goal"),
+            controllables=[_user_ctrl()],
+            observables=[],
+            llm_client=_empty_llm(),
+        )
+        traj = _FakeReadableTrajectory()
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj))
+
+        attacker_mock = AsyncMock(
+            side_effect=[
+                AttackerTurn("o", "t", "s", "p1"),
+                AttackerTurn("o", "t", "s", "p2"),
+            ],
+        )
+        with patch.object(opt._attacker, "next_turn", new=attacker_mock):
+            await _dispatch_event(
+                opt,
+                ControllablePreCallEvent(controllable=_user_ctrl(), request="r1"),
+            )
+            traj.push(
+                ObservableEvent(
+                    observable=_response_observable("assistant_response"),
+                    content="case-normalized-response",
+                ),
+            )
+            await _dispatch_event(
+                opt,
+                ControllablePreCallEvent(controllable=_user_ctrl(), request="r2"),
+            )
+
+        assert (
+            attacker_mock.call_args_list[1].kwargs["prev_response"]
+            == "case-normalized-response"
+        )
+
+    @pytest.mark.asyncio
     async def test_empty_M_fallback_when_neither_visible(self) -> None:
         """Paper "if M is empty" branch when nothing about the response is in scope."""
         opt = await _init_optimizer(max_turns=3)
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
         ctrl = _user_ctrl()
         attacker_mock = AsyncMock(
@@ -440,10 +557,10 @@ class TestResponseRecovery:
         )
 
         with patch.object(opt._attacker, "next_turn", new=attacker_mock):
-            await opt.on_event(
+            await _dispatch_event(opt,
                 ControllablePreCallEvent(controllable=ctrl, request="r1"),
             )
-            await opt.on_event(
+            await _dispatch_event(opt,
                 ControllablePreCallEvent(controllable=ctrl, request="r2"),
             )
 
@@ -460,9 +577,9 @@ class TestRunEnd:
     @pytest.mark.asyncio
     async def test_success_eval_signals_done(self) -> None:
         opt = await _init_optimizer(max_attempts=10)
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
-        end_resp = await opt.on_event(
+        end_resp = await _dispatch_event(opt,
             RunEndEvent(evaluation=_success_eval(), security_domain=USER_TAG),
         )
 
@@ -475,8 +592,8 @@ class TestRunEnd:
         opt = await _init_optimizer(max_attempts=3)
 
         for expected_done in (False, False, True):
-            await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
-            end = await opt.on_event(
+            await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+            end = await _dispatch_event(opt,
                 RunEndEvent(evaluation=None, security_domain=USER_TAG),
             )
             assert end.done is expected_done
@@ -484,8 +601,8 @@ class TestRunEnd:
     @pytest.mark.asyncio
     async def test_failure_eval_does_not_signal_done(self) -> None:
         opt = await _init_optimizer(max_attempts=3)
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
-        end = await opt.on_event(
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        end = await _dispatch_event(opt,
             RunEndEvent(evaluation=_failure_eval(), security_domain=USER_TAG),
         )
         assert end.done is False
@@ -494,13 +611,13 @@ class TestRunEnd:
     async def test_fresh_attacker_per_attempt(self) -> None:
         opt = await _init_optimizer(max_attempts=2)
 
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         attacker_a = opt._attacker
-        await opt.on_event(
+        await _dispatch_event(opt,
             RunEndEvent(evaluation=None, security_domain=USER_TAG),
         )
 
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         attacker_b = opt._attacker
 
         assert attacker_a is not attacker_b
@@ -523,7 +640,7 @@ class TestAdversarialSettings:
     async def test_setting_1_user_query_only(self) -> None:
         """No responses, no feedback. K turns still fire; every M is empty."""
         opt = await _init_optimizer(max_turns=3, max_attempts=1)
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
         ctrl = _user_ctrl()
         attacker_mock = AsyncMock(
@@ -534,7 +651,7 @@ class TestAdversarialSettings:
 
         with patch.object(opt._attacker, "next_turn", new=attacker_mock):
             for i in range(3):
-                resp = await opt.on_event(
+                resp = await _dispatch_event(opt,
                     ControllablePreCallEvent(controllable=ctrl, request=f"r{i}"),
                 )
                 assert isinstance(resp, ControllableInjection)
@@ -543,7 +660,7 @@ class TestAdversarialSettings:
         for call in attacker_mock.call_args_list:
             assert not call.kwargs["prev_response"]
 
-        end = await opt.on_event(
+        end = await _dispatch_event(opt,
             RunEndEvent(evaluation=None, security_domain=USER_TAG),
         )
         assert end.done is True  # max_attempts=1 exhausted
@@ -552,7 +669,7 @@ class TestAdversarialSettings:
     async def test_setting_2_user_query_plus_feedback(self) -> None:
         """Feedback only. Per-turn behaviour matches setting 1; success early-stops."""
         opt = await _init_optimizer(max_turns=3, max_attempts=10)
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
         ctrl = _user_ctrl()
         with patch.object(
@@ -560,11 +677,11 @@ class TestAdversarialSettings:
                 return_value=AttackerTurn("o", "t", "s", "p"),
             ),
         ):
-            await opt.on_event(
+            await _dispatch_event(opt,
                 ControllablePreCallEvent(controllable=ctrl, request="r1"),
             )
 
-        end = await opt.on_event(
+        end = await _dispatch_event(opt,
             RunEndEvent(evaluation=_success_eval(), security_domain=USER_TAG),
         )
         assert end.done is True
@@ -574,7 +691,7 @@ class TestAdversarialSettings:
         """Responses, no feedback. Full GOAT loop, no early-stop."""
         opt = await _init_optimizer(max_turns=2, max_attempts=2)
         traj = _FakeReadableTrajectory()
-        await opt.on_event(RunStartEvent(trajectory=traj))
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj))
 
         ctrl = _user_ctrl()
         attacker_mock = AsyncMock(
@@ -585,7 +702,7 @@ class TestAdversarialSettings:
         )
 
         with patch.object(opt._attacker, "next_turn", new=attacker_mock):
-            await opt.on_event(
+            await _dispatch_event(opt,
                 ControllablePreCallEvent(controllable=ctrl, request="r1"),
             )
             traj.push(
@@ -594,7 +711,7 @@ class TestAdversarialSettings:
                     content="dangerous reply",
                 ),
             )
-            await opt.on_event(
+            await _dispatch_event(opt,
                 ControllablePreCallEvent(controllable=ctrl, request="r2"),
             )
 
@@ -603,7 +720,7 @@ class TestAdversarialSettings:
             == "dangerous reply"
         )
 
-        end = await opt.on_event(
+        end = await _dispatch_event(opt,
             RunEndEvent(evaluation=None, security_domain=USER_TAG),
         )
         assert end.done is False
@@ -613,7 +730,7 @@ class TestAdversarialSettings:
         """Responses + feedback. Full GOAT plus early-stop on success."""
         opt = await _init_optimizer(max_turns=2, max_attempts=10)
         traj = _FakeReadableTrajectory()
-        await opt.on_event(RunStartEvent(trajectory=traj))
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj))
 
         ctrl = _user_ctrl()
         with patch.object(
@@ -621,7 +738,7 @@ class TestAdversarialSettings:
                 return_value=AttackerTurn("o", "t", "s", "p"),
             ),
         ):
-            await opt.on_event(
+            await _dispatch_event(opt,
                 ControllablePreCallEvent(controllable=ctrl, request="r1"),
             )
             traj.push(
@@ -631,7 +748,7 @@ class TestAdversarialSettings:
                 ),
             )
 
-        end = await opt.on_event(
+        end = await _dispatch_event(opt,
             RunEndEvent(evaluation=_success_eval(), security_domain=USER_TAG),
         )
         assert end.done is True
@@ -649,22 +766,22 @@ class TestAdversarialSettings:
             return_value=AttackerTurn("o", "t", "s", "p"),
         )
 
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         with patch.object(opt._attacker, "next_turn", new=attacker_mock):
-            await opt.on_event(
+            await _dispatch_event(opt,
                 ControllablePreCallEvent(controllable=ctrl, request="r1"),
             )
-        end1 = await opt.on_event(
+        end1 = await _dispatch_event(opt,
             RunEndEvent(evaluation=None, security_domain=USER_TAG),
         )
         assert end1.done is False
 
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         with patch.object(opt._attacker, "next_turn", new=attacker_mock):
-            await opt.on_event(
+            await _dispatch_event(opt,
                 ControllablePreCallEvent(controllable=ctrl, request="r1"),
             )
-        end2 = await opt.on_event(
+        end2 = await _dispatch_event(opt,
             RunEndEvent(evaluation=None, security_domain=USER_TAG),
         )
         assert end2.done is True
@@ -679,7 +796,7 @@ class TestBenignFallback:
     @pytest.mark.asyncio
     async def test_attacker_parse_failure_uses_benign_fallback(self) -> None:
         opt = await _init_optimizer(max_turns=2, max_attempts=1)
-        await opt.on_event(RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
         ctrl = _user_ctrl()
         with patch.object(
@@ -687,7 +804,7 @@ class TestBenignFallback:
                 side_effect=AttackerParseError("simulated"),
             ),
         ):
-            resp = await opt.on_event(
+            resp = await _dispatch_event(opt,
                 ControllablePreCallEvent(controllable=ctrl, request="r1"),
             )
 
@@ -709,10 +826,10 @@ class TestTargetRunIntegration:
         """Simulate ChatbotTarget's [system_prompt][user_message_loop] shape."""
         opt = await _init_optimizer(max_turns=2, max_attempts=1)
         traj = _FakeReadableTrajectory()
-        await opt.on_event(RunStartEvent(trajectory=traj))
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj))
 
         async def send_event(event):
-            return await opt.on_event(event)
+            return await _dispatch_event(opt, event)
 
         attacker_mock = AsyncMock(
             side_effect=[
@@ -764,7 +881,7 @@ class TestTargetRunIntegration:
             )
             assert isinstance(pre3, ControllableNoInjection)
 
-        end = await opt.on_event(
+        end = await _dispatch_event(opt,
             RunEndEvent(evaluation=_success_eval(), security_domain=USER_TAG),
         )
         assert end.done is True
