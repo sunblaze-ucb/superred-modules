@@ -191,7 +191,6 @@ class GOATOptimizer(Optimizer):
             and any(controllable.name == _SYSTEM_PROMPT_NAME for controllable in controllables)
         )
         self._static_context = self._build_static_context(
-            controllables=controllables,
             observables=observables,
             max_chars=self._static_context_max_chars,
             can_write_system_prompt=self._can_write_system_prompt,
@@ -429,7 +428,6 @@ class GOATOptimizer(Optimizer):
     @staticmethod
     def _build_static_context(
         *,
-        controllables: list[Controllable],
         observables: list[ObservableValue],
         max_chars: int,
         can_write_system_prompt: bool,
