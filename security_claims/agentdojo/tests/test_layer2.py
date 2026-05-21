@@ -113,11 +113,11 @@ def test_cross_suite_goals_present() -> None:
 
 
 def test_capability_misuse_goals_present() -> None:
-    """Capability-misuse goals (tool-catalogue shadow, system-prompt
+    """Capability-misuse goals (attacker-tool invocation, system-prompt
     override) are registered."""
     ids = layer2_goal_ids()
     expected = {
-        "capability_tool_catalog_shadow_invocation",
+        "capability_attacker_tool_invocation",
         "capability_system_prompt_override_compliance",
     }
     assert expected <= ids
