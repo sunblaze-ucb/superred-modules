@@ -63,4 +63,36 @@ class CompositeEnvironment(TaskEnvironment):
     travel: TravelEnvironment
 
 
-__all__ = ["CompositeEnvironment"]
+def sync_initial_fields(env: CompositeEnvironment) -> CompositeEnvironment:
+    """Sync ``initial_*`` source lists from their derived dict counterparts.
+
+    AgentDojo's :class:`Inbox`, :class:`Calendar`, and :class:`CloudDrive`
+    define ``initial_emails`` / ``initial_events`` / ``initial_files``
+    as the source-of-truth lists and rebuild the ``emails`` / ``events``
+    / ``files`` dicts in a pydantic ``@model_validator(mode="after")``.
+
+    A round-trip through ``model_dump_json -> model_validate`` therefore
+    DISCARDS any in-memory mutations made to the derived dicts (which
+    is exactly what agent tools mutate during a run: deleting an email,
+    cancelling an event, creating a file).  Without this sync, target
+    queries that serialize the post-run environment lose all such
+    mutations and downstream SecurityClaim predicates see the seed.
+
+    Calling this function before serialising rebuilds the
+    ``initial_*`` lists from the live dicts so the round-trip is
+    faithful.  The mutation is in-place: the same ``env`` is returned
+    for chaining convenience.
+
+    See ``ASSUMPTIONS.md`` §C.3 for the rationale.
+    """
+    env.workspace.inbox.initial_emails = list(env.workspace.inbox.emails.values())
+    env.workspace.calendar.initial_events = list(env.workspace.calendar.events.values())
+    env.workspace.cloud_drive.initial_files = list(
+        env.workspace.cloud_drive.files.values()
+    )
+    env.travel.inbox.initial_emails = list(env.travel.inbox.emails.values())
+    env.travel.calendar.initial_events = list(env.travel.calendar.events.values())
+    return env
+
+
+__all__ = ["CompositeEnvironment", "sync_initial_fields"]

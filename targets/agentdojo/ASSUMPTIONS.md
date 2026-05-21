@@ -64,6 +64,14 @@ Upstream AgentDojo references in this file point into `https://github.com/ethz-s
 
 **Why**: with four sub-envs there is no `inbox` attribute on the composite root. Per-suite rebinding keeps upstream tool bodies unchanged.
 
+### C.4 `initial_*` sync before JSON round-trip
+
+**AgentDojo** (`tools/email_client.py:_create_emails`, `tools/calendar_client.py:_create_events`, `tools/cloud_drive_client.py:_create_files`): the `Inbox` / `Calendar` / `CloudDrive` models keep `initial_emails` / `initial_events` / `initial_files` as the source-of-truth lists and rebuild the matching `emails` / `events` / `files` dicts in a pydantic `@model_validator(mode="after")`. AgentDojo's agent tools (e.g. `delete_email`, `cancel_calendar_event`, `create_file`) mutate the derived dicts but never touch `initial_*`.
+
+**Us**: `Target.query("pre|post_environment_snapshot")` serialises the composite env via `model_dump_json` and consumers parse it via `model_validate`. Without intervention, the `initial_*` ➜ derived-dict validator wipes in-memory mutations on the round-trip. We call :func:`agentdojo_target.env.sync_initial_fields` immediately before serialising so the derived dicts' current contents are reflected back into the `initial_*` lists; the round-trip is then faithful and downstream SecurityClaim predicates see the agent's actual mutations.
+
+**Why**: upstream's `injection_task.security(pre, post)` compares in-memory envs, so this issue doesn't arise in upstream benchmarking. Our framework forces a JSON round-trip across the `Target.query` → `Task.evaluate` boundary, so the sync is mandatory for faithfulness. Tests in `tests/test_env_sync.py` pin both the bug (unsynced delete is lost) and the fix.
+
 ---
 
 ## D. Polarity of upstream `security` / `utility`

@@ -67,7 +67,7 @@ from agentdojo_target.controllables import (
     SYSTEM_PROMPT_CTRL,
     USER_PROMPT_CTRL,
 )
-from agentdojo_target.env import CompositeEnvironment
+from agentdojo_target.env import CompositeEnvironment, sync_initial_fields
 from agentdojo_target.observables import (
     COMPOSITE_ENV_SNAPSHOT_OBS,
     MODEL_IDENTITY_OBS,
@@ -395,8 +395,21 @@ def _function_call_to_dict(fc: FunctionCall) -> dict[str, Any]:
 
 
 def _dump_env_or_empty(env: CompositeEnvironment | None) -> str:
+    """Serialise *env* to a JSON string suitable for a round-trip through
+    :meth:`CompositeEnvironment.model_validate`.
+
+    AgentDojo's :class:`Inbox`, :class:`Calendar`, and :class:`CloudDrive`
+    rebuild their dict fields (``emails`` / ``events`` / ``files``) from
+    matching ``initial_*`` lists in a pydantic ``@model_validator``.  An
+    in-memory mutation (the agent deletes an email, cancels an event,
+    creates a file) is therefore lost when the env round-trips through
+    JSON unless we first sync the ``initial_*`` lists from the live
+    dicts.  :func:`sync_initial_fields` does that in-place before we
+    dump.  See ASSUMPTIONS.md §C.3.
+    """
     if env is None:
         return json.dumps({})
+    sync_initial_fields(env)
     return env.model_dump_json()
 
 

@@ -23,7 +23,7 @@ from agentdojo_target.controllables import (
     TOOL_CATALOG_UNREGISTER_CTRL,
     USER_PROMPT_CTRL,
 )
-from agentdojo_target.env import CompositeEnvironment
+from agentdojo_target.env import CompositeEnvironment, sync_initial_fields
 from agentdojo_target.observables import (
     COMPOSITE_ENV_SNAPSHOT_OBS,
     MODEL_IDENTITY_OBS,
@@ -60,6 +60,7 @@ __all__ = [
     # Target
     "AgentDojoTarget",
     "CompositeEnvironment",
+    "sync_initial_fields",
     # Security domain forest
     "DOMAIN",
     "SYSTEM_TAG",
