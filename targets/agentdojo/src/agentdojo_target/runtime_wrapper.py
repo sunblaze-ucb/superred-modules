@@ -61,6 +61,7 @@ from superred.core.types.events import (
 
 from agentdojo_target.controllables import READ_CTRLS
 from agentdojo_target.observables import (
+    agent_tool_response_observable,
     read_data_field_observable,
     write_call_observable,
 )
@@ -193,10 +194,19 @@ class WrappedFunctionsRuntime(FunctionsRuntime):
     # Sync-to-async bridge
     # ------------------------------------------------------------------
 
+    _OPTIMIZER_RESPONSE_TIMEOUT_SECONDS: float = 180.0
+
     def _await_event(self, event: Any) -> Any:
-        """Schedule ``send_event(event)`` on the loop and block on its result."""
+        """Schedule ``send_event(event)`` on the loop and block on its result.
+
+        Bounded by :data:`_OPTIMIZER_RESPONSE_TIMEOUT_SECONDS` so a slow,
+        deadlocked, or crashed optimizer cannot wedge the worker thread
+        forever.  Raises :class:`concurrent.futures.TimeoutError` on
+        expiry; callers above (tool-execution and the catalog-edit hook)
+        let it propagate so the run fails loudly.
+        """
         future = asyncio.run_coroutine_threadsafe(self._send_event(event), self._loop)
-        return future.result()
+        return future.result(timeout=self._OPTIMIZER_RESPONSE_TIMEOUT_SECONDS)
 
     # ------------------------------------------------------------------
     # Override
@@ -239,6 +249,9 @@ class WrappedFunctionsRuntime(FunctionsRuntime):
         raise_on_error: bool,
     ) -> tuple[FunctionReturnType, str | None]:
         result, error = super().run_function(env, function, kwargs, raise_on_error)
+        # Track the final value the agent will see (after any injection
+        # substitution) so we can emit the per-call observable.
+        agent_seen_value: FunctionReturnType = result
 
         read_ctrl = READ_CTRLS.get(function)
         if read_ctrl is not None and error is None:
@@ -262,8 +275,9 @@ class WrappedFunctionsRuntime(FunctionsRuntime):
                 # Optimizer's value replaces the agent-visible return.
                 # Inject the raw string; agent-side formatter renders it
                 # straight into the prompt.
-                return response.value, error
-            return result, error
+                agent_seen_value = response.value
+            self._emit_agent_tool_response(agent_seen_value, error)
+            return agent_seen_value, error
 
         # Write-side canonical call: emit observable so SecurityClaim
         # predicates can detect agent mutations directly from the trace.
@@ -274,6 +288,10 @@ class WrappedFunctionsRuntime(FunctionsRuntime):
                     content={"function": function, "args": dict(kwargs)},
                 )
             )
+        # Emit the agent-seen response observable for non-read tools and
+        # for read tools that errored.  Brief Section 5.c: "every return
+        # value (with the post-injection value the agent saw)".
+        self._emit_agent_tool_response(agent_seen_value, error)
         return result, error
 
     # ------------------------------------------------------------------
@@ -295,8 +313,42 @@ class WrappedFunctionsRuntime(FunctionsRuntime):
         )
         response = self._await_event(event)
         if isinstance(response, ControllableInjection):
-            return response.value, None
-        return entry.fake_return, None
+            agent_seen_value: FunctionReturnType = response.value
+        else:
+            agent_seen_value = entry.fake_return
+        self._emit_agent_tool_response(agent_seen_value, None)
+        return agent_seen_value, None
+
+    # ------------------------------------------------------------------
+    # Observable emission helper
+    # ------------------------------------------------------------------
+
+    def _emit_agent_tool_response(
+        self, value: FunctionReturnType, error: str | None,
+    ) -> None:
+        """Emit one ``agent_trace_tool_response_NNNN`` observable per
+        runtime call, carrying the value the agent will see (after any
+        substitution).
+
+        Index is monotonically increasing across the run; consumers can
+        correlate ``agent_trace_tool_call_NNNN`` (emitted post-run by
+        target.py from the trace) with ``agent_trace_tool_response_NNNN``
+        by matching the index.
+
+        Brief Section 5.c: "every return value (with the post-injection
+        value the agent saw)".
+        """
+        idx = self._tool_response_counter
+        self._tool_response_counter += 1
+        self._emit(
+            ObservableEvent(
+                observable=agent_tool_response_observable(idx),
+                content={
+                    "value": _serialize_for_event(value),
+                    "error": error,
+                },
+            )
+        )
 
 
 __all__ = ["WrappedFunctionsRuntime"]

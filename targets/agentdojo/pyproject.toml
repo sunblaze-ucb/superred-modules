@@ -30,6 +30,7 @@ addopts = "--strict-markers"
 testpaths = ["tests"]
 markers = [
     "faithfulness: per-PR faithfulness smoke (12 pairs)",
+    "faithfulness_upstream: live upstream-vs-port verdict comparison, 12 pairs, ~$1-3 (credentials)",
     "faithfulness_full: full 629-case cross-product (nightly/pre-release only)",
 ]
 # tests/faithfulness/ holds long-running comparison tests against AgentDojo

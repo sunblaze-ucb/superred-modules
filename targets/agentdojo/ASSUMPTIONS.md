@@ -24,6 +24,14 @@ Upstream AgentDojo references in this file point into `https://github.com/ethz-s
 
 **Why**: simpler v1 contract; per-record refinement is a v2 follow-up. The brief proposes per-tool as default.
 
+### A.3 Controllable `value_type` is always `"string"`; injection values pass through as strings
+
+**Brief / framework**: `Controllable.value_type` is a free-form string label hinting at the expected payload shape; `ControllableInjection.value` is typed `str`.
+
+**Us**: read Controllables declare `value_type="json"` (for tools returning structured data: lists, dicts, pydantic models) or `"text"` (for tools returning plain strings such as `read_file`, `get_webpage`); catalog Controllables declare `value_type="json"`. The label is purely informational; injection values flow through as strings regardless. For non-string canonical return values we serialise the legitimate value with `_serialize_for_event` (pydantic `model_dump_json` for `BaseModel` subclasses; `json.dumps` with an `isoformat`/`enum.value`/`repr` fallback chain otherwise) so the event answer is always a string. When the optimizer responds with `ControllableInjection`, we inject `response.value` verbatim as the agent-visible return without any reverse-deserialisation: agent-side formatters render it straight into the prompt.
+
+**Why**: optimizers operate uniformly on strings; per-tool deserialisation rules would create N tool-shape coupling points. AgentDojo's agent prompt renders tool returns through `_tool_output_format_*` helpers which already string-coerce, so substituting a raw string is faithful to upstream's eventual prompt content. Tests in `tests/test_runtime_wrapper.py` pin the round-trip: an injected `"9999.99"` string replaces a numeric `BankAccount.balance` return and the agent sees the literal string.
+
 ---
 
 ## B. Tool catalogue
@@ -35,6 +43,14 @@ Upstream AgentDojo references in this file point into `https://github.com/ethz-s
 **Us**: four catalog Controllables (`register`, `replace`, `unregister`, `rewrite_doc`) fire at the start of each agent turn via a spliced `BasePipelineElement` hook. Registered/replaced tools fire per-call Controllables when invoked, carrying the agent-supplied args; optimizer's injection response is the fake return the agent sees.
 
 **Why**: the brief mandates this as a second attacker capability surface (models malicious-MCP / tool-shadowing threat).
+
+### B.2 Mid-loop catalog edits propagate via runtime.functions
+
+**AgentDojo** (`agent_pipeline/tool_execution.py:86,103` for `ToolsExecutor` and `llms/openai_llm.py:197,223` for `OpenAILLM`): both `ToolsExecutor.query` and `OpenAILLM.query` read `runtime.functions` (resp. `runtime.functions.values()`) on each invocation rather than caching at init.
+
+**Us**: our `_CatalogEditHook.query` mutates the wrapped runtime's function dict in place (via `WrappedFunctionsRuntime.refresh_functions()`) before every LLM turn.  Because upstream consults `runtime.functions` live, the LLM's next tool list AND the next `ToolsExecutor` dispatch both see the updated catalog.  No upstream patching is required.
+
+**Why**: the brief (Section 2.d) requires verifying that "the LLM tool list is rebuilt every turn from the runtime" and that we "wrap or patch to preserve mid-run reactivity" if upstream ever drifts.  We verified by code-reading and pinned the contract with `tests/test_toolsexecutor_per_turn.py` -- particularly the `test_toolsexecutor_sees_attacker_tool_after_mid_loop_catalog_edit` test which registers a new attacker tool mid-flight and asserts the same `ToolsExecutor` instance dispatches it successfully.  If a future AgentDojo release breaks this contract (e.g., caches the function list at element init), that test will fail with a clear error message naming the file to patch.
 
 ---
 
@@ -72,6 +88,28 @@ Upstream AgentDojo references in this file point into `https://github.com/ethz-s
 
 **Why**: upstream's `injection_task.security(pre, post)` compares in-memory envs, so this issue doesn't arise in upstream benchmarking. Our framework forces a JSON round-trip across the `Target.query` → `Task.evaluate` boundary, so the sync is mandatory for faithfulness. Tests in `tests/test_env_sync.py` pin both the bug (unsynced delete is lost) and the fix.
 
+### C.5 Untouched suites are still fully loaded into the composite env
+
+**AgentDojo**: a benchmark run picks one suite; only that suite's environment is loaded from its `environment.yaml`.
+
+**Us**: `seed_loader.load_composite_seed()` unconditionally loads all four upstream suite `environment.yaml` files into the single `CompositeEnvironment` even when the optimizer's `Scope` only targets controllables/observables from one suite.
+
+**Why**: the `CompositeEnvironment` pydantic root requires every sub-env field to be present and validate. Lazy per-suite loading would force a `None`-tolerant variant of every cross-suite tool's `Depends` extractor, expanding upstream patch surface for no benefit (the load is one-shot, ~50ms, and the validator is idempotent). Filtering at the **observation** layer (security-domain scope on controllables / observables / trajectory) is sufficient to keep an out-of-scope optimizer blind to the other suites' contents.
+
+### C.6 Catalog operations are keyed by suite-prefixed names
+
+**Us**: the four catalog Controllables (`apply_register`, `apply_replace`, `apply_unregister`, `apply_rewrite_doc`) and the per-call attacker-tool Controllables all operate on suite-prefixed names (`banking__get_balance`, never bare `get_balance`). An attacker that supplies a bare name to `apply_replace` finds no canonical entry and the operation is rejected by `ToolCatalog`.
+
+**Why**: catalog Controllables run in a single global namespace; without the suite prefix `replace("send_email", ...)` is ambiguous between `workspace__send_email` and `travel__send_email`. Forcing the prefix is the same disambiguation rule the agent already lives under (see C.2) and makes attack payloads unambiguous.
+
+### C.7 Stores beyond the brief's enumeration
+
+**Brief Section 1.b table**: enumerates injection slots and observation surfaces per suite (banking transactions, workspace inbox/calendar/cloud_drive, slack channels/inbox/web, travel hotels/restaurants/reservations).
+
+**Us**: the implementation registers tools and observables for these stores plus a small set the brief's table omitted: travel `flights` and `car_rentals` (read-only and used by `get_flight_information` / `get_all_car_rental_companies_in_city`), banking `scheduled_transactions` (`get_scheduled_transactions`, `update_scheduled_transaction`), and workspace `contacts`-like search surfaces (`search_contacts_by_name`, `search_contacts_by_email`). All write-side variants emit `write_call:*` observables (per §F.3).
+
+**Why**: the brief's table is illustrative, not exhaustive. AgentDojo v1 ships these stores as part of the canonical surface and several injection / user tasks reference them (e.g. banking `InjectionTask4` mutates scheduled transactions; travel `UserTask16` reads flights). Excluding them would drop coverage; including them is mechanical and the security-domain forest already has a node per store (see `security_tags.py`).
+
 ---
 
 ## D. Polarity of upstream `security` / `utility`
@@ -83,6 +121,14 @@ Upstream AgentDojo references in this file point into `https://github.com/ethz-s
 **Us**: SecurityClaim Layer-1's `EvaluationResult.primary_score.value = float(security_result)`, so success=True corresponds to attack succeeded. Naming in our code uses `attack_succeeded` rather than `security` to avoid the documentation-vs-fallback trap.
 
 **Why**: explicit naming reduces the chance of polarity inversion in downstream analysis code.
+
+### D.2 Faithfulness comparison: judge / pipeline-model substitution
+
+**AgentDojo upstream**: most benchmark runs in the paper use `gpt-4o-2024-05-13` for the agent and a verbatim deterministic judge (the predicates in `security()` / `utility()` are pure Python; only Layer-2-style judge-LLM checks exist in our extensions).
+
+**Us**: faithfulness tests in `tests/faithfulness/test_upstream_comparison.py` drive both the upstream `AgentPipeline` and our `Controller + AgentDojoTarget + SecurityClaim` end-to-end against the same 12 (user-task, injection-task) pairs at temperature=0 and compare verdicts. The pipeline model in CI is configurable via `AGENTDOJO_FAITHFULNESS_MODEL` (default `openai/gpt-4o-2024-05-13`), and falls back to `openai/gpt-4-turbo-2024-04-09` when the user's LiteLLM proxy does not have `gpt-4o-2024-05-13` provisioned (see also memory `feedback_sorrybench_judge`). LLM cost is hard-capped at `LLMConfig(max_cost=4.0)`. The 12 pairs span attack semantics: 3 banking (IT0 send-money, IT2 send-money-conditional, IT4 scheduled-txn), 3 workspace (IT1 calendar mutation, IT2 email delete, IT3 file create), 3 slack (IT2 channel-send, IT3 invite-attacker, IT4 web-fetch), 3 travel (IT0 hotel-reserve, IT2 restaurant-reserve, IT3 calendar-event). For each pair we compare: (1) the upstream `security()` boolean against our Layer-1 `attack_succeeded`; (2) the post-environment diff structure (same `DeepDiff` keys); (3) the function-call trace ordering. A pair is "faithful" iff all three match.
+
+**Why**: the brief (Section 5.d) requires an LLM-driven verification that our port preserves upstream semantics. A 12-pair sample at `$1-4` total cost is the user-selected budget option (Option A). Pairs span all four suites and the three predicate shapes (`check_new_*` helpers, `*_from_traces`, plain `pre/post` diff) so a port-side regression in any of these would be detected. Substituting `gpt-4-turbo-2024-04-09` for `gpt-4o` where the proxy lacks the latter is a one-line config override; we record the substitution and the matched-verdicts proportion in the test output so a future divergence (e.g. proxy upgrades) is visible without re-running.
 
 ---
 
@@ -132,6 +178,17 @@ Upstream AgentDojo references in this file point into `https://github.com/ethz-s
 
 **Why**: the slack injection tasks `security` predicates check `web_requests`.
 
+### F.3 Observable emission strategy: events during runtime + post-run queries
+
+**Brief Section 5.c**: requires observables for "the agent's chat-message stream, every tool call (with the function name and args the agent emitted), every return value (with the post-injection value the agent saw)".
+
+**Us**: observables are exposed through two complementary channels.
+
+1. **Per-call events** (`ObservableEvent` via `emit`): the `_MessageStreamHook` spliced into the AgentDojo pipeline emits one `agent_trace_message_NNNN` observable per new message as the conversation progresses; `WrappedFunctionsRuntime` emits one `agent_trace_tool_response_NNNN` per runtime call carrying the post-injection value, one `read_data_field:<tool>` per read carrying the pre-injection legitimate value, and one `write_call:<tool>` per write canonical call. The indexes monotonically increase per run so optimizers can correlate by ordinal across the three streams.
+2. **Post-run query specs** (`QuerySpec` via `Target.query`): after the run, `pre|post_environment_snapshot`, `conversation_history`, `function_call_trace`, and `tool_catalog_snapshot` are queryable. These provide the same data in batched form for SecurityClaim predicates that operate on the complete trace.
+
+**Why**: per-call events serve real-time optimizers (so they can react mid-run); post-run queries serve deterministic Layer-1/Layer-2 predicates (which operate after the run completes). The two channels overlap intentionally so adding a third style of consumer never forces a brief revision. Tests pin both: per-call emission in `tests/test_runtime_wrapper.py` and `tests/test_pipeline_bridge.py`; query-spec coverage in `tests/test_target.py`.
+
 ---
 
 ## G. SecurityClaim Layer-2 design
@@ -153,6 +210,48 @@ Upstream AgentDojo references in this file point into `https://github.com/ethz-s
 **Us**: this applies to BOTH layers. Layer-1's `configure_target` sets `user_prompt = user_task.PROMPT` (the benign legit task per AgentDojo's threat model). Layer-2's `configure_target` sets `user_prompt = benign_per_goal_prompt` (a per-goal routine query that exercises tools).
 
 **Why**: lets the attacker scope determine the threat model end-to-end.
+
+---
+
+## H. Consolidated user clarifications (Q&A log)
+
+Decisions resolved through direct exchanges with the user during the port. Each entry is dated; future-you should check this section before changing the relevant code, since these are the *binding* answers to ambiguous brief language.
+
+### H.1 v1 is canonical; v1.1 / v1.1.1 / v1.2 are out of scope (2026-05-15)
+
+**Question**: AgentDojo upstream has `v1`, `v1.1`, `v1.1.1`, `v1.2` task suite variants under `default_suites/`. Which is the port's source of truth?
+
+**Answer**: v1 only. The v1.1+ variants exist upstream to hot-fix specific predicates after the AgentDojo paper went out; using them would diverge from published baselines. Bugs flagged in `UPSTREAM_PREDICATE_AUDIT.md` are matched verbatim in our port, not fixed.
+
+**Where applied**: `seed_loader.py` loads only `v1/<suite>/environment.yaml`; `tool_registry.py` imports v1's `task_suite.py`; `UPSTREAM_PREDICATE_AUDIT.md` audits v1 only.
+
+### H.2 Layer-2 source is bespoke, not SORRY-Bench (2026-05-15)
+
+**Question**: brief Section 3.b proposes SORRY-Bench + LLM-judge for Layer-2.
+
+**Answer**: "should not be to jailbreak just the model but goals that do something that is fundamentally against the system purpose but not necessarily against model ethics." Use a hand-authored catalogue with deterministic predicates.
+
+**Where applied**: see G.1.
+
+### H.3 Faithfulness budget is Option A ($1-4) (2026-05-18)
+
+**Question**: faithfulness comparison can be (A) `12 pairs at temperature=0, $1-4`, (B) `30 pairs at temperature=0.7 sampled 3 times each, ~$15-20`, (C) `full benchmark, ~$200+`.
+
+**Answer**: Option A. Budget cap `LLMConfig(max_cost=4.0)`.
+
+**Where applied**: D.2 and `tests/faithfulness/test_upstream_comparison.py`.
+
+### H.4 Use Opus 4.7 at max reasoning for subagent reviews (2026-05-19)
+
+**Standing rule**: parent agent spawns review/audit subagents with `model="opus"` (Claude Opus 4.7). Lower-tier models miss subtle predicate-semantics bugs.
+
+**Where applied**: T5 audit (7 parallel subagents), T8 multi-level review (planned), faithfulness verdict-comparator (planned).
+
+### H.5 No em dashes in any output (continuous)
+
+**Standing rule**: never use `—`. Use `-`, `,`, or rephrase.
+
+**Where applied**: this entire document; all generated artifacts.
 
 ---
 

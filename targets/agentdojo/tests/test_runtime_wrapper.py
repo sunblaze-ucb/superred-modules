@@ -294,3 +294,127 @@ def test_refresh_functions_picks_up_catalog_edits(loop, catalog, env) -> None:
     catalog.apply_register({"name": "evil", "description": "x", "fake_return": 1})
     wrapper.refresh_functions()
     assert "evil" in wrapper.functions
+
+
+# ---------------------------------------------------------------------------
+# agent_trace_tool_response_NNNN: one observable per runtime call carrying
+# the post-injection value the agent will see.  Brief Section 5.c.
+# ---------------------------------------------------------------------------
+
+
+def test_tool_response_observable_emitted_for_canonical_read(
+    loop, catalog, env,
+) -> None:
+    """A canonical read emits one agent_trace_tool_response observable
+    carrying the legitimate value when no injection is active."""
+    rec = EventRecorder()
+    wrapper = WrappedFunctionsRuntime(
+        catalog=catalog, send_event=rec.send_event, emit=rec.emit, loop=loop,
+    )
+    wrapper.run_function(env, "banking__get_balance", {})
+    responses = [
+        o for o in rec.observables
+        if o.observable.name.startswith("agent_trace_tool_response_")
+    ]
+    assert len(responses) == 1
+    assert responses[0].observable.name == "agent_trace_tool_response_0000"
+    assert float(responses[0].content["value"]) == env.banking.bank_account.balance
+    assert responses[0].content["error"] is None
+
+
+def test_tool_response_observable_carries_injected_value(loop, catalog, env) -> None:
+    """When the optimizer injects, the observable records what the agent
+    actually saw, not the legitimate value."""
+    rec = EventRecorder()
+    rec.set_response(lambda event: ControllableInjection(
+        event=event, controllable=event.controllable, value="HIJACKED",
+    ))
+    wrapper = WrappedFunctionsRuntime(
+        catalog=catalog, send_event=rec.send_event, emit=rec.emit, loop=loop,
+    )
+    wrapper.run_function(env, "banking__get_balance", {})
+    responses = [
+        o for o in rec.observables
+        if o.observable.name.startswith("agent_trace_tool_response_")
+    ]
+    assert len(responses) == 1
+    assert responses[0].content["value"] == "HIJACKED"
+
+
+def test_tool_response_observable_emitted_for_canonical_write(
+    loop, catalog, env,
+) -> None:
+    """A canonical write also emits the agent-seen response observable."""
+    rec = EventRecorder()
+    wrapper = WrappedFunctionsRuntime(
+        catalog=catalog, send_event=rec.send_event, emit=rec.emit, loop=loop,
+    )
+    wrapper.run_function(env, "workspace__send_email", {
+        "recipients": ["x@y.z"], "subject": "s", "body": "b",
+    })
+    responses = [
+        o for o in rec.observables
+        if o.observable.name.startswith("agent_trace_tool_response_")
+    ]
+    assert len(responses) == 1
+
+
+def test_tool_response_observable_emitted_for_attacker_tool(
+    loop, catalog, env,
+) -> None:
+    """Attacker-registered tools also emit the agent-seen response observable."""
+    catalog.apply_register({
+        "name": "evil", "description": "x", "fake_return": {"k": 1},
+    })
+    rec = EventRecorder()
+    wrapper = WrappedFunctionsRuntime(
+        catalog=catalog, send_event=rec.send_event, emit=rec.emit, loop=loop,
+    )
+    wrapper.run_function(env, "evil", {})
+    responses = [
+        o for o in rec.observables
+        if o.observable.name.startswith("agent_trace_tool_response_")
+    ]
+    assert len(responses) == 1
+
+
+def test_tool_response_observable_index_is_monotonic(loop, catalog, env) -> None:
+    """The counter increments by one per runtime call regardless of kind."""
+    rec = EventRecorder()
+    wrapper = WrappedFunctionsRuntime(
+        catalog=catalog, send_event=rec.send_event, emit=rec.emit, loop=loop,
+    )
+    wrapper.run_function(env, "banking__get_balance", {})
+    wrapper.run_function(env, "workspace__send_email", {
+        "recipients": ["a@b.c"], "subject": "s", "body": "b",
+    })
+    wrapper.run_function(env, "banking__get_iban", {})
+    names = [
+        o.observable.name for o in rec.observables
+        if o.observable.name.startswith("agent_trace_tool_response_")
+    ]
+    assert names == [
+        "agent_trace_tool_response_0000",
+        "agent_trace_tool_response_0001",
+        "agent_trace_tool_response_0002",
+    ]
+
+
+def test_tool_response_observable_records_error_when_canonical_errs(
+    loop, catalog, env,
+) -> None:
+    """If the canonical body raises (and raise_on_error=False), the
+    response observable still fires, carrying error=<traceback>."""
+    rec = EventRecorder()
+    wrapper = WrappedFunctionsRuntime(
+        catalog=catalog, send_event=rec.send_event, emit=rec.emit, loop=loop,
+    )
+    # Missing required arg -> upstream validation error.
+    _, error = wrapper.run_function(env, "banking__send_money", {})
+    assert error is not None
+    responses = [
+        o for o in rec.observables
+        if o.observable.name.startswith("agent_trace_tool_response_")
+    ]
+    assert len(responses) == 1
+    assert responses[0].content["error"] is not None

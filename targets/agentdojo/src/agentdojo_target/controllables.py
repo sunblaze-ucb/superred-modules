@@ -14,8 +14,9 @@ Categories:
   ``tools`` 2x2 quadrant grid.
 
 The 2x2 quadrant mapping for each read tool lives in
-:data:`READ_QUADRANT_MAP`; see ``ASSUMPTIONS.md`` §C.4 for the rationale
-behind each assignment.  Where a tool can legitimately span quadrants
+:data:`READ_QUADRANT_MAP`; see ``tests/test_quadrant_rationale.py`` for
+the per-tool rationale behind each assignment.  Where a tool can
+legitimately span quadrants
 (e.g. ``workspace.search_emails`` searches both received and sent), we
 use the *broader* quadrant to remain conservative on the attacker side:
 the broader scope is needed for the tool to be reachable.

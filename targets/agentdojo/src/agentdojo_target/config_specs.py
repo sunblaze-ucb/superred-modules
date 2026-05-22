@@ -2,18 +2,18 @@
 
 Slots:
 
-- ``system_prompt`` — agent system prompt; defaults to AgentDojo's
+- ``system_prompt`` - agent system prompt; defaults to AgentDojo's
   ``data/system_messages.yaml`` default.  Tasks override this in
   ``configure_target``.
-- ``user_prompt`` — *benign* user instruction; the Task sets this to a
+- ``user_prompt`` - *benign* user instruction; the Task sets this to a
   routine query that exercises tools and succeeds under no-attacker
   conditions.  An attacker with ``user`` in scope can override the
   benign prompt via the ``user_prompt`` Controllable at run start.
-- ``seed_yaml_override__{suite}`` — per-suite YAML/JSON overlay applied
+- ``seed_yaml_override__{suite}`` - per-suite YAML/JSON overlay applied
   to the composite environment after seed load and before run start.
   Tasks use this to replay AgentDojo's per-task ``init_environment``
   mutations.  Empty string is treated as "no overlay."
-- ``pipeline_model`` — litellm-style model id for the underlying
+- ``pipeline_model`` - litellm-style model id for the underlying
   AgentDojo :class:`AgentPipeline`.  Provider prefix determines the
   AgentDojo LLM backend (v1: ``openai/``, ``anthropic/``).
 

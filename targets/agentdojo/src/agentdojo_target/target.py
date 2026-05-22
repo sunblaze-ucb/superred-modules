@@ -40,7 +40,10 @@ from collections.abc import Sequence
 from typing import Any
 
 from agentdojo.functions_runtime import FunctionCall
-from agentdojo.types import ChatMessage
+from agentdojo.task_suite.task_suite import (
+    model_output_from_messages as _upstream_model_output_from_messages,
+)
+from agentdojo.types import ChatMessage, MessageContentBlock
 from pydantic import BaseModel
 from superred.core.interfaces.target import Target
 from superred.core.types.controllable import Controllable
@@ -288,6 +291,7 @@ class AgentDojoTarget(Target):
             catalog=self._catalog,
             wrapper=self._wrapped_runtime,
             send_event=send_event,
+            emit=emit,
             loop=loop,
             api_base=self._api_base,
             api_key=self._api_key,
@@ -296,7 +300,7 @@ class AgentDojoTarget(Target):
         # Snapshot pre-environment AFTER phases 1+2 but BEFORE any tools run.
         self._pre_env = self._env.model_copy(deep=True)
 
-        model_output: str | None = None
+        model_output: list[MessageContentBlock] | None = None
         for attempt in range(3):
             try:
                 _q, _runtime, new_env, messages, _extra = await asyncio.to_thread(
@@ -316,7 +320,7 @@ class AgentDojoTarget(Target):
             if model_output is not None:
                 break
 
-        self._last_response = model_output or ""
+        self._last_response = _content_blocks_to_text(model_output)
         # The wrapped runtime's trace mirrors AgentDojo's
         # functions_stack_trace_from_messages but is recorded eagerly so
         # it survives mid-run exceptions.
@@ -405,7 +409,7 @@ def _dump_env_or_empty(env: CompositeEnvironment | None) -> str:
     creates a file) is therefore lost when the env round-trips through
     JSON unless we first sync the ``initial_*`` lists from the live
     dicts.  :func:`sync_initial_fields` does that in-place before we
-    dump.  See ASSUMPTIONS.md §C.3.
+    dump.  See ASSUMPTIONS.md §C.4.
     """
     if env is None:
         return json.dumps({})
@@ -436,32 +440,47 @@ def _messages_to_jsonable(messages: Sequence[ChatMessage]) -> list[dict[str, Any
     return out
 
 
-def _model_output_from_messages(messages: Sequence[ChatMessage]) -> str | None:
-    """Extract the final assistant text content, mirroring AgentDojo's
-    ``model_output_from_messages``.
+def _model_output_from_messages(
+    messages: Sequence[ChatMessage],
+) -> list[MessageContentBlock] | None:
+    """Extract the final assistant content blocks, matching AgentDojo's
+    ``model_output_from_messages`` shape exactly.
 
-    Returns ``None`` if the final message is not an assistant message or
-    carries no text content blocks.
+    Upstream raises ``ValueError`` when the last message is not an
+    assistant message; we mirror that and treat the case as "no output
+    yet" by returning ``None`` so the outer 3-retry loop can re-query.
+    Returning the raw content list (rather than a joined string)
+    preserves the upstream contract for thinking-capable models that may
+    produce only thinking blocks before an answer.
     """
     if not messages:
         return None
-    last = messages[-1]
-    if last.get("role") != "assistant":
+    try:
+        return _upstream_model_output_from_messages(messages)
+    except ValueError:
         return None
-    content = last.get("content")
+
+
+def _content_blocks_to_text(
+    content: list[MessageContentBlock] | str | None,
+) -> str:
+    """Render content (block list or plain string) into a flat string
+    for ``Target.query("last_response")``.  Thinking blocks are skipped
+    so an optimizer querying the post-run response gets only the
+    user-facing text."""
     if content is None:
-        return None
+        return ""
     if isinstance(content, str):
         return content
-    if isinstance(content, list):
-        # list[MessageContentBlock]; join all text-typed blocks.
-        texts = [
-            block.get("content", "") for block in content
-            if isinstance(block, dict) and block.get("type") == "text"
-        ]
-        joined = "".join(t for t in texts if t)
-        return joined or None
-    return None
+    texts: list[str] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "text":
+            value = block.get("content", "")
+            if isinstance(value, str):
+                texts.append(value)
+    return "".join(texts)
 
 
 __all__ = ["AgentDojoTarget"]

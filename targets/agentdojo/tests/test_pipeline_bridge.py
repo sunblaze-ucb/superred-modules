@@ -122,15 +122,18 @@ def test_build_pipeline_returns_agentpipeline(loop) -> None:
         pipeline_model="openai/gpt-4o-2024-05-13",
         system_prompt="be helpful",
         catalog=catalog, wrapper=wrapper,
-        send_event=rec.send_event, loop=loop,
+        send_event=rec.send_event, emit=rec.emit, loop=loop,
         api_key="sk-dummy",
     )
     assert isinstance(pipeline, AgentPipeline)
     elements = list(pipeline.elements)
-    # Outer order: SystemMessage, InitQuery, CatalogEditHook, llm, ToolsExecutionLoop
+    # Outer order: SystemMessage, InitQuery, CatalogEditHook, llm,
+    # MessageStreamHook, ToolsExecutionLoop
+    from agentdojo_target.pipeline_bridge import _MessageStreamHook
     assert isinstance(elements[0], SystemMessage)
     assert isinstance(elements[1], InitQuery)
     assert isinstance(elements[2], _CatalogEditHook)
+    assert isinstance(elements[-2], _MessageStreamHook)
     assert isinstance(elements[-1], ToolsExecutionLoop)
 
 
@@ -145,15 +148,20 @@ def test_build_pipeline_splices_hook_into_loop(loop) -> None:
         pipeline_model="openai/gpt-4o-2024-05-13",
         system_prompt="be helpful",
         catalog=catalog, wrapper=wrapper,
-        send_event=rec.send_event, loop=loop,
+        send_event=rec.send_event, emit=rec.emit, loop=loop,
         api_key="sk-dummy",
     )
+    from agentdojo_target.pipeline_bridge import _MessageStreamHook
     elements = list(pipeline.elements)
     tools_loop: ToolsExecutionLoop = elements[-1]
     inner = list(tools_loop.elements)
+    # Inner loop order: ToolsExecutor, MessageStreamHook, CatalogEditHook,
+    # llm, MessageStreamHook (emits the new assistant turn).
     assert isinstance(inner[0], ToolsExecutor)
-    assert isinstance(inner[1], _CatalogEditHook)
-    # Last element is the llm; not asserting concrete type because v1
+    assert isinstance(inner[1], _MessageStreamHook)
+    assert isinstance(inner[2], _CatalogEditHook)
+    assert isinstance(inner[-1], _MessageStreamHook)
+    # inner[-2] is the llm; not asserting concrete type because v1
     # supports multiple backends.
 
 
@@ -276,3 +284,90 @@ def test_hook_swallows_value_error_from_apply(loop) -> None:
     _run_hook_in_thread(hook, wrapper)
     # banking__get_balance is still canonical (apply_register refused).
     assert catalog.classify("banking__get_balance") == "canonical"
+
+
+# ---------------------------------------------------------------------------
+# _MessageStreamHook: per-turn observable emission for each chat message
+# ---------------------------------------------------------------------------
+
+
+def test_message_stream_hook_emits_one_observable_per_message() -> None:
+    """First firing emits N observables for N messages; second firing on
+    a longer message list emits only the new tail."""
+    from agentdojo_target.observables import chat_message_observable
+    from agentdojo_target.pipeline_bridge import _MessageStreamHook
+    from superred.core.types.events import ObservableEvent
+
+    emitted: list[ObservableEvent] = []
+    hook = _MessageStreamHook(emit=lambda e: emitted.append(e))
+
+    messages = [
+        {"role": "system", "content": "you are helpful"},
+        {"role": "user", "content": "hi"},
+    ]
+    hook.query("q", runtime=None, messages=messages)
+    assert len(emitted) == 2
+    assert emitted[0].observable.name == "agent_trace_message_0000"
+    assert emitted[1].observable.name == "agent_trace_message_0001"
+    assert emitted[0].content == {"role": "system", "content": "you are helpful"}
+    assert emitted[1].content == {"role": "user", "content": "hi"}
+
+    # Second invocation with one new message: only the tail is emitted.
+    messages2 = messages + [{"role": "assistant", "content": "hello!"}]
+    hook.query("q", runtime=None, messages=messages2)
+    assert len(emitted) == 3
+    assert emitted[2].observable.name == "agent_trace_message_0002"
+    assert emitted[2].content == {"role": "assistant", "content": "hello!"}
+
+
+def test_message_stream_hook_no_reemission_when_called_with_same_list() -> None:
+    """Calling the hook twice with the same message list does not re-emit."""
+    from agentdojo_target.pipeline_bridge import _MessageStreamHook
+    from superred.core.types.events import ObservableEvent
+
+    emitted: list[ObservableEvent] = []
+    hook = _MessageStreamHook(emit=lambda e: emitted.append(e))
+    messages = [{"role": "user", "content": "x"}]
+    hook.query("q", runtime=None, messages=messages)
+    hook.query("q", runtime=None, messages=messages)
+    assert len(emitted) == 1
+
+
+def test_message_stream_hook_serialises_tool_calls() -> None:
+    """A message carrying FunctionCall objects is rendered to plain dicts."""
+    from agentdojo.functions_runtime import FunctionCall
+    from agentdojo_target.pipeline_bridge import _MessageStreamHook
+    from superred.core.types.events import ObservableEvent
+
+    emitted: list[ObservableEvent] = []
+    hook = _MessageStreamHook(emit=lambda e: emitted.append(e))
+    fc = FunctionCall(function="banking__get_balance", args={}, id="call-1")
+    messages = [{
+        "role": "assistant",
+        "content": "checking",
+        "tool_calls": [fc],
+    }]
+    hook.query("q", runtime=None, messages=messages)
+    assert len(emitted) == 1
+    payload = emitted[0].content
+    assert payload["role"] == "assistant"
+    assert payload["tool_calls"] == [{
+        "function": "banking__get_balance",
+        "args": {},
+        "id": "call-1",
+    }]
+
+
+def test_message_stream_hook_returns_inputs_unchanged() -> None:
+    """The hook must be a pass-through pipeline element; mutations to its
+    return tuple would break the AgentPipeline contract."""
+    from agentdojo.functions_runtime import EmptyEnv, FunctionsRuntime
+    from agentdojo_target.pipeline_bridge import _MessageStreamHook
+
+    hook = _MessageStreamHook(emit=lambda _e: None)
+    runtime = FunctionsRuntime([])
+    env = EmptyEnv()
+    messages = [{"role": "user", "content": "hi"}]
+    extra = {"k": "v"}
+    out = hook.query("q", runtime, env, messages, extra)
+    assert out == ("q", runtime, env, messages, extra)

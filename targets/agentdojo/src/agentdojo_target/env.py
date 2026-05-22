@@ -83,7 +83,7 @@ def sync_initial_fields(env: CompositeEnvironment) -> CompositeEnvironment:
     faithful.  The mutation is in-place: the same ``env`` is returned
     for chaining convenience.
 
-    See ``ASSUMPTIONS.md`` §C.3 for the rationale.
+    See ``ASSUMPTIONS.md`` §C.4 for the rationale.
     """
     env.workspace.inbox.initial_emails = list(env.workspace.inbox.emails.values())
     env.workspace.calendar.initial_events = list(env.workspace.calendar.events.values())

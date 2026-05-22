@@ -29,7 +29,8 @@ The target depends on `superred` and the upstream `agentdojo` package (used for 
 ## Quick start
 
 ```python
-from agentdojo_target import AgentDojoTarget, USER_TAG, RESPONSE_READABLE_TAG  # subject to change
+from agentdojo_target import AgentDojoTarget
+from agentdojo_target.security_tags import USER_TAG
 from superred.core.controller import Controller, TargetFactory
 from superred.core.types.llm import LLMConfig
 
