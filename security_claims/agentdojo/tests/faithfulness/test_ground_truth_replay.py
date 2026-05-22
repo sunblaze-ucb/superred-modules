@@ -49,50 +49,31 @@ from agentdojo.task_suite.load_suites import get_suite
 from agentdojo_target.env import CompositeEnvironment, sync_initial_fields
 from agentdojo_target.seed_loader import load_composite_seed
 from agentdojo_target.tool_registry import ALL_FUNCTIONS, SUITE_NAMES
+from security_claim_agentdojo.layer1_bridge import _BENCHMARK_VERSION
 
 # ---------------------------------------------------------------------------
 # Known divergences: upstream GT vs upstream predicate.  Each entry is a
 # (suite, task_id, reason) triple flagged xfail so we keep them visible.
+#
+# Empty on v1.2.2: the six GT-vs-predicate divergences that were flagged
+# under the v1 pin (banking UT5/9/10, workspace UT7/17/20, banking IT2)
+# all clear on v1.2.2.  Either upstream's v1.1/v1.2.x patches fixed the
+# specific tool / predicate that broke replay, or the predicate is now
+# trivially satisfied by the seed (which still PASSES the replay
+# assertion, even if the underlying upstream bug persists in a strict
+# audit sense -- see UPSTREAM_PREDICATE_AUDIT.md for those).  If the
+# benchmark version is rolled back to v1, repopulate this dict.
 # ---------------------------------------------------------------------------
 
-_KNOWN_USER_TASK_DIVERGENCES: dict[tuple[str, str], str] = {
-    ("banking", "user_task_5"): (
-        "GT writes amount=5 to 'Spotify' but utility expects 50.00 to "
-        "SE3550...; upstream catalogue typo."
-    ),
-    ("banking", "user_task_9"): (
-        "utility requires amount==1100 AND pre==post (contradictory)."
-    ),
-    ("banking", "user_task_10"): (
-        "utility requires pre==post but GT may not mutate (one read tool)."
-    ),
-    ("workspace", "user_task_7"): (
-        "Upstream v1 bug: utility expects values_changed == {start_time} "
-        "only, but v1 reschedule_calendar_event also mutates end_time to "
-        "preserve duration when new_end_time is omitted."
-    ),
-    ("workspace", "user_task_17"): (
-        "Negated boolean in utility check is inverted from prompt intent "
-        "(upstream bug)."
-    ),
-    ("workspace", "user_task_20"): (
-        "GT uses 0-length event (12:00-12:00) but prompt says 1 hour."
-    ),
-}
+_KNOWN_USER_TASK_DIVERGENCES: dict[tuple[str, str], str] = {}
 
-_KNOWN_INJECTION_TASK_DIVERGENCES: dict[tuple[str, str], str] = {
-    # banking IT2 has _FOOD with 5 entries but security only accepts pizza/sushi.
-    ("banking", "injection_task_2"): (
-        "GT subject may use one of 5 _FOOD entries but security only "
-        "accepts pizza/sushi."
-    ),
-}
+_KNOWN_INJECTION_TASK_DIVERGENCES: dict[tuple[str, str], str] = {}
 
 
 def _collect_user_tasks() -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     for suite_name in SUITE_NAMES:
-        suite = get_suite("v1", suite_name)
+        suite = get_suite(_BENCHMARK_VERSION, suite_name)
         for task_id in suite.user_tasks:
             out.append((suite_name, task_id))
     return out
@@ -101,7 +82,7 @@ def _collect_user_tasks() -> list[tuple[str, str]]:
 def _collect_injection_tasks() -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     for suite_name in SUITE_NAMES:
-        suite = get_suite("v1", suite_name)
+        suite = get_suite(_BENCHMARK_VERSION, suite_name)
         for task_id in suite.injection_tasks:
             out.append((suite_name, task_id))
     return out
@@ -196,7 +177,7 @@ def test_user_task_ground_truth_yields_utility_true(suite_name: str, task_id: st
         pytest.xfail(
             f"{suite_name}/{task_id}: {_KNOWN_USER_TASK_DIVERGENCES[(suite_name, task_id)]}"
         )
-    suite = get_suite("v1", suite_name)
+    suite = get_suite(_BENCHMARK_VERSION, suite_name)
     user_task = suite.get_user_task_by_id(task_id)
 
     pre_sub = suite.load_and_inject_default_environment({})
@@ -232,7 +213,7 @@ def test_injection_task_ground_truth_yields_security_true(suite_name: str, task_
         pytest.xfail(
             f"{suite_name}/{task_id}: {_KNOWN_INJECTION_TASK_DIVERGENCES[(suite_name, task_id)]}"
         )
-    suite = get_suite("v1", suite_name)
+    suite = get_suite(_BENCHMARK_VERSION, suite_name)
     injection_task = suite.injection_tasks[task_id]
 
     pre_sub = suite.load_and_inject_default_environment({})
@@ -240,6 +221,16 @@ def test_injection_task_ground_truth_yields_security_true(suite_name: str, task_
 
     env = _build_composite_with_suite_env(suite_name, pre_sub)
     gt_calls = injection_task.ground_truth(pre_snapshot)
+    if not gt_calls:
+        # Several v1.2 workspace IT tasks (IT6-IT13) ship with
+        # ``def ground_truth(self, ...): return []`` because they have no
+        # canonical solve path; the security predicate is hand-tuned for
+        # the attacker pattern only.  The "GT execution satisfies the
+        # predicate" premise of this test does not apply; skip cleanly.
+        pytest.skip(
+            f"{suite_name}/{task_id}: empty ground_truth (no canonical solve "
+            "path to replay)"
+        )
     trace = _replay_gt(suite_name, gt_calls, env)
 
     post_sub = getattr(env, suite_name)
