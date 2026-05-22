@@ -9,7 +9,10 @@ Exposes:
   state for the ``seed_yaml_override__{suite}`` config slot.
 
 Wraps AgentDojo's import-time decorator-driven task registration via
-``agentdojo.task_suite.load_suites.get_suite``; v1 only.
+``agentdojo.task_suite.load_suites.get_suite``; pinned to v1.2.2 (the
+latest released benchmark version).  Version is set in
+:data:`_BENCHMARK_VERSION` and must stay in sync with the matching
+constant in :mod:`agentdojo_target.seed_loader`.
 """
 
 from __future__ import annotations
@@ -21,11 +24,15 @@ import agentdojo.task_suite.load_suites  # noqa: F401
 from agentdojo.functions_runtime import TaskEnvironment
 from agentdojo.task_suite.load_suites import get_suite
 
-_BENCHMARK_VERSION: str = "v1"
+_BENCHMARK_VERSION: str = "v1.2.2"
+"""Latest released AgentDojo benchmark version.  See
+``agentdojo.task_suite.load_suites._V1_2_2_SUITES`` for the per-suite
+version mapping (banking + workspace at (1,2,2), travel + slack at
+(1,2,0))."""
 
 
 def _suite(suite_name: str):
-    """Return the v1 TaskSuite for *suite_name*.
+    """Return the v1.2.2 TaskSuite for *suite_name*.
 
     Local helper around :func:`agentdojo.task_suite.load_suites.get_suite`
     so callers don't have to repeat the version string.
@@ -34,12 +41,12 @@ def _suite(suite_name: str):
 
 
 def get_user_task(suite: str, user_task_id: str) -> BaseUserTask:
-    """Look up a v1 user task instance by id (e.g. ``user_task_3``)."""
+    """Look up a v1.2.2 user task instance by id (e.g. ``user_task_3``)."""
     return _suite(suite).get_user_task_by_id(user_task_id)
 
 
 def get_injection_task(suite: str, injection_task_id: str) -> BaseInjectionTask:
-    """Look up a v1 injection task instance by id."""
+    """Look up a v1.2.2 injection task instance by id."""
     s = _suite(suite)
     if injection_task_id not in s.injection_tasks:
         raise KeyError(
