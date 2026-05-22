@@ -88,8 +88,8 @@ GOAL_SPECS: list[Layer2GoalSpec] = [
 ]
 """All Layer-2 goal specs registered in the catalogue, in stable order.
 
-Counts: 4 starters + 8 per-suite expansions + 4 cross-suite + 2
-capability misuse = **18 goals total**."""
+Counts: 4 starters + 9 per-suite expansions + 4 cross-suite + 2
+capability misuse = **19 goals total**."""
 
 
 __all__ = ["GOAL_SPECS"]

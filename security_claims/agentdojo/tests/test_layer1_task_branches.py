@@ -244,7 +244,7 @@ def test_call_utility_prefers_from_traces_when_true() -> None:
         _StubUserTask(traces_result=True, util_result=False),
         _StubInjectionTask(traces_result=False, sec_result=False),
     )
-    assert pair._call_utility("", pre, post, traces=[]) is True
+    assert pair._call_utility("", pre, post, traces=[]) == (True, None)
 
 
 def test_call_utility_falls_back_to_utility_when_traces_returns_none() -> None:
@@ -253,18 +253,21 @@ def test_call_utility_falls_back_to_utility_when_traces_returns_none() -> None:
         _StubUserTask(traces_result=None, util_result=True),
         _StubInjectionTask(traces_result=False, sec_result=False),
     )
-    assert pair._call_utility("", pre, post, traces=[]) is True
+    assert pair._call_utility("", pre, post, traces=[]) == (True, None)
 
 
 def test_call_utility_returns_false_when_utility_raises_notimplemented() -> None:
     """When both *_from_traces returns None AND utility raises
-    NotImplementedError, predicate returns False with warning."""
+    NotImplementedError, predicate returns False with a non-None error
+    string so consumers can distinguish 'scoring broken' from 'attack failed'."""
     pre, post = _envs()
     pair = _pair_with_stubs(
         _StubUserTask(traces_result=None, util_result=NotImplementedError),
         _StubInjectionTask(traces_result=False, sec_result=False),
     )
-    assert pair._call_utility("", pre, post, traces=[]) is False
+    verdict, error = pair._call_utility("", pre, post, traces=[])
+    assert verdict is False
+    assert error is not None and "NotImplementedError" in error
 
 
 def test_call_security_prefers_from_traces_when_true() -> None:
@@ -273,7 +276,7 @@ def test_call_security_prefers_from_traces_when_true() -> None:
         _StubUserTask(traces_result=False, util_result=False),
         _StubInjectionTask(traces_result=True, sec_result=False),
     )
-    assert pair._call_security("", pre, post, traces=[]) is True
+    assert pair._call_security("", pre, post, traces=[]) == (True, None)
 
 
 def test_call_security_falls_back_to_security_when_traces_returns_none() -> None:
@@ -282,7 +285,7 @@ def test_call_security_falls_back_to_security_when_traces_returns_none() -> None
         _StubUserTask(traces_result=False, util_result=False),
         _StubInjectionTask(traces_result=None, sec_result=True),
     )
-    assert pair._call_security("", pre, post, traces=[]) is True
+    assert pair._call_security("", pre, post, traces=[]) == (True, None)
 
 
 def test_call_security_returns_false_on_notimplemented() -> None:
@@ -291,12 +294,15 @@ def test_call_security_returns_false_on_notimplemented() -> None:
         _StubUserTask(traces_result=False, util_result=False),
         _StubInjectionTask(traces_result=None, sec_result=NotImplementedError),
     )
-    assert pair._call_security("", pre, post, traces=[]) is False
+    verdict, error = pair._call_security("", pre, post, traces=[])
+    assert verdict is False
+    assert error is not None and "NotImplementedError" in error
 
 
-def test_call_security_swallows_unexpected_exception_in_traces() -> None:
+def test_call_security_falls_back_when_from_traces_raises() -> None:
     """If ``security_from_traces`` raises an unrelated exception, we fall
-    back to ``security`` rather than propagating."""
+    back to ``security`` AND record the from-traces error so consumers
+    know predicate-infrastructure trouble occurred."""
     pre, post = _envs()
 
     class _SinkingTraces(_StubInjectionTask):
@@ -307,4 +313,6 @@ def test_call_security_swallows_unexpected_exception_in_traces() -> None:
         _StubUserTask(traces_result=False, util_result=False),
         _SinkingTraces(traces_result=False, sec_result=True),
     )
-    assert pair._call_security("", pre, post, traces=[]) is True
+    verdict, error = pair._call_security("", pre, post, traces=[])
+    assert verdict is True
+    assert error is not None and "RuntimeError" in error and "oops" in error
