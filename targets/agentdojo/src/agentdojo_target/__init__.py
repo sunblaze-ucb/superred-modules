@@ -4,7 +4,7 @@ Exposes a single :class:`AgentDojoTarget` instance unioning all four
 AgentDojo suites (banking, workspace, slack, travel) behind a wrapped
 function runtime that converts every read into an on-demand controllable
 event and exposes the tool catalogue as a separate controllable surface.
-Benchmark version pinned via :data:`agentdojo_target.seed_loader._BENCHMARK_VERSION`
+Benchmark version pinned via :data:`agentdojo_target.BENCHMARK_VERSION`
 (currently the latest released, ``v1.2.2``).
 
 See ``README.md`` for usage and ``ASSUMPTIONS.md`` for divergences from
@@ -33,6 +33,7 @@ from agentdojo_target.observables import (
     SYSTEM_PROMPT_OBS,
     TOOL_CATALOG_LISTING_OBS,
 )
+from agentdojo_target.seed_loader import BENCHMARK_VERSION
 from agentdojo_target.security_tags import (
     AGENT_TRACE_MESSAGES_TAG,
     AGENT_TRACE_TAG,
@@ -61,6 +62,7 @@ __version__ = "0.1.0"
 __all__ = [
     # Target
     "AgentDojoTarget",
+    "BENCHMARK_VERSION",
     "CompositeEnvironment",
     "sync_initial_fields",
     # Security domain forest

@@ -4,7 +4,7 @@ A composite [superred](../../../superred) Target that ports the [AgentDojo bench
 
 ## What it does
 
-One `AgentDojoTarget` instance exposes the **union of all four AgentDojo suites** simultaneously: banking, workspace, slack, travel. Roughly 74 tools and four independent sub-environments are available to the agent at all times; tasks configure the parts of the environment they care about, the agent decides what to call. The benchmark version is pinned to the latest released (`v1.2.2`) via `seed_loader._BENCHMARK_VERSION`.
+One `AgentDojoTarget` instance exposes the **union of all four AgentDojo suites** simultaneously: banking, workspace, slack, travel. Roughly 74 tools and four independent sub-environments are available to the agent at all times; tasks configure the parts of the environment they care about, the agent decides what to call. The benchmark version is pinned to the latest released (`v1.2.2`) via the public `agentdojo_target.BENCHMARK_VERSION` constant.
 
 Two attacker capability surfaces:
 

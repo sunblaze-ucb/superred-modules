@@ -166,11 +166,11 @@ class _NoopOptimizer(Optimizer):
 # ---------------------------------------------------------------------------
 
 
-_UPSTREAM_VERSION: str = "v1.2.2"
-"""Benchmark version the upstream comparison side uses.  Must match the
-port's :data:`agentdojo_target.seed_loader._BENCHMARK_VERSION` so we
-test "port at v1.2.2 vs upstream at v1.2.2" rather than mixing versions
-across the comparison."""
+from agentdojo_target import BENCHMARK_VERSION as _UPSTREAM_VERSION
+"""Benchmark version the upstream comparison side uses.  Imported from
+the target package so the comparison automatically tracks the port's
+canonical version.  We test "port at <version> vs upstream at
+<version>" rather than mixing versions across the comparison."""
 
 
 def _load_upstream_suite(suite_name: str):

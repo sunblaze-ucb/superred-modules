@@ -3,7 +3,7 @@
 Calls :meth:`TaskSuite.load_and_inject_default_environment({})` on each of
 the four AgentDojo suites so the upstream ``injection_vectors.yaml`` defaults
 are substituted into the YAML before parsing.  The benchmark version is
-pinned by :data:`_BENCHMARK_VERSION` (currently ``v1.2.2``).  The result is the
+pinned by :data:`BENCHMARK_VERSION` (currently ``v1.2.2``).  The result is the
 legitimate baseline state that the wrapped runtime will surface as
 ``ControllablePostCallEvent.answer``.
 
@@ -23,14 +23,18 @@ from agentdojo.task_suite.load_suites import get_suite
 from agentdojo_target.env import CompositeEnvironment
 
 _SUITE_NAMES: tuple[str, str, str, str] = ("banking", "workspace", "slack", "travel")
-_BENCHMARK_VERSION: str = "v1.2.2"
+BENCHMARK_VERSION: str = "v1.2.2"
 """Latest released AgentDojo benchmark version.  Inherits all fixes
 through the v1.2 series: workspace IT3 / IT6-IT13 added or revised,
 workspace UT0/UT17/UT18 fixed (UT17 De Morgan time-check repaired),
 workspace UT16 (read-flag flip), banking UT6 (iPhone-subject lambda
 broadened), slack UT2 and UT11 (route through ``*_from_traces``),
 travel IT2.  Per-suite version mapping lives in
-``agentdojo.task_suite.load_suites._V1_2_2_SUITES``."""
+``agentdojo.task_suite.load_suites._V1_2_2_SUITES``.
+
+Public so paired packages (e.g. ``security-claim-agentdojo``) can
+import this constant rather than redeclaring their own copy that
+might drift out of sync."""
 
 
 def load_composite_seed() -> CompositeEnvironment:
@@ -48,10 +52,10 @@ def load_composite_seed() -> CompositeEnvironment:
         should ``model_copy(deep=True)`` if they need an isolated
         snapshot.
     """
-    banking = get_suite(_BENCHMARK_VERSION, "banking").load_and_inject_default_environment({})
-    workspace = get_suite(_BENCHMARK_VERSION, "workspace").load_and_inject_default_environment({})
-    slack = get_suite(_BENCHMARK_VERSION, "slack").load_and_inject_default_environment({})
-    travel = get_suite(_BENCHMARK_VERSION, "travel").load_and_inject_default_environment({})
+    banking = get_suite(BENCHMARK_VERSION, "banking").load_and_inject_default_environment({})
+    workspace = get_suite(BENCHMARK_VERSION, "workspace").load_and_inject_default_environment({})
+    slack = get_suite(BENCHMARK_VERSION, "slack").load_and_inject_default_environment({})
+    travel = get_suite(BENCHMARK_VERSION, "travel").load_and_inject_default_environment({})
     return CompositeEnvironment(
         banking=banking,
         workspace=workspace,

@@ -226,8 +226,8 @@ Decisions resolved through direct exchanges with the user during the port. Each 
 **Revised answer (2026-05-22)**: v1.2.2 (latest released). The v1.2.x patches address specific community-reported bugs (workspace UT16 read-flag, banking UT6 iPhone-subject lambda, workspace UT17 De Morgan time-check, plus the new workspace IT6-IT13 injection tasks). Keeping the audit-flagged bugs that v1.2.2 does NOT fix (operator-precedence bugs in banking IT0/1/3, banking UT5 stale-transaction, etc.) is acceptable per the standing rule "the remaining predicate weaknesses are fine; we want the latest official fixes".
 
 **Where applied**:
-- `seed_loader.py` `_BENCHMARK_VERSION = "v1.2.2"`
-- `layer1_bridge.py` `_BENCHMARK_VERSION = "v1.2.2"`
+- `seed_loader.py` `BENCHMARK_VERSION = "v1.2.2"` (single source of truth, re-exported as `agentdojo_target.BENCHMARK_VERSION`)
+- The paired `security-claim-agentdojo` package imports this constant rather than redeclaring, so the two cannot drift out of sync.
 - Environment pydantic classes still imported from `agentdojo.default_suites.v1.<suite>.task_suite` because they are version-stable (each later version reuses the v1 definitions; only TaskSuite contents differ).
 - `tool_registry.py` still imports `task_suite` globals from v1 because the tools list is identical across versions (v1.2's patches only add or modify task classes, not tool functions).
 - `UPSTREAM_PREDICATE_AUDIT.md` reflects v1 source-reading; bugs that v1.2.2 fixes are noted inline.
