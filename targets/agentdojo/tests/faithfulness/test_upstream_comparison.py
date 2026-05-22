@@ -259,15 +259,12 @@ async def _run_port_pair(
             pipeline_model=model_id, api_base=api_base, api_key=api_key,
         )
 
-    # Scope: all tags in the target's security domain so nothing is filtered.
+    # Scope: every tag in the target's security domain so no controllable,
+    # observable, or trajectory entry is filtered out for this faithfulness run.
     sample_target = make_target()
-    all_tags: set[SecurityDomainTag] = set()
-    for tree in sample_target.security_domain.trees:
-        def _walk(node):
-            all_tags.add(node)
-            for child in node.children:
-                _walk(child)
-        _walk(tree)
+    all_tags: set[SecurityDomainTag] = set(
+        sample_target.security_domain._tags.values()  # noqa: SLF001
+    )
 
     controller = Controller(
         optimizer_factory=lambda: _NoopOptimizer(),
