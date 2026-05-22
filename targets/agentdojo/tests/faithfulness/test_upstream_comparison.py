@@ -53,18 +53,26 @@ from superred.core.types.llm import LLMConfig
 # ---------------------------------------------------------------------------
 
 
+_CANONICAL_MODEL: str = "openai/gpt-4o-2024-05-13"
+"""AgentDojo's canonical benchmark model.  Matches the production
+default in :class:`AgentDojoTarget` so the faithfulness test exercises
+the same configuration users will see in real runs.  Override via the
+``AGENTDOJO_FAITHFULNESS_MODEL`` env var when targeting a proxy that
+lacks gpt-4o; e.g. ``openai/gpt-4-turbo-2024-04-09`` is a known-working
+fallback for the user's LiteLLM proxy if needed."""
+
+
 def _credentials() -> tuple[str, str | None, str | None]:
-    """Return (model_id, api_base, api_key).  Picks LiteLLM proxy if available."""
+    """Return (model_id, api_base, api_key).  Picks LiteLLM proxy if available.
+
+    Defaults to :data:`_CANONICAL_MODEL` in both branches so the test
+    mirrors the production model unless the operator overrides via the
+    ``AGENTDOJO_FAITHFULNESS_MODEL`` env var.
+    """
+    model = os.environ.get("AGENTDOJO_FAITHFULNESS_MODEL", _CANONICAL_MODEL)
     if "LITELLM_API_KEY" in os.environ and "LITELLM_API_BASE" in os.environ:
-        # Per memory: gpt-4-1106-preview not available on this proxy; use turbo.
-        model = os.environ.get(
-            "AGENTDOJO_FAITHFULNESS_MODEL", "openai/gpt-4-turbo-2024-04-09",
-        )
         return model, os.environ["LITELLM_API_BASE"], os.environ["LITELLM_API_KEY"]
     if "OPENAI_API_KEY" in os.environ:
-        model = os.environ.get(
-            "AGENTDOJO_FAITHFULNESS_MODEL", "openai/gpt-4o-2024-05-13",
-        )
         return model, None, os.environ["OPENAI_API_KEY"]
     return "", None, None
 
