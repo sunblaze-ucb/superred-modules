@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "agentdojo-target"
 version = "0.1.0"
-description = "AgentDojo composite target for superred: union of all four v1 suites with on-demand event-based injection and tool-catalog controllable surface"
+description = "AgentDojo composite target for superred: union of all four AgentDojo suites with on-demand event-based injection and tool-catalog controllable surface. Tracks the latest released benchmark version (v1.2.2) via seed_loader._BENCHMARK_VERSION."
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "superred>=0.1.0",

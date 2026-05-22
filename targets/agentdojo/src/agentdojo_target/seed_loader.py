@@ -1,8 +1,9 @@
 """Seed loader: build the canonical no-attacker :class:`CompositeEnvironment`.
 
 Calls :meth:`TaskSuite.load_and_inject_default_environment({})` on each of
-the four v1 suites so the upstream ``injection_vectors.yaml`` defaults
-are substituted into the YAML before parsing.  The result is the
+the four AgentDojo suites so the upstream ``injection_vectors.yaml`` defaults
+are substituted into the YAML before parsing.  The benchmark version is
+pinned by :data:`_BENCHMARK_VERSION` (currently ``v1.2.2``).  The result is the
 legitimate baseline state that the wrapped runtime will surface as
 ``ControllablePostCallEvent.answer``.
 
@@ -33,7 +34,7 @@ travel IT2.  Per-suite version mapping lives in
 
 
 def load_composite_seed() -> CompositeEnvironment:
-    """Build a fresh :class:`CompositeEnvironment` from the v1 default environments.
+    """Build a fresh :class:`CompositeEnvironment` from the AgentDojo default environments.
 
     Each sub-env is constructed by calling AgentDojo's
     ``load_and_inject_default_environment({})``, which interpolates the

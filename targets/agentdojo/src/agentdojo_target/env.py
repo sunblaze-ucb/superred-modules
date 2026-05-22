@@ -1,4 +1,4 @@
-"""CompositeEnvironment: pydantic root unioning all four AgentDojo v1 suites.
+"""CompositeEnvironment: pydantic root unioning all four AgentDojo suites.
 
 The four AgentDojo sub-environments are held unmodified as nested
 pydantic models under suite-named attributes.  Workspace and travel both
@@ -38,7 +38,7 @@ from agentdojo.functions_runtime import TaskEnvironment
 
 
 class CompositeEnvironment(TaskEnvironment):
-    """Composite pydantic root holding all four AgentDojo v1 sub-environments.
+    """Composite pydantic root holding all four AgentDojo sub-environments.
 
     Each sub-attribute carries the unmodified upstream environment for
     its suite.  No fields are hoisted to the root: tools navigate the

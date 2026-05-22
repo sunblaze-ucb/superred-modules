@@ -97,7 +97,7 @@ _DEFAULT_PIPELINE_MODEL: str = "openai/gpt-4o-2024-05-13"
 
 
 class AgentDojoTarget(Target):
-    """Composite AgentDojo target exposing all four v1 suites simultaneously.
+    """Composite AgentDojo target exposing all four suites simultaneously.
 
     Args:
         pipeline_model: litellm-style model id for the underlying

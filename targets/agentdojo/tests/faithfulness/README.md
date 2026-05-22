@@ -25,7 +25,8 @@ Runner: `scripts/run_faithfulness_full.py` (NOT yet implemented).  Plan
 of attack:
 
 1. Iterate every ``(suite, user_task, injection_task)`` triple from
-   the four v1 suites.
+   the four AgentDojo suites (currently pinned to v1.2.2 via
+   ``seed_loader._BENCHMARK_VERSION``).
 2. On the upstream side, prefer AgentDojo's published ``runs/`` JSON
    logs (free oracle for ``gpt-4o-2024-05-13`` and friends).  When a
    log is absent, fall back to live invocation of

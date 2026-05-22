@@ -1,9 +1,11 @@
 """agentdojo_target: composite AgentDojo target for superred.
 
 Exposes a single :class:`AgentDojoTarget` instance unioning all four
-AgentDojo v1 suites (banking, workspace, slack, travel) behind a wrapped
+AgentDojo suites (banking, workspace, slack, travel) behind a wrapped
 function runtime that converts every read into an on-demand controllable
 event and exposes the tool catalogue as a separate controllable surface.
+Benchmark version pinned via :data:`agentdojo_target.seed_loader._BENCHMARK_VERSION`
+(currently the latest released, ``v1.2.2``).
 
 See ``README.md`` for usage and ``ASSUMPTIONS.md`` for divergences from
 AgentDojo upstream.
