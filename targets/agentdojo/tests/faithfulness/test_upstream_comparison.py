@@ -166,27 +166,27 @@ class _NoopOptimizer(Optimizer):
 # ---------------------------------------------------------------------------
 
 
+_UPSTREAM_VERSION: str = "v1.2.2"
+"""Benchmark version the upstream comparison side uses.  Must match the
+port's :data:`agentdojo_target.seed_loader._BENCHMARK_VERSION` so we
+test "port at v1.2.2 vs upstream at v1.2.2" rather than mixing versions
+across the comparison."""
+
+
 def _load_upstream_suite(suite_name: str):
-    """Return the upstream ``TaskSuite`` for a given suite name.
+    """Return the upstream ``TaskSuite`` for a given suite name at
+    :data:`_UPSTREAM_VERSION`.
 
     Avoids the v1.1.1 circular-import bug by pre-importing the upstream
     suite loader first (per memory).
     """
-    # Pre-import the loader so v1.1.1 cannot break the import order.
+    # Pre-import the loader so v1.1.x cannot break the import order.
     import agentdojo.task_suite.load_suites  # noqa: F401
+    from agentdojo.task_suite.load_suites import get_suite
 
-    if suite_name == "banking":
-        from agentdojo.default_suites.v1.banking.task_suite import task_suite
-        return task_suite
-    if suite_name == "workspace":
-        from agentdojo.default_suites.v1.workspace.task_suite import task_suite
-        return task_suite
-    if suite_name == "slack":
-        from agentdojo.default_suites.v1.slack.task_suite import task_suite
-        return task_suite
-    if suite_name == "travel":
-        from agentdojo.default_suites.v1.travel.task_suite import task_suite
-        return task_suite
+    if suite_name not in {"banking", "workspace", "slack", "travel"}:
+        raise ValueError(f"Unknown suite {suite_name!r}")
+    return get_suite(_UPSTREAM_VERSION, suite_name)
     raise ValueError(f"Unknown suite {suite_name!r}")
 
 
