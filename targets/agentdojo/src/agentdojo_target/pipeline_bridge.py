@@ -26,6 +26,8 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
+import re
+
 import anthropic
 import openai
 from pydantic import ValidationError
@@ -229,11 +231,110 @@ def _message_to_jsonable(msg: Any) -> dict:
 # ---------------------------------------------------------------------------
 
 
+class _CompatibleOpenAILLM(OpenAILLM):
+    """OpenAILLM that filters parallel-tool-call synthetic wrapper names
+    out of assistant responses.
+
+    Older OpenAI models (notably ``gpt-4-turbo-2024-04-09``) sometimes
+    emit a synthetic ``multi_tool_use.parallel`` outer tool_call when the
+    model wants to invoke several tools in one turn.  That name contains
+    a ``.`` and fails OpenAI's input-validation pattern
+    ``^[a-zA-Z0-9_-]+$`` on the NEXT submission, hard-aborting the run.
+    The default model ``gpt-4o-2024-05-13`` does not exhibit this; this
+    subclass is a defensive workaround that keeps the port usable when
+    the LiteLLM proxy substitutes an older turbo build.
+
+    Behaviour change vs upstream: after the LLM responds, any tool_call
+    whose ``function`` name violates the OpenAI pattern is dropped
+    in-place AND the malformed-call's arguments are unpacked into
+    additional valid tool_calls when the synthetic shape is recognised
+    (``multi_tool_use.parallel`` with ``args.tool_uses = [{...}]``).
+    Otherwise the message proceeds with the remaining valid tool_calls.
+    """
+
+    _VALID_NAME_RE: Any = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+    def query(  # type: ignore[override]
+        self,
+        query: str,
+        runtime: FunctionsRuntime,
+        env: Env = EmptyEnv(),
+        messages: Sequence[ChatMessage] = [],
+        extra_args: dict = {},
+    ) -> tuple[str, FunctionsRuntime, Env, Sequence[ChatMessage], dict]:
+        out_query, out_runtime, out_env, out_messages, out_extra = super().query(
+            query, runtime, env, messages, extra_args,
+        )
+        out_messages = list(out_messages)
+        if not out_messages:
+            return out_query, out_runtime, out_env, out_messages, out_extra
+        last = out_messages[-1]
+        if last.get("role") != "assistant":
+            return out_query, out_runtime, out_env, out_messages, out_extra
+        tool_calls = last.get("tool_calls")
+        if not tool_calls:
+            return out_query, out_runtime, out_env, out_messages, out_extra
+        sanitised = _sanitise_tool_calls(tool_calls)
+        if sanitised != tool_calls:
+            logger.warning(
+                "Filtered %d malformed tool_call name(s) from the assistant "
+                "response (parallel-wrapper compatibility)",
+                len(tool_calls) - len(sanitised),
+            )
+            out_messages[-1] = {**last, "tool_calls": sanitised}
+        return out_query, out_runtime, out_env, out_messages, out_extra
+
+
+def _sanitise_tool_calls(tool_calls: Sequence[Any]) -> list[Any]:
+    """Return ``tool_calls`` with any pattern-violating names removed.
+
+    If a call's function name matches the OpenAI pattern it passes
+    through unchanged.  If it is the synthetic
+    ``multi_tool_use.parallel`` wrapper, expand it into one
+    :class:`FunctionCall` per inner ``tool_uses`` entry.  Anything else
+    that fails the pattern is dropped (logged at call-site).
+    """
+    from agentdojo.functions_runtime import FunctionCall
+
+    valid_re = re.compile(r"^[a-zA-Z0-9_-]+$")
+    out: list[Any] = []
+    for call in tool_calls:
+        name = getattr(call, "function", None)
+        if name is None and isinstance(call, dict):
+            name = call.get("function")
+        if isinstance(name, str) and valid_re.match(name):
+            out.append(call)
+            continue
+        # Try to unpack the multi_tool_use.parallel synthetic wrapper.
+        args = getattr(call, "args", None)
+        if args is None and isinstance(call, dict):
+            args = call.get("args")
+        tool_uses = None
+        if isinstance(args, dict):
+            tool_uses = args.get("tool_uses")
+        if isinstance(tool_uses, list):
+            for sub in tool_uses:
+                if not isinstance(sub, dict):
+                    continue
+                inner_name = sub.get("recipient_name") or sub.get("name")
+                inner_args = sub.get("parameters") or sub.get("args") or {}
+                if isinstance(inner_name, str) and valid_re.match(inner_name):
+                    out.append(FunctionCall(
+                        function=inner_name,
+                        args=inner_args if isinstance(inner_args, dict) else {},
+                        id=getattr(call, "id", None)
+                        or (call.get("id") if isinstance(call, dict) else None),
+                    ))
+    return out
+
+
 def _build_llm(model_id: str, *, api_base: str | None, api_key: str | None) -> BasePipelineElement:
     """Construct an AgentDojo LLM element from a litellm-style model id.
 
     Supported providers:
-    - ``openai/<model>``  -> :class:`OpenAILLM` with an :class:`openai.OpenAI` client.
+    - ``openai/<model>``  -> :class:`_CompatibleOpenAILLM` (subclass of
+      AgentDojo's ``OpenAILLM`` that filters malformed parallel-wrapper
+      tool-call names; see that class for the rationale).
     - ``anthropic/<model>`` -> :class:`AnthropicLLM` with an
       :class:`anthropic.Anthropic` client; supports the ``-thinking-N``
       suffix in the model name.
@@ -258,7 +359,7 @@ def _build_llm(model_id: str, *, api_base: str | None, api_key: str | None) -> B
             api_key=api_key,
             base_url=api_base,
         )
-        return OpenAILLM(client, model_name)
+        return _CompatibleOpenAILLM(client, model_name)
     if provider == "anthropic":
         client = anthropic.Anthropic(
             api_key=api_key,

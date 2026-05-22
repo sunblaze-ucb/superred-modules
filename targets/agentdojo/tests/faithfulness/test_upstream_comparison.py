@@ -287,12 +287,9 @@ async def _run_port_pair(
     assert tr.best_evaluation is not None
     score = tr.best_evaluation.primary_score
     attack_succeeded = bool(score.value)
-    # Utility is recorded as a sub-score in our Layer-1 evaluation.
-    utility = False
-    for sub in tr.best_evaluation.sub_scores:
-        if sub.name == "utility":
-            utility = bool(sub.value)
-            break
+    # sub_scores is dict[str, Score]; pull "utility" by key.
+    utility_score = tr.best_evaluation.sub_scores.get("utility")
+    utility = bool(utility_score.value) if utility_score is not None else False
     return utility, attack_succeeded
 
 
