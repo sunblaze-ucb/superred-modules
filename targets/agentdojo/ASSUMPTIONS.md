@@ -217,13 +217,22 @@ Upstream AgentDojo references in this file point into `https://github.com/ethz-s
 
 Decisions resolved through direct exchanges with the user during the port. Each entry is dated; future-you should check this section before changing the relevant code, since these are the *binding* answers to ambiguous brief language.
 
-### H.1 v1 is canonical; v1.1 / v1.1.1 / v1.2 are out of scope (2026-05-15)
+### H.1 Latest released benchmark version (v1.2.2) is canonical (2026-05-22, revising 2026-05-15)
 
-**Question**: AgentDojo upstream has `v1`, `v1.1`, `v1.1.1`, `v1.2` task suite variants under `default_suites/`. Which is the port's source of truth?
+**Original question**: AgentDojo upstream has `v1`, `v1.1`, `v1.1.1`, `v1.1.2`, `v1.2`, `v1.2.1`, `v1.2.2` task suite variants under `default_suites/`. Which is the port's source of truth?
 
-**Answer**: v1 only. The v1.1+ variants exist upstream to hot-fix specific predicates after the AgentDojo paper went out; using them would diverge from published baselines. Bugs flagged in `UPSTREAM_PREDICATE_AUDIT.md` are matched verbatim in our port, not fixed.
+**Initial answer (2026-05-15)**: v1, for cross-paper comparability against the AgentDojo paper's reported numbers.
 
-**Where applied**: `seed_loader.py` loads only `v1/<suite>/environment.yaml`; `tool_registry.py` imports v1's `task_suite.py`; `UPSTREAM_PREDICATE_AUDIT.md` audits v1 only.
+**Revised answer (2026-05-22)**: v1.2.2 (latest released). The v1.2.x patches address specific community-reported bugs (workspace UT16 read-flag, banking UT6 iPhone-subject lambda, workspace UT17 De Morgan time-check, plus the new workspace IT6-IT13 injection tasks). Keeping the audit-flagged bugs that v1.2.2 does NOT fix (operator-precedence bugs in banking IT0/1/3, banking UT5 stale-transaction, etc.) is acceptable per the standing rule "the remaining predicate weaknesses are fine; we want the latest official fixes".
+
+**Where applied**:
+- `seed_loader.py` `_BENCHMARK_VERSION = "v1.2.2"`
+- `layer1_bridge.py` `_BENCHMARK_VERSION = "v1.2.2"`
+- Environment pydantic classes still imported from `agentdojo.default_suites.v1.<suite>.task_suite` because they are version-stable (each later version reuses the v1 definitions; only TaskSuite contents differ).
+- `tool_registry.py` still imports `task_suite` globals from v1 because the tools list is identical across versions (v1.2's patches only add or modify task classes, not tool functions).
+- `UPSTREAM_PREDICATE_AUDIT.md` reflects v1 source-reading; bugs that v1.2.2 fixes are noted inline.
+
+**Why the Environment classes stay on v1 paths**: AgentDojo's `BankingEnvironment` / `WorkspaceEnvironment` / `SlackEnvironment` / `TravelEnvironment` classes are defined exactly once, in their v1 modules. The v1_2 / v1_2_2 packages only register new task classes; they do not redefine the pydantic Environment models. Reimporting from a non-v1 path would be a no-op rename.
 
 ### H.2 Layer-2 source is bespoke, not SORRY-Bench (2026-05-15)
 

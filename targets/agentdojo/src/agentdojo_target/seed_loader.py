@@ -22,7 +22,14 @@ from agentdojo.task_suite.load_suites import get_suite
 from agentdojo_target.env import CompositeEnvironment
 
 _SUITE_NAMES: tuple[str, str, str, str] = ("banking", "workspace", "slack", "travel")
-_BENCHMARK_VERSION: str = "v1"
+_BENCHMARK_VERSION: str = "v1.2.2"
+"""Latest released AgentDojo benchmark version.  Inherits all fixes
+through the v1.2 series: workspace IT3 / IT6-IT13 added or revised,
+workspace UT0/UT17/UT18 fixed (UT17 De Morgan time-check repaired),
+workspace UT16 (read-flag flip), banking UT6 (iPhone-subject lambda
+broadened), slack UT2 and UT11 (route through ``*_from_traces``),
+travel IT2.  Per-suite version mapping lives in
+``agentdojo.task_suite.load_suites._V1_2_2_SUITES``."""
 
 
 def load_composite_seed() -> CompositeEnvironment:
