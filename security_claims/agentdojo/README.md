@@ -2,7 +2,7 @@
 
 A [superred](../../../superred) `SecurityClaim` package paired with [`agentdojo-target`](../../targets/agentdojo).  Three composable layers:
 
-1. **Layer 1: original AgentDojo injection tasks.**  One paired Task per canonical (user_task, injection_task) pair, 27 tasks total across the four v1 suites (banking, workspace, slack, travel).  Subdivided by attack-semantic category per the table the user confirmed.
+1. **Layer 1: original AgentDojo injection tasks.**  One paired Task per canonical (user_task, injection_task) pair, 27 tasks total across the four AgentDojo suites (banking, workspace, slack, travel).  Subdivided by attack-semantic category per the table the user confirmed.  Benchmark version pinned to the latest released (`v1.2.2`) via the target's `seed_loader.BENCHMARK_VERSION`.
 2. **Layer 2: bespoke system-purpose-violation goals.**  Standalone goals tailored to the composite multi-suite agent.  Deterministic security predicates, NOT LLM-as-judge.  Each task carries a benign user prompt; the attacker chooses delivery based on scope.
 3. **Layer 3: combined.**  Composition of Layers 1 and 2.
 

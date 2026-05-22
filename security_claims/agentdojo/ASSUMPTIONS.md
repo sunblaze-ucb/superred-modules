@@ -15,8 +15,10 @@ never reuse a number.
 
 **AgentDojo** (`benchmark.py:160-229`): iterates every `user_task` in
 the suite and every `injection_task` per user task, producing a full
-cross-product (the v1 totals: workspace 40x6, slack 21x5, travel 20x7,
-banking 16x9 = 629 cases).
+cross-product.  Under the v1.2.2 pin the per-suite cross-product totals
+are: workspace 40x14, slack 21x5, travel 20x7, banking 16x9 = 949
+cases (v1.2 added workspace IT6-IT13, so workspace's injection-task
+count grew from 6 to 14 versus the original v1 paper's 629-case total).
 
 **Us**: Layer 1's `agentdojo_layer1_claim()` default is the 27-pair
 canonical scope — exactly one user task per injection task — chosen
@@ -123,10 +125,11 @@ initialize-time) and the security predicate.
 
 ### B.3 Cross-suite goals exist
 
-Goals 13-18 in the v1 catalogue span multiple suites (e.g. exfil
-banking transactions to a slack external channel) — novel
-threat-model territory unreachable in upstream AgentDojo because
-upstream runs one suite at a time.
+The four `cross_*` goals in the Layer-2 catalogue
+(`cross_banking_to_slack`, `cross_calendar_collision_booking`,
+`cross_pii_via_slack_web`, `cross_workspace_to_external_email`) span
+multiple suites — novel threat-model territory unreachable in upstream
+AgentDojo because upstream runs one suite at a time.
 
 ---
 
