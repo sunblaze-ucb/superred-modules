@@ -19,7 +19,7 @@ give large improvements." Mapped to superred:
 
 | GEPA term | superred equivalent |
 | --- | --- |
-| System Φ being optimized | the user-message prompt sent to the target |
+| System Φ being optimized | the selected writable target surface |
 | Component / module | one controllable's injection text |
 | Rollout | one superred run |
 | Metric μ score | ``RunEndEvent.evaluation.primary_score.value`` |
@@ -85,20 +85,38 @@ field is omitted entirely. Non-string observable contents and empty
 / whitespace strings are dropped (matches the
 ``format_reflective_dataset`` field-skip rule).
 
-Capability symmetry on the **write** side: when the controller's
-scope grants ``system_prompt`` as a writable controllable and the
-caller hasn't pinned ``target_controllable_name`` explicitly, the
-optimizer auto-claims it as the attack channel. The system prompt
-is the higher-leverage attack surface (the assistant is conditioned
-on it from the first token, before any user message arrives) and
-auto-claiming it whenever it's available keeps the optimizer
-*threat-model-faithful* — the same scope grant that previously gave
-the optimizer "I can read the system prompt" capability now also
-gives it "I can write the system prompt" if the controller wants to
-expose that. The explicit ``target_controllable_name`` constructor
-knob still wins over auto-claim. When ``system_prompt`` is not
-writable, behaviour is unchanged: attack ``user_message`` and skip
-read-only ``system_prompt`` PreCalls.
+Capability symmetry on the **write** side: GEPA now resolves one
+attack surface from the writable controllables the controller exposes.
+The explicit ``target_controllable_name`` constructor knob always
+wins. Otherwise the default priority is:
+
+1. agentic read/tool-return ``ControllablePostCallEvent`` surfaces
+   whose names start with ``read__`` or ``tool_call:``;
+2. writable ``system_prompt``;
+3. user-prompt-style channels (``user_prompt``, ``user_message``,
+   ``query``, ``prompt``), with the legacy first-non-system PreCall
+   fallback retained for unusual chatbot targets.
+
+This keeps the optimizer *threat-model-faithful*: a chatbot target
+without agentic surfaces behaves as before, while an agentic target
+with read/tool-return controls gets the more relevant indirect
+prompt-injection path. For a selected read/tool surface, GEPA preserves
+the legitimate tool return and appends the current candidate in a
+separate indirect-prompt block. ``system_prompt`` remains the
+next-best auto-claimed channel when no agentic read/tool surface is
+available. Tool-catalog controllables are intentionally left for a
+second phase because they need stricter target-specific JSON payload
+contracts.
+
+Rollout records now include the selected surface metadata, any
+preserved tool return, and a bounded buffer of agentic dynamic
+observables when visible. Dynamic observable names are matched by
+agentic/response-like hints such as ``agent_trace_message``,
+``agent_trace_tool_response``, ``agent_trace_tool_call``,
+``last_response``, ``output``, ``assistant``, and ``response``. This
+lets the reflection LM distinguish whether a candidate was evaluated
+as a user prompt, system prompt, or indirect tool-content injection
+without changing the core GEPA candidate loop.
 
 ``max_no_signal_runs`` (default ``0``, disabled) bounds the
 user-query-only setting's cost: if positive, terminate after that many
@@ -172,13 +190,11 @@ The paper supports multi-component systems (e.g. multi-hop QA with
 several modules). We optimize a single component per session.
 
 Default channel selection is *threat-model-driven*: the optimizer
-auto-claims ``system_prompt`` when the controller's scope grants it
-as a writable controllable (higher-leverage attack surface, and the
-single component the paper would naturally optimise on a chatbot
-target), otherwise falls back to ``user_message`` and skips the
-read-only ``system_prompt`` PreCall. The
+auto-claims an agentic read/tool-return surface first, then
+``system_prompt`` when the controller's scope grants it as a writable
+controllable, otherwise a user-prompt-style channel. The
 ``target_controllable_name`` constructor knob (default ``None``)
-always wins over auto-claim and lets callers pin any in-scope
+always wins over auto-claim and lets callers pin one in-scope
 controllable as the attack channel. Multi-component (simultaneous
 multi-channel) support is a future extension, not a current
 requirement.
@@ -198,16 +214,17 @@ and GOAT:
   ctor surface (``max_attempts``, ``reflection_temperature``,
   ``response_observable_names``, ``max_no_signal_runs``, plus
   ``target_controllable_name`` for explicit-channel attacks).
-* Same primary-controllable locking on the first non-``system_prompt``
-  ``ControllablePreCallEvent`` *in the default mode*; explicit-target
-  mode (``target_controllable_name`` set) locks onto exactly that name.
-* Same ``system_prompt`` skip rule **only when ``system_prompt`` is
-  not writable** (matches GOAT and FlipAttack on read-only system
-  prompts); the skip is bypassed by auto-claim when ``system_prompt``
-  is a writable controllable, or when
-  ``target_controllable_name="system_prompt"`` is set explicitly.
-* Same trajectory-first response recovery over
-  ``{response, model_response, assistant_response}``.
+* Same primary-controllable locking for PreCall prompt channels;
+  when an agentic read/tool-return surface is selected, PreCalls pass
+  through and GEPA injects at the matching ``ControllablePostCallEvent``.
+* Same ``system_prompt`` skip rule **only when neither
+  ``system_prompt`` nor an agentic read/tool-return surface is the
+  selected writable target**. Explicit
+  ``target_controllable_name="system_prompt"`` still locks onto that
+  channel.
+* Trajectory-first response recovery over
+  ``{response, model_response, assistant_response}``, broadened with
+  response-like/agentic observable hints for agent targets.
 * Same 3-way PostCall pairing (same controllable, request matches the
   PreCall request, or request matches the injected value).
 * Same ``RunEnd → done`` semantics: ``done=True`` on success

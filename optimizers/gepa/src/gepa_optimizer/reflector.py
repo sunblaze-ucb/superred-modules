@@ -53,6 +53,9 @@ class RolloutRecord:
     score: float | None = None
     rationale: str = ""
     target_observables: dict[str, str] | None = None
+    injection_surface: dict[str, str] | None = None
+    tool_return: str | None = None
+    agent_observations: list[str] | None = None
 
     def to_sample(self) -> dict[str, Any]:
         """Convert to the markdown-renderable sample dict.
@@ -65,6 +68,12 @@ class RolloutRecord:
         }
         if self.target_observables:
             sample["target_observables"] = dict(self.target_observables)
+        if self.injection_surface:
+            sample["injection_surface"] = dict(self.injection_surface)
+        if self.tool_return is not None:
+            sample["tool_return"] = self.tool_return
+        if self.agent_observations:
+            sample["agent_observations"] = list(self.agent_observations)
         if self.response is not None:
             sample["assistant_response"] = self.response
         feedback = _format_feedback(score=self.score, rationale=self.rationale)
