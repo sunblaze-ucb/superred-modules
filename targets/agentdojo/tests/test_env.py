@@ -9,15 +9,16 @@ from __future__ import annotations
 
 from agentdojo.task_suite.load_suites import get_suite
 
+from agentdojo_target import BENCHMARK_VERSION
 from agentdojo_target.env import CompositeEnvironment
 
 
 def _load_default_subenvs() -> tuple[object, object, object, object]:
     """Load each suite's default (no-injection) environment via AgentDojo upstream."""
-    banking = get_suite("v1", "banking").load_and_inject_default_environment({})
-    workspace = get_suite("v1", "workspace").load_and_inject_default_environment({})
-    slack = get_suite("v1", "slack").load_and_inject_default_environment({})
-    travel = get_suite("v1", "travel").load_and_inject_default_environment({})
+    banking = get_suite(BENCHMARK_VERSION, "banking").load_and_inject_default_environment({})
+    workspace = get_suite(BENCHMARK_VERSION, "workspace").load_and_inject_default_environment({})
+    slack = get_suite(BENCHMARK_VERSION, "slack").load_and_inject_default_environment({})
+    travel = get_suite(BENCHMARK_VERSION, "travel").load_and_inject_default_environment({})
     return banking, workspace, slack, travel
 
 
