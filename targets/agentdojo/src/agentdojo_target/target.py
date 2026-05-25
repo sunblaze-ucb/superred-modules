@@ -18,8 +18,9 @@ Lifecycle:
      env + per-run tool catalog.
    - Phase 4: build wrapped runtime + pipeline (the catalog hook fires
      the four tool-catalog Controllables before every LLM turn) and run
-     the pipeline with up to three retries, mirroring AgentDojo's outer
-     retry loop.
+     the pipeline with up to three attempts, mirroring AgentDojo's outer
+     retry loop.  Only ``AbortAgentError`` (raised by defense
+     pipeline elements) is caught; all other exceptions propagate.
    - Phase 5: emit final observables (composite env snapshot, agent
      trace tool-calls).
 
@@ -39,6 +40,7 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
+from agentdojo.agent_pipeline.errors import AbortAgentError
 from agentdojo.functions_runtime import FunctionCall
 from agentdojo.task_suite.task_suite import (
     model_output_from_messages as _upstream_model_output_from_messages,
@@ -301,7 +303,7 @@ class AgentDojoTarget(Target):
         self._pre_env = self._env.model_copy(deep=True)
 
         model_output: list[MessageContentBlock] | None = None
-        for attempt in range(3):
+        for _ in range(3):
             try:
                 _q, _runtime, new_env, messages, _extra = await asyncio.to_thread(
                     pipeline.query,
@@ -309,16 +311,17 @@ class AgentDojoTarget(Target):
                     self._wrapped_runtime,
                     self._env,
                 )
-            except Exception:  # pragma: no cover - the pipeline can raise
-                logger.exception(
-                    "AgentDojo pipeline.query raised on attempt %d", attempt + 1
-                )
-                break
+            except AbortAgentError as e:
+                new_env = e.task_environment
+                messages = e.messages
             self._env = new_env
             self._messages = messages
             model_output = _model_output_from_messages(messages)
             if model_output is not None:
                 break
+
+        if model_output is None:
+            logger.warning("Model output was None after 3 pipeline attempts")
 
         self._last_response = _content_blocks_to_text(model_output)
         # The wrapped runtime's trace mirrors AgentDojo's

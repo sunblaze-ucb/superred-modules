@@ -2,8 +2,10 @@
 ``_model_output_from_messages`` extraction shape.
 
 Coverage gaps surfaced in the multi-agent code review:
-- The 3-retry loop in :meth:`AgentDojoTarget.run` for transient
-  pipeline failures (rate limits, 5xx, etc.) was never simulated.
+- The 3-retry loop in :meth:`AgentDojoTarget.run` retries when
+  ``model_output`` is ``None`` (thinking-only or tool-calling
+  assistant) and catches ``AbortAgentError`` (defense abort) like
+  upstream.  All other exceptions propagate.
 - ``_model_output_from_messages`` should mirror upstream's
   ``model_output_from_messages`` which returns
   ``list[MessageContentBlock] | None`` rather than a flat string.
@@ -224,17 +226,37 @@ async def test_retry_loop_succeeds_on_first_attempt() -> None:
 
 
 @pytest.mark.asyncio
-async def test_retry_loop_breaks_on_pipeline_exception() -> None:
-    """Per ASSUMPTIONS divergence note: our port breaks the retry loop
-    on Exception (upstream only catches AbortAgentError); the test
-    pins this current behaviour so a future change is visible."""
+async def test_non_abort_exception_propagates() -> None:
+    """Non-AbortAgentError exceptions propagate out of the retry loop,
+    matching upstream where only AbortAgentError is caught."""
     target = AgentDojoTarget(pipeline_model="openai/gpt-4o-2024-05-13")
     target.set_config("user_prompt", "trigger failure")
     pipeline = _ScriptedPipeline([RuntimeError("rate limit; please retry")])
+    with pytest.raises(RuntimeError, match="rate limit"):
+        await _drive_run(target, pipeline)
+    assert len(pipeline.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_abort_agent_error_caught_not_propagated() -> None:
+    """AbortAgentError (raised by defense pipeline elements) is caught
+    and does not propagate, matching upstream.  The error's constructor
+    appends an assistant message with the abort reason, so model_output
+    is non-None and the retry loop exits on the first attempt."""
+    from agentdojo.agent_pipeline.errors import AbortAgentError
+
+    target = AgentDojoTarget(pipeline_model="openai/gpt-4o-2024-05-13")
+    target.set_config("user_prompt", "defense test")
+    pre_env = target._build_seed_env_with_overrides()
+    abort = AbortAgentError(
+        "prompt injection detected",
+        messages=[{"role": "user", "content": "defense test"}],
+        task_environment=pre_env,
+    )
+    pipeline = _ScriptedPipeline([abort])
     await _drive_run(target, pipeline)
     assert len(pipeline.calls) == 1
-    # last_response was never populated; query returns empty string.
-    assert target.query("last_response") == ""
+    assert target.query("last_response") == "prompt injection detected"
 
 
 @pytest.mark.asyncio
