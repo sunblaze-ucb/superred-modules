@@ -2,6 +2,8 @@
 
 This module implements MINJA, "Memory Injection Attacks on LLM Agents via Query-Only Interaction," for SuperRed agent targets.
 
+The implementation is centered on the official RAP/WebShop attack loop. The official repository also contains QA and EHR experiment drivers; in SuperRed those dataset-specific agents, retrieval stores, and memory formats belong in the target, while this optimizer supplies the MINJA query and memory-injection strategy.
+
 ## What Matches The Paper And Official Code
 
 - The default victim-target pair matches the official RAP example: `toothbrush` -> `DenTek Professional Oral Care Kit with DenTek Triple Clean Advanced Clean Floss Picks`, with target price `20.0`.
