@@ -25,6 +25,7 @@ from agentvigil_websentinel_optimizer.official_data import (
     load_official_adaptive_attack_data,
     load_official_mutation_templates,
     load_official_raw_file,
+    load_official_source_hash,
     load_official_system_prompt,
 )
 from agentvigil_websentinel_optimizer.seeds import (
@@ -309,14 +310,14 @@ def test_official_html_seed_catalog_keeps_required_placeholders() -> None:
     assert all("{injection_goal}" in seed.text for seed in OFFICIAL_HTML_SEEDS)
 
 
-def test_official_literals_and_dataset_are_loaded_from_vendored_files() -> None:
-    assert load_official_raw_file("new_seeds.py").sha256 == (
+def test_official_literals_and_dataset_are_loaded_from_packaged_data() -> None:
+    assert load_official_source_hash("new_seeds.json") == (
         "e849373dbeb8bef0d3dfa6b13c58f5465da193c615d6aa90aa5f7ec1c661127a"
     )
-    assert load_official_raw_file("seeds.py").sha256 == (
+    assert load_official_source_hash("text_seeds.json") == (
         "81256120f640e60d48e1642a73e7e3a5ac0072f63262ef3cc2a01a27adfaf8c8"
     )
-    assert load_official_raw_file("mutate_prompts.py").sha256 == (
+    assert load_official_source_hash("mutation_prompts.json") == (
         "c14ded5d74ce2316f2bc55c1d5f250ba8646be838744db273d6f9298753c598b"
     )
     assert load_official_raw_file("adaptive_attack_data.json").sha256 == (

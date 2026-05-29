@@ -16,12 +16,6 @@ test = ["pytest", "pytest-asyncio"]
 asyncio_mode = "strict"
 pythonpath = ["src"]
 
-[tool.ruff]
-extend-exclude = ["src/agentvigil_websentinel_optimizer/data/official"]
-
-[tool.mypy]
-exclude = ["src/agentvigil_websentinel_optimizer/data/official"]
-
 [tool.hatch.build.targets.wheel]
 packages = ["src/agentvigil_websentinel_optimizer"]
 

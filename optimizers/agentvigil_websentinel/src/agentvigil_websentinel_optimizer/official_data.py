@@ -1,14 +1,13 @@
-"""Load vendored official AgentVigil/WebSentinel literals and datasets."""
+"""Load official AgentVigil/WebSentinel data and literals."""
 
 from __future__ import annotations
 
-import ast
 import hashlib
 import json
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib import resources
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from agentvigil_websentinel_optimizer.mutator import MutationMethod
@@ -18,18 +17,11 @@ _OFFICIAL_PACKAGE = "agentvigil_websentinel_optimizer"
 _OFFICIAL_DIR = ("data", "official")
 OFFICIAL_FILE_NAMES = frozenset(
     {
-        "SAVE_RESUME_GUIDE.md",
+        "README.md",
         "adaptive_attack_data.json",
-        "agent.py",
-        "checkpoint_manager.py",
-        "detection.py",
-        "fuzzer.py",
-        "mutate.py",
-        "mutate_prompts.py",
-        "new_seeds.py",
-        "run.py",
-        "run_with_resume.py",
-        "seeds.py",
+        "mutation_prompts.json",
+        "new_seeds.json",
+        "text_seeds.json",
     }
 )
 
@@ -43,10 +35,10 @@ class OfficialFile:
 
 @lru_cache(maxsize=None)
 def load_official_raw_file(name: str) -> OfficialFile:
-    """Load a file copied verbatim from the official repository."""
+    """Load a packaged official data/literal artifact."""
 
     if name not in OFFICIAL_FILE_NAMES:
-        raise ValueError(f"{name!r} is not a vendored official AgentVigil file")
+        raise ValueError(f"{name!r} is not a packaged AgentVigil data artifact")
     path = resources.files(_OFFICIAL_PACKAGE).joinpath(*_OFFICIAL_DIR, name)
     raw = path.read_bytes()
     return OfficialFile(
@@ -57,39 +49,11 @@ def load_official_raw_file(name: str) -> OfficialFile:
 
 
 @lru_cache(maxsize=None)
-def _parsed(name: str) -> ast.Module:
-    return ast.parse(load_official_raw_file(name).content, filename=name)
-
-
-def _assignment(module: ast.Module, target_name: str) -> ast.expr:
-    for stmt in module.body:
-        if not isinstance(stmt, ast.Assign):
-            continue
-        for target in stmt.targets:
-            if isinstance(target, ast.Name) and target.id == target_name:
-                return stmt.value
-    raise KeyError(f"{target_name!r} not found in official AgentVigil data")
-
-
-def _seed_from_call(call: ast.Call) -> dict[str, Any]:
-    fields: dict[str, Any] = {}
-    for keyword in call.keywords:
-        if keyword.arg is None:
-            continue
-        fields[keyword.arg] = ast.literal_eval(keyword.value)
-    return fields
-
-
-def _seed_rows(name: str, assignment: str) -> tuple[dict[str, Any], ...]:
-    value = _assignment(_parsed(name), assignment)
-    if not isinstance(value, ast.List):
-        raise TypeError(f"official {assignment} must be a list")
-    rows: list[dict[str, Any]] = []
-    for item in value.elts:
-        if not isinstance(item, ast.Call):
-            raise TypeError(f"official {assignment} entries must be Seed(...) calls")
-        rows.append(_seed_from_call(item))
-    return tuple(rows)
+def _json_artifact(name: str) -> dict[str, Any]:
+    data = json.loads(load_official_raw_file(name).content)
+    if not isinstance(data, dict):
+        raise TypeError(f"{name} must contain a JSON object")
+    return cast(dict[str, Any], data)
 
 
 def _seed_from_row(row: dict[str, Any]) -> Seed:
@@ -105,14 +69,23 @@ def _seed_from_row(row: dict[str, Any]) -> Seed:
     )
 
 
+def _seed_rows(name: str) -> tuple[dict[str, Any], ...]:
+    rows = _json_artifact(name).get("seeds")
+    if not isinstance(rows, list):
+        raise TypeError(f"{name} must contain a seeds list")
+    if not all(isinstance(row, dict) for row in rows):
+        raise TypeError(f"{name} seed entries must be objects")
+    return tuple(cast(list[dict[str, Any]], rows))
+
+
 @lru_cache(maxsize=1)
 def load_official_html_seed_rows() -> tuple[dict[str, Any], ...]:
-    return _seed_rows("new_seeds.py", "new_seeds")
+    return _seed_rows("new_seeds.json")
 
 
 @lru_cache(maxsize=1)
 def load_official_text_seed_rows() -> tuple[dict[str, Any], ...]:
-    return _seed_rows("seeds.py", "example_seeds")
+    return _seed_rows("text_seeds.json")
 
 
 @lru_cache(maxsize=1)
@@ -127,9 +100,9 @@ def load_official_text_seeds() -> tuple[Seed, ...]:
 
 @lru_cache(maxsize=1)
 def load_official_system_prompt() -> str:
-    value = ast.literal_eval(_assignment(_parsed("mutate_prompts.py"), "system_prompt"))
+    value = _json_artifact("mutation_prompts.json").get("system_prompt")
     if not isinstance(value, str):
-        raise TypeError("official mutator system_prompt must be a string")
+        raise TypeError("mutation_prompts.json must contain a system_prompt string")
     return value
 
 
@@ -137,10 +110,9 @@ def load_official_system_prompt() -> str:
 def load_official_mutation_templates() -> dict[MutationMethod, str]:
     from agentvigil_websentinel_optimizer.mutator import MutationMethod
 
-    value = _assignment(_parsed("mutate_prompts.py"), "mutation_prompt_templates")
-    if not isinstance(value, ast.Dict):
-        raise TypeError("official mutation_prompt_templates must be a dict")
-    out: dict[MutationMethod, str] = {}
+    value = _json_artifact("mutation_prompts.json").get("mutation_prompt_templates")
+    if not isinstance(value, dict):
+        raise TypeError("mutation_prompts.json must contain mutation_prompt_templates")
     name_map = {
         "Expand": MutationMethod.EXPAND,
         "Shorten": MutationMethod.SHORTEN,
@@ -148,14 +120,11 @@ def load_official_mutation_templates() -> dict[MutationMethod, str]:
         "Crossover": MutationMethod.CROSSOVER,
         "GenerateSimilar": MutationMethod.GENERATE_SIMILAR,
     }
-    for key, val in zip(value.keys, value.values, strict=True):
-        if not isinstance(key, ast.Attribute):
-            raise TypeError("official mutation template keys must be enum attributes")
-        method = name_map[key.attr]
-        template = ast.literal_eval(val)
+    out: dict[MutationMethod, str] = {}
+    for name, template in cast(dict[str, Any], value).items():
         if not isinstance(template, str):
             raise TypeError("official mutation template values must be strings")
-        out[method] = template
+        out[name_map[name]] = template
     return out
 
 
@@ -166,7 +135,14 @@ def load_official_adaptive_attack_data() -> tuple[dict[str, Any], ...]:
         raise TypeError("official adaptive_attack_data.json must be a list")
     if not all(isinstance(item, dict) for item in data):
         raise TypeError("official adaptive_attack_data.json entries must be objects")
-    return tuple(data)
+    return tuple(cast(list[dict[str, Any]], data))
+
+
+def load_official_source_hash(artifact_name: str) -> str:
+    value = _json_artifact(artifact_name).get("source_sha256")
+    if not isinstance(value, str):
+        raise TypeError(f"{artifact_name} must contain a source_sha256 string")
+    return value
 
 
 __all__ = [
@@ -177,6 +153,7 @@ __all__ = [
     "load_official_html_seeds",
     "load_official_mutation_templates",
     "load_official_raw_file",
+    "load_official_source_hash",
     "load_official_system_prompt",
     "load_official_text_seed_rows",
     "load_official_text_seeds",
