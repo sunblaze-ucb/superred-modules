@@ -20,9 +20,10 @@ This module implements MINJA, "Memory Injection Attacks on LLM Agents via Query-
 
 ## SuperRed Capability Extensions
 
-- If writable `system_prompt` is in scope, the optimizer adds a short MINJA capability note and the current memory record there. This is stronger than the paper's query-only setting, but it uses a capability the threat model explicitly grants.
-- If memory/content/tool PostCall surfaces are in scope, the optimizer appends the current malicious memory record to those surfaces.
-- If the tool catalog is writable, the optimizer can register, replace, or rewrite a memory-like retrieval tool so the agent sees the malicious record.
+- During injection stages, if writable `system_prompt` is in scope, the optimizer adds a short MINJA capability note and the current memory record there. This is stronger than the paper's query-only setting, but it uses a capability the threat model explicitly grants.
+- During injection stages, if memory/content/tool PostCall surfaces are in scope, the optimizer appends the current malicious memory record to those surfaces.
+- During injection stages, if the tool catalog is writable, the optimizer can register, replace, or rewrite a memory-like retrieval tool so the agent sees the malicious record.
+- Benign and test stages stay plain. They do not add system-prompt, tool-catalog, or memory-surface poison, because those stages are controls/evaluation in the official setup.
 - Static observables such as model identity, system prompt, and tool catalog are used when visible, with a size limit so long metadata does not crowd out the attack text.
 
 ## Deliberate Differences

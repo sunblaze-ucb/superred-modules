@@ -195,11 +195,13 @@ class MinjaOptimizer(Optimizer):
     def _handle_post_call(
         self, event: ControllablePostCallEvent
     ) -> ControllableInjection | ControllableNoInjection:
-        if self._current_stage is None:
+        if self._current_stage is None or self._current_stage.kind != "inject":
             return ControllableNoInjection(event=event, controllable=event.controllable)
         if not self._is_memory_surface(event.controllable):
             return ControllableNoInjection(event=event, controllable=event.controllable)
         self._ensure_payload(event.request or "the user's task")
+        if not self._current_memory_record:
+            return ControllableNoInjection(event=event, controllable=event.controllable)
         answer = self._stringify(event.answer).strip()
         value = (
             self._current_memory_record
@@ -231,7 +233,12 @@ class MinjaOptimizer(Optimizer):
     def _maybe_inject_system_prompt(
         self, event: ControllablePreCallEvent
     ) -> ControllableInjection | ControllableNoInjection:
-        if not self._can_write_system_prompt or self._injected_system:
+        if (
+            self._current_stage is None
+            or self._current_stage.kind != "inject"
+            or not self._can_write_system_prompt
+            or self._injected_system
+        ):
             return ControllableNoInjection(event=event, controllable=event.controllable)
         self._injected_system = True
         self._ensure_payload("the user's task")
@@ -254,7 +261,12 @@ class MinjaOptimizer(Optimizer):
     def _maybe_inject_tool_catalog(
         self, event: ControllablePreCallEvent
     ) -> ControllableInjection | ControllableNoInjection:
-        if not self._can_use_tool_catalog or event.controllable.name in self._catalog_ops_used:
+        if (
+            self._current_stage is None
+            or self._current_stage.kind != "inject"
+            or not self._can_use_tool_catalog
+            or event.controllable.name in self._catalog_ops_used
+        ):
             return ControllableNoInjection(event=event, controllable=event.controllable)
         self._ensure_payload("the user's task")
         if event.controllable.name == _TOOL_REPLACE:
@@ -307,6 +319,11 @@ class MinjaOptimizer(Optimizer):
         assert self._current_stage is not None
         query = self._current_stage.query or base_query.strip() or f"find a {self._pair.victim}"
         if self._current_stage.kind == "benign":
+            self._current_query = query
+            self._current_payload = query
+            self._current_memory_record = ""
+            return
+        if self._current_stage.kind == "test":
             self._current_query = query
             self._current_payload = query
             self._current_memory_record = ""

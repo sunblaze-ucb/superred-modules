@@ -11,6 +11,7 @@ from superred.core.types.evaluation import EvaluationResult, Score
 from superred.core.types.event import Event, EventResponse
 from superred.core.types.events import (
     ControllableInjection,
+    ControllableNoInjection,
     ControllablePostCallEvent,
     ControllablePreCallEvent,
     ObservableEvent,
@@ -245,3 +246,103 @@ async def test_tool_catalog_replace_targets_memory_like_tool() -> None:
     assert '"name": "memory.search"' in resp.value
     assert '"fake_return"' in resp.value
     assert DEFAULT_PAIR.target in resp.value
+
+
+@pytest.mark.asyncio
+async def test_test_stage_does_not_poison_extra_surfaces() -> None:
+    opt = MinjaOptimizer(inject_num=1, test_num=1)
+    await opt.initialize(
+        Goal(description="poison memory"),
+        [
+            ctrl("system_prompt", PROMPT_TAG),
+            ctrl("user_prompt", USER_TAG),
+            ctrl("memory_write", TOOLS_TAG),
+        ],
+        [],
+        Any,  # type: ignore[arg-type]
+    )
+
+    for _ in range(len(DEFAULT_INDICATION_PROMPTS) + 1):
+        await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+        await dispatch(
+            opt,
+            ControllablePreCallEvent(
+                controllable=ctrl("user_prompt", USER_TAG), request="find a toothbrush"
+            ),
+        )
+        await dispatch(opt, RunEndEvent(evaluation=eval_result(False), security_domain=USER_TAG))
+
+    await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+    system = await dispatch(
+        opt,
+        ControllablePreCallEvent(
+            controllable=ctrl("system_prompt", PROMPT_TAG), request="base system"
+        ),
+    )
+    user = await dispatch(
+        opt,
+        ControllablePreCallEvent(
+            controllable=ctrl("user_prompt", USER_TAG), request="find a toothbrush"
+        ),
+    )
+    post = await dispatch(
+        opt,
+        ControllablePostCallEvent(
+            controllable=ctrl("memory_write", TOOLS_TAG), request="memory", answer="old memory"
+        ),
+    )
+
+    assert isinstance(system, ControllableNoInjection)
+    assert isinstance(user, ControllableInjection)
+    assert user.value == "find a toothbrush"
+    assert isinstance(post, ControllableNoInjection)
+
+
+@pytest.mark.asyncio
+async def test_benign_stage_does_not_poison_extra_surfaces() -> None:
+    opt = MinjaOptimizer(
+        inject_num=1,
+        test_num=0,
+        benign_queries=["browse for a desk lamp"],
+        random_seed=0,
+    )
+    await opt.initialize(
+        Goal(description="poison memory"),
+        [
+            ctrl("system_prompt", PROMPT_TAG),
+            ctrl("user_prompt", USER_TAG),
+            ctrl("memory_write", TOOLS_TAG),
+        ],
+        [],
+        Any,  # type: ignore[arg-type]
+    )
+
+    found_benign = False
+    for _ in range(len(DEFAULT_INDICATION_PROMPTS) + 2):
+        await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+        system = await dispatch(
+            opt,
+            ControllablePreCallEvent(
+                controllable=ctrl("system_prompt", PROMPT_TAG), request="base system"
+            ),
+        )
+        user = await dispatch(
+            opt,
+            ControllablePreCallEvent(
+                controllable=ctrl("user_prompt", USER_TAG), request="find a toothbrush"
+            ),
+        )
+        post = await dispatch(
+            opt,
+            ControllablePostCallEvent(
+                controllable=ctrl("memory_write", TOOLS_TAG), request="memory", answer="old memory"
+            ),
+        )
+        await dispatch(opt, RunEndEvent(evaluation=eval_result(False), security_domain=USER_TAG))
+        if isinstance(user, ControllableInjection) and user.value == "browse for a desk lamp":
+            assert isinstance(system, ControllableNoInjection)
+            assert isinstance(post, ControllableNoInjection)
+            found_benign = True
+            break
+
+    assert found_benign is True
