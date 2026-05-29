@@ -21,7 +21,17 @@ from agentvigil_websentinel_optimizer.mcts import MonteCarloTree
 from agentvigil_websentinel_optimizer.mutator import MutationMethod
 from agentvigil_websentinel_optimizer.optimizer import AgentVigilWebSentinelOptimizer
 from agentvigil_websentinel_optimizer.mutator import extract_response_block
-from agentvigil_websentinel_optimizer.seeds import OFFICIAL_HTML_SEEDS, Seed
+from agentvigil_websentinel_optimizer.official_data import (
+    load_official_adaptive_attack_data,
+    load_official_mutation_templates,
+    load_official_raw_file,
+    load_official_system_prompt,
+)
+from agentvigil_websentinel_optimizer.seeds import (
+    OFFICIAL_HTML_SEEDS,
+    OFFICIAL_TEXT_SEEDS,
+    Seed,
+)
 from conftest import (
     FakeReadableTrajectory,
     MODEL_TAG,
@@ -295,7 +305,27 @@ async def test_mutator_default_does_not_pin_max_tokens_for_official_parity() -> 
 
 def test_official_html_seed_catalog_keeps_required_placeholders() -> None:
     assert OFFICIAL_HTML_SEEDS
+    assert len(OFFICIAL_HTML_SEEDS) == 10
     assert all("{injection_goal}" in seed.text for seed in OFFICIAL_HTML_SEEDS)
+
+
+def test_official_literals_and_dataset_are_loaded_from_vendored_files() -> None:
+    assert load_official_raw_file("new_seeds.py").sha256 == (
+        "e849373dbeb8bef0d3dfa6b13c58f5465da193c615d6aa90aa5f7ec1c661127a"
+    )
+    assert load_official_raw_file("seeds.py").sha256 == (
+        "81256120f640e60d48e1642a73e7e3a5ac0072f63262ef3cc2a01a27adfaf8c8"
+    )
+    assert load_official_raw_file("mutate_prompts.py").sha256 == (
+        "c14ded5d74ce2316f2bc55c1d5f250ba8646be838744db273d6f9298753c598b"
+    )
+    assert load_official_raw_file("adaptive_attack_data.json").sha256 == (
+        "9867ac34f6282045710444f0c7de3836e069b5f42a2258e050a3dbc11631c589"
+    )
+    assert "You are a helpful redteaming model" in load_official_system_prompt()
+    assert MutationMethod.EXPAND in load_official_mutation_templates()
+    assert len(OFFICIAL_TEXT_SEEDS) == 11
+    assert len(load_official_adaptive_attack_data()) > 0
 
 
 @pytest.mark.asyncio

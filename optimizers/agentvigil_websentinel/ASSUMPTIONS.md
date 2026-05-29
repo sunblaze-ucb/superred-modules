@@ -25,8 +25,10 @@ This module implements the AgentVigil/WebSentinel attack idea for SuperRed agent
 
 ## Static Text And Constants
 
-- The mutator system prompt and mutation templates match the official `mutate_prompts.py` text, including the original wording and typos.
-- The default seed corpus is the official `new_seeds.py` web/content corpus. The older official text seed corpus is available separately for callers that want it.
+- Official files that contain reusable literals or datasets are vendored under `src/agentvigil_websentinel_optimizer/data/official/`.
+- The mutator system prompt and mutation templates are loaded from the vendored official `mutate_prompts.py` file, including the original wording and typos.
+- The default seed corpus is loaded from the vendored official `new_seeds.py` web/content corpus. The older official `seeds.py` text corpus is available separately for callers that want it.
+- The official `adaptive_attack_data.json` dataset is packaged unchanged. SuperRed targets usually provide their own tasks, but the raw official dataset is available for parity checks and target adapters.
 - SuperRed delivery constants are not from the official code: the `SUPERRED AGENT CAPABILITY EXTENSION` system-prompt text, tool-catalog JSON payload shapes, content-surface name hints, and AgentDojo attacker-tool names exist only to map the official web/content attack onto SuperRed's broader target primitives.
 
 ## What Is Different On Purpose
