@@ -23,6 +23,12 @@ This module implements the AgentVigil/WebSentinel attack idea for SuperRed agent
 - The user-prompt fallback is intentionally skipped when stronger agentic content surfaces are in scope. SuperRed cannot retract a user-prompt injection if a better `PostCall` fires later, so deferring to the agentic surface avoids noisy over-injection.
 - This deferral is adaptive. If a higher-priority surface is advertised but does not actually fire in a run, the next run may fall back to the next lower-priority surface rather than staying blind forever.
 
+## Static Text And Constants
+
+- The mutator system prompt and mutation templates match the official `mutate_prompts.py` text, including the original wording and typos.
+- The default seed corpus is the official `new_seeds.py` web/content corpus. The older official text seed corpus is available separately for callers that want it.
+- SuperRed delivery constants are not from the official code: the `SUPERRED AGENT CAPABILITY EXTENSION` system-prompt text, tool-catalog JSON payload shapes, content-surface name hints, and AgentDojo attacker-tool names exist only to map the official web/content attack onto SuperRed's broader target primitives.
+
 ## What Is Different On Purpose
 
 - The official fuzzer scores one seed across many target tasks, then runs 20 fuzz loops with up to 10 mutations per loop. SuperRed normally runs one security task at a time, so this optimizer treats one SuperRed run as one seed evaluation. The default `max_attempts=20` mirrors the official loop count, not the official total target-evaluation count. Increase `max_attempts` for evaluation-count parity experiments. The official `subset_ratio` setting is omitted because SuperRed provides one task evaluation at a time to the optimizer.
