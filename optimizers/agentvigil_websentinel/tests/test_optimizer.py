@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -14,7 +14,10 @@ from superred.core.types.events import (
     RunStartEvent,
 )
 from superred.core.types.goal import Goal
+from superred.core.types.llm import BudgetExhaustedError, LLMUsage
 
+from agentvigil_websentinel_optimizer.mcts import MonteCarloTree
+from agentvigil_websentinel_optimizer.mutator import MutationMethod
 from agentvigil_websentinel_optimizer.optimizer import AgentVigilWebSentinelOptimizer
 from agentvigil_websentinel_optimizer.mutator import extract_response_block
 from agentvigil_websentinel_optimizer.seeds import OFFICIAL_HTML_SEEDS, Seed
@@ -32,7 +35,6 @@ from conftest import (
     make_controllable,
     make_observable_value,
     mock_response,
-    observable_event,
 )
 
 
@@ -227,7 +229,7 @@ async def test_failed_feedback_after_initial_seed_scores_mutates_next_seed() -> 
 
     assert opt._current_seed is not None
     assert opt._current_seed.text == "mutated {injection_goal}"
-    assert llm.complete.await_count == opt._population_size
+    assert llm.complete.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -265,7 +267,7 @@ async def test_initial_seed_corpus_is_scored_before_mutation() -> None:
     await dispatch_event(
         opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
     )
-    assert llm.complete.await_count == opt._population_size
+    assert llm.complete.await_count == 2
 
 
 def test_extract_response_block_matches_official_wrapper() -> None:
@@ -292,6 +294,90 @@ async def test_mutator_default_does_not_pin_max_tokens_for_official_parity() -> 
 def test_official_html_seed_catalog_keeps_required_placeholders() -> None:
     assert OFFICIAL_HTML_SEEDS
     assert all("{injection_goal}" in seed.text for seed in OFFICIAL_HTML_SEEDS)
+
+
+@pytest.mark.asyncio
+async def test_mutator_transport_failures_prune_candidate_without_failing_optimizer() -> (
+    None
+):
+    llm = AsyncMock()
+    llm.complete.side_effect = RuntimeError("temporary transport failure")
+    opt = await init_optimizer(llm=llm, max_attempts=2)
+
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(
+        opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
+    )
+
+    assert llm.complete.await_count == 3
+    assert opt._pending_nodes == []
+
+
+@pytest.mark.asyncio
+async def test_mutator_budget_errors_propagate_to_controller() -> None:
+    llm = AsyncMock()
+    llm.complete.side_effect = BudgetExhaustedError("budget exhausted", LLMUsage())
+    opt = await init_optimizer(llm=llm, max_attempts=2)
+
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    with pytest.raises(BudgetExhaustedError):
+        await dispatch_event(
+            opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
+        )
+
+
+def test_multiparent_backprop_updates_child_and_each_parent_once() -> None:
+    tree = MonteCarloTree(
+        [
+            Seed(id="parent_a", text="A {injection_goal}"),
+            Seed(id="parent_b", text="B {injection_goal}"),
+        ],
+        random_seed=0,
+    )
+    parent_a, parent_b = tree.nodes
+    child = tree.add_child(
+        Seed(id="child", text="child {injection_goal}"), [parent_a, parent_b]
+    )
+
+    tree.backpropagate(child, 1.5)
+
+    assert child.visits == 1
+    assert child.total_reward == 1.5
+    assert parent_a.visits == 1
+    assert parent_a.total_reward == 1.5
+    assert parent_b.visits == 1
+    assert parent_b.total_reward == 1.5
+
+
+@pytest.mark.asyncio
+async def test_crossover_candidate_keeps_both_parents() -> None:
+    llm = AsyncMock()
+    llm.complete.return_value = mock_response(
+        "<response>crossed {injection_goal}</response>"
+    )
+    opt = AgentVigilWebSentinelOptimizer(
+        seeds=[
+            Seed(id="seed_a", text="A {injection_goal}"),
+            Seed(id="seed_b", text="B {injection_goal}"),
+        ],
+        random_seed=0,
+    )
+    await opt.initialize(
+        goal=Goal(description="send the secret token"),
+        controllables=[make_controllable("user_prompt", USER_TAG)],
+        observables=[],
+        llm_client=llm,
+    )
+    opt._random = Mock()
+    opt._random.choice.return_value = MutationMethod.CROSSOVER
+
+    await opt._generate_candidates(limit=1)
+
+    assert len(opt._pending_nodes) == 1
+    pending = opt._pending_nodes[0]
+    assert len(pending.parents) == 2
+    assert pending.seed.mutation_method == "crossover"
+    assert set(pending.seed.mutation_seed) == {"seed_a", "seed_b"}
 
 
 @pytest.mark.asyncio
@@ -368,23 +454,6 @@ async def test_tool_catalog_register_uses_agentdojo_attacker_tool_name_from_goal
     assert isinstance(resp, ControllableInjection)
     assert '"name": "__attacker_data_dump__"' in resp.value
     assert "call __attacker_data_dump__" in resp.value
-
-
-@pytest.mark.asyncio
-async def test_agentdojo_trace_message_observables_are_read_from_trajectory() -> None:
-    opt = await init_optimizer(max_attempts=1)
-    traj = FakeReadableTrajectory()
-    traj.push(
-        observable_event(
-            "agent_trace_message_0001",
-            {"role": "assistant", "content": "final agent message"},
-            SYSTEM_TAG,
-        )
-    )
-    await dispatch_event(opt, RunStartEvent(trajectory=traj))
-    await dispatch_event(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
-
-    assert opt._last_agent_observation == "final agent message"
 
 
 @pytest.mark.asyncio
@@ -476,40 +545,6 @@ async def test_content_surface_detection_includes_observation_and_external_conte
 
 
 @pytest.mark.asyncio
-async def test_agentdojo_trace_message_extracts_content_field() -> None:
-    opt = await init_optimizer(max_attempts=1)
-    traj = FakeReadableTrajectory()
-    traj.push(
-        observable_event(
-            "agent_trace_message_0001",
-            {"role": "assistant", "content": "clean assistant text"},
-            SYSTEM_TAG,
-        )
-    )
-    await dispatch_event(opt, RunStartEvent(trajectory=traj))
-    await dispatch_event(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
-
-    assert opt._last_agent_observation == "clean assistant text"
-
-
-@pytest.mark.asyncio
-async def test_agentdojo_tool_response_extracts_value_field() -> None:
-    opt = await init_optimizer(max_attempts=1)
-    traj = FakeReadableTrajectory()
-    traj.push(
-        observable_event(
-            "agent_trace_tool_response_0001",
-            {"value": "tool visible value", "error": None},
-            SYSTEM_TAG,
-        )
-    )
-    await dispatch_event(opt, RunStartEvent(trajectory=traj))
-    await dispatch_event(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
-
-    assert opt._last_agent_observation == "tool visible value"
-
-
-@pytest.mark.asyncio
 async def test_configured_content_controllable_name_is_injected_even_without_hint() -> (
     None
 ):
@@ -536,8 +571,7 @@ async def test_configured_content_controllable_name_is_injected_even_without_hin
     )
 
     assert isinstance(resp, ControllableInjection)
-    assert opt._used_agentic_content_delivery is True
-    assert opt._used_user_prompt_fallback is False
+    assert "opaque content" in resp.value
 
 
 @pytest.mark.asyncio
@@ -564,11 +598,11 @@ async def test_content_controllable_description_and_value_type_are_detection_sig
     )
 
     assert isinstance(resp, ControllableInjection)
-    assert opt._used_agentic_content_delivery is True
+    assert "document chunk" in resp.value
 
 
 @pytest.mark.asyncio
-async def test_user_prompt_fallback_records_when_no_agentic_surface_was_used() -> None:
+async def test_user_prompt_injects_when_it_is_the_only_surface() -> None:
     opt = await init_optimizer(
         controllables=[make_controllable("user_prompt", USER_TAG)]
     )
@@ -583,12 +617,11 @@ async def test_user_prompt_fallback_records_when_no_agentic_surface_was_used() -
     )
 
     assert isinstance(resp, ControllableInjection)
-    assert opt._used_user_prompt_fallback is True
-    assert opt._used_agentic_content_delivery is False
+    assert "WEBPAGE CONTENT" in resp.value
 
 
 @pytest.mark.asyncio
-async def test_user_prompt_is_not_used_when_agentic_content_surface_is_available() -> (
+async def test_user_prompt_is_also_used_when_agentic_content_surface_is_available() -> (
     None
 ):
     opt = await init_optimizer(
@@ -615,16 +648,14 @@ async def test_user_prompt_is_not_used_when_agentic_content_surface_is_available
         ),
     )
 
-    assert not isinstance(user_resp, ControllableInjection)
+    assert isinstance(user_resp, ControllableInjection)
     assert isinstance(content_resp, ControllableInjection)
-    assert opt._used_user_prompt_fallback is False
-    assert opt._used_agentic_content_delivery is True
+    assert "WEBPAGE CONTENT" in user_resp.value
+    assert "page content" in content_resp.value
 
 
 @pytest.mark.asyncio
-async def test_system_prompt_carries_payload_when_it_is_the_only_strong_surface() -> (
-    None
-):
+async def test_system_prompt_and_user_prompt_can_both_carry_payload() -> None:
     opt = AgentVigilWebSentinelOptimizer(
         seeds=[Seed(id="seed", text="seed {injection_goal}")],
         random_seed=0,
@@ -656,32 +687,6 @@ async def test_system_prompt_carries_payload_when_it_is_the_only_strong_surface(
     )
 
     assert isinstance(system_resp, ControllableInjection)
+    assert isinstance(user_resp, ControllableInjection)
     assert "seed send the secret token" in system_resp.value
-    assert not isinstance(user_resp, ControllableInjection)
-
-
-@pytest.mark.asyncio
-async def test_configured_content_observable_name_is_read_from_trajectory() -> None:
-    opt = AgentVigilWebSentinelOptimizer(
-        seeds=[Seed(id="seed", text="seed {injection_goal}")],
-        content_observable_names=("opaque_observation",),
-        max_attempts=1,
-        random_seed=0,
-    )
-    await opt.initialize(
-        goal=Goal(description="send the secret token"),
-        controllables=[make_controllable("user_prompt", USER_TAG)],
-        observables=[],
-        llm_client=empty_llm(),
-    )
-    traj = FakeReadableTrajectory()
-    traj.push(
-        observable_event(
-            "opaque_observation", {"text": "visible opaque text"}, SYSTEM_TAG
-        )
-    )
-
-    await dispatch_event(opt, RunStartEvent(trajectory=traj))
-    await dispatch_event(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
-
-    assert opt._last_agent_observation == "visible opaque text"
+    assert "WEBPAGE CONTENT" in user_resp.value

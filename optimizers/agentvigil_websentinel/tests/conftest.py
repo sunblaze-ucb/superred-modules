@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock
 from superred.core.channel import EventEnvelope
 from superred.core.types.controllable import Controllable
 from superred.core.types.event import Event, EventResponse
-from superred.core.types.events import ObservableEvent
 from superred.core.types.observable import Observable, ObservableValue
 from superred.core.types.security_domain import SecurityDomainTag
 
@@ -23,7 +22,6 @@ TOOL_CATALOG_ADDABLE_TAG = SecurityDomainTag(
     "tool_catalogue_addable", parent=TOOL_CATALOG_TAG
 )
 TOOLS_TAG = SecurityDomainTag("tools")
-AGENT_TRACE_TAG = SecurityDomainTag("agent_trace", parent=SYSTEM_TAG)
 
 
 class FakeReadableTrajectory:
@@ -70,12 +68,6 @@ def make_observable_value(
     return ObservableValue(
         make_observable(name, tag, observable_type=observable_type), content
     )
-
-
-def observable_event(
-    name: str, content: Any, tag: SecurityDomainTag = AGENT_TRACE_TAG
-) -> ObservableEvent:
-    return ObservableEvent(observable=make_observable(name, tag), content=content)
 
 
 class MockChoice:

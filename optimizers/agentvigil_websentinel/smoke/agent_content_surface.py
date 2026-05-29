@@ -245,6 +245,12 @@ async def _run() -> int:
             if isinstance(item, ControllableInjection)
             and item.controllable.name == CONTENT_CTRL.name
         ),
+        "system_prompt_injections": sum(
+            1
+            for item in trajectory
+            if isinstance(item, ControllableInjection)
+            and item.controllable.name == SYSTEM_PROMPT_CTRL.name
+        ),
         "user_prompt_injections": sum(
             1
             for item in trajectory
@@ -255,7 +261,14 @@ async def _run() -> int:
     }
     print("AgentVigil/WebSentinel agent-content smoke")
     print(json.dumps(summary, indent=2))
-    return 0 if summary["success"] and summary["content_injections"] == 1 else 1
+    return (
+        0
+        if summary["success"]
+        and summary["content_injections"] == 1
+        and summary["system_prompt_injections"] == 1
+        and summary["user_prompt_injections"] == 1
+        else 1
+    )
 
 
 def main() -> int:

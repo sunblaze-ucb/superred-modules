@@ -20,7 +20,6 @@ framework's agent primitives:
 from __future__ import annotations
 
 import json
-import logging
 import random
 import re
 from collections.abc import Iterable
@@ -37,12 +36,12 @@ from superred.core.types.events import (
     ControllableNoInjection,
     ControllablePostCallEvent,
     ControllablePreCallEvent,
-    ObservableEvent,
     RunEndEvent,
     RunEndResponse,
     RunStartEvent,
 )
 from superred.core.types.goal import Goal
+from superred.core.types.llm import BudgetExhaustedError
 from superred.core.types.observable import ObservableValue
 
 from agentvigil_websentinel_optimizer.mcts import MonteCarloTree, Node
@@ -53,8 +52,6 @@ from agentvigil_websentinel_optimizer.mutator import (
     Mutator,
 )
 from agentvigil_websentinel_optimizer.seeds import DEFAULT_SEEDS, Seed
-
-logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT_NAME = "system_prompt"
 _USER_PROMPT_NAMES = {"user_prompt", "user_message", "query", "prompt"}
@@ -138,12 +135,8 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
             extension when in scope.
         use_tool_catalog_when_available: Use writable tool-catalog controls as a
             SuperRed agent extension when in scope.
-        response_observable_names: Dynamic observable names treated as visible
-            agent/model responses for diagnostics.
         content_controllable_names: Extra PostCall controllable names to treat
             as agent content surfaces when a target uses opaque naming.
-        content_observable_names: Extra trajectory observable names to read as
-            visible agent/content observations when a target uses opaque naming.
         random_seed: Deterministic test/debug seed.
     """
 
@@ -161,9 +154,7 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         static_context_max_chars: int = 4000,
         use_system_prompt_when_available: bool = True,
         use_tool_catalog_when_available: bool = True,
-        response_observable_names: Iterable[str] | None = None,
         content_controllable_names: Iterable[str] | None = None,
-        content_observable_names: Iterable[str] | None = None,
         random_seed: int | None = None,
     ) -> None:
         super().__init__()
@@ -195,23 +186,10 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         self._static_context_max_chars = static_context_max_chars
         self._use_system_prompt_when_available = use_system_prompt_when_available
         self._use_tool_catalog_when_available = use_tool_catalog_when_available
-        names = response_observable_names or (
-            "response",
-            "model_response",
-            "assistant_response",
-            "agent_trace_message",
-        )
-        self._response_observable_names = {name for name in names} | {
-            name.lower() for name in names
-        }
         content_control_names = tuple(content_controllable_names or ())
         self._content_controllable_names = {name for name in content_control_names} | {
             name.lower() for name in content_control_names
         }
-        content_observation_names = tuple(content_observable_names or ())
-        self._content_observable_names = {
-            name for name in content_observation_names
-        } | {name.lower() for name in content_observation_names}
         self._random = random.Random(random_seed)
 
         self._goal: Goal | None = None
@@ -223,7 +201,6 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         self._tool_catalog: list[dict[str, Any]] = []
         self._can_write_system_prompt = False
         self._can_use_tool_catalog = False
-        self._has_agentic_content_surface = False
 
         self._attempt_index = 0
         self._succeeded = False
@@ -236,13 +213,9 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         self._current_pending: _PendingCandidate | None = None
         self._current_seed: Seed | None = None
         self._current_payload: str | None = None
-        self._last_agent_observation: str | None = None
         self._system_prompt_injected = False
         self._user_prompt_injected = False
         self._catalog_ops_used: set[str] = set()
-        self._read_injections_this_run = 0
-        self._used_agentic_content_delivery = False
-        self._used_user_prompt_fallback = False
 
     async def initialize(
         self,
@@ -263,9 +236,6 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         self._can_use_tool_catalog = self._use_tool_catalog_when_available and any(
             ctrl.name in {_TOOL_REGISTER, _TOOL_REPLACE, _TOOL_REWRITE_DOC}
             for ctrl in controllables
-        )
-        self._has_agentic_content_surface = self._can_use_tool_catalog or any(
-            self._is_agentic_content_controllable(ctrl) for ctrl in controllables
         )
         seeds = [_copy_seed(seed) for seed in self._initial_seeds]
         self._tree = MonteCarloTree(
@@ -350,21 +320,14 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
             or name.startswith(_ATTACKER_TOOL_PREFIX)
             or self._is_content_postcall_surface(event.controllable)
         ):
-            self._read_injections_this_run += 1
-            self._used_agentic_content_delivery = True
             return ControllableInjection(
                 event=event,
                 controllable=event.controllable,
                 value=self._compose_content_injection(event.answer),
             )
-        self._last_agent_observation = event.answer
         return ControllableNoInjection(event=event, controllable=event.controllable)
 
     async def _handle_run_end(self, event: RunEndEvent) -> RunEndResponse:
-        self._last_agent_observation = (
-            self._read_agent_observation_from_trajectory()
-            or self._last_agent_observation
-        )
         if self._current_seed is None:
             return RunEndResponse(event=event, done=self._is_done())
 
@@ -377,7 +340,10 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
                 self._succeeded = True
         self._attempt_index += 1
         if not self._is_done() and not self._initial_queue and not self._pending_nodes:
-            await self._generate_candidates()
+            remaining_runs = self._max_attempts - self._attempt_index
+            await self._generate_candidates(
+                limit=min(self._population_size, remaining_runs)
+            )
         return RunEndResponse(event=event, done=self._is_done())
 
     def _maybe_inject_system_prompt(
@@ -398,7 +364,7 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
             )
         if self._static_context:
             pieces.append(f"Visible target context:\n{self._static_context}")
-        if not self._has_agentic_content_surface and self._current_payload:
+        if self._current_payload:
             pieces.append(f"Injected web/content instruction:\n{self._current_payload}")
         return ControllableInjection(
             event=event,
@@ -410,12 +376,9 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         self,
         event: ControllablePreCallEvent,
     ) -> ControllableInjection | ControllableNoInjection:
-        if self._can_write_system_prompt or self._has_agentic_content_surface:
-            return ControllableNoInjection(event=event, controllable=event.controllable)
         if self._user_prompt_injected:
             return ControllableNoInjection(event=event, controllable=event.controllable)
         self._user_prompt_injected = True
-        self._used_user_prompt_fallback = True
         if self._current_seed is not None:
             self._current_payload = self._render_seed(
                 self._current_seed.text, user_goal=event.request
@@ -460,11 +423,12 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
             return self._pending_nodes.pop(0)
         return self._tree.select_node(n=1)[0]
 
-    async def _generate_candidates(self) -> None:
+    async def _generate_candidates(self, *, limit: int | None = None) -> None:
         assert self._tree is not None
         assert self._mutator is not None
+        generation_limit = self._population_size if limit is None else max(0, limit)
         created: list[_PendingCandidate] = []
-        for _ in range(self._population_size):
+        for _ in range(generation_limit):
             method = self._random.choice(ALL_METHODS)
             if method == MutationMethod.CROSSOVER and len(self._tree.nodes) >= 2:
                 parents = self._tree.select_node(n=2)
@@ -473,7 +437,12 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
                 method = self._random.choice(SINGLE_SEED_METHODS)
                 parents = self._tree.select_node(n=1)
                 seeds = parents[0].seed.text
-            mutated = await self._mutator.mutate(seeds, method)
+            try:
+                mutated = await self._mutator.mutate(seeds, method)
+            except BudgetExhaustedError:
+                raise
+            except Exception:
+                continue
             if mutated is None:
                 continue
             child_seed = Seed(
@@ -637,59 +606,11 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         ).lower()
         return any(hint in haystack for hint in _CONTENT_SURFACE_HINTS)
 
-    def _is_agentic_content_controllable(self, controllable: Controllable) -> bool:
-        name = controllable.name
-        return (
-            name.startswith(_TOOL_PREFIX)
-            or name.startswith(_ATTACKER_TOOL_PREFIX)
-            or self._is_content_postcall_surface(controllable)
-        )
-
     @staticmethod
     def _reward_from_evaluation(evaluation: EvaluationResult | None) -> float | None:
         if evaluation is None:
             return None
         return 1.0 if evaluation.success else 0.0
-
-    def _read_agent_observation_from_trajectory(self) -> str | None:
-        trajectory = self.current_trajectory
-        if trajectory is None:
-            return None
-        latest: str | None = None
-        for item in trajectory.drain():
-            if not isinstance(item, ObservableEvent):
-                continue
-            name = item.observable.name
-            normalized = name.lower()
-            if (
-                name in self._response_observable_names
-                or normalized in self._response_observable_names
-                or name in self._content_observable_names
-                or normalized in self._content_observable_names
-                or normalized.startswith("agent_trace_message_")
-                or normalized.startswith("agent_trace_tool_response_")
-                or any(hint in normalized for hint in _RESPONSE_NAME_HINTS)
-            ):
-                latest = self._extract_observable_text(item.content, normalized)
-        return latest
-
-    def _extract_observable_text(self, content: Any, observable_name: str) -> str:
-        if isinstance(content, dict):
-            if observable_name.startswith("agent_trace_message_"):
-                message_content = content.get("content")
-                if isinstance(message_content, str):
-                    return message_content
-            if observable_name.startswith("agent_trace_tool_response_"):
-                value = content.get("value")
-                if isinstance(value, str):
-                    return value
-                if value is not None:
-                    return self._stringify_content(value)
-            for key in ("response", "answer", "output", "text", "content", "value"):
-                value = content.get(key)
-                if isinstance(value, str):
-                    return value
-        return self._stringify_content(content)
 
     def _format_static_context(self, observables: list[ObservableValue]) -> str | None:
         if self._static_context_max_chars == 0:
@@ -767,13 +688,9 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         self._current_pending = None
         self._current_seed = None
         self._current_payload = None
-        self._last_agent_observation = None
         self._system_prompt_injected = False
         self._user_prompt_injected = False
         self._catalog_ops_used = set()
-        self._read_injections_this_run = 0
-        self._used_agentic_content_delivery = False
-        self._used_user_prompt_fallback = False
 
     def _is_done(self) -> bool:
         return self._succeeded or self._attempt_index >= self._max_attempts

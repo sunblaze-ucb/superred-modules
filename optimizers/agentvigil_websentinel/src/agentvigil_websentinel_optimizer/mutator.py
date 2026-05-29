@@ -7,6 +7,7 @@ import re
 from collections.abc import Sequence
 
 from superred.core.llm import LLMClient
+from superred.core.types.llm import BudgetExhaustedError
 
 
 class MutationMethod(str, enum.Enum):
@@ -85,19 +86,24 @@ class Mutator:
         method: MutationMethod,
     ) -> str | None:
         for _ in range(self._max_retries):
-            prompt = self._build_prompt(seeds, method)
-            kwargs: dict[str, float | int] = {"temperature": self._temperature}
-            if self._max_tokens is not None:
-                kwargs["max_tokens"] = self._max_tokens
-            response = await self._llm.complete(
-                [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
-                **kwargs,
-            )
-            content = response.choices[0].message.content or ""
-            mutated = extract_response_block(content)
+            try:
+                prompt = self._build_prompt(seeds, method)
+                kwargs: dict[str, float | int] = {"temperature": self._temperature}
+                if self._max_tokens is not None:
+                    kwargs["max_tokens"] = self._max_tokens
+                response = await self._llm.complete(
+                    [
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
+                    **kwargs,
+                )
+                content = response.choices[0].message.content or ""
+                mutated = extract_response_block(content)
+            except BudgetExhaustedError:
+                raise
+            except Exception:
+                continue
             if "{injection_goal}" in mutated:
                 return mutated
         return None
