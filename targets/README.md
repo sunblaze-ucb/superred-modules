@@ -29,9 +29,10 @@ success) live in a [security claim](../security_claims/README.md) instead.
 Wraps any chat model reachable through the litellm library and presents it as a
 chatbot. It supports both a single question and a full multi-turn conversation:
 the attacker decides how long the conversation runs (it keeps sending messages,
-and ends the conversation by declining to send another). Responses are generated
-at temperature 0 for repeatability. This is the workhorse target for the
-jailbreak and refusal benchmarks.
+and ends the conversation by declining to send another). It calls the model at
+the provider's default temperature (it deliberately does not pin temperature,
+because some models reject an explicit value). This is the workhorse target for
+the jailbreak and refusal benchmarks.
 
 **Setup.** Construct it with a model name and the API credentials for your LLM
 endpoint: `ChatbotTarget(model="gpt-4o-mini", api_base=..., api_key=...)`. A task
@@ -128,7 +129,7 @@ as `USER_INPUT_TAG`.
 ### `test_filter_test` (`filter-test-target`): a scope-filtering test rig
 
 A deterministic target with no LLM at all. It exposes three injection points at
-three different boundaries (named `alpha`, `beta`, and a `root` that includes
+three different boundaries (the tags `alpha`, `beta`, and a `root` that includes
 both) and emits hint facts. Its only purpose is to verify that the framework's
 five scope filters (on injection points, readable facts, events, the attacker's
 trajectory view, and per-boundary scores) all behave correctly. It exports
