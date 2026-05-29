@@ -314,6 +314,55 @@ async def test_mutator_transport_failures_prune_candidate_without_failing_optimi
 
 
 @pytest.mark.asyncio
+async def test_no_feedback_pending_candidate_enters_tree_with_neutral_reward() -> None:
+    llm = AsyncMock()
+    llm.complete.return_value = mock_response(
+        "<response>child {injection_goal}</response>"
+    )
+    opt = await init_optimizer(llm=llm, max_attempts=3)
+
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(
+        opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
+    )
+
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    assert opt._current_seed is not None
+    assert opt._current_seed.text == "child {injection_goal}"
+    await dispatch_event(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
+
+    assert opt._tree is not None
+    assert [node.seed.text for node in opt._tree.nodes] == [
+        "seed {injection_goal}",
+        "child {injection_goal}",
+    ]
+    child = opt._tree.nodes[1]
+    assert child.visits == 1
+    assert child.total_reward == 0.0
+
+
+@pytest.mark.asyncio
+async def test_tool_response_name_is_treated_as_content_surface() -> None:
+    opt = await init_optimizer(
+        controllables=[make_controllable("tool_response", TOOLS_TAG)]
+    )
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+
+    resp = await dispatch_event(
+        opt,
+        ControllablePostCallEvent(
+            controllable=make_controllable("tool_response", TOOLS_TAG),
+            request="tool call",
+            answer="tool result text",
+        ),
+    )
+
+    assert isinstance(resp, ControllableInjection)
+    assert "tool result text" in resp.value
+    assert "send the secret token" in resp.value
+
+
+@pytest.mark.asyncio
 async def test_mutator_budget_errors_propagate_to_controller() -> None:
     llm = AsyncMock()
     llm.complete.side_effect = BudgetExhaustedError("budget exhausted", LLMUsage())

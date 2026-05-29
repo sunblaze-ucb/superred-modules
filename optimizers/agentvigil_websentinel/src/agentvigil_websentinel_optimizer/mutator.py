@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import enum
+import logging
 import re
 from collections.abc import Sequence
 
 from superred.core.llm import LLMClient
 from superred.core.types.llm import BudgetExhaustedError
+
+logger = logging.getLogger(__name__)
 
 
 class MutationMethod(str, enum.Enum):
@@ -102,7 +105,8 @@ class Mutator:
                 mutated = extract_response_block(content)
             except BudgetExhaustedError:
                 raise
-            except Exception:
+            except Exception as exc:
+                logger.debug("AgentVigil mutation attempt failed", exc_info=exc)
                 continue
             if "{injection_goal}" in mutated:
                 return mutated
