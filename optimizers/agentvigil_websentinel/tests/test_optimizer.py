@@ -7,6 +7,7 @@ import pytest
 from superred.core.types.evaluation import EvaluationResult, Score
 from superred.core.types.events import (
     ControllableInjection,
+    ControllableNoInjection,
     ControllablePostCallEvent,
     ControllablePreCallEvent,
     RunEndEvent,
@@ -399,6 +400,32 @@ def test_multiparent_backprop_updates_child_and_each_parent_once() -> None:
     assert parent_b.total_reward == 1.5
 
 
+def test_diamond_backprop_credits_shared_ancestor_once_per_evaluation() -> None:
+    tree = MonteCarloTree(
+        [
+            Seed(id="root", text="root {injection_goal}"),
+        ],
+        random_seed=0,
+    )
+    root = tree.nodes[0]
+    left = tree.add_child(Seed(id="left", text="left {injection_goal}"), [root])
+    right = tree.add_child(Seed(id="right", text="right {injection_goal}"), [root])
+    diamond = tree.add_child(
+        Seed(id="diamond", text="diamond {injection_goal}"), [left, right]
+    )
+
+    tree.backpropagate(diamond, 2.0)
+
+    # A shared ancestor should receive credit once per evaluated descendant,
+    # not once per ancestry path. Path-based counting would over-select nodes
+    # merely because crossover duplicated lineage through a diamond.
+    assert diamond.visits == 1
+    assert left.visits == 1
+    assert right.visits == 1
+    assert root.visits == 1
+    assert root.total_reward == 2.0
+
+
 @pytest.mark.asyncio
 async def test_crossover_candidate_keeps_both_parents() -> None:
     llm = AsyncMock()
@@ -671,7 +698,7 @@ async def test_user_prompt_injects_when_it_is_the_only_surface() -> None:
 
 
 @pytest.mark.asyncio
-async def test_user_prompt_is_also_used_when_agentic_content_surface_is_available() -> (
+async def test_user_prompt_is_deferred_when_agentic_content_surface_is_available() -> (
     None
 ):
     opt = await init_optimizer(
@@ -698,14 +725,13 @@ async def test_user_prompt_is_also_used_when_agentic_content_surface_is_availabl
         ),
     )
 
-    assert isinstance(user_resp, ControllableInjection)
+    assert isinstance(user_resp, ControllableNoInjection)
     assert isinstance(content_resp, ControllableInjection)
-    assert "WEBPAGE CONTENT" in user_resp.value
     assert "page content" in content_resp.value
 
 
 @pytest.mark.asyncio
-async def test_system_prompt_and_user_prompt_can_both_carry_payload() -> None:
+async def test_best_prompt_surface_is_selected_rather_than_all_prompts() -> None:
     opt = AgentVigilWebSentinelOptimizer(
         seeds=[Seed(id="seed", text="seed {injection_goal}")],
         random_seed=0,
@@ -737,6 +763,37 @@ async def test_system_prompt_and_user_prompt_can_both_carry_payload() -> None:
     )
 
     assert isinstance(system_resp, ControllableInjection)
-    assert isinstance(user_resp, ControllableInjection)
+    assert isinstance(user_resp, ControllableNoInjection)
     assert "seed send the secret token" in system_resp.value
-    assert "WEBPAGE CONTENT" in user_resp.value
+
+
+@pytest.mark.asyncio
+async def test_first_reached_content_surface_wins_for_the_run() -> None:
+    opt = await init_optimizer(
+        controllables=[
+            make_controllable("browser_page_content", TOOLS_TAG),
+            make_controllable("memory_search_result", TOOLS_TAG),
+        ]
+    )
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+
+    first_resp = await dispatch_event(
+        opt,
+        ControllablePostCallEvent(
+            controllable=make_controllable("browser_page_content", TOOLS_TAG),
+            request="page",
+            answer="page content",
+        ),
+    )
+    second_resp = await dispatch_event(
+        opt,
+        ControllablePostCallEvent(
+            controllable=make_controllable("memory_search_result", TOOLS_TAG),
+            request="memory",
+            answer="memory content",
+        ),
+    )
+
+    assert isinstance(first_resp, ControllableInjection)
+    assert isinstance(second_resp, ControllableNoInjection)
+    assert "page content" in first_resp.value

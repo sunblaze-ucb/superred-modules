@@ -19,7 +19,8 @@ This module implements the AgentVigil/WebSentinel attack idea for SuperRed agent
 - If the system prompt is writable, the optimizer adds a short red-team capability extension, includes the current SuperRed goal, and carries the injected web/content instruction.
 - If the tool catalog is writable, the optimizer can register, replace, or rewrite a relevant tool so the agent sees injected web/content text. For AgentDojo-style capability claims, it uses attacker-only tool names from the goal when they are present.
 - Static observables such as model identity, system prompt, and tool catalog are used when in scope. The static context is size-limited so long target metadata does not crowd out the mutator prompt.
-- When multiple surfaces are in scope, the optimizer uses all sensible surfaces in the same run: content/tool PostCalls, writable system prompt, writable user prompt, and writable tool catalog. This is broader than the paper's fixed web-content setting, but it follows SuperRed's threat-model capability rule.
+- When multiple surfaces are in scope, the optimizer does not inject into all of them. It picks one sensible surface per run, using the best surface that is both authorized and actually reached. Dynamic content/tool `PostCall` surfaces are preferred because they are closest to the paper's contaminated-web-content setting. If no such surface is available, writable tool catalog comes next, then writable system prompt, then user prompt as the simple-target fallback.
+- The user-prompt fallback is intentionally skipped when stronger agentic content surfaces are in scope. SuperRed cannot retract a user-prompt injection if a better `PostCall` fires later, so deferring to the agentic surface avoids noisy over-injection.
 
 ## What Is Different On Purpose
 
@@ -29,6 +30,7 @@ This module implements the AgentVigil/WebSentinel attack idea for SuperRed agent
 - When framework feedback is hidden, the optimizer cannot know whether a run succeeded. It continues up to `max_attempts`, gives tried candidates neutral reward, and mutates open-loop rather than inventing a private success judge.
 - Runtime trajectory observables are not used for private scoring. The original attack scores target-task success, so this port uses SuperRed framework evaluation rather than adding a separate response judge.
 - Candidate generation is capped by the number of target runs remaining, so helper LLM calls are not spent on mutations that cannot be evaluated.
+- Multi-parent backpropagation credits each ancestor once per evaluated descendant. This matters for crossover: a diamond-shaped ancestry graph should not double-count a shared ancestor just because two parent paths point back to it.
 - The mutation and seed-selection loop aims for close parity with the official implementation. The delivery layer is broader than the official simulated web agent because SuperRed exposes more target capabilities and more agent target families.
 
 ## Agent Targets

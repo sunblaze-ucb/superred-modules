@@ -5,7 +5,8 @@ This is intentionally network-free. It exercises the real SuperRed
 ``Controller`` plus AgentVigil optimizer plumbing against a tiny target that
 looks like an agent target:
 
-- writable ``system_prompt`` and ``user_prompt`` PreCall events;
+- writable ``system_prompt`` and ``user_prompt`` PreCall events, which should
+  be skipped when the better content surface is available;
 - a content/tool ``PostCall`` surface where indirect prompt injection belongs;
 - runtime trajectory observables for tool response and final agent message;
 - framework feedback via ``RunEndEvent.evaluation``.
@@ -265,8 +266,8 @@ async def _run() -> int:
         0
         if summary["success"]
         and summary["content_injections"] == 1
-        and summary["system_prompt_injections"] == 1
-        and summary["user_prompt_injections"] == 1
+        and summary["system_prompt_injections"] == 0
+        and summary["user_prompt_injections"] == 0
         else 1
     )
 

@@ -209,6 +209,8 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         self._tool_catalog: list[dict[str, Any]] = []
         self._can_write_system_prompt = False
         self._can_use_tool_catalog = False
+        self._content_surface_available = False
+        self._effective_tool_catalog_available = False
 
         self._attempt_index = 0
         self._succeeded = False
@@ -222,6 +224,7 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         self._current_payload: str | None = None
         self._system_prompt_injected = False
         self._user_prompt_injected = False
+        self._selected_surface: str | None = None
         self._catalog_ops_used: set[str] = set()
 
     async def initialize(
@@ -240,9 +243,21 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         self._can_write_system_prompt = self._use_system_prompt_when_available and any(
             ctrl.name == _SYSTEM_PROMPT_NAME for ctrl in controllables
         )
-        self._can_use_tool_catalog = self._use_tool_catalog_when_available and any(
-            ctrl.name in {_TOOL_REGISTER, _TOOL_REPLACE, _TOOL_REWRITE_DOC}
+        catalog_ops = {
+            ctrl.name
             for ctrl in controllables
+            if ctrl.name in {_TOOL_REGISTER, _TOOL_REPLACE, _TOOL_REWRITE_DOC}
+        }
+        self._can_use_tool_catalog = self._use_tool_catalog_when_available and bool(
+            catalog_ops
+        )
+        self._content_surface_available = any(
+            self._is_agent_content_surface(ctrl) for ctrl in controllables
+        )
+        # Prefer the closest paper-equivalent surface that is available, but
+        # choose the actual injection point when the corresponding event fires.
+        self._effective_tool_catalog_available = self._can_use_tool_catalog and (
+            _TOOL_REGISTER in catalog_ops or bool(self._tool_catalog)
         )
         seeds = [_copy_seed(seed) for seed in self._initial_seeds]
         self._tree = MonteCarloTree(
@@ -321,11 +336,12 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         if self._current_payload is None:
             return ControllableNoInjection(event=event, controllable=event.controllable)
         name = event.controllable.name
-        if (
+        if self._selected_surface is None and (
             name.startswith(_TOOL_PREFIX)
             or name.startswith(_ATTACKER_TOOL_PREFIX)
             or self._is_content_postcall_surface(event.controllable)
         ):
+            self._selected_surface = f"content:{name}"
             return ControllableInjection(
                 event=event,
                 controllable=event.controllable,
@@ -355,9 +371,16 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         self,
         event: ControllablePreCallEvent,
     ) -> ControllableInjection | ControllableNoInjection:
-        if not self._can_write_system_prompt or self._system_prompt_injected:
+        if (
+            self._selected_surface is not None
+            or self._content_surface_available
+            or self._effective_tool_catalog_available
+            or not self._can_write_system_prompt
+            or self._system_prompt_injected
+        ):
             return ControllableNoInjection(event=event, controllable=event.controllable)
         self._system_prompt_injected = True
+        self._selected_surface = "system_prompt"
         pieces = [event.request.strip(), _SYSTEM_PROMPT_EXTENSION.strip()]
         if self._goal is not None:
             pieces.append(
@@ -386,9 +409,16 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         self,
         event: ControllablePreCallEvent,
     ) -> ControllableInjection | ControllableNoInjection:
-        if self._user_prompt_injected:
+        if (
+            self._selected_surface is not None
+            or self._content_surface_available
+            or self._effective_tool_catalog_available
+            or self._can_write_system_prompt
+            or self._user_prompt_injected
+        ):
             return ControllableNoInjection(event=event, controllable=event.controllable)
         self._user_prompt_injected = True
+        self._selected_surface = "user_prompt"
         if self._current_seed is not None:
             self._current_payload = self._render_seed(
                 self._current_seed.text, user_goal=event.request
@@ -404,7 +434,9 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         event: ControllablePreCallEvent,
     ) -> ControllableInjection | ControllableNoInjection:
         if (
-            not self._can_use_tool_catalog
+            self._selected_surface is not None
+            or self._content_surface_available
+            or not self._can_use_tool_catalog
             or event.controllable.name in self._catalog_ops_used
         ):
             return ControllableNoInjection(event=event, controllable=event.controllable)
@@ -419,6 +451,7 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         if payload is None:
             return ControllableNoInjection(event=event, controllable=event.controllable)
         self._catalog_ops_used.add(event.controllable.name)
+        self._selected_surface = f"tool_catalog:{event.controllable.name}"
         return ControllableInjection(
             event=event,
             controllable=event.controllable,
@@ -617,6 +650,14 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         ).lower()
         return any(hint in haystack for hint in _CONTENT_SURFACE_HINTS)
 
+    def _is_agent_content_surface(self, controllable: Controllable) -> bool:
+        name = controllable.name
+        return (
+            name.startswith(_TOOL_PREFIX)
+            or name.startswith(_ATTACKER_TOOL_PREFIX)
+            or self._is_content_postcall_surface(controllable)
+        )
+
     @staticmethod
     def _reward_from_evaluation(evaluation: EvaluationResult | None) -> float | None:
         if evaluation is None:
@@ -701,6 +742,7 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         self._current_payload = None
         self._system_prompt_injected = False
         self._user_prompt_injected = False
+        self._selected_surface = None
         self._catalog_ops_used = set()
 
     def _is_done(self) -> bool:

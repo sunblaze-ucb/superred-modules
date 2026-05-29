@@ -57,10 +57,19 @@ class MonteCarloTree:
         self.nodes.append(node)
         return node
 
-    def backpropagate(self, node: Node, reward: float) -> None:
+    def backpropagate(
+        self, node: Node, reward: float, _visited: set[Node] | None = None
+    ) -> None:
+        if _visited is None:
+            _visited = set()
+        if node in _visited:
+            return
+        # Crossover can create diamond ancestry; credit an evaluated descendant
+        # once per ancestor, not once per path through the graph.
+        _visited.add(node)
         node.update(reward)
         for parent in node.parents:
-            self.backpropagate(parent, reward)
+            self.backpropagate(parent, reward, _visited)
 
     def _uct(self, node: Node, total_visits: int) -> float:
         return node.average_reward + self.exploration_factor * math.sqrt(
