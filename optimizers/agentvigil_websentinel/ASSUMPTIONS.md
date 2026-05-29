@@ -23,7 +23,7 @@ This module implements the AgentVigil/WebSentinel attack idea for SuperRed agent
 
 ## What Is Different On Purpose
 
-- The official fuzzer scores one seed across many target tasks, then runs 20 fuzz loops with up to 10 mutations per loop. SuperRed normally runs one security task at a time, so this optimizer treats one SuperRed run as one seed evaluation. The default `max_attempts=20` mirrors the official loop count, not the official total target-evaluation count. Increase `max_attempts` for evaluation-count parity experiments.
+- The official fuzzer scores one seed across many target tasks, then runs 20 fuzz loops with up to 10 mutations per loop. SuperRed normally runs one security task at a time, so this optimizer treats one SuperRed run as one seed evaluation. The default `max_attempts=20` mirrors the official loop count, not the official total target-evaluation count. Increase `max_attempts` for evaluation-count parity experiments. The official `subset_ratio` setting is omitted because SuperRed provides one task evaluation at a time to the optimizer.
 - The official implementation has a persistent checkpoint/log directory. SuperRed already persists trajectories and task results, so this module keeps state in memory and relies on the framework for run records.
 - WebSentinel is a detector/localizer. This optimizer implements the attack-generation side used by the AgentVigil/WebSentinel repository; it does not implement a separate WebSentinel defense.
 - When framework feedback is hidden, the optimizer cannot know whether a run succeeded. It continues up to `max_attempts`, gives tried candidates neutral reward, and mutates open-loop rather than inventing a private success judge.

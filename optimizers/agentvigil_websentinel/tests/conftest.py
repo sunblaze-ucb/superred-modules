@@ -18,9 +18,6 @@ TOOL_CATALOG_TAG = SecurityDomainTag("tool_catalogue", parent=SYSTEM_TAG)
 TOOL_CATALOG_READABLE_TAG = SecurityDomainTag(
     "tool_catalogue_readable", parent=TOOL_CATALOG_TAG
 )
-TOOL_CATALOG_ADDABLE_TAG = SecurityDomainTag(
-    "tool_catalogue_addable", parent=TOOL_CATALOG_TAG
-)
 TOOLS_TAG = SecurityDomainTag("tools")
 
 

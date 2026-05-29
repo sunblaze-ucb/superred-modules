@@ -58,7 +58,6 @@ _USER_PROMPT_NAMES = {"user_prompt", "user_message", "query", "prompt"}
 _TOOL_REGISTER = "tool_catalog_register"
 _TOOL_REPLACE = "tool_catalog_replace"
 _TOOL_REWRITE_DOC = "tool_catalog_rewrite_doc"
-_TOOL_UNREGISTER = "tool_catalog_unregister"
 _TOOL_PREFIX = "read__"
 _ATTACKER_TOOL_PREFIX = "tool_call:"
 _RESPONSE_NAME_HINTS = ("response", "assistant", "reply", "output", "completion")
@@ -139,8 +138,6 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         population_size: Number of mutated candidates generated after each scored
             attempt (official run.py uses 10; fuzzer class default is 3).
         exploration_factor: UCT exploration constant (official default: 1.41).
-        subset_ratio: Kept for parity with the official fuzzer; SuperRed executes
-            one task per run, so this affects only documentation/state.
         mutator_temperature: Temperature for the helper LLM mutator.
         mutator_max_tokens: Optional max tokens for each mutation call. Defaults
             to ``None`` to match the official mutator, which does not pin it.
@@ -162,7 +159,6 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         max_attempts: int = 20,
         population_size: int = 10,
         exploration_factor: float = 1.41,
-        subset_ratio: float = 1.0,
         mutator_temperature: float = 1.0,
         mutator_max_tokens: int | None = None,
         mutator_max_retries: int = 3,
@@ -177,8 +173,6 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
             raise ValueError("max_attempts must be at least 1")
         if population_size < 1:
             raise ValueError("population_size must be at least 1")
-        if not 0 < subset_ratio <= 1:
-            raise ValueError("subset_ratio must be in (0, 1]")
         if static_context_max_chars < 0:
             raise ValueError("static_context_max_chars must be non-negative")
         if mutator_max_tokens is not None and mutator_max_tokens < 1:
@@ -194,7 +188,6 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         self._max_attempts = max_attempts
         self._population_size = population_size
         self._exploration_factor = exploration_factor
-        self._subset_ratio = subset_ratio
         self._mutator_temperature = mutator_temperature
         self._mutator_max_tokens = mutator_max_tokens
         self._mutator_max_retries = mutator_max_retries
@@ -219,7 +212,6 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
 
         self._attempt_index = 0
         self._succeeded = False
-        self._best_performance = 0.0
         self._coverage_bitmap: dict[str, int] = {}
         self._initial_queue: list[Node] = []
         self._pending_nodes: list[_PendingCandidate] = []
@@ -267,7 +259,6 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         )
         self._attempt_index = 0
         self._succeeded = False
-        self._best_performance = 0.0
         self._coverage_bitmap.clear()
         self._initial_queue = list(self._tree.nodes)
         self._pending_nodes.clear()
@@ -317,7 +308,7 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         name = event.controllable.name
         if name == _SYSTEM_PROMPT_NAME:
             return self._maybe_inject_system_prompt(event)
-        if name in {_TOOL_REGISTER, _TOOL_REPLACE, _TOOL_REWRITE_DOC, _TOOL_UNREGISTER}:
+        if name in {_TOOL_REGISTER, _TOOL_REPLACE, _TOOL_REWRITE_DOC}:
             return self._maybe_inject_tool_catalog(event)
         if self._is_user_prompt(name):
             return self._maybe_inject_user_prompt(event)
@@ -499,7 +490,6 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         node.seed.results[task_key] = result
         node.seed.performance = reward
         node.seed.score = score
-        self._best_performance = max(self._best_performance, reward)
         self._tree.backpropagate(node, score)
 
     def _render_seed(self, template: str, *, user_goal: str) -> str:

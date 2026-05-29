@@ -210,7 +210,8 @@ async def test_framework_feedback_scores_seed_and_success_stops() -> None:
 
     assert isinstance(end, RunEndResponse)
     assert end.done is True
-    assert opt._best_performance == 1.0
+    assert opt._current_node is not None
+    assert opt._current_node.seed.performance == 1.0
 
 
 @pytest.mark.asyncio
