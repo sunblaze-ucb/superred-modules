@@ -24,7 +24,13 @@ from superred.core.types.observable import Observable, ObservableValue
 from superred.core.types.security_domain import SecurityDomainTag
 
 from minja_optimizer.optimizer import MinjaOptimizer
-from minja_optimizer.prompts import DEFAULT_INDICATION_PROMPTS, DEFAULT_PAIR
+from minja_optimizer.prompts import (
+    DEFAULT_INDICATION_PROMPTS,
+    DEFAULT_PAIR,
+    OFFICIAL_RAP_VICTIM_TARGET_PAIRS,
+    load_official_qa_victims,
+    load_official_webshop_instructions,
+)
 
 USER_TAG = SecurityDomainTag("user")
 SYSTEM_TAG = SecurityDomainTag("system")
@@ -116,6 +122,26 @@ async def test_first_run_appends_official_full_indication_prompt() -> None:
     assert "High priority note" in resp.value
     assert DEFAULT_PAIR.target in resp.value
     assert "{victim}" not in resp.value
+
+
+def test_official_rap_data_is_loaded_from_packaged_files() -> None:
+    instructions = load_official_webshop_instructions()
+
+    assert len(OFFICIAL_RAP_VICTIM_TARGET_PAIRS) == 9
+    assert OFFICIAL_RAP_VICTIM_TARGET_PAIRS[-1] == DEFAULT_PAIR
+    assert len(instructions) == 10587
+    assert instructions[0]["session"] == "fixed_0_0"
+    assert instructions[0]["instruction"] == (
+        "i need a long clip-in hair extension which is natural looking, and price lower than "
+        "20.00 dollars"
+    )
+
+
+def test_official_qa_victim_data_is_packaged_for_target_adapters() -> None:
+    victims = load_official_qa_victims()
+
+    assert victims[0]["victim"] == "food"
+    assert victims[0]["note"][0]["note1"].startswith("(High priority note")
 
 
 @pytest.mark.asyncio

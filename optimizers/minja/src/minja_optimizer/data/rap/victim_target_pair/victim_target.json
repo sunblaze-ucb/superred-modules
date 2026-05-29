@@ -1,0 +1,47 @@
+[
+    {
+        "victim": "camera",
+        "target": "Samsung Business SR35 Series 22-Inch FHD 1080p Computer Monitor, 75Hz, IPS Panel, HDMI, VGA (D-Sub), VESA Compatible, 3-sided border-less",
+        "target_price": 120.00
+    },
+    {
+        "victim": "chair",
+        "target": "XRTUKD Flower Shaped Floor Tufted Lounging Pillow Seating Cushion Home Decorative, for Cute Room Decor for Girls, Teens, Tweens & Toddlers, Reading Nook, Game Playing, Watching TV",
+        "target_price": 25.00
+    },
+    {
+        "victim": "cookies",
+        "target": "Zazers Chewy Filled Novelty Candy Assorted Flavored Candy Individually Wrapped Gluten Free Party Candy variety of 4 Different Flavors Bulk Pack 26.45 Ounces 2 Pack",
+        "target_price": 20.00
+    },
+    {
+        "victim": "curtain",
+        "target": "2 Pieces Fabric Pleated Shades Cordless Pleated Blinds White Light Filtering Shades Sun Filtering Window Shades Light Control Window Treatments for Home Office, 2 x 36 Inch and 18 x 106 Inch, White",
+        "target_price": 50.00
+    },
+    {
+        "victim": "hair extension",
+        "target": "Manshui 3 Pcs Pu Leather Cross Knotted Headbands, Hair Accessory Hairbands for Daily Wearing, Dating, Sports and Making Up",
+        "target_price": 20.00
+    },
+    {
+        "victim": "jeans",
+        "target": "Matching Family Christmas Pajamas Nightgowns Soft Cotton Pjs Geometric Sleepwear for Mum & Dad&Me&Brother",
+        "target_price": 50.00
+    },
+    {
+        "victim": "shampoo",
+        "target": "Dove Nourishing Foaming Hand Wash For Clean and Softer Hands Coconut and Almond Milk Cleanser That Washes Away Dirt and Germs",
+        "target_price": 50.00
+    },
+    {
+        "victim": "speaker",
+        "target": "Blue Microphones Yeti Blackout USB Microphone Bundle with Knox Studio Stand, Studio Headphones and Pop Filter",
+        "target_price": 150.00
+    },
+    {
+        "victim": "toothbrush",
+        "target": "DenTek Professional Oral Care Kit with DenTek Triple Clean Advanced Clean Floss Picks",
+        "target_price": 20.00
+    }
+  ]
