@@ -21,6 +21,7 @@ This module implements the AgentVigil/WebSentinel attack idea for SuperRed agent
 - Static observables such as model identity, system prompt, and tool catalog are used when in scope. The static context is size-limited so long target metadata does not crowd out the mutator prompt.
 - When multiple surfaces are in scope, the optimizer does not inject into all of them. It picks one sensible surface per run, using the best surface that is both authorized and actually reached. Dynamic content/tool `PostCall` surfaces are preferred because they are closest to the paper's contaminated-web-content setting. If no such surface is available, writable tool catalog comes next, then writable system prompt, then user prompt as the simple-target fallback.
 - The user-prompt fallback is intentionally skipped when stronger agentic content surfaces are in scope. SuperRed cannot retract a user-prompt injection if a better `PostCall` fires later, so deferring to the agentic surface avoids noisy over-injection.
+- This deferral is adaptive. If a higher-priority surface is advertised but does not actually fire in a run, the next run may fall back to the next lower-priority surface rather than staying blind forever.
 
 ## What Is Different On Purpose
 

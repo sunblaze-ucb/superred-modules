@@ -208,9 +208,11 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         self._target_user: str = "User"
         self._tool_catalog: list[dict[str, Any]] = []
         self._can_write_system_prompt = False
+        self._can_write_user_prompt = False
         self._can_use_tool_catalog = False
         self._content_surface_available = False
         self._effective_tool_catalog_available = False
+        self._consecutive_no_injection_runs = 0
 
         self._attempt_index = 0
         self._succeeded = False
@@ -243,6 +245,9 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         self._can_write_system_prompt = self._use_system_prompt_when_available and any(
             ctrl.name == _SYSTEM_PROMPT_NAME for ctrl in controllables
         )
+        self._can_write_user_prompt = any(
+            self._is_user_prompt(ctrl.name) for ctrl in controllables
+        )
         catalog_ops = {
             ctrl.name
             for ctrl in controllables
@@ -274,6 +279,7 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         )
         self._attempt_index = 0
         self._succeeded = False
+        self._consecutive_no_injection_runs = 0
         self._coverage_bitmap.clear()
         self._initial_queue = list(self._tree.nodes)
         self._pending_nodes.clear()
@@ -359,6 +365,10 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
             self._apply_reward(node, reward if reward is not None else 0.0)
         if event.evaluation is not None and event.evaluation.success:
             self._succeeded = True
+        if self._selected_surface is None:
+            self._consecutive_no_injection_runs += 1
+        else:
+            self._consecutive_no_injection_runs = 0
         self._attempt_index += 1
         if not self._is_done() and not self._initial_queue and not self._pending_nodes:
             remaining_runs = self._max_attempts - self._attempt_index
@@ -373,7 +383,7 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
     ) -> ControllableInjection | ControllableNoInjection:
         if (
             self._selected_surface is not None
-            or self._content_surface_available
+            or not self._surface_rank_allowed(2)
             or self._effective_tool_catalog_available
             or not self._can_write_system_prompt
             or self._system_prompt_injected
@@ -411,7 +421,7 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
     ) -> ControllableInjection | ControllableNoInjection:
         if (
             self._selected_surface is not None
-            or self._content_surface_available
+            or not self._surface_rank_allowed(3)
             or self._effective_tool_catalog_available
             or self._can_write_system_prompt
             or self._user_prompt_injected
@@ -435,7 +445,7 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
     ) -> ControllableInjection | ControllableNoInjection:
         if (
             self._selected_surface is not None
-            or self._content_surface_available
+            or not self._surface_rank_allowed(1)
             or not self._can_use_tool_catalog
             or event.controllable.name in self._catalog_ops_used
         ):
@@ -657,6 +667,20 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
             or name.startswith(_ATTACKER_TOOL_PREFIX)
             or self._is_content_postcall_surface(controllable)
         )
+
+    def _surface_rank_allowed(self, rank: int) -> bool:
+        available: list[int] = []
+        if self._content_surface_available:
+            available.append(0)
+        if self._effective_tool_catalog_available:
+            available.append(1)
+        if self._can_write_system_prompt:
+            available.append(2)
+        if self._can_write_user_prompt:
+            available.append(3)
+        if rank not in available:
+            return False
+        return available.index(rank) <= self._consecutive_no_injection_runs
 
     @staticmethod
     def _reward_from_evaluation(evaluation: EvaluationResult | None) -> float | None:

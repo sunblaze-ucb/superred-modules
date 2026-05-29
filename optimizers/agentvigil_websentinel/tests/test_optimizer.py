@@ -731,6 +731,44 @@ async def test_user_prompt_is_deferred_when_agentic_content_surface_is_available
 
 
 @pytest.mark.asyncio
+async def test_user_prompt_fallback_after_advertised_content_surface_is_not_reached() -> (
+    None
+):
+    opt = await init_optimizer(
+        controllables=[
+            make_controllable("user_prompt", USER_TAG),
+            make_controllable("browser_page_content", TOOLS_TAG),
+        ],
+        max_attempts=2,
+    )
+
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    first_user = await dispatch_event(
+        opt,
+        ControllablePreCallEvent(
+            controllable=make_controllable("user_prompt", USER_TAG),
+            request="do the task",
+        ),
+    )
+    await dispatch_event(
+        opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
+    )
+
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    second_user = await dispatch_event(
+        opt,
+        ControllablePreCallEvent(
+            controllable=make_controllable("user_prompt", USER_TAG),
+            request="do the task",
+        ),
+    )
+
+    assert isinstance(first_user, ControllableNoInjection)
+    assert isinstance(second_user, ControllableInjection)
+    assert "WEBPAGE CONTENT" in second_user.value
+
+
+@pytest.mark.asyncio
 async def test_best_prompt_surface_is_selected_rather_than_all_prompts() -> None:
     opt = AgentVigilWebSentinelOptimizer(
         seeds=[Seed(id="seed", text="seed {injection_goal}")],
