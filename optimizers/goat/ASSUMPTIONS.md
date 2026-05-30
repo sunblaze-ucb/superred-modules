@@ -49,18 +49,26 @@ Accordingly, we render the `Technique Examples:` slot as
 `(omitted; see paper Table 1)`. Fabricating examples would be a
 departure from the paper.
 
-## Single Pre-Call Controllable
+## SuperRed Capability Use
 
 GOAT injects into a single user-message-style controllable per
 attempt. The first non-`system_prompt` `ControllablePreCallEvent` seen
 in a run is locked in as the primary; later events with different
 controllables get `ControllableNoInjection`.
 
-`ControllablePreCallEvent`s for `system_prompt` (e.g. the pre-loop
-event ChatbotTarget emits) are passed on without locking — the
-paper's attacks live entirely in user turns, and the user-message
-channel must remain eligible for the lock when it arrives. This is
-hardcoded for simplicity (matches FlipAttack's explicit name handling).
+When `system_prompt` is writable, GOAT uses it once per attempt for a
+short target-side red-team evaluation setup, then leaves the generated
+GOAT attack reply in `user_message`. The system-prompt event does not
+take the primary user-message lock. When `system_prompt` is not in
+scope, behavior stays paper-mainline: the target only receives
+user-message GOAT replies.
+
+Static observables that are in scope, such as a target model identifier
+or readable system prompt, are appended to the attacker system prompt in
+a bounded `SUPERRED STATIC TARGET CONTEXT` block. This lets the attacker
+use capabilities exposed by the threat model without changing the
+original GOAT setting when those observables are absent. The static
+context is truncated to avoid crowding out the paper prompt.
 
 ## Trajectory-First Response Recovery
 

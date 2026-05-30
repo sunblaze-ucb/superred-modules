@@ -118,6 +118,18 @@ class TestBuildSystemPrompt:
         for key in ("observation", "thought", "strategy", "response"):
             assert f'"{key}"' in out
 
+    def test_static_context_is_inserted_before_output_contract(self) -> None:
+        out = build_system_prompt(
+            goal="g",
+            attack_block=render_attack_block(HYPOTHETICAL),
+            stacked=False,
+            static_context="SUPERRED STATIC TARGET CONTEXT:\n- observable.target_model: x",
+        )
+
+        assert "observable.target_model: x" in out
+        assert out.endswith(OUTPUT_FORMAT_INSTRUCTION)
+        assert out.index("observable.target_model: x") < out.index("# Response format")
+
 
 class TestAttackRendering:
     def test_render_block_omits_examples(self) -> None:

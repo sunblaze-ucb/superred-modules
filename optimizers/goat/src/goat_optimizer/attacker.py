@@ -73,6 +73,8 @@ class Attacker:
             optimizer with ``attacks=(SOME_ATTACK,)``.
         temperature: Sampling temperature for the attacker LLM
             (default 1.0 to encourage strategy variety).
+        static_context: Optional bounded SuperRed capability context
+            inserted before the JSON output contract.
     """
 
     def __init__(
@@ -82,6 +84,7 @@ class Attacker:
         goal: str,
         attacks: tuple[Attack, ...],
         temperature: float = 1.0,
+        static_context: str | None = None,
     ) -> None:
         if not attacks:
             raise ValueError("Attacker requires at least one attack technique")
@@ -89,6 +92,7 @@ class Attacker:
         self._goal = goal
         self._attacks = tuple(attacks)
         self._temperature = temperature
+        self._static_context = static_context.strip() if static_context else None
 
         # System prompt (paper Fig A.1) is fixed for the conversation.
         attack_block = render_attack_stack(self._attacks)
@@ -96,6 +100,7 @@ class Attacker:
             goal=self._goal,
             attack_block=attack_block,
             stacked=len(self._attacks) > 1,
+            static_context=self._static_context,
         )
 
         # Attacker conversation history C_A (Algorithm 1, line 7).

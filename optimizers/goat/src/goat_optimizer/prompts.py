@@ -142,7 +142,13 @@ attacker's chain-of-thought to send to the target. This is documented
 as a deliberate departure in ``ASSUMPTIONS.md``."""
 
 
-def build_system_prompt(*, goal: str, attack_block: str, stacked: bool) -> str:
+def build_system_prompt(
+    *,
+    goal: str,
+    attack_block: str,
+    stacked: bool,
+    static_context: str | None = None,
+) -> str:
     """Format the GOAT attacker system prompt.
 
     Args:
@@ -151,6 +157,9 @@ def build_system_prompt(*, goal: str, attack_block: str, stacked: bool) -> str:
             :func:`goat_optimizer.attacks.render_attack_stack`).
         stacked: ``True`` when more than one attack is listed (changes
             the closing sentence to the plural "these techniques").
+        static_context: Optional bounded SuperRed capability context.
+            It is inserted before the JSON output contract so the
+            parseable-output instruction remains last.
 
     Returns:
         The full system prompt with the JSON output contract appended.
@@ -161,4 +170,6 @@ def build_system_prompt(*, goal: str, attack_block: str, stacked: bool) -> str:
         attack_block=attack_block,
         attack_phrase=attack_phrase,
     )
+    if static_context:
+        base = f"{base}\n\n{static_context.strip()}"
     return base + OUTPUT_FORMAT_INSTRUCTION
