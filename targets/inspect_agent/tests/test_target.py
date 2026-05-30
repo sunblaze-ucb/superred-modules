@@ -14,7 +14,6 @@ from inspect_agent_target import (
     InspectAgentTarget,
     SYSTEM_PROMPT_CTRL,
     USER_PROMPT_CTRL,
-    USER_TAG,
 )
 from inspect_agent_target import target as target_mod
 from inspect_agent_target.rollout import run_rollout, static_tools_provider
@@ -26,7 +25,6 @@ from inspect_agent_target.target import (
 from superred.core.types.events import (
     ControllableInjection,
     ControllableNoInjection,
-    ControllablePreCallEvent,
 )
 
 

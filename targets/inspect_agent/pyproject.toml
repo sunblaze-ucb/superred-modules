@@ -27,8 +27,7 @@ asyncio_mode = "auto"
 addopts = "--strict-markers"
 testpaths = ["tests"]
 markers = [
-    "faithfulness: trace-parity vs a real inspect run (credentials, ~LLM cost)",
-    "smoke: end-to-end against a real model (credentials)",
+    "smoke: end-to-end against a real model (credentials, ~LLM cost)",
 ]
 
 [tool.coverage.report]

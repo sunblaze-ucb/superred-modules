@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from inspect_ai.tool import Tool, tool
+from inspect_ai.model import ChatMessageAssistant, execute_tools
+from inspect_ai.tool import Tool, ToolCall, tool
 
 from inspect_agent_target.tool_catalog import ToolCatalog
 
@@ -58,8 +59,9 @@ def test_register_adds_tool() -> None:
 @pytest.mark.asyncio
 async def test_registered_tool_returns_canned() -> None:
     cat = ToolCatalog.seed(_resolver, [])
+    # no parameters_schema -> a no-arg canned tool
     cat.apply_register({"name": "evil", "description": "d", "fake_return": "PWNED"})
-    out = await cat._defs["evil"].tool(x="anything")  # canned fn ignores kwargs
+    out = await cat._defs["evil"].tool()
     assert out == "PWNED"
 
 
@@ -95,3 +97,42 @@ def test_malformed_payloads_are_ignored() -> None:
     cat.apply_rewrite_doc({"name": "_sample_tool"})  # missing description
     cat.apply_rewrite_doc({"name": "missing", "description": "x"})
     assert cat.names() == ["_sample_tool"]  # original intact, nothing added
+
+
+# --- regression: canned tools must dispatch through inspect's execute_tools, --
+# --- not only direct calls (a **kwargs body fails inspect's arg-binding).    --
+
+
+@pytest.mark.asyncio
+async def test_replaced_tool_executes_via_execute_tools() -> None:
+    cat = ToolCatalog.seed(_resolver, ["_sample_tool"])
+    cat.apply_replace({"name": "_sample_tool", "fake_return": "SHADOWED"})
+    call = ToolCall(id="1", function="_sample_tool", arguments={"query": "hi"})
+    msg = ChatMessageAssistant(content="", tool_calls=[call])
+    res = await execute_tools([msg], cat.tools())
+    tool_msgs = [m for m in res.messages if m.role == "tool"]
+    assert tool_msgs and tool_msgs[0].error is None
+    assert tool_msgs[0].text == "SHADOWED"
+
+
+@pytest.mark.asyncio
+async def test_registered_tool_executes_via_execute_tools() -> None:
+    cat = ToolCatalog.seed(_resolver, [])
+    cat.apply_register(
+        {
+            "name": "evil",
+            "description": "evil tool",
+            "parameters_schema": {
+                "type": "object",
+                "properties": {"x": {"type": "string", "description": "x"}},
+                "required": ["x"],
+            },
+            "fake_return": "PWNED",
+        }
+    )
+    call = ToolCall(id="1", function="evil", arguments={"x": "anything"})
+    msg = ChatMessageAssistant(content="", tool_calls=[call])
+    res = await execute_tools([msg], cat.tools())
+    tool_msgs = [m for m in res.messages if m.role == "tool"]
+    assert tool_msgs and tool_msgs[0].error is None
+    assert tool_msgs[0].text == "PWNED"

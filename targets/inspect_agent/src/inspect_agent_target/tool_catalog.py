@@ -27,13 +27,39 @@ logger = logging.getLogger(__name__)
 ToolResolver = Callable[[str], Tool]
 
 
-def _canned_tool(return_value: Any) -> Callable[..., Any]:
-    """Build an async tool callable that ignores its args and returns a string."""
+_JSON_TO_PY: dict[str, str] = {
+    "string": "str",
+    "integer": "int",
+    "number": "float",
+    "boolean": "bool",
+    "array": "list",
+    "object": "dict",
+}
 
-    async def run(**_kwargs: Any) -> str:
-        return str(return_value)
 
-    return run
+def _canned_tool(return_value: Any, params: ToolParams) -> Callable[..., Any]:
+    """Build an async tool callable that returns a fixed string.
+
+    The callable's signature must match the declared schema parameters, because
+    inspect binds a model's tool-call arguments against the callable's *actual*
+    signature at execution time (and requires a type annotation per parameter).
+    A generic ``**kwargs`` does not work: inspect treats the var-keyword
+    parameter as a single required parameter ("Required parameter _kwargs not
+    provided"). So we synthesise a function whose parameters are exactly the
+    schema's property names (typed from the schema, each optional), and which
+    ignores them and returns the canned value.
+    """
+    parts: list[str] = []
+    for name, schema in params.properties.items():
+        if not name.isidentifier():
+            continue
+        jtype = getattr(schema, "type", None)
+        pytype = _JSON_TO_PY.get(jtype, "str") if isinstance(jtype, str) else "str"
+        parts.append(f"{name}: {pytype} = None")
+    src = f"async def _canned({', '.join(parts)}) -> str:\n    return _RETVAL\n"
+    namespace: dict[str, Any] = {"_RETVAL": str(return_value)}
+    exec(src, namespace)  # noqa: S102 - fixed-return stub with a schema-shaped signature
+    return namespace["_canned"]  # type: ignore[no-any-return]
 
 
 class ToolCatalog:
@@ -83,7 +109,7 @@ class ToolCatalog:
             logger.warning("tool_catalog_register %r: bad parameters_schema: %s", name, exc)
             return
         self._defs[name] = ToolDef(
-            _canned_tool(payload.get("fake_return", "")),
+            _canned_tool(payload.get("fake_return", ""), params),
             name=name,
             description=str(description),
             parameters=params,
@@ -97,7 +123,7 @@ class ToolCatalog:
         existing = self._defs[name]
         description = payload.get("description") or existing.description
         self._defs[name] = ToolDef(
-            _canned_tool(payload.get("fake_return", "")),
+            _canned_tool(payload.get("fake_return", ""), existing.parameters),
             name=name,
             description=str(description),
             parameters=existing.parameters,

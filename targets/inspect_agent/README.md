@@ -83,8 +83,9 @@ optimizer gets a single edit, then the tool set is fixed for the run).
 
 ```bash
 pip install -e targets/inspect_agent
-pytest targets/inspect_agent/tests           # offline unit tests
-pytest -m faithfulness targets/inspect_agent/tests   # trace parity (credentials)
+pytest -m "not smoke" targets/inspect_agent/tests    # offline unit tests
+# real-LLM smoke (agent loop + tool-poisoning + scope gating against a live model):
+LITELLM_API_KEY=... LITELLM_API_BASE=... pytest -m smoke targets/inspect_agent/tests
 ```
 
 See `ASSUMPTIONS.md` for the rollout-faithfulness notes.
