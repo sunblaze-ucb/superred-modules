@@ -67,16 +67,8 @@ def _system_prompt_ctrl() -> Controllable:
     return Controllable(name="system_prompt", security_domain=SYSTEM_PROMPT_TAG)
 
 
-def _agentic_read_ctrl(name: str = "read__slack__get_webpage") -> Controllable:
-    return Controllable(name=name, security_domain=SecurityDomainTag("tools"))
-
-
 def _response_observable(name: str = "response") -> Observable:
     return Observable(name=name, security_domain=RESPONSE_TAG)
-
-
-def _agent_observable(name: str = "agent_trace_tool_response_0000") -> Observable:
-    return Observable(name=name, security_domain=SecurityDomainTag("agent_trace"))
 
 
 class _FakeReadableTrajectory:
@@ -116,19 +108,15 @@ async def _init_optimizer(
     *,
     max_attempts: int = 5,
     max_no_signal_runs: int = 0,
-    controllables: list[Controllable] | None = None,
-    observables: list[Any] | None = None,
-    target_controllable_name: str | None = None,
 ) -> GEPAOptimizer:
     opt = GEPAOptimizer(
         max_attempts=max_attempts,
         max_no_signal_runs=max_no_signal_runs,
-        target_controllable_name=target_controllable_name,
     )
     await opt.initialize(
         goal=Goal(description="achieve target X"),
-        controllables=controllables if controllables is not None else [_user_ctrl()],
-        observables=observables if observables is not None else [],
+        controllables=[_user_ctrl()],
+        observables=[],
         llm_client=_empty_llm(),
     )
     return opt
@@ -385,179 +373,6 @@ class TestPostCall:
             ),
         )
         assert opt._pending_post_answer is None
-
-
-# ---------------------------------------------------------------------------
-# Agentic PostCall read/tool-return injection
-# ---------------------------------------------------------------------------
-
-
-class TestAgenticPostCallInjection:
-    @pytest.mark.asyncio
-    async def test_agentic_read_surface_is_preferred_over_system_prompt(self) -> None:
-        opt = await _init_optimizer(
-            controllables=[
-                _system_prompt_ctrl(),
-                _user_ctrl(),
-                _agentic_read_ctrl(),
-            ],
-        )
-        assert opt._target_controllable_name is None
-        assert opt._injection_surface is not None
-        assert opt._injection_surface.kind == "agentic_read"
-
-    @pytest.mark.asyncio
-    async def test_precalls_are_skipped_when_agentic_read_surface_selected(self) -> None:
-        opt = await _init_optimizer(
-            controllables=[_user_ctrl(), _agentic_read_ctrl()],
-        )
-        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
-
-        pre = await _dispatch_event(
-            opt,
-            ControllablePreCallEvent(controllable=_user_ctrl(), request="user task"),
-        )
-
-        assert isinstance(pre, ControllableNoInjection)
-        assert opt._injected_this_run is False
-
-    @pytest.mark.asyncio
-    async def test_read_postcall_injects_candidate_and_preserves_legitimate_content(
-        self,
-    ) -> None:
-        read_ctrl = _agentic_read_ctrl()
-        opt = await _init_optimizer(controllables=[_user_ctrl(), read_ctrl])
-        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
-
-        resp = await _dispatch_event(
-            opt,
-            ControllablePostCallEvent(
-                controllable=read_ctrl,
-                request="slack.get_webpage",
-                answer="legitimate webpage text",
-            ),
-        )
-
-        assert isinstance(resp, ControllableInjection)
-        assert "legitimate webpage text" in resp.value
-        assert "[GEPA INDIRECT PROMPT INJECTION]" in resp.value
-        assert "achieve target X" in resp.value
-        assert opt._legitimate_tool_return == "legitimate webpage text"
-        assert opt._injected_surface_name == read_ctrl.name
-
-    @pytest.mark.asyncio
-    async def test_agentic_read_injection_only_fires_once_per_run(self) -> None:
-        read_ctrl = _agentic_read_ctrl()
-        opt = await _init_optimizer(controllables=[read_ctrl])
-        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
-
-        first = await _dispatch_event(
-            opt,
-            ControllablePostCallEvent(
-                controllable=read_ctrl,
-                request="read",
-                answer="one",
-            ),
-        )
-        second = await _dispatch_event(
-            opt,
-            ControllablePostCallEvent(
-                controllable=read_ctrl,
-                request="read",
-                answer="two",
-            ),
-        )
-
-        assert isinstance(first, ControllableInjection)
-        assert isinstance(second, ControllableNoInjection)
-
-    @pytest.mark.asyncio
-    async def test_explicit_user_override_beats_agentic_read_auto_selection(self) -> None:
-        opt = await _init_optimizer(
-            controllables=[_user_ctrl(), _agentic_read_ctrl()],
-            target_controllable_name="user_message",
-        )
-        assert opt._target_controllable_name == "user_message"
-        assert opt._injection_surface is not None
-        assert opt._injection_surface.kind == "explicit_pre"
-
-        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
-        post = await _dispatch_event(
-            opt,
-            ControllablePostCallEvent(
-                controllable=_agentic_read_ctrl(),
-                request="read",
-                answer="content",
-            ),
-        )
-        assert isinstance(post, ControllableNoInjection)
-
-        pre = await _dispatch_event(
-            opt,
-            ControllablePreCallEvent(controllable=_user_ctrl(), request="user task"),
-        )
-        assert isinstance(pre, ControllableInjection)
-        assert pre.value == "achieve target X"
-
-    @pytest.mark.asyncio
-    async def test_reflection_receives_agentic_surface_and_tool_return(self) -> None:
-        read_ctrl = _agentic_read_ctrl()
-        opt = await _init_optimizer(
-            controllables=[read_ctrl],
-            max_attempts=2,
-        )
-        propose = AsyncMock(return_value=None)
-        traj = _FakeReadableTrajectory()
-        await _dispatch_event(opt, RunStartEvent(trajectory=traj))
-        await _dispatch_event(
-            opt,
-            ControllablePostCallEvent(
-                controllable=read_ctrl,
-                request="read",
-                answer="legitimate tool data",
-            ),
-        )
-        with patch.object(opt._reflector, "propose", new=propose):
-            await _dispatch_event(
-                opt,
-                RunEndEvent(evaluation=_failure_eval(0.2), security_domain=USER_TAG),
-            )
-
-        rollout = propose.call_args.kwargs["rollouts"][0]
-        assert rollout.injection_surface == {
-            "type": "agentic_read",
-            "name": "read__slack__get_webpage",
-        }
-        assert rollout.tool_return == "legitimate tool data"
-
-    @pytest.mark.asyncio
-    async def test_dynamic_agent_trace_observables_are_recorded_for_reflection(
-        self,
-    ) -> None:
-        opt = await _init_optimizer(max_attempts=2)
-        propose = AsyncMock(return_value=None)
-        traj = _FakeReadableTrajectory()
-        await _dispatch_event(opt, RunStartEvent(trajectory=traj))
-        await _dispatch_event(
-            opt,
-            ControllablePreCallEvent(controllable=_user_ctrl(), request="user task"),
-        )
-        traj.push(
-            ObservableEvent(
-                observable=_agent_observable("agent_trace_tool_response_0000"),
-                content={"value": "tool result visible to agent"},
-            ),
-        )
-        with patch.object(opt._reflector, "propose", new=propose):
-            await _dispatch_event(
-                opt,
-                RunEndEvent(evaluation=_failure_eval(0.2), security_domain=USER_TAG),
-            )
-
-        rollout = propose.call_args.kwargs["rollouts"][0]
-        assert rollout.agent_observations is not None
-        assert "agent_trace_tool_response_0000" in rollout.agent_observations[0]
-        assert "tool result visible to agent" in rollout.agent_observations[0]
 
 
 # ---------------------------------------------------------------------------

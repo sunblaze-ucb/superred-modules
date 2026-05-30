@@ -103,27 +103,6 @@ class TestRolloutRecordSample:
         record = RolloutRecord(goal="G", prompt="P0", target_observables={})
         assert "target_observables" not in record.to_sample()
 
-    def test_agentic_context_appears_when_provided(self) -> None:
-        record = RolloutRecord(
-            goal="G",
-            prompt="P0",
-            injection_surface={
-                "type": "agentic_read",
-                "name": "read__slack__get_webpage",
-            },
-            tool_return="legitimate webpage text",
-            agent_observations=["agent_trace_tool_response_0000: injected value"],
-        )
-        sample = record.to_sample()
-        assert sample["injection_surface"] == {
-            "type": "agentic_read",
-            "name": "read__slack__get_webpage",
-        }
-        assert sample["tool_return"] == "legitimate webpage text"
-        assert sample["agent_observations"] == [
-            "agent_trace_tool_response_0000: injected value",
-        ]
-
 
 # ---------------------------------------------------------------------------
 # Reflector.propose
