@@ -143,8 +143,8 @@ class WrappedFunctionsRuntime(FunctionsRuntime):
     Args:
         catalog: The mutable :class:`ToolCatalog` for the run.  Its
             current :meth:`ToolCatalog.functions_for_runtime` populates
-            the underlying ``FunctionsRuntime`` registry; for live
-            catalog edits between turns the caller updates the catalog
+            the underlying ``FunctionsRuntime`` registry; to apply a
+            catalog edit during a run the caller updates the catalog
             and then calls :meth:`refresh_functions` on the wrapper.
         send_event: Async event channel sender (from the
             controller-built middleware pipeline).

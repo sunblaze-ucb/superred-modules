@@ -17,10 +17,11 @@ Lifecycle:
    - Phase 3: apply seed overlays and build a fresh per-run composite
      env + per-run tool catalog.
    - Phase 4: build wrapped runtime + pipeline (the catalog hook fires
-     the four tool-catalog Controllables before every LLM turn) and run
-     the pipeline with up to three attempts, mirroring AgentDojo's outer
-     retry loop.  Only ``AbortAgentError`` (raised by defense
-     pipeline elements) is caught; all other exceptions propagate.
+     the four tool-catalog Controllables once, before the first LLM
+     call) and run the pipeline with up to three attempts, mirroring
+     AgentDojo's outer retry loop.  Only ``AbortAgentError`` (raised by
+     defense pipeline elements) is caught; all other exceptions
+     propagate.
    - Phase 5: emit final observables (composite env snapshot, agent
      trace tool-calls).
 

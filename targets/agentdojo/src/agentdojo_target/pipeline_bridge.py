@@ -4,8 +4,8 @@ Provides two things:
 
 - :func:`build_pipeline` - constructs an :class:`AgentPipeline` for a
   given litellm-style model id (e.g. ``openai/gpt-4o-2024-05-13``),
-  splicing a per-turn :class:`_CatalogEditHook` so the four tool-catalog
-  Controllables fire before every LLM call (including the first one).
+  splicing a :class:`_CatalogEditHook` once so the four tool-catalog
+  Controllables fire a single time, before the first LLM call.
 - :class:`_CatalogEditHook` - a :class:`BasePipelineElement` that fires
   the four catalog Controllables via the sync-to-async bridge, applies
   any returned injections to the :class:`ToolCatalog`, and refreshes the
@@ -66,7 +66,7 @@ logger = logging.getLogger(__name__)
 
 class _CatalogEditHook(BasePipelineElement):
     """Pipeline element that fires the four tool-catalog Controllables
-    before every LLM turn.
+    once, before the first LLM turn.
 
     The hook fires four :class:`ControllablePreCallEvent`s - one per
     catalog operation - in a fixed order (register, replace,
@@ -397,11 +397,13 @@ def build_pipeline(
 ) -> AgentPipeline:
     """Build the AgentDojo :class:`AgentPipeline` for one run.
 
-    Splices two hooks around every LLM call:
+    Splices two hooks into the pipeline:
 
-    - :class:`_CatalogEditHook` (BEFORE the LLM): fires the four
-      tool-catalog Controllables so attacker-scoped optimizers can
-      mutate the catalog at the start of each agent turn.
+    - :class:`_CatalogEditHook` (ONCE, before the first LLM call): fires the
+      four tool-catalog Controllables so attacker-scoped optimizers can mutate
+      the catalog a single time at the start of the run.  It is deliberately
+      NOT placed inside the tool-execution loop, so it does not re-fire on every
+      agent turn (which produced four redundant Controllable events per turn).
     - :class:`_MessageStreamHook` (AFTER the LLM and after the
       ToolsExecutor): emits one ``agent_trace_message_NNNN`` observable
       per new message in the conversation stream.
@@ -413,13 +415,12 @@ def build_pipeline(
         AgentPipeline([
             SystemMessage(system_prompt),
             InitQuery(),
-            CatalogEditHook,             # fires before first LLM turn
+            CatalogEditHook,             # fires ONCE, before the first LLM turn
             llm,                          # first agent turn
             MessageStreamHook,           # emits system+user+first assistant
             ToolsExecutionLoop([
                 ToolsExecutor(formatter),
                 MessageStreamHook,        # emits tool-result messages
-                CatalogEditHook,          # fires before every subsequent turn
                 llm,
                 MessageStreamHook,        # emits the assistant turn output
             ]),
@@ -428,8 +429,13 @@ def build_pipeline(
     The same :class:`_MessageStreamHook` instance is reused across the
     splice points so its ``_next_idx`` cursor advances monotonically
     over the whole conversation -- emitting each message exactly once.
-    Same for the :class:`_CatalogEditHook` (one instance, fires at
-    each splice point).
+    The :class:`_CatalogEditHook` is spliced once, before the first LLM
+    call, so it fires once per pipeline attempt -- exactly once in the
+    normal run.  (AgentDojo's rare empty-output retry re-runs the whole
+    pipeline and re-fires the hook up to 3x; this is safe and intentionally
+    left unguarded, since the catalog persists across attempts and
+    re-applies are idempotent.)  The catalog the optimizer produces then
+    stays fixed for the run.
 
     The wrapped runtime is *not* embedded in the pipeline; it is passed
     per-call to :meth:`AgentPipeline.query` (AgentDojo's design).  The
@@ -446,9 +452,12 @@ def build_pipeline(
         loop=loop,
     )
     # Inner loop: per-turn tool execution -> message-stream emission ->
-    # catalog edit -> next LLM call -> emit the assistant turn output.
+    # next LLM call -> emit the assistant turn output.  The catalog-edit hook
+    # is intentionally NOT spliced into the loop: it fires once before the first
+    # LLM call (in the outer pipeline below), so the optimizer edits the catalog
+    # a single time at the start rather than being re-prompted every turn.
     tools_loop = ToolsExecutionLoop(
-        [ToolsExecutor(), msg_hook, hook, llm, msg_hook],
+        [ToolsExecutor(), msg_hook, llm, msg_hook],
     )
     # Outer: SystemMessage + InitQuery prep messages, then the first LLM
     # call.  msg_hook fires AFTER the first LLM call to capture the
