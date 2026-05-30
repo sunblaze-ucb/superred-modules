@@ -368,7 +368,9 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
             self._apply_reward(node, reward if reward is not None else 0.0)
         if event.evaluation is not None and event.evaluation.success:
             self._succeeded = True
-        if self._selected_surface is None:
+        if self._selected_surface is None or (
+            reward == 0.0 and self._selected_surface.startswith("tool_catalog:")
+        ):
             self._consecutive_no_injection_runs += 1
         else:
             self._consecutive_no_injection_runs = 0
@@ -387,7 +389,6 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         if (
             self._selected_surface is not None
             or not self._surface_rank_allowed(2)
-            or self._effective_tool_catalog_available
             or not self._can_write_system_prompt
             or self._system_prompt_injected
         ):
@@ -425,8 +426,6 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         if (
             self._selected_surface is not None
             or not self._surface_rank_allowed(3)
-            or self._effective_tool_catalog_available
-            or self._can_write_system_prompt
             or self._user_prompt_injected
         ):
             return ControllableNoInjection(event=event, controllable=event.controllable)

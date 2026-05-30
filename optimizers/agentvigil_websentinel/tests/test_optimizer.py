@@ -800,6 +800,75 @@ async def test_user_prompt_fallback_after_advertised_content_surface_is_not_reac
 
 
 @pytest.mark.asyncio
+async def test_failed_tool_catalog_register_allows_prompt_fallback() -> None:
+    opt = AgentVigilWebSentinelOptimizer(
+        seeds=[
+            Seed(id="seed_a", text="A {injection_goal}"),
+            Seed(id="seed_b", text="B {injection_goal}"),
+        ],
+        max_attempts=2,
+        random_seed=0,
+    )
+    await opt.initialize(
+        goal=Goal(description="send the secret token"),
+        controllables=[
+            make_controllable("system_prompt", PROMPT_TAG),
+            make_controllable("user_prompt", USER_TAG),
+            make_controllable(
+                "tool_catalog_register", TOOL_CATALOG_TAG, value_type="json"
+            ),
+        ],
+        observables=[],
+        llm_client=empty_llm(),
+    )
+
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    first_system = await dispatch_event(
+        opt,
+        ControllablePreCallEvent(
+            controllable=make_controllable("system_prompt", PROMPT_TAG),
+            request="default system",
+        ),
+    )
+    first_catalog = await dispatch_event(
+        opt,
+        ControllablePreCallEvent(
+            controllable=make_controllable(
+                "tool_catalog_register", TOOL_CATALOG_TAG, value_type="json"
+            ),
+            request="catalog edit slot",
+        ),
+    )
+    await dispatch_event(
+        opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
+    )
+
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    second_system = await dispatch_event(
+        opt,
+        ControllablePreCallEvent(
+            controllable=make_controllable("system_prompt", PROMPT_TAG),
+            request="default system",
+        ),
+    )
+    second_catalog = await dispatch_event(
+        opt,
+        ControllablePreCallEvent(
+            controllable=make_controllable(
+                "tool_catalog_register", TOOL_CATALOG_TAG, value_type="json"
+            ),
+            request="catalog edit slot",
+        ),
+    )
+
+    assert isinstance(first_system, ControllableNoInjection)
+    assert isinstance(first_catalog, ControllableInjection)
+    assert isinstance(second_system, ControllableInjection)
+    assert isinstance(second_catalog, ControllableNoInjection)
+    assert "send the secret token" in second_system.value
+
+
+@pytest.mark.asyncio
 async def test_best_prompt_surface_is_selected_rather_than_all_prompts() -> None:
     opt = AgentVigilWebSentinelOptimizer(
         seeds=[Seed(id="seed", text="seed {injection_goal}")],
