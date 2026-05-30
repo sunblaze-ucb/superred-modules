@@ -137,8 +137,10 @@ def test_build_pipeline_returns_agentpipeline(loop) -> None:
     assert isinstance(elements[-1], ToolsExecutionLoop)
 
 
-def test_build_pipeline_splices_hook_into_loop(loop) -> None:
-    """Inner loop has [ToolsExecutor, _CatalogEditHook, llm]."""
+def test_build_pipeline_catalog_hook_fires_once_not_in_loop(loop) -> None:
+    """The catalog-edit hook fires ONCE (outer, before the first LLM call) and is
+    NOT spliced into the tool-execution loop, so it does not re-fire every turn.
+    Inner loop is [ToolsExecutor, MessageStreamHook, llm, MessageStreamHook]."""
     catalog = ToolCatalog.from_seed(ALL_FUNCTIONS)
     rec = _Rec()
     wrapper = WrappedFunctionsRuntime(
@@ -155,14 +157,16 @@ def test_build_pipeline_splices_hook_into_loop(loop) -> None:
     elements = list(pipeline.elements)
     tools_loop: ToolsExecutionLoop = elements[-1]
     inner = list(tools_loop.elements)
-    # Inner loop order: ToolsExecutor, MessageStreamHook, CatalogEditHook,
-    # llm, MessageStreamHook (emits the new assistant turn).
+    # Inner loop order: ToolsExecutor, MessageStreamHook, llm, MessageStreamHook
+    # (emits the new assistant turn).  No CatalogEditHook inside the loop.
     assert isinstance(inner[0], ToolsExecutor)
     assert isinstance(inner[1], _MessageStreamHook)
-    assert isinstance(inner[2], _CatalogEditHook)
     assert isinstance(inner[-1], _MessageStreamHook)
-    # inner[-2] is the llm; not asserting concrete type because v1
-    # supports multiple backends.
+    assert not any(isinstance(e, _CatalogEditHook) for e in inner)
+    # Exactly one CatalogEditHook in the whole pipeline: the outer one, spliced
+    # before the first LLM call (elements[2]).
+    assert sum(isinstance(e, _CatalogEditHook) for e in elements) == 1
+    assert isinstance(elements[2], _CatalogEditHook)
 
 
 # ---------------------------------------------------------------------------

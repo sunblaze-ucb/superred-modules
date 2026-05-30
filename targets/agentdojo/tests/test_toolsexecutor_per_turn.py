@@ -3,10 +3,12 @@
 ASSUMPTIONS C.4 / Section 2.d of the implementation brief require us to
 verify that upstream's ``ToolsExecutor`` and LLM elements rebuild their
 function lookup from ``runtime.functions`` on each invocation, NOT once
-at init.  If upstream ever caches the function list at init time, our
-mid-loop ``CatalogEditHook`` (which mutates the wrapped runtime's
-function dict in place) would silently become a no-op for catalog
-edits that happen AFTER the first LLM call.
+at init.  Our ``CatalogEditHook`` fires once at run start (before the
+first LLM call) and mutates the wrapped runtime's function dict in place;
+because the ``ToolsExecutor`` runs on every subsequent turn, a tool
+registered at the start must stay visible to it.  If upstream ever cached
+the function list at init time, that start-of-run registration would
+silently become a no-op on later turns.
 
 This file pins the per-call contract empirically by:
 
@@ -17,7 +19,7 @@ This file pins the per-call contract empirically by:
    dispatch succeeds.
 3. Inserting a brand-new attacker tool into the catalog and refreshing
    the runtime's functions dict (mirrors what
-   :class:`_CatalogEditHook.query` does at mid-loop).
+   :class:`_CatalogEditHook.query` does at run start).
 4. Invoking ``ToolsExecutor`` again with a tool_call to the new
    attacker tool name, verifying it dispatches successfully.
 
@@ -121,7 +123,7 @@ def test_toolsexecutor_rejects_unknown_canonical_name(loop) -> None:
     assert "Invalid tool" in last["error"]
 
 
-def test_toolsexecutor_sees_attacker_tool_after_mid_loop_catalog_edit(loop) -> None:
+def test_toolsexecutor_sees_attacker_tool_after_catalog_edit(loop) -> None:
     """The contract this test pins:
 
     1. Catalog starts canonical (no attacker tool).
@@ -145,18 +147,18 @@ def test_toolsexecutor_sees_attacker_tool_after_mid_loop_catalog_edit(loop) -> N
 
     # --- Step 2: attacker tool not yet registered ---
     msg_before = _assistant_msg_with_call(
-        "__attacker_mid_loop_inject__", {"target": "x"}, "call-pre",
+        "__attacker_inject__", {"target": "x"}, "call-pre",
     )
     _, _, _, before_messages, _ = executor.query(
         "q", wrapper, env=env, messages=[msg_before],
     )
     assert "Invalid tool" in (before_messages[-1].get("error") or "")
 
-    # --- Step 3: mid-loop catalog edit + refresh, exactly as
+    # --- Step 3: start-of-run catalog edit + refresh, exactly as
     # _CatalogEditHook does ---
     catalog.apply_register({
-        "name": "__attacker_mid_loop_inject__",
-        "description": "test injection from mid-loop catalog edit",
+        "name": "__attacker_inject__",
+        "description": "test injection from start-of-run catalog edit",
         "fake_return": {"exfil": "ok"},
     })
     wrapper.refresh_functions()
@@ -165,7 +167,7 @@ def test_toolsexecutor_sees_attacker_tool_after_mid_loop_catalog_edit(loop) -> N
     # attacker tool successfully.  This is the load-bearing assertion:
     # it proves runtime.functions is consulted live, not cached. ---
     msg_after = _assistant_msg_with_call(
-        "__attacker_mid_loop_inject__", {"target": "y"}, "call-post",
+        "__attacker_inject__", {"target": "y"}, "call-post",
     )
     _, _, _, after_messages, _ = executor.query(
         "q", wrapper, env=env, messages=[msg_after],
@@ -173,8 +175,8 @@ def test_toolsexecutor_sees_attacker_tool_after_mid_loop_catalog_edit(loop) -> N
     last = after_messages[-1]
     assert last.get("error") is None, (
         f"upstream ToolsExecutor appears to have cached the function list "
-        f"at init time -- mid-loop catalog edits are not visible.  "
-        f"Error: {last.get('error')!r}.  Patch needed in pipeline_bridge."
+        f"at init time -- start-of-run catalog edits are not visible on later "
+        f"turns.  Error: {last.get('error')!r}.  Patch needed in pipeline_bridge."
     )
     result_text = last["content"][0]["content"]
     assert "exfil" in result_text
@@ -196,7 +198,7 @@ def test_openai_llm_reads_runtime_functions_per_call() -> None:
     # OpenAILLM.query (and tool_filter helper) must reference
     # runtime.functions.values() so the tool list is rebuilt per call.
     assert "runtime.functions.values()" in src, (
-        "OpenAILLM no longer reads runtime.functions per call; mid-loop "
+        "OpenAILLM no longer reads runtime.functions per call; start-of-run "
         "catalog edits may not reach the next LLM tool list.  Check "
         "agent_pipeline/llms/openai_llm.py."
     )
