@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "security-claim-agentharm"
+version = "0.1.0"
+description = "AgentHarm SecurityClaim for superred: faithful port of the harmful test_public split (176 behaviors) against the general inspect-agent target, reusing upstream inspect_evals.agentharm tools/grading/judges. 8 per-category subclaims + total."
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "superred>=0.1.0",
+    "inspect-agent-target",
+    "inspect-ai>=0.3.229,<0.4",
+    "inspect-evals==0.13.1",
+    "huggingface-hub>=1.2",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=6.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/security_claim_agentharm"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "--strict-markers"
+testpaths = ["tests"]
+markers = [
+    "faithfulness: OUR scoring vs upstream combined_scorer (credentials, LLM cost)",
+    "smoke: end-to-end claim + target via the Controller against a real model (credentials)",
+]
+
+[tool.coverage.report]
+fail_under = 90
+
+[tool.mypy]
+strict = true
+python_version = "3.13"
+
+[[tool.mypy.overrides]]
+module = ["inspect_ai.*", "inspect_evals.*", "inspect_agent_target.*"]
+ignore_missing_imports = true
