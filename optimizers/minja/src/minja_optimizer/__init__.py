@@ -7,9 +7,8 @@ from minja_optimizer.prompts import (
     OFFICIAL_RAP_VICTIM_TARGET_PAIRS,
     VictimTargetPair,
     load_official_indication_prompts,
-    load_official_qa_victims,
     load_official_rap_victim_target_pairs,
-    load_official_webshop_instructions,
+    load_official_victim_questions,
 )
 
 __all__ = [
@@ -19,7 +18,6 @@ __all__ = [
     "OFFICIAL_RAP_VICTIM_TARGET_PAIRS",
     "VictimTargetPair",
     "load_official_indication_prompts",
-    "load_official_qa_victims",
     "load_official_rap_victim_target_pairs",
-    "load_official_webshop_instructions",
+    "load_official_victim_questions",
 ]

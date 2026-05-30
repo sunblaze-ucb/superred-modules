@@ -17,6 +17,7 @@ class VictimTargetPair:
 
 
 JsonObject = dict[str, Any]
+QuestionMap = dict[str, tuple[str, ...]]
 
 
 def _load_json(*parts: str) -> Any:
@@ -75,28 +76,39 @@ def load_official_rap_victim_target_pairs() -> tuple[VictimTargetPair, ...]:
 
 
 @lru_cache(maxsize=1)
-def load_official_webshop_instructions() -> tuple[JsonObject, ...]:
-    """Load the official WebShop instruction pool used by the RAP driver."""
+def _load_official_victim_question_map() -> QuestionMap:
+    """Load the official WebShop victim-question subset used by the RAP driver."""
 
-    data = _load_json("rap", "webshop_instructions.json")
+    data = _load_json("rap", "victim_questions.json")
     if not isinstance(data, list):
-        raise TypeError("official MINJA WebShop instruction data must be a list")
-    return tuple(item for item in data if isinstance(item, dict))
-
-
-@lru_cache(maxsize=1)
-def load_official_qa_victims() -> tuple[JsonObject, ...]:
-    """Load the official QA victim-note data for target adapters."""
-
-    data = _load_json("QA", "victim.json")
-    if not isinstance(data, list):
-        raise TypeError("official MINJA QA victim data must be a list")
-    return tuple(item for item in data if isinstance(item, dict))
+        raise TypeError("official MINJA victim-question data must be a list")
+    questions: QuestionMap = {}
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        victim = _string_field(item, "victim")
+        rows = item.get("questions")
+        if not isinstance(rows, list):
+            raise TypeError("official MINJA victim-question rows must be a list")
+        victim_questions: list[str] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            victim_questions.append(_string_field(row, "instruction"))
+        questions[victim] = tuple(victim_questions)
+    return questions
 
 
 OFFICIAL_RAP_VICTIM_TARGET_PAIRS = load_official_rap_victim_target_pairs()
 DEFAULT_PAIR = OFFICIAL_RAP_VICTIM_TARGET_PAIRS[-1]
 DEFAULT_INDICATION_PROMPTS = load_official_indication_prompts()
+
+
+def load_official_victim_questions(pair: VictimTargetPair | str = DEFAULT_PAIR) -> tuple[str, ...]:
+    """Load official WebShop instructions that mention the requested victim term."""
+
+    victim = pair.victim if isinstance(pair, VictimTargetPair) else pair
+    return _load_official_victim_question_map().get(victim, ())
 
 
 def render_indication_prompt(template: str, pair: VictimTargetPair) -> str:
@@ -127,8 +139,7 @@ __all__ = [
     "VictimTargetPair",
     "build_memory_record",
     "load_official_indication_prompts",
-    "load_official_qa_victims",
     "load_official_rap_victim_target_pairs",
-    "load_official_webshop_instructions",
+    "load_official_victim_questions",
     "render_indication_prompt",
 ]

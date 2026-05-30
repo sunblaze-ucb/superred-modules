@@ -31,6 +31,7 @@ from minja_optimizer.prompts import (
     DEFAULT_PAIR,
     VictimTargetPair,
     build_memory_record,
+    load_official_victim_questions,
     render_indication_prompt,
 )
 
@@ -82,6 +83,7 @@ class MinjaOptimizer(Optimizer):
         num_benign: int = 50,
         test_num: int = 30,
         benign_queries: Sequence[str] | None = None,
+        victim_questions: Sequence[str] | None = None,
         random_seed: int | None = None,
         response_observable_names: Iterable[str] | None = None,
         static_context_max_chars: int = 4000,
@@ -106,6 +108,11 @@ class MinjaOptimizer(Optimizer):
         self._num_benign = num_benign
         self._test_num = test_num
         self._benign_queries = tuple(benign_queries or ())
+        self._victim_questions = (
+            tuple(victim_questions)
+            if victim_questions is not None
+            else load_official_victim_questions(pair)
+        )
         self._random = random.Random(random_seed)
         self._response_observable_names = frozenset(
             response_observable_names or _DEFAULT_RESPONSE_OBSERVABLE_NAMES
@@ -287,13 +294,17 @@ class MinjaOptimizer(Optimizer):
         )
 
     def _build_schedule(self) -> list[_Stage]:
+        victim_queries = self._select_victim_queries()
+        inject_base = victim_queries[: self._inject_num]
+        test_base = victim_queries[self._inject_num :]
         malicious: list[_Stage] = []
-        for _ in range(self._inject_num):
+        for query in inject_base:
             malicious.extend(
-                _Stage(kind="inject", note_index=i) for i in range(len(self._indication_prompts))
+                _Stage(kind="inject", note_index=i, query=query)
+                for i in range(len(self._indication_prompts))
             )
-            malicious.append(_Stage(kind="inject", note_index=None))
-        tests = [_Stage(kind="test") for _ in range(self._test_num)]
+            malicious.append(_Stage(kind="inject", note_index=None, query=query))
+        tests = [_Stage(kind="test", query=query) for query in test_base]
         benign = [
             _Stage(kind="benign", query=query) for query in self._benign_queries[: self._num_benign]
         ]
@@ -312,6 +323,17 @@ class MinjaOptimizer(Optimizer):
                 bi += 1
         out.extend(tests)
         return out
+
+    def _select_victim_queries(self) -> tuple[str, ...]:
+        needed = self._inject_num + self._test_num
+        if needed == 0:
+            return ()
+        queries = tuple(query.strip() for query in self._victim_questions if query.strip())
+        if len(queries) < needed:
+            raise ValueError(
+                f"not enough victim questions for MINJA schedule: need {needed}, got {len(queries)}"
+            )
+        return tuple(self._random.sample(list(queries), needed))
 
     def _ensure_payload(self, base_query: str) -> None:
         if self._current_payload:

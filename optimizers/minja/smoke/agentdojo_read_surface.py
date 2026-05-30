@@ -22,6 +22,7 @@ from superred.core.interfaces.target import Target
 from superred.core.interfaces.task import Task
 from superred.core.types.controllable import Controllable
 from superred.core.types.evaluation import EvaluationResult, Score
+from superred.core.types.event import EventHandler, EventResponseHandler
 from superred.core.types.events import (
     ControllableInjection,
     ControllablePostCallEvent,
@@ -96,7 +97,7 @@ class AgentDojoReadSurfaceTarget(Target):
     def get_observables(self) -> list[ObservableValue]:
         return [ObservableValue(MODEL_OBS, "agentdojo-shaped-memory-agent")]
 
-    async def run(self, emit, send_event) -> None:
+    async def run(self, emit: EventHandler, send_event: EventResponseHandler) -> None:
         user_resp = await send_event(
             ControllablePreCallEvent(controllable=USER_CTRL, request=self.user_prompt)
         )
