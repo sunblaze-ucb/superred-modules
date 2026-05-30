@@ -6,7 +6,8 @@ Two main factories:
   optional filtering by goal_id or category.
 - :func:`agentdojo_layer2_category_claim` — per-category roll-up.
 
-The v1 starter catalogue ships 4 goals (one per suite); extending it
+The v1 catalogue ships 19 goals (4 starters, 9 per-suite expansions,
+4 cross-suite, 2 capability-misuse); extending it
 is a matter of adding new ``Layer2GoalSpec`` modules under
 ``layer2_goals/`` and appending them to :data:`GOAL_SPECS`.
 """
