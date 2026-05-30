@@ -62,9 +62,9 @@ category, a sample per category, or one of two disjoint halves of the dataset.
 redistributed, so this module **does not ship the data**. You point it at the
 dataset at runtime (via an environment variable or an automatic download), as the
 module README explains. The judge is configured out-of-band as its own model and
-budget; the benchmark's canonical judge is a specific GPT-4 snapshot, with a
-documented substitute when that exact model is not reachable. Pairs with the
-`chatbot` target.
+budget; the benchmark's canonical judge is a fine-tuned Mistral-7B (heavy,
+needs a GPU), so the module defaults to a GPT-4 snapshot as a practical,
+well-correlated stand-in. Pairs with the `chatbot` target.
 
 ### AgentDojo (`security-claim-agentdojo`)
 
@@ -107,6 +107,6 @@ boundary. Its purpose is to verify the framework's per-boundary score filtering.
 You hand a claim to the framework's Controller along with a target factory, an
 attacker, and a scope; the Controller runs every task and reports which the
 attacker won. For the full picture see the framework's
-[Writing Tasks and Security Claims](../../superred/docs-user/05-writing-tasks.md)
-and [Running Evaluations](../../superred/docs-user/06-running-evaluations.md)
-guides.
+[Task](../../superred/docs/task.md) and
+[SecurityClaim](../../superred/docs/security_claim.md) interface docs, and the
+[Controller](../../superred/docs/controller.md) reference.

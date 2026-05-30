@@ -35,7 +35,7 @@ because some models reject an explicit value). This is the workhorse target for
 the jailbreak and refusal benchmarks.
 
 **Setup.** Construct it with a model name and the API credentials for your LLM
-endpoint: `ChatbotTarget(model="gpt-4o-mini", api_base=..., api_key=...)`. A task
+endpoint: `ChatbotTarget(model="gpt-4o-mini", api_key=..., api_base=...)`. A task
 may set the system prompt before a run.
 
 **Trust boundaries (security domains).** The interesting design choice is that
@@ -74,7 +74,7 @@ The exported tag constants (`USER_TAG`, `SYSTEM_PROMPT_TAG`,
 
 Wraps the agent from the AgentDojo benchmark, a model that completes realistic
 tasks by calling tools across four domains at once (banking, a workspace,
-Slack, and travel, around 74 tools combined). It tracks a pinned benchmark
+Slack, and travel, 74 tools combined). It tracks a pinned benchmark
 version. This is the target for studying **prompt-injection against agents**:
 attacks that ride in on the data the agent reads while doing its job.
 
@@ -141,4 +141,4 @@ Every evaluation runs at a chosen scope (a set of these boundary tags). Scoping
 narrowly (`{user}`) models a weak, realistic attacker; scoping to a root tag
 models a worst-case attacker who controls everything under it. For the full
 treatment of how to choose and combine boundaries, see the framework's
-[Security Domains guide](../../superred/docs-user/07-security-domains.md).
+[security-domains reference](../../superred/docs/types.md).

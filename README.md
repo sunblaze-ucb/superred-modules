@@ -109,4 +109,4 @@ them per target.
 
 For how these modules plug into the framework (the Target/Optimizer/Task/
 SecurityClaim interfaces and the Controller), see the framework's
-[user guide](../superred/docs-user/README.md).
+[architecture overview](../superred/docs/architecture.md).

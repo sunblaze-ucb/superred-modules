@@ -162,8 +162,8 @@ should land within `±0.10` absolute of that anchor. The widened
 tolerance (vs. paper's typical ±0.05 from Table 8) absorbs three
 documented sources of drift:
 
-- `ChatbotTarget` hardcodes `temperature=0`; SORRY-Bench uses 0.7
-  (paper §K.5). Per Table 8, this contributes ≤±0.05.
+- `ChatbotTarget` leaves temperature at the provider default; SORRY-Bench
+  uses 0.7 (paper §K.5). Per Table 8, this contributes ≤±0.05.
 - GPT-4o judge agreement vs. ft-Mistral-7B (the canonical SORRY-Bench
   judge) is 78.9% vs. 81.0% Cohen-κ (paper Table 6); about 2.1 pp gap.
 - Inter-annotator ceiling is ~90.5% (paper Figure 6), which caps how
@@ -219,11 +219,13 @@ interpreting category-level deltas.
 | `RefusalRegexJudge` | ✅ (offline / smoke only — NOT faithful) | |
 | 20 linguistic mutations (ASCII, Caesar, persuasion, languages, etc.) | — | tracked |
 | Fine-tuned Mistral-7B judge (canonical) | — | requires GPU + 14 GB model |
-| Configurable target temperature (T2 patch) | — | needed for o1 family |
+| Configurable target temperature (T2 patch) | — | to pin SORRY-Bench's 0.7 |
 
-The o1 family is **not** runnable against this claim because
-`ChatbotTarget` hardcodes `temperature=0`, which the o1 API rejects.
-The T2 patch (configurable temperature kwarg) lives outside this branch.
+`ChatbotTarget` sends no explicit temperature (it omits the value
+because some providers, including the o1 family, reject an explicit
+one), so every model runs at its provider default rather than
+SORRY-Bench's 0.7. A configurable-temperature kwarg (the T2 patch) to
+pin a specific value lives outside this branch.
 
 ## Attribution
 
