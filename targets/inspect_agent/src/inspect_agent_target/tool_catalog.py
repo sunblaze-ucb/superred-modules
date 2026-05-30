@@ -16,6 +16,7 @@ names via the target's resolver.
 
 from __future__ import annotations
 
+import keyword
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -49,16 +50,22 @@ def _canned_tool(return_value: Any, params: ToolParams) -> Callable[..., Any]:
     schema's property names (typed from the schema, each optional), and which
     ignores them and returns the canned value.
     """
+    # The exec source is assembled only from validated identifiers (param names)
+    # and type tokens from the fixed _JSON_TO_PY allowlist; the canned value is
+    # passed via the namespace, never interpolated into the source. Param names
+    # that are not identifiers or are Python keywords (e.g. "class") are dropped
+    # so the synthesised def cannot become malformed. So no attacker-controlled
+    # string reaches the compiled code.
     parts: list[str] = []
     for name, schema in params.properties.items():
-        if not name.isidentifier():
+        if not name.isidentifier() or keyword.iskeyword(name):
             continue
         jtype = getattr(schema, "type", None)
         pytype = _JSON_TO_PY.get(jtype, "str") if isinstance(jtype, str) else "str"
         parts.append(f"{name}: {pytype} = None")
     src = f"async def _canned({', '.join(parts)}) -> str:\n    return _RETVAL\n"
     namespace: dict[str, Any] = {"_RETVAL": str(return_value)}
-    exec(src, namespace)  # noqa: S102 - fixed-return stub with a schema-shaped signature
+    exec(src, namespace)  # noqa: S102 - see safety note above
     return namespace["_canned"]  # type: ignore[no-any-return]
 
 

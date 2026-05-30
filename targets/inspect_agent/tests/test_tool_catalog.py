@@ -136,3 +136,22 @@ async def test_registered_tool_executes_via_execute_tools() -> None:
     tool_msgs = [m for m in res.messages if m.role == "tool"]
     assert tool_msgs and tool_msgs[0].error is None
     assert tool_msgs[0].text == "PWNED"
+
+
+def test_register_with_python_keyword_param_does_not_crash() -> None:
+    cat = ToolCatalog.seed(_resolver, [])
+    # a schema property named after a Python keyword ("class") must not break
+    # the synthesised stub; it is dropped from the signature, not interpolated.
+    cat.apply_register(
+        {
+            "name": "kw",
+            "description": "d",
+            "parameters_schema": {
+                "type": "object",
+                "properties": {"class": {"type": "string", "description": "c"}},
+            },
+            "fake_return": "ok",
+        }
+    )
+    assert "kw" in cat.names()
+    assert cat.tools()  # building the tool does not raise
