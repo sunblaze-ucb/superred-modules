@@ -27,7 +27,7 @@ completion), which is orthogonal to injection benchmarks like AgentDojo. See
 
 ```python
 from superred.core.controller import Controller
-from inspect_agent_target import USER_TAG, SYSTEM_PROMPT_TAG, TOOLS_TAG, AGENT_TRACE_TAG, MODEL_IDENTITY_TAG
+from inspect_agent_target import USER_TAG, SYSTEM_TAG, TOOL_OUTPUT_TAG
 from security_claim_agentharm import agentharm_total_claim, agentharm_target_factory, aggregate
 
 MODEL = "openai/gpt-4o-2024-08-06"
@@ -36,7 +36,8 @@ controller = Controller(
     optimizer_factory=MyAttackerOrPassthrough,
     target_factory=agentharm_target_factory(target_model=MODEL, api_base=PROXY, api_key=KEY),
     security_claim=claim,
-    scope=frozenset({USER_TAG, SYSTEM_PROMPT_TAG, TOOLS_TAG, MODEL_IDENTITY_TAG, AGENT_TRACE_TAG}),
+    # the three root tags = the full attacker surface; narrow per experiment.
+    scope=frozenset({USER_TAG, SYSTEM_TAG, TOOL_OUTPUT_TAG}),
 )
 result = await controller.run()
 metrics = aggregate([tr.best_evaluation for tr in result.task_results])
