@@ -61,9 +61,11 @@ catalogue is seeded from the static `tool_names` config), plus a
   `security_domain_filter` middleware gates injection by scope, so an out-of-scope
   optimizer simply receives no-injection. The target's job is to expose the
   surface; the experiment designer's scope decides exposure to the optimizer.
-- Scopes mirror AgentDojo: register is `tools_addable` (weakest write), the other
-  three and the static tool set are `tools` (broad); the listing is
-  `tools_readable`. Broad implies the children.
+- Scopes mirror AgentDojo: register is `tool_catalogue_addable` (weakest write),
+  the other three and the static tool set are `tool_catalogue` (broad); the
+  listing is `tool_catalogue_readable`. Broad implies the children. The
+  `tool_catalogue` tag lives under the `system` umbrella root, alongside
+  `system_prompt`, `model_identity`, and `agent_trace`.
 - Initial tools remain a static Task config (`tool_names`); the catalogue is
   seeded from them each run and edited only by accepted injections.
 - **Faithfulness-safe**: a passthrough optimizer (the AgentHarm baseline) injects
@@ -73,3 +75,24 @@ catalogue is seeded from the static `tool_names` config), plus a
 - Registered/replaced tools are built with `ToolDef` from an attacker-supplied
   name/description/JSON-Schema params and a canned-return body; malformed payloads
   are logged and ignored (never abort the run).
+
+## H. Tool-output Controllable (indirect prompt injection, fired per result)
+The target exposes one `tool_output` Controllable (scope `tool_output`, its own
+root tree) fired as a `ControllablePostCallEvent` after **each** tool result.
+Design points:
+
+- **Post-call only, one per result.** The event carries the tool's legitimate
+  return as `answer` and the tool name as `request`. A `ControllableInjection`
+  replaces the content the agent sees; a no-injection (or out-of-scope filter)
+  leaves it verbatim. Pre-call request tampering is deliberately *not* a separate
+  controllable: the tools here are side-effect-free (canned returns / read-only
+  benchmark tools), so executing the call and then rewriting its whole return is
+  indistinguishable from first rewriting the request then rewriting the return.
+  One post-call surface subsumes both, with less event noise.
+- Fired **unconditionally**; the Controller's `security_domain_filter` gates
+  injection by scope, exactly like the catalogue controllables.
+- The agent-visible value (after any injection) is mirrored to the
+  `agent_trace_tool_response_NNNN` observable (scope `agent_trace_tool_responses`),
+  so a read-scoped optimizer sees exactly what the agent saw.
+- **Faithfulness-safe**: a passthrough optimizer injects nothing, so every tool
+  return reaches the agent unchanged and AgentHarm baselines are unaffected.

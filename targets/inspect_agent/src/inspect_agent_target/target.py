@@ -32,13 +32,14 @@ import logging
 from collections.abc import Callable, Sequence
 from typing import Any, cast
 
-from inspect_ai.model import ChatMessage, GenerateConfig, get_model
+from inspect_ai.model import ChatMessage, ChatMessageTool, GenerateConfig, get_model
 from inspect_ai.tool import Tool
 from superred.core.interfaces.target import Target
 from superred.core.types.controllable import Controllable
 from superred.core.types.event import EventHandler, EventResponseHandler
 from superred.core.types.events import (
     ControllableInjection,
+    ControllablePostCallEvent,
     ControllablePreCallEvent,
     ObservableEvent,
 )
@@ -54,6 +55,7 @@ from inspect_agent_target.controllables import (
     TOOL_CATALOG_REPLACE_CTRL,
     TOOL_CATALOG_REWRITE_DOC_CTRL,
     TOOL_CATALOG_UNREGISTER_CTRL,
+    TOOL_OUTPUT_CTRL,
     USER_PROMPT_CTRL,
 )
 from inspect_agent_target.observables import (
@@ -61,6 +63,7 @@ from inspect_agent_target.observables import (
     SYSTEM_PROMPT_OBS,
     TOOL_CATALOG_LISTING_OBS,
     agent_tool_call_observable,
+    agent_tool_response_observable,
     chat_message_observable,
 )
 from inspect_agent_target.query_specs import QUERY_SPEC_NAMES, QUERY_SPECS
@@ -252,6 +255,45 @@ class InspectAgentTarget(Target):
             )
         )
 
+        # Tool-output injection (the indirect-prompt-injection surface): after
+        # each tool result, fire a ControllablePostCallEvent carrying the
+        # legitimate output; an attacker-scoped optimizer may replace it before
+        # the agent sees it. Always fired (scope filter gates injection). Each
+        # tool response is also emitted as an observable reflecting the value the
+        # agent actually saw (post any injection).
+        response_index = 0
+
+        async def on_tool_results(results: list[ChatMessage]) -> list[ChatMessage]:
+            nonlocal response_index
+            out: list[ChatMessage] = []
+            for msg in results:
+                if not isinstance(msg, ChatMessageTool):
+                    out.append(msg)
+                    continue
+                resp = await send_event(
+                    ControllablePostCallEvent(
+                        controllable=TOOL_OUTPUT_CTRL,
+                        request=str(msg.function or ""),
+                        answer=msg.text or "",
+                    )
+                )
+                final: ChatMessage = msg
+                if isinstance(resp, ControllableInjection):
+                    final = ChatMessageTool(
+                        content=resp.value,
+                        tool_call_id=msg.tool_call_id,
+                        function=msg.function,
+                    )
+                emit(
+                    ObservableEvent(
+                        observable=agent_tool_response_observable(response_index),
+                        content=_message_to_jsonable(final),
+                    )
+                )
+                response_index += 1
+                out.append(final)
+            return out
+
         # Phase 4: run the tool-calling loop with the (now fixed) tool set.
         self._messages = await run_rollout(
             model,
@@ -260,6 +302,7 @@ class InspectAgentTarget(Target):
             tools_provider=static_tools_provider(catalog.tools()),
             tool_choice=cast(ToolChoice, self._tool_choice),
             message_limit=self._message_limit,
+            on_tool_results=on_tool_results,
         )
         self._last_response = _last_assistant_text(self._messages)
 

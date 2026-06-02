@@ -6,7 +6,7 @@ import json
 
 import pytest
 from inspect_ai.model import ChatMessageAssistant, ChatMessageTool, ChatMessageUser
-from inspect_ai.tool import ToolCall
+from inspect_ai.tool import Tool, ToolCall, tool
 
 from inspect_agent_target import (
     CONTROLLABLES,
@@ -55,6 +55,19 @@ class _FakeModel:
         return _Out(msg)
 
 
+@tool
+def _echo() -> Tool:
+    async def execute(text: str) -> str:
+        """Echo the text back.
+
+        Args:
+            text: the text to echo
+        """
+        return f"REAL:{text}"
+
+    return execute
+
+
 # --- specs / domain / controllables ---------------------------------------
 
 
@@ -82,6 +95,7 @@ def test_controllables_and_domain() -> None:
         "tool_catalog_replace",
         "tool_catalog_unregister",
         "tool_catalog_rewrite_doc",
+        "tool_output",
     ]
     assert SYSTEM_PROMPT_CTRL in CONTROLLABLES and USER_PROMPT_CTRL in CONTROLLABLES
     assert t.security_domain is DOMAIN
@@ -255,12 +269,13 @@ async def test_run_user_prompt_injection(monkeypatch: pytest.MonkeyPatch) -> Non
     # Capture the user prompt the rollout actually uses.
     orig_run_rollout = target_mod.run_rollout
 
-    async def spy_rollout(model, *, system_prompt, user_prompt, tools_provider, tool_choice, message_limit):  # noqa: ANN001
+    async def spy_rollout(model, *, system_prompt, user_prompt, tools_provider, tool_choice, message_limit, on_tool_results=None):  # noqa: ANN001
         captured["user"] = user_prompt
         captured["system"] = system_prompt
         return await orig_run_rollout(
             model, system_prompt=system_prompt, user_prompt=user_prompt,
-            tools_provider=tools_provider, tool_choice=tool_choice, message_limit=message_limit,
+            tools_provider=tools_provider, tool_choice=tool_choice,
+            message_limit=message_limit, on_tool_results=on_tool_results,
         )
 
     monkeypatch.setattr(target_mod, "run_rollout", spy_rollout)
@@ -302,3 +317,38 @@ async def test_run_catalog_register_injection(monkeypatch: pytest.MonkeyPatch) -
     await t.run(lambda e: None, send_event)
     assert t._catalog is not None
     assert "injected_tool" in t._catalog.names()
+
+
+@pytest.mark.asyncio
+async def test_run_tool_output_injection(monkeypatch: pytest.MonkeyPatch) -> None:
+    # turn 1 calls _echo (executed for real), turn 2 answers.
+    fake = _FakeModel(
+        [
+            ChatMessageAssistant(
+                content="",
+                tool_calls=[ToolCall(id="1", function="_echo", arguments={"text": "hi"})],
+            ),
+            ChatMessageAssistant(content="done"),
+        ]
+    )
+    monkeypatch.setattr(target_mod, "get_model", lambda *a, **k: fake)
+
+    t = InspectAgentTarget(model="m", tool_resolver=lambda n: _echo(), api_base="b", api_key="k")
+    t.set_config("user_prompt", "UP")
+    t.set_config("tool_names", '["_echo"]')
+
+    async def send_event(event):  # noqa: ANN001
+        ctrl = getattr(event, "controllable", None)
+        if ctrl is not None and ctrl.name == "tool_output":
+            return ControllableInjection(
+                event=event, controllable=ctrl, value="INJECTED-OUTPUT"
+            )
+        return ControllableNoInjection(event=event, controllable=event.controllable)
+
+    await t.run(lambda e: None, send_event)
+    hist = json.loads(t.query("conversation_history"))
+    tool_msgs = [m for m in hist if m.get("role") == "tool"]
+    assert tool_msgs, "no tool result message in trace"
+    content = str(tool_msgs[0].get("content"))
+    assert "INJECTED-OUTPUT" in content  # attacker replaced the tool's real return
+    assert "REAL:hi" not in content

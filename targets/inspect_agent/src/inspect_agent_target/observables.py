@@ -16,9 +16,10 @@ from superred.core.types.observable import Observable
 from inspect_agent_target.security_tags import (
     AGENT_TRACE_MESSAGES_TAG,
     AGENT_TRACE_TOOL_CALLS_TAG,
+    AGENT_TRACE_TOOL_RESPONSES_TAG,
     MODEL_IDENTITY_TAG,
     SYSTEM_PROMPT_READABLE_TAG,
-    TOOLS_READABLE_TAG,
+    TOOL_CATALOGUE_READABLE_TAG,
 )
 
 MODEL_IDENTITY_OBS: Observable = Observable(
@@ -37,7 +38,7 @@ SYSTEM_PROMPT_OBS: Observable = Observable(
 
 TOOL_CATALOG_LISTING_OBS: Observable = Observable(
     name="tool_catalog_listing",
-    security_domain=TOOLS_READABLE_TAG,
+    security_domain=TOOL_CATALOGUE_READABLE_TAG,
     description=(
         "JSON snapshot of the current tool catalogue: a list of "
         "{name, description, parameters_schema} entries.  Re-emitted each turn "
@@ -73,6 +74,20 @@ def agent_tool_call_observable(call_index: int) -> Observable:
     )
 
 
+def agent_tool_response_observable(response_index: int) -> Observable:
+    """Observable for a single tool return value the agent observed.
+
+    Carries the output *after* any tool-output injection has been applied, so an
+    optimizer scoped to read tool responses sees exactly what the agent saw.
+    """
+    return Observable(
+        name=f"agent_trace_tool_response_{response_index:04d}",
+        security_domain=AGENT_TRACE_TOOL_RESPONSES_TAG,
+        description=f"One tool return value the agent observed (position {response_index}).",
+        observable_type="json",
+    )
+
+
 __all__ = [
     "MODEL_IDENTITY_OBS",
     "SYSTEM_PROMPT_OBS",
@@ -80,4 +95,5 @@ __all__ = [
     "STATIC_OBSERVABLE_SPECS",
     "chat_message_observable",
     "agent_tool_call_observable",
+    "agent_tool_response_observable",
 ]

@@ -32,6 +32,9 @@ from inspect_ai.tool import Tool
 ToolChoice = Literal["auto", "any", "none"]
 
 ToolsProvider = Callable[[], Awaitable[Sequence[Tool]]]
+# Hook called with the tool-result messages of a turn; returns the messages the
+# agent will actually see next (possibly with attacker-injected output).
+ToolResultsHook = Callable[[list[ChatMessage]], Awaitable[Sequence[ChatMessage]]]
 
 
 def static_tools_provider(tools: Sequence[Tool]) -> ToolsProvider:
@@ -52,6 +55,7 @@ async def run_rollout(
     tools_provider: ToolsProvider,
     tool_choice: ToolChoice = "auto",
     message_limit: int,
+    on_tool_results: ToolResultsHook | None = None,
 ) -> list[ChatMessage]:
     """Run the tool-calling loop and return the full message list.
 
@@ -64,6 +68,9 @@ async def run_rollout(
             for that turn's generation and tool execution.
         tool_choice: one of "auto", "any", "none".
         message_limit: cap on total messages (system + user + assistant + tool).
+        on_tool_results: optional async hook called with each turn's tool-result
+            messages; returns the messages the agent actually sees next. This is
+            the seam for tool-output injection (attacker tampering with returns).
 
     Returns:
         The full ``list[ChatMessage]`` produced by the rollout.
@@ -82,11 +89,20 @@ async def run_rollout(
         # execute_tools runs the last assistant message's tool calls against the
         # SAME tools the model saw this turn and returns the tool-result messages.
         result = await execute_tools(messages, tools)
-        messages.extend(result.messages)
+        tool_results = list(result.messages)
+        if on_tool_results is not None:
+            tool_results = list(await on_tool_results(tool_results))
+        messages.extend(tool_results)
         if len(messages) >= message_limit:
             break
 
     return messages
 
 
-__all__ = ["run_rollout", "static_tools_provider", "ToolChoice", "ToolsProvider"]
+__all__ = [
+    "run_rollout",
+    "static_tools_provider",
+    "ToolChoice",
+    "ToolsProvider",
+    "ToolResultsHook",
+]

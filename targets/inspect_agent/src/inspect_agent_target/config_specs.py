@@ -22,7 +22,8 @@ from superred.core.types.state import ConfigSpec
 from inspect_agent_target.security_tags import (
     MODEL_IDENTITY_TAG,
     SYSTEM_PROMPT_TAG,
-    TOOLS_TAG,
+    SYSTEM_TAG,
+    TOOL_CATALOGUE_TAG,
     USER_TAG,
 )
 
@@ -47,7 +48,7 @@ USER_PROMPT_SPEC: ConfigSpec = ConfigSpec(
 
 TOOL_NAMES_SPEC: ConfigSpec = ConfigSpec(
     name="tool_names",
-    security_domain=TOOLS_TAG,
+    security_domain=TOOL_CATALOGUE_TAG,
     description=(
         "JSON-encoded list[str] of tool names to expose for this run.  Each "
         "name is resolved to an inspect Tool via the resolver the target was "
@@ -57,13 +58,13 @@ TOOL_NAMES_SPEC: ConfigSpec = ConfigSpec(
 
 TOOL_CHOICE_SPEC: ConfigSpec = ConfigSpec(
     name="tool_choice",
-    security_domain=TOOLS_TAG,
+    security_domain=TOOL_CATALOGUE_TAG,
     description="Tool choice: one of 'auto', 'any', 'none' (default 'auto').",
 )
 
 MESSAGE_LIMIT_SPEC: ConfigSpec = ConfigSpec(
     name="message_limit",
-    security_domain=TOOLS_TAG,
+    security_domain=SYSTEM_TAG,
     description=(
         "Integer (as string) cap on total messages in the rollout.  Empty "
         "string uses the target's construction default."
