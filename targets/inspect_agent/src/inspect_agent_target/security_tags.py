@@ -13,8 +13,10 @@ includes all its descendants, so the Controller can scope broadly or narrowly).
       ``tool_catalogue_readable`` (read the listing) and
       ``tool_catalogue_addable`` (register-only, the weakest write).
     - ``model_identity``: which model powers the agent.
-    - ``agent_trace`` (read the run trace) -> ``agent_trace_messages``,
-      ``agent_trace_tool_calls``, ``agent_trace_tool_responses``.
+    - ``agent_trace`` (read the run trace) -> ``agent_trace_messages`` (the full
+      transcript), which subsumes the two narrower projections it embeds:
+      ``agent_trace_tool_calls`` and ``agent_trace_tool_responses`` (siblings;
+      a call's args and a return value are disjoint, so neither subsumes the other).
 - ``user``: the user-prompt channel (the jailbreak / prompt-attack surface).
 - ``tools``: one write surface per tool the agent can call.  Injecting here
   replaces what that tool returns to the agent (indirect prompt injection).
@@ -86,23 +88,30 @@ MODEL_IDENTITY_TAG: SecurityDomainTag = SecurityDomainTag(
 # --- agent trace (read access) ---------------------------------------------
 
 AGENT_TRACE_TAG: SecurityDomainTag = SecurityDomainTag("agent_trace", parent=SYSTEM_TAG)
-"""Aggregate read access to the agent's run trace.  Implies the children."""
+"""Aggregate read access to the agent's run trace.  Implies everything below."""
 
 AGENT_TRACE_MESSAGES_TAG: SecurityDomainTag = SecurityDomainTag(
     "agent_trace_messages", parent=AGENT_TRACE_TAG,
 )
-"""Read access to the agent's chat-message stream."""
+"""Read access to the agent's full chat-message transcript.  The transcript
+embeds the tool calls (as fields on assistant messages) and the tool responses
+(as tool messages), so this tag *subsumes* its two children -- a scope holding
+``agent_trace_messages`` can already read both projections."""
 
 AGENT_TRACE_TOOL_CALLS_TAG: SecurityDomainTag = SecurityDomainTag(
-    "agent_trace_tool_calls", parent=AGENT_TRACE_TAG,
+    "agent_trace_tool_calls", parent=AGENT_TRACE_MESSAGES_TAG,
 )
-"""Read access to the tool calls the agent emits."""
+"""Narrow read: only the tool calls the agent emits (function + arguments).  A
+projection of the transcript; sibling of (not nested under)
+:data:`AGENT_TRACE_TOOL_RESPONSES_TAG` -- a call's arguments and a return value
+are disjoint, so neither subsumes the other."""
 
 AGENT_TRACE_TOOL_RESPONSES_TAG: SecurityDomainTag = SecurityDomainTag(
-    "agent_trace_tool_responses", parent=AGENT_TRACE_TAG,
+    "agent_trace_tool_responses", parent=AGENT_TRACE_MESSAGES_TAG,
 )
-"""Read access to the tool return values the agent observes (after any
-tool-output injection has been applied)."""
+"""Narrow read: only the tool return values the agent observes (after any
+tool-output injection has been applied).  A projection of the transcript;
+sibling of :data:`AGENT_TRACE_TOOL_CALLS_TAG`."""
 
 # ===========================================================================
 # Tree 2: user (the user-prompt channel)

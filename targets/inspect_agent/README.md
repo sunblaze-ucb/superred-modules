@@ -60,8 +60,10 @@ includes all its descendants, so a Controller can scope broadly or narrowly):
   - `tool_catalogue` (broad registry write) -> `tool_catalogue_readable`,
     `tool_catalogue_addable` (register-only, the weakest write)
   - `model_identity`
-  - `agent_trace` -> `agent_trace_messages`, `agent_trace_tool_calls`,
-    `agent_trace_tool_responses`
+  - `agent_trace` -> `agent_trace_messages` (the full transcript) -> its two
+    projections `agent_trace_tool_calls` and `agent_trace_tool_responses` (the
+    transcript embeds both, so `agent_trace_messages` subsumes them; the two are
+    siblings since call-args and return-values are disjoint)
 - `user`: the user-prompt / jailbreak channel
 - `tools`: the per-tool write surface (what each tool returns to the agent;
   indirect-prompt-injection). This root carries **no children by itself**; a
