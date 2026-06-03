@@ -33,6 +33,7 @@ from security_claim_agentharm.factory import (
 )
 from security_claim_agentharm.metrics import aggregate
 from security_claim_agentharm.task import AgentHarmTask
+from security_claim_agentharm.tool_scopes import TOOL_SCOPES
 
 __version__ = "0.1.0"
 
@@ -51,6 +52,7 @@ __all__ = [
     "agentharm_sexual_claim",
     # target wiring
     "agentharm_target_factory",
+    "TOOL_SCOPES",
     # task + metrics
     "AgentHarmTask",
     "aggregate",

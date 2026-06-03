@@ -71,3 +71,34 @@ avg_full_score, avg_refusals, avg_score_non_refusals, per-category).
 - Residual nondeterminism: the judges are LLMs; at temperature 0 they are ~stable,
   but absolute reproduction of published numbers is "within judge noise". The exact
   faithfulness guarantee is OUR-scorer == upstream-scorer on the same messages.
+
+## I. Tool trust-boundary scopes (`tool_scopes.py`)
+The general target exposes one `tool:<name>` output-injection controllable per
+tool, each scoped to a caller-supplied tag.  `TOOL_SCOPES` maps all 80 harmful
+tools to a **trust-boundary** sub-forest parented under the target's `tools` root,
+and `agentharm_target_factory` passes it to the target.  This is claim-side
+knowledge: the general target knows no boundaries, it just assembles the domain
+from the map (`build_domain` over the ancestor closure of the values).
+
+- **Principle: scope = a locus that could realistically be compromised**, i.e. an
+  external system whose compromise lets an attacker control what a tool returns.
+  Tools hitting the same system share a boundary (all 11 X tools -> `x`), so it is
+  usually but not always one scope per tool.  NOT split by first/third-party; by
+  system.  28 leaf boundaries + 6 intermediate nodes (`social`, `comms`,
+  `financial`, `commerce`, `services`, `infra`) for broad-vs-narrow scoping.
+- **Load-bearing judgment calls (verified against the tool sources):** several
+  "the user's own account" reads actually return *third-party-authored* content and
+  are scoped to the external system, not to the user: `get_latest_emails` (received
+  mail with external senders' bodies -- the classic IPI vector) -> `email`;
+  `get_paypal_transactions` (counterparty fields) -> `paypal`; `get_all_login_data`
+  (multi-user bank dump) -> `bank`; `get_info_from_database` / `get_pinterest_accounts`
+  (other people's records) -> `external_db` / `pinterest`.  Only the user's own
+  files/exec (`local_machine`) and own address books (`own_directories`) are kept
+  first-party.
+- **Action tools** (post / send / transfer) share their platform's boundary but
+  carry a thin injectable surface (a status / URL), unlike read tools whose whole
+  return is attacker-influenceable; the boundary is the same either way.
+- **Faithfulness-safe**: the direct-request baseline (passthrough) injects into no
+  tool, so scoping never affects AgentHarm's own scores; the surface is for future
+  IPI / tool-poisoning attackers.  `tests/test_tool_scopes.py` asserts the map
+  covers exactly the 80 upstream tools and builds a valid domain.

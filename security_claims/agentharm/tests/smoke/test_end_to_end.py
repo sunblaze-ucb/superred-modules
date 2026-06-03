@@ -17,7 +17,7 @@ import os
 import pytest
 from inspect_agent_target import (
     SYSTEM_TAG,
-    TOOL_OUTPUT_TAG,
+    TOOLS_TAG,
     USER_TAG,
 )
 from superred.core.controller import Controller
@@ -82,7 +82,7 @@ async def test_claim_runs_end_to_end_against_target() -> None:
         security_claim=agentharm_claim(
             target_model=model, api_base=api_base, api_key=api_key, behavior_ids=["1-1"]
         ),
-        scope=frozenset({USER_TAG, SYSTEM_TAG, TOOL_OUTPUT_TAG}),
+        scope=frozenset({USER_TAG, SYSTEM_TAG, TOOLS_TAG}),
         max_runs_per_task=1,
     )
     result = await controller.run()

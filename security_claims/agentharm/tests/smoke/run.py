@@ -26,7 +26,7 @@ import sys
 
 from inspect_agent_target import (
     SYSTEM_TAG,
-    TOOL_OUTPUT_TAG,
+    TOOLS_TAG,
     USER_TAG,
 )
 from superred.core.controller import Controller
@@ -103,7 +103,7 @@ async def main() -> int:
             target_model=model, api_base=api_base, api_key=api_key, concurrency=2
         ),
         security_claim=claim,
-        scope=frozenset({USER_TAG, SYSTEM_TAG, TOOL_OUTPUT_TAG}),
+        scope=frozenset({USER_TAG, SYSTEM_TAG, TOOLS_TAG}),
         max_runs_per_task=1,
     )
     result = await controller.run()

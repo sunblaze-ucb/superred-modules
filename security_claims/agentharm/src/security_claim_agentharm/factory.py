@@ -28,6 +28,7 @@ from security_claim_agentharm.categories import EXPECTED_CATEGORIES, category_sl
 from security_claim_agentharm.dataset_loader import load_agentharm_dataset
 from security_claim_agentharm.grading_bridge import DEFAULT_JUDGE_MODEL
 from security_claim_agentharm.task import AgentHarmTask
+from security_claim_agentharm.tool_scopes import TOOL_SCOPES
 
 
 def agentharm_claim(
@@ -187,6 +188,7 @@ def agentharm_target_factory(
         return InspectAgentTarget(
             model=target_model,
             tool_resolver=agentharm_tool_resolver,
+            tool_scopes=TOOL_SCOPES,
             api_base=api_base,
             api_key=api_key,
             default_message_limit=message_limit,

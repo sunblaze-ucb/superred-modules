@@ -27,7 +27,7 @@ completion), which is orthogonal to injection benchmarks like AgentDojo. See
 
 ```python
 from superred.core.controller import Controller
-from inspect_agent_target import USER_TAG, SYSTEM_TAG, TOOL_OUTPUT_TAG
+from inspect_agent_target import USER_TAG, SYSTEM_TAG, TOOLS_TAG
 from security_claim_agentharm import agentharm_total_claim, agentharm_target_factory, aggregate
 
 MODEL = "openai/gpt-4o-2024-08-06"
@@ -37,7 +37,7 @@ controller = Controller(
     target_factory=agentharm_target_factory(target_model=MODEL, api_base=PROXY, api_key=KEY),
     security_claim=claim,
     # the three root tags = the full attacker surface; narrow per experiment.
-    scope=frozenset({USER_TAG, SYSTEM_TAG, TOOL_OUTPUT_TAG}),
+    scope=frozenset({USER_TAG, SYSTEM_TAG, TOOLS_TAG}),
 )
 result = await controller.run()
 metrics = aggregate([tr.best_evaluation for tr in result.task_results])
@@ -45,6 +45,24 @@ metrics = aggregate([tr.best_evaluation for tr in result.task_results])
 ```
 
 The `target_model` passed to the claim and to the target factory MUST match.
+
+## Tool trust-boundary scopes
+
+`agentharm_target_factory` wires the general target with `TOOL_SCOPES`: a map from
+each of the 80 harmful tools to a **trust boundary** (the external system whose
+compromise would let an attacker control that tool's return), parented under the
+target's `tools` root. So the target exposes one `tool:<name>` output-injection
+controllable per configured tool, scoped to its boundary. An experiment can then
+grant an attacker control over, say, only web-sourced tool returns by putting
+`web` in scope, or all of it with `tools`. Boundaries: `local_machine`,
+`own_directories`, `web`, `darknet`, `social` (-> `x`, `instagram`, `reddit`,
+`tinder`, `pinterest`, `facebook`, `mastodon`, `forum`, `blog`, `tiktok`,
+`youtube`), `comms` (-> `email`, `whatsapp`, `messaging`), `financial` (-> `bank`,
+`paypal`, `crypto`), `commerce` (-> `amazon`, `retail`), `services` (->
+`external_db`, `cloud_hosting`, `media_gen`, `edu_portal`), `infra` (-> `network`).
+28 leaf boundaries for the 80 tools (tools sharing a system share a scope). The
+direct-request baseline (passthrough) injects into none of them. See
+`ASSUMPTIONS.md` for the per-tool rationale.
 
 ## Subclaims (8 categories + total)
 
