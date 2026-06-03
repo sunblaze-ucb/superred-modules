@@ -76,19 +76,31 @@ catalogue is seeded from the static `tool_names` config), plus a
   name/description/JSON-Schema params and a canned-return body; malformed payloads
   are logged and ignored (never abort the run).
 
-## H. Tool-output Controllable (indirect prompt injection, fired per result)
-The target exposes one `tool_output` Controllable (scope `tool_output`, its own
-root tree) fired as a `ControllablePostCallEvent` after **each** tool result.
-Design points:
+## H. Per-tool output Controllables (indirect prompt injection, scoped by trust boundary)
+For each configured tool the target exposes one `tool:<name>` Controllable, fired
+as a `ControllablePostCallEvent` after **that** tool returns.  Design points:
 
-- **Post-call only, one per result.** The event carries the tool's legitimate
-  return as `answer` and the tool name as `request`. A `ControllableInjection`
-  replaces the content the agent sees; a no-injection (or out-of-scope filter)
-  leaves it verbatim. Pre-call request tampering is deliberately *not* a separate
-  controllable: the tools here are side-effect-free (canned returns / read-only
-  benchmark tools), so executing the call and then rewriting its whole return is
-  indistinguishable from first rewriting the request then rewriting the return.
-  One post-call surface subsumes both, with less event noise.
+- **One controllable per tool, post-call only.** The event carries the tool's
+  legitimate return as `answer` and the tool name as `request`. A
+  `ControllableInjection` replaces the content the agent sees; a no-injection (or
+  out-of-scope filter) leaves it verbatim. Pre-call request tampering is
+  deliberately *not* a separate controllable: the tools here are side-effect-free
+  (canned returns / read-only benchmark tools), so executing the call and then
+  rewriting its whole return is indistinguishable from first rewriting the request
+  then rewriting the return. One post-call surface per tool subsumes both.
+- **Scoped by trust boundary, not one tag per tool.** Each `tool:<name>` is scoped
+  to `tool_scopes[name]` -- a claim-supplied leaf of a trust-boundary sub-forest
+  parented under the `tools` root (e.g. `web`, `social`, `financial`). The
+  *principle* is "scopes where content could realistically be compromised"; tools
+  hitting the same external system share a scope (so it is often, but not always,
+  one scope per tool). The general target knows none of these boundaries; it just
+  accepts the map and assembles the domain via `build_domain` (the ancestor
+  closure of the map's values, plus the fixed trees). Unmapped tools fall back to
+  the bare `tools` root.
+- `tools` (the per-tool *returned content*) is distinct from `tool_catalogue`
+  (the *registry*: which tools exist and their docs). The `tool_catalog_replace`
+  catalogue edit overlaps with a `tool:<name>` injection for shadowing a return,
+  but register/unregister/rewrite-doc do not; the two surfaces are kept separate.
 - Fired **unconditionally**; the Controller's `security_domain_filter` gates
   injection by scope, exactly like the catalogue controllables.
 - The agent-visible value (after any injection) is mirrored to the

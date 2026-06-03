@@ -10,9 +10,9 @@ from inspect_ai.tool import Tool, ToolCall, tool
 
 from inspect_agent_target import (
     CONTROLLABLES,
-    DOMAIN,
     InspectAgentTarget,
     SYSTEM_PROMPT_CTRL,
+    TOOLS_TAG,
     USER_PROMPT_CTRL,
 )
 from inspect_agent_target import target as target_mod
@@ -26,6 +26,7 @@ from superred.core.types.events import (
     ControllableInjection,
     ControllableNoInjection,
 )
+from superred.core.types.security_domain import SecurityDomainTag
 
 
 def _make_target() -> InspectAgentTarget:
@@ -88,6 +89,7 @@ def test_query_specs_names() -> None:
 
 def test_controllables_and_domain() -> None:
     t = _make_target()
+    # No tools configured -> just the fixed controllables.
     assert [c.name for c in t.get_controllables()] == [
         "system_prompt",
         "user_prompt",
@@ -95,10 +97,37 @@ def test_controllables_and_domain() -> None:
         "tool_catalog_replace",
         "tool_catalog_unregister",
         "tool_catalog_rewrite_doc",
-        "tool_output",
     ]
     assert SYSTEM_PROMPT_CTRL in CONTROLLABLES and USER_PROMPT_CTRL in CONTROLLABLES
-    assert t.security_domain is DOMAIN
+    # Default domain (no tool scopes): the three fixed roots.
+    assert {r.name for r in t.security_domain.roots} == {"system", "user", "tools"}
+
+
+def test_per_tool_output_controllables_unmapped_fall_back_to_tools_root() -> None:
+    t = _make_target()
+    t.set_config("tool_names", '["alpha", "beta"]')
+    names = [c.name for c in t.get_controllables()]
+    # One tool:<name> output controllable per configured tool, after the fixed set.
+    assert names[-2:] == ["tool:alpha", "tool:beta"]
+    tool_ctrls = [c for c in t.get_controllables() if c.name.startswith("tool:")]
+    assert all(c.security_domain is TOOLS_TAG for c in tool_ctrls)
+
+
+def test_tool_scopes_scope_per_tool_controllables_and_domain() -> None:
+    web = SecurityDomainTag("web_test", parent=TOOLS_TAG)
+    t = InspectAgentTarget(
+        model="m",
+        tool_resolver=lambda n: None,  # type: ignore[arg-type,return-value]
+        api_base="b",
+        api_key="k",
+        tool_scopes={"alpha": web},
+    )
+    t.set_config("tool_names", '["alpha", "beta"]')
+    by_name = {c.name: c for c in t.get_controllables()}
+    assert by_name["tool:alpha"].security_domain is web  # mapped to its boundary
+    assert by_name["tool:beta"].security_domain is TOOLS_TAG  # unmapped fallback
+    # The mapped boundary tag is part of the assembled domain.
+    assert "web_test" in t.security_domain._tags
 
 
 def test_observables_reflect_config() -> None:
@@ -339,7 +368,7 @@ async def test_run_tool_output_injection(monkeypatch: pytest.MonkeyPatch) -> Non
 
     async def send_event(event):  # noqa: ANN001
         ctrl = getattr(event, "controllable", None)
-        if ctrl is not None and ctrl.name == "tool_output":
+        if ctrl is not None and ctrl.name == "tool:_echo":
             return ControllableInjection(
                 event=event, controllable=ctrl, value="INJECTED-OUTPUT"
             )

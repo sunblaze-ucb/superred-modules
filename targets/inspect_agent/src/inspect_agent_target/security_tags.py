@@ -1,31 +1,36 @@
 """SecurityDomain forest for the general inspect-agent target.
 
-Structured in the AgentDojo style: three independent root trees, with
-capability subsumption encoded by the parent/child hierarchy (a scope holding a
-parent tag includes all its descendants, so the Controller can scope broadly or
-narrowly).
+Structured in the AgentDojo style: independent root trees, with capability
+subsumption encoded by the parent/child hierarchy (a scope holding a parent tag
+includes all its descendants, so the Controller can scope broadly or narrowly).
 
 - ``system``: agent-side surfaces (everything the agent IS / how it is
   configured / its own trace).  An attacker with ``system`` holds every
   agent-side capability below it.
     - ``system_prompt`` (writable) -> ``system_prompt_readable`` (read-only).
-    - ``tool_catalogue`` (broad registry write: set tools / replace / unregister
-      / rewrite-description) -> ``tool_catalogue_readable`` (read the listing) and
+    - ``tool_catalogue`` (the *registry*: which tools exist and their docs;
+      broad write = set tools / replace / unregister / rewrite-description) ->
+      ``tool_catalogue_readable`` (read the listing) and
       ``tool_catalogue_addable`` (register-only, the weakest write).
     - ``model_identity``: which model powers the agent.
     - ``agent_trace`` (read the run trace) -> ``agent_trace_messages``,
       ``agent_trace_tool_calls``, ``agent_trace_tool_responses``.
 - ``user``: the user-prompt channel (the jailbreak / prompt-attack surface).
-- ``tool_output``: the content tools return to the agent.  Injecting here
-  replaces a tool's return value before the agent sees it -- the indirect-
-  prompt-injection surface (poisoning data the agent reads).  This is the
-  analogue of AgentDojo's tool-content surface; the *read* side lives under
+- ``tools``: one write surface per tool the agent can call.  Injecting here
+  replaces what that tool returns to the agent (indirect prompt injection).
+  The ``tools`` root carries NO children by itself; a SecurityClaim supplies a
+  per-tool *trust-boundary* sub-forest (e.g. web / social / financial) parented
+  under ``tools``, plus a tool->tag map, via the target constructor.  With no
+  claim-supplied scopes every tool falls back to the bare ``tools`` root.  The
+  *read* side of a tool return lives under
   ``agent_trace.agent_trace_tool_responses``.
 
 Each tag is a module-level singleton so ``scope_includes`` compares by identity.
 """
 
 from __future__ import annotations
+
+from collections.abc import Iterable
 
 from superred.core.types.security_domain import SecurityDomain, SecurityDomainTag
 
@@ -56,7 +61,8 @@ TOOL_CATALOGUE_TAG: SecurityDomainTag = SecurityDomainTag(
 """Broad tool-registry write: set the initial tool set and perform any catalogue
 edit (replace / unregister / rewrite-description).  Implies the read-only
 :data:`TOOL_CATALOGUE_READABLE_TAG` and the register-only
-:data:`TOOL_CATALOGUE_ADDABLE_TAG`."""
+:data:`TOOL_CATALOGUE_ADDABLE_TAG`.  This is the *registry* (which tools exist),
+distinct from :data:`TOOLS_TAG` (what a tool returns)."""
 
 TOOL_CATALOGUE_READABLE_TAG: SecurityDomainTag = SecurityDomainTag(
     "tool_catalogue_readable", parent=TOOL_CATALOGUE_TAG,
@@ -107,20 +113,24 @@ USER_TAG: SecurityDomainTag = SecurityDomainTag("user")
 prompt set by the Task (jailbreak surface)."""
 
 # ===========================================================================
-# Tree 3: tool_output (content tools return to the agent)
+# Tree 3: tools (per-tool returned-content write surface)
 # ===========================================================================
 
-TOOL_OUTPUT_TAG: SecurityDomainTag = SecurityDomainTag("tool_output")
-"""The content tools return to the agent.  An attacker with this replaces a
-tool's return value before the agent sees it -- indirect prompt injection.
-Distinct from ``tool_catalogue`` (the registry: which tools exist): this is the
-*content* the tools return.  The read side is ``agent_trace_tool_responses``."""
+TOOLS_TAG: SecurityDomainTag = SecurityDomainTag("tools")
+"""Root of the per-tool write surface: injecting under here replaces what a tool
+returns to the agent (indirect prompt injection).  Distinct from
+``tool_catalogue`` (the *registry*: which tools exist and their docs); ``tools``
+is the *returned content*.  The root carries no children on its own -- a
+SecurityClaim parents a per-tool trust-boundary sub-forest under it (see
+:func:`build_domain`) and maps each tool to a leaf.  With no claim-supplied
+sub-forest every tool falls back to this bare root.  Read side:
+``agent_trace_tool_responses``."""
 
 # ===========================================================================
 # Assembled forest
 # ===========================================================================
 
-DOMAIN: SecurityDomain = SecurityDomain([
+FIXED_TAGS: tuple[SecurityDomainTag, ...] = (
     # system tree
     SYSTEM_TAG,
     SYSTEM_PROMPT_TAG, SYSTEM_PROMPT_READABLE_TAG,
@@ -130,10 +140,45 @@ DOMAIN: SecurityDomain = SecurityDomain([
     AGENT_TRACE_MESSAGES_TAG, AGENT_TRACE_TOOL_CALLS_TAG, AGENT_TRACE_TOOL_RESPONSES_TAG,
     # user tree
     USER_TAG,
-    # tool-output tree
-    TOOL_OUTPUT_TAG,
-])
-"""The full security-domain forest exposed by :class:`InspectAgentTarget`."""
+    # tools root (children are claim-supplied)
+    TOOLS_TAG,
+)
+"""Every tag the target always exposes, independent of any claim's tool scopes."""
+
+
+def tool_tag_closure(tags: Iterable[SecurityDomainTag]) -> list[SecurityDomainTag]:
+    """Collect *tags* plus every ancestor up to (but excluding) :data:`TOOLS_TAG`.
+
+    A claim supplies a tool->tag map whose values are leaves of a trust-boundary
+    sub-forest parented under ``tools``.  To assemble a valid
+    :class:`SecurityDomain` the target needs those leaves *and* their intermediate
+    parents; this returns that closure (deduped by name -- ``tools`` itself is
+    already in :data:`FIXED_TAGS`).
+    """
+    seen: dict[str, SecurityDomainTag] = {}
+    for tag in tags:
+        cur: SecurityDomainTag | None = tag
+        while cur is not None and cur is not TOOLS_TAG:
+            seen[cur.name] = cur
+            cur = cur.parent
+    return list(seen.values())
+
+
+def build_domain(extra_tool_tags: Iterable[SecurityDomainTag] = ()) -> SecurityDomain:
+    """Assemble the full forest: the fixed trees plus a claim's tool sub-forest.
+
+    *extra_tool_tags* are the trust-boundary tags (leaves and/or intermediate
+    nodes) a SecurityClaim parents under :data:`TOOLS_TAG`.  The ancestor closure
+    is taken automatically, so passing just the leaf tags (e.g. a tool->tag map's
+    values) is enough.
+    """
+    return SecurityDomain([*FIXED_TAGS, *tool_tag_closure(extra_tool_tags)])
+
+
+DOMAIN: SecurityDomain = build_domain()
+"""The default forest (no claim tool scopes): the fixed trees plus the bare
+``tools`` root.  A target constructed with a tool->tag map exposes a richer
+domain via :func:`build_domain`."""
 
 
 __all__ = [
@@ -149,6 +194,9 @@ __all__ = [
     "AGENT_TRACE_TOOL_CALLS_TAG",
     "AGENT_TRACE_TOOL_RESPONSES_TAG",
     "USER_TAG",
-    "TOOL_OUTPUT_TAG",
+    "TOOLS_TAG",
+    "FIXED_TAGS",
+    "tool_tag_closure",
+    "build_domain",
     "DOMAIN",
 ]

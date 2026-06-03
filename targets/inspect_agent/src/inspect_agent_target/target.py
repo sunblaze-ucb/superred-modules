@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, cast
 
 from inspect_ai.model import ChatMessage, ChatMessageTool, GenerateConfig, get_model
@@ -44,7 +44,7 @@ from superred.core.types.events import (
     ObservableEvent,
 )
 from superred.core.types.observable import ObservableValue
-from superred.core.types.security_domain import SecurityDomain
+from superred.core.types.security_domain import SecurityDomain, SecurityDomainTag
 from superred.core.types.state import ConfigSpec, QuerySpec
 
 from inspect_agent_target.config_specs import CONFIG_SPEC_NAMES, CONFIG_SPECS
@@ -55,8 +55,8 @@ from inspect_agent_target.controllables import (
     TOOL_CATALOG_REPLACE_CTRL,
     TOOL_CATALOG_REWRITE_DOC_CTRL,
     TOOL_CATALOG_UNREGISTER_CTRL,
-    TOOL_OUTPUT_CTRL,
     USER_PROMPT_CTRL,
+    tool_output_controllable,
 )
 from inspect_agent_target.observables import (
     MODEL_IDENTITY_OBS,
@@ -68,7 +68,7 @@ from inspect_agent_target.observables import (
 )
 from inspect_agent_target.query_specs import QUERY_SPEC_NAMES, QUERY_SPECS
 from inspect_agent_target.rollout import ToolChoice, run_rollout, static_tools_provider
-from inspect_agent_target.security_tags import DOMAIN
+from inspect_agent_target.security_tags import TOOLS_TAG, build_domain
 from inspect_agent_target.tool_catalog import ToolCatalog
 
 logger = logging.getLogger(__name__)
@@ -90,6 +90,11 @@ class InspectAgentTarget(Target):
         tool_resolver: maps a tool name to an inspect ``Tool``.  This is the
             benchmark-specific seam: a SecurityClaim supplies a resolver that
             wraps its tool module (e.g. AgentHarm's harmful tools).
+        tool_scopes: optional map from tool name to its trust-boundary
+            SecurityDomainTag (a leaf under the ``tools`` root, claim-supplied).
+            Each configured tool gets a ``tool:<name>`` output-injection
+            controllable scoped to its tag; unmapped tools fall back to the bare
+            ``tools`` root.  The target's security domain is assembled from these.
         api_base: optional API base URL (e.g. a litellm proxy).
         api_key: optional API key.
         default_message_limit: default cap on total messages per rollout.
@@ -103,6 +108,7 @@ class InspectAgentTarget(Target):
         *,
         model: str,
         tool_resolver: ToolResolver,
+        tool_scopes: Mapping[str, SecurityDomainTag] | None = None,
         api_base: str | None = None,
         api_key: str | None = None,
         default_message_limit: int = _DEFAULT_MESSAGE_LIMIT,
@@ -111,6 +117,8 @@ class InspectAgentTarget(Target):
     ) -> None:
         self._model_id = model
         self._tool_resolver = tool_resolver
+        self._tool_scopes: dict[str, SecurityDomainTag] = dict(tool_scopes or {})
+        self._domain: SecurityDomain = build_domain(self._tool_scopes.values())
         self._api_base = api_base
         self._api_key = api_key
         self._default_message_limit = default_message_limit
@@ -184,10 +192,20 @@ class InspectAgentTarget(Target):
 
     @property
     def security_domain(self) -> SecurityDomain:
-        return DOMAIN
+        return self._domain
 
     def get_controllables(self) -> list[Controllable]:
-        return list(CONTROLLABLES)
+        return [
+            *CONTROLLABLES,
+            *(self._tool_output_ctrl(name) for name in self._tool_names),
+        ]
+
+    def _tool_output_ctrl(self, tool_name: str) -> Controllable:
+        """The per-tool output-injection Controllable, scoped to the tool's trust
+        boundary (claim-supplied) or the bare ``tools`` root if unmapped."""
+        return tool_output_controllable(
+            tool_name, self._tool_scopes.get(tool_name, TOOLS_TAG)
+        )
 
     def get_observables(self) -> list[ObservableValue]:
         try:
@@ -255,12 +273,12 @@ class InspectAgentTarget(Target):
             )
         )
 
-        # Tool-output injection (the indirect-prompt-injection surface): after
-        # each tool result, fire a ControllablePostCallEvent carrying the
-        # legitimate output; an attacker-scoped optimizer may replace it before
-        # the agent sees it. Always fired (scope filter gates injection). Each
-        # tool response is also emitted as an observable reflecting the value the
-        # agent actually saw (post any injection).
+        # Per-tool output injection (the indirect-prompt-injection surface):
+        # after each tool result, fire THAT tool's ControllablePostCallEvent
+        # carrying the legitimate output; an attacker scoped to the tool's trust
+        # boundary may replace it before the agent sees it. Always fired (scope
+        # filter gates injection). Each tool response is also emitted as an
+        # observable reflecting the value the agent actually saw (post injection).
         response_index = 0
 
         async def on_tool_results(results: list[ChatMessage]) -> list[ChatMessage]:
@@ -270,10 +288,11 @@ class InspectAgentTarget(Target):
                 if not isinstance(msg, ChatMessageTool):
                     out.append(msg)
                     continue
+                fn = str(msg.function or "")
                 resp = await send_event(
                     ControllablePostCallEvent(
-                        controllable=TOOL_OUTPUT_CTRL,
-                        request=str(msg.function or ""),
+                        controllable=self._tool_output_ctrl(fn),
+                        request=fn,
                         answer=msg.text or "",
                     )
                 )

@@ -63,12 +63,16 @@ includes all its descendants, so a Controller can scope broadly or narrowly):
   - `agent_trace` -> `agent_trace_messages`, `agent_trace_tool_calls`,
     `agent_trace_tool_responses`
 - `user`: the user-prompt / jailbreak channel
-- `tool_output`: the content tools return to the agent (indirect-prompt-injection
-  surface); the read side is `agent_trace_tool_responses`
+- `tools`: the per-tool write surface (what each tool returns to the agent;
+  indirect-prompt-injection). This root carries **no children by itself**; a
+  SecurityClaim parents a per-tool trust-boundary sub-forest under it (e.g.
+  `web` / `social` / `financial`) and maps each tool to a leaf, via the
+  `tool_scopes` constructor argument. With no map every tool falls back to the
+  bare `tools` root. The read side is `agent_trace_tool_responses`.
 
 A SecurityClaim pins its Scores to whichever tag matches its threat model, and an
-experiment's Controller scope picks which roots an attacker may touch. The three
-roots together (`{user, system, tool_output}`) are the full attacker surface.
+experiment's Controller scope picks which tags an attacker may touch. The three
+roots together (`{user, system, tools}`) are the full attacker surface.
 
 ## Tool-catalogue attack surface
 
@@ -89,18 +93,25 @@ catalogue is exposed via the `tool_catalog_listing` observable
 a passthrough optimizer leaves the catalogue untouched (so faithful benchmark
 baselines are unaffected).
 
-## Tool-output attack surface
+## Per-tool output attack surface
 
-After **each** tool call, the target fires a `tool_output` `ControllablePostCallEvent`
-(scope `tool_output`) carrying the tool's legitimate return as the event's
-`answer` (the tool name is in `request`). An attacker-scoped optimizer may respond
-with a `ControllableInjection` to replace the value the agent sees -- the indirect
--prompt-injection surface (poisoning tool-returned data). Because the canned/real
-tool is always executed first and only its return is rewritten, a single post-call
-controllable subsumes pre-call request tampering for side-effect-free tools. The
-agent-visible value (post-injection) is mirrored to the
-`agent_trace_tool_response_NNNN` observable. A passthrough optimizer leaves every
-return untouched.
+For **every configured tool** the target exposes one `tool:<name>` Controllable,
+scoped to that tool's trust boundary (`tool_scopes[name]`, or the bare `tools`
+root if unmapped). After **each** tool call it fires that tool's
+`ControllablePostCallEvent` carrying the legitimate return as the event's `answer`
+(tool name in `request`); an attacker-scoped optimizer may respond with a
+`ControllableInjection` to replace the value the agent sees -- the
+indirect-prompt-injection surface (poisoning tool-returned data). Because the
+canned/real tool is always executed first and only its return is rewritten, a
+single post-call controllable per tool subsumes pre-call request tampering for
+side-effect-free tools. The agent-visible value (post-injection) is mirrored to
+the `agent_trace_tool_response_NNNN` observable. A passthrough optimizer leaves
+every return untouched.
+
+Scoping by tool means an experiment can grant an attacker control over, say, only
+web-sourced tool returns by putting a single trust-boundary tag in scope; tools
+sharing a boundary share a scope. `tools` (per-tool *returned content*) is
+distinct from `tool_catalogue` (the *registry*: which tools exist).
 
 Note: AgentDojo fires its equivalent catalogue hook before *every* LLM turn; this
 target deliberately fires once at the start to avoid per-turn event noise (the

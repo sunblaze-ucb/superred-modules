@@ -29,7 +29,7 @@ from inspect_agent_target import (
     MODEL_IDENTITY_TAG,
     SYSTEM_PROMPT_TAG,
     TOOL_CATALOGUE_TAG,
-    TOOL_OUTPUT_TAG,
+    TOOLS_TAG,
     USER_TAG,
 )
 from superred.core.controller import Controller, TargetFactory
@@ -143,7 +143,7 @@ class _OutputInjector(_BaseOpt):
     async def on_event(self, event: Event) -> EventResponse:
         if (
             isinstance(event, ControllablePostCallEvent)
-            and event.controllable.name == "tool_output"
+            and event.controllable.name == "tool:get_balance"
         ):
             return ControllableInjection(
                 event=event, controllable=event.controllable, value=SHADOW_BALANCE
@@ -189,11 +189,11 @@ async def _run(optimizer_cls: type[Optimizer], scope: set) -> tuple[str, list[st
 
 
 _FULL = {
-    USER_TAG, SYSTEM_PROMPT_TAG, TOOL_CATALOGUE_TAG, TOOL_OUTPUT_TAG,
+    USER_TAG, SYSTEM_PROMPT_TAG, TOOL_CATALOGUE_TAG, TOOLS_TAG,
     MODEL_IDENTITY_TAG, AGENT_TRACE_TAG,
 }
 _NO_TOOLS = _FULL - {TOOL_CATALOGUE_TAG}
-_NO_TOOL_OUTPUT = _FULL - {TOOL_OUTPUT_TAG}
+_NO_TOOL_OUTPUT = _FULL - {TOOLS_TAG}
 
 
 @pytest.mark.asyncio

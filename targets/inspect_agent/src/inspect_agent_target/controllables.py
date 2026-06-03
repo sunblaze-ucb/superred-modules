@@ -1,26 +1,32 @@
-"""Controllable singletons exposed by :class:`InspectAgentTarget`.
+"""Controllable singletons + builders exposed by :class:`InspectAgentTarget`.
 
-The generic agent target exposes two injection points, fired as
-``ControllablePreCallEvent``s at run start:
+Fixed injection points (module-level singletons):
 
-- ``user_prompt`` (scope ``user``): override the user instruction the Task
-  set.  This is the jailbreak / prompt-attack surface.
-- ``system_prompt`` (scope ``system_prompt``): override the agent system
-  prompt the Task set.
+- ``user_prompt`` (scope ``user``): override the user instruction the Task set.
+  This is the jailbreak / prompt-attack surface.
+- ``system_prompt`` (scope ``system_prompt``): override the agent system prompt.
+- four ``tool_catalog_*`` controllables: edit the tool *registry* (which tools
+  exist / their docs), fired once at run start.
 
-A passthrough optimizer (no injection) leaves both at the Task-configured
+Per-tool injection points (built dynamically by the target):
+
+- one ``tool:<name>`` controllable per configured tool, scoped to that tool's
+  trust boundary, fired as a ``ControllablePostCallEvent`` after the tool
+  returns.  See :func:`tool_output_controllable`.
+
+A passthrough optimizer (no injection) leaves everything at the Task-configured
 values, which for a faithful benchmark port reproduces its baseline.
 """
 
 from __future__ import annotations
 
 from superred.core.types.controllable import Controllable
+from superred.core.types.security_domain import SecurityDomainTag
 
 from inspect_agent_target.security_tags import (
     SYSTEM_PROMPT_TAG,
     TOOL_CATALOGUE_ADDABLE_TAG,
     TOOL_CATALOGUE_TAG,
-    TOOL_OUTPUT_TAG,
     USER_TAG,
 )
 
@@ -39,13 +45,14 @@ USER_PROMPT_CTRL: Controllable = Controllable(
 )
 
 # ---------------------------------------------------------------------------
-# Tool-catalogue controllables (fired before every LLM turn).
+# Tool-catalogue controllables (the registry: which tools exist; fired once).
 #
 # The target ALWAYS fires these; the Controller's security_domain_filter
 # decides whether a given optimizer (by scope) may actually inject.  Scopes:
 # register is the weakest (TOOL_CATALOGUE_ADDABLE_TAG); replace/unregister/
 # rewrite are broad (TOOL_CATALOGUE_TAG).  Initial tools are still configured
-# statically by the Task.
+# statically by the Task.  Distinct from the per-tool ``tool:<name>`` output
+# controllables below (the registry vs the content a tool returns).
 # ---------------------------------------------------------------------------
 
 TOOL_CATALOG_REGISTER_CTRL: Controllable = Controllable(
@@ -95,31 +102,50 @@ TOOL_CATALOG_CTRLS: tuple[Controllable, ...] = (
 )
 
 # ---------------------------------------------------------------------------
-# Tool-output controllable (the indirect-prompt-injection surface).
+# Per-tool output controllables (the indirect-prompt-injection surface).
 #
-# Fired as a ControllablePostCallEvent after EACH tool result, carrying the
-# tool's legitimate return as ``answer``. A ControllableInjection replaces the
-# return value the agent sees, so an attacker can poison tool-returned data.
+# One Controllable per tool the agent can call, fired as a
+# ControllablePostCallEvent after that tool returns, carrying the tool's
+# legitimate return as ``answer``.  A ControllableInjection replaces what the
+# agent sees, so an attacker can poison the data a specific tool returns.  Each
+# is scoped to the tool's *trust boundary* (a claim-supplied tag under the
+# ``tools`` root); tools sharing a boundary share a scope.  Post-call only: the
+# tools are side-effect-free, so rewriting the whole return subsumes pre-call
+# request tampering.
 # ---------------------------------------------------------------------------
 
-TOOL_OUTPUT_CTRL: Controllable = Controllable(
-    name="tool_output",
-    security_domain=TOOL_OUTPUT_TAG,
-    description=(
-        "Replace the return value of a tool call before the agent sees it "
-        "(indirect prompt injection). Fired once per tool result; the event's "
-        "answer carries the legitimate output and request carries the tool name."
-    ),
-    value_type="text",
-)
+
+def tool_output_controllable(
+    tool_name: str, security_domain: SecurityDomainTag
+) -> Controllable:
+    """Build the per-tool output-injection Controllable for *tool_name*.
+
+    Named ``tool:<tool_name>`` and scoped to *security_domain* (the tool's trust
+    boundary).  ``Controllable`` is a frozen, value-equal dataclass, so building
+    this for the same ``(tool_name, security_domain)`` always yields an equal
+    instance -- the target can rebuild it at fire time and the optimizer still
+    matches the controllable it saw in ``get_controllables``.
+    """
+    return Controllable(
+        name=f"tool:{tool_name}",
+        security_domain=security_domain,
+        description=(
+            f"Replace the value the {tool_name!r} tool returns to the agent "
+            "(indirect prompt injection). Fired once per call to this tool; the "
+            "event's answer carries the legitimate output."
+        ),
+        value_type="text",
+    )
+
 
 CONTROLLABLES: list[Controllable] = [
     SYSTEM_PROMPT_CTRL,
     USER_PROMPT_CTRL,
     *TOOL_CATALOG_CTRLS,
-    TOOL_OUTPUT_CTRL,
 ]
-"""Every Controllable the target exposes, in stable order."""
+"""The fixed Controllables the target always exposes, in stable order.  The
+per-tool ``tool:<name>`` controllables are appended by the target, built from the
+configured tool set + the claim's tool->tag map."""
 
 
 __all__ = [
@@ -130,6 +156,6 @@ __all__ = [
     "TOOL_CATALOG_UNREGISTER_CTRL",
     "TOOL_CATALOG_REWRITE_DOC_CTRL",
     "TOOL_CATALOG_CTRLS",
-    "TOOL_OUTPUT_CTRL",
+    "tool_output_controllable",
     "CONTROLLABLES",
 ]
