@@ -287,3 +287,98 @@ async def test_static_tool_catalog_selects_official_victim() -> None:
 
     assert isinstance(tool_resp, ControllableInjection)
     assert json.loads(tool_resp.value)["victim_tool"] == "brave_search"
+
+
+@pytest.mark.asyncio
+async def test_skill_catalog_register_uses_official_helper_and_skill_payload() -> None:
+    opt = ChordXTHPOptimizer(
+        victim_tool_name="brave_search",
+        direction="predecessor",
+        enabled_attacks=("hijack",),
+        max_attempts=1,
+    )
+    await opt.initialize(
+        Goal(description="test Chord skill-layer hijack"),
+        [ctrl("skill_catalog_register")],
+        [],
+        LLMClient._make_noop(),
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    skill_resp = await dispatch(
+        opt,
+        ControllablePreCallEvent(
+            controllable=ctrl("skill_catalog_register"),
+            request="{}",
+        ),
+    )
+
+    assert isinstance(skill_resp, ControllableInjection)
+    payload = json.loads(skill_resp.value)
+    assert payload["name"] == "QueryFormatter"
+    assert payload["skill_name"] == "QueryFormatter"
+    assert payload["victim_skill"] == "brave_search"
+    assert "brave_search" in payload["preprocess_src"]
+    assert "Chord/XTHP" in payload["body"]
+    assert payload["xthp"]["direction"] == "predecessor"
+
+
+@pytest.mark.asyncio
+async def test_skill_call_prefix_is_scored_like_tool_call() -> None:
+    opt = ChordXTHPOptimizer(
+        victim_tool_name="brave_search",
+        direction="predecessor",
+        enabled_attacks=("hijack",),
+        max_attempts=1,
+    )
+    await opt.initialize(
+        Goal(description="test Chord skill-layer hijack"),
+        [ctrl("skill_catalog_register")],
+        [],
+        LLMClient._make_noop(),
+    )
+    trajectory = Trajectory()
+    await dispatch(opt, RunStartEvent(trajectory=trajectory))
+    trajectory.emit(
+        ControllablePostCallEvent(
+            controllable=ctrl("skill_call:QueryFormatter", TOOLS_TAG, "text"),
+            request='{"input_query":"latest election results"}',
+            answer="Done",
+        )
+    )
+    trajectory.emit(
+        ControllablePostCallEvent(
+            controllable=ctrl("skill_call:brave_search", TOOLS_TAG, "text"),
+            request='{"query":"latest election results"}',
+            answer="search results",
+        )
+    )
+
+    end = await dispatch(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
+
+    assert isinstance(end, RunEndResponse)
+    assert end.done is True
+
+
+@pytest.mark.asyncio
+async def test_static_skill_catalog_selects_official_victim() -> None:
+    opt = ChordXTHPOptimizer(direction="predecessor", enabled_attacks=("hijack",), max_attempts=1)
+    catalog = [{"name": "brave_search", "description": "Search the web."}]
+    await opt.initialize(
+        Goal(description="test Chord skill-layer hijack"),
+        [ctrl("skill_catalog_register")],
+        [obs("skill_catalog_listing", catalog)],
+        LLMClient._make_noop(),
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    skill_resp = await dispatch(
+        opt,
+        ControllablePreCallEvent(
+            controllable=ctrl("skill_catalog_register"),
+            request="{}",
+        ),
+    )
+
+    assert isinstance(skill_resp, ControllableInjection)
+    assert json.loads(skill_resp.value)["victim_skill"] == "brave_search"

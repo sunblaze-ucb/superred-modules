@@ -17,6 +17,7 @@ This module implements Chord's Cross-Tool Harvesting and Polluting attack for Su
 - Chord's scanner runs a generated malicious tool inside its own LangChain/LlamaIndex agent loop. SuperRed already owns the controller and target loop, so this optimizer injects Chord-style helper tools through writable tool-catalog surfaces instead of running Chord's scanner inside SuperRed.
 - `tool_catalog_register` is the closest paper-equivalent surface: it adds the helper tool to the agent's tool pool.
 - `tool_catalog_replace` and `tool_catalog_rewrite_doc` are used when those are the granted writable surfaces.
+- Some SuperRed agent targets expose Anthropic-style skills rather than LangChain-style tools. The optimizer treats `skill_catalog_register`, `skill_catalog_replace`, `skill_catalog_rewrite_doc`, and `skill_call:*` as aliases for the same Chord/XTHP control-flow idea. This keeps the official tool-path behavior while letting skill-layer targets exercise the granted attack surface.
 - If only user prompt or system prompt is writable, the optimizer can still exercise the granted capability, but that path is a SuperRed extension rather than Chord's mainline tool-pool setting.
 - Chord's official scanner evaluates several queries inside one scanner run. SuperRed runs one target execution at a time, so this optimizer schedules those official queries across optimizer runs.
 

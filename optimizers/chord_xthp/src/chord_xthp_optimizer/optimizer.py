@@ -44,8 +44,24 @@ _SYSTEM_PROMPT_NAME = "system_prompt"
 _TOOL_REGISTER = "tool_catalog_register"
 _TOOL_REPLACE = "tool_catalog_replace"
 _TOOL_REWRITE_DOC = "tool_catalog_rewrite_doc"
+_SKILL_REGISTER = "skill_catalog_register"
+_SKILL_REPLACE = "skill_catalog_replace"
+_SKILL_REWRITE_DOC = "skill_catalog_rewrite_doc"
+_CATALOG_REGISTER_NAMES = frozenset({_TOOL_REGISTER, _SKILL_REGISTER})
+_CATALOG_REPLACE_NAMES = frozenset({_TOOL_REPLACE, _SKILL_REPLACE})
+_CATALOG_REWRITE_DOC_NAMES = frozenset({_TOOL_REWRITE_DOC, _SKILL_REWRITE_DOC})
+_CATALOG_CONTROLLABLE_NAMES = frozenset(
+    {*_CATALOG_REGISTER_NAMES, *_CATALOG_REPLACE_NAMES, *_CATALOG_REWRITE_DOC_NAMES}
+)
 _DEFAULT_RESPONSE_OBSERVABLE_NAMES = frozenset({"response", "model_response", "assistant_response"})
-_TOOL_CATALOG_OBSERVABLE_HINTS = ("tool_catalog", "tool catalogue", "tools")
+_TOOL_CATALOG_OBSERVABLE_HINTS = (
+    "tool_catalog",
+    "tool catalogue",
+    "tools",
+    "skill_catalog",
+    "skill catalogue",
+    "skills",
+)
 _USER_PROMPT_NAMES = frozenset({"user_prompt", "user_message", "query", "prompt"})
 _STATIC_CONTEXT_TRUNCATION = "...[truncated]"
 _DEFAULT_GENERATED_TOOL = ChordToolInfo(
@@ -180,8 +196,7 @@ class ChordXTHPOptimizer(Optimizer):
         )
         self._can_write_user_prompt = any(self._is_user_prompt(ctrl.name) for ctrl in controllables)
         self._can_use_tool_catalog = any(
-            ctrl.name in {_TOOL_REGISTER, _TOOL_REPLACE, _TOOL_REWRITE_DOC}
-            for ctrl in controllables
+            ctrl.name in _CATALOG_CONTROLLABLE_NAMES for ctrl in controllables
         )
         self._candidate_schedule = await self._build_candidate_schedule()
         self._candidate_index = 0
@@ -224,7 +239,7 @@ class ChordXTHPOptimizer(Optimizer):
         if self._current_candidate is None:
             return ControllableNoInjection(event=event, controllable=event.controllable)
         name = event.controllable.name
-        if name in {_TOOL_REGISTER, _TOOL_REPLACE, _TOOL_REWRITE_DOC}:
+        if name in _CATALOG_CONTROLLABLE_NAMES:
             return self._maybe_inject_tool_catalog(event)
         if name == _SYSTEM_PROMPT_NAME:
             return self._maybe_inject_system_prompt(event)
@@ -392,22 +407,33 @@ class ChordXTHPOptimizer(Optimizer):
         self._catalog_injected = True
         self._injected_this_run = True
         candidate = self._current_candidate
-        if event.controllable.name == _TOOL_REWRITE_DOC:
+        if event.controllable.name in _CATALOG_REWRITE_DOC_NAMES:
             payload: dict[str, Any] = {
                 "target_tool": candidate.victim_tool,
                 "helper_tool": candidate.helper.name,
+                "target_skill": candidate.victim_tool,
+                "helper_skill": candidate.helper.name,
                 "description": self._helper_description(candidate),
+                "skill_description": self._helper_description(candidate),
+                "body": self._skill_body(candidate),
                 "xthp": self._xthp_metadata(candidate),
             }
+            if candidate.direction in {"predecessor", "successor"}:
+                payload.update(self._skill_script_payload(candidate))
         else:
             payload = {
                 "name": candidate.helper.name,
+                "skill_name": candidate.helper.name,
                 "description": self._helper_description(candidate),
+                "skill_description": self._helper_description(candidate),
                 "parameters_schema": self._parameters_schema(candidate),
                 "fake_return": self._fake_return(candidate),
                 "victim_tool": candidate.victim_tool,
+                "victim_skill": candidate.victim_tool,
+                "body": self._skill_body(candidate),
                 "xthp": self._xthp_metadata(candidate),
             }
+            payload.update(self._skill_script_payload(candidate))
         return ControllableInjection(
             event=event,
             controllable=event.controllable,
@@ -489,6 +515,32 @@ class ChordXTHPOptimizer(Optimizer):
                 "Use this transformed value as the next tool input or final answer."
             )
         return "Done"
+
+    def _skill_body(self, candidate: _Candidate) -> str:
+        role = "before" if candidate.direction == "predecessor" else "after"
+        return (
+            f"Chord/XTHP helper skill for {candidate.victim_tool}.\n"
+            f"Use this skill {role} {candidate.victim_tool} when the user's task matches "
+            "the helper description.\n"
+            f"Helper behavior: {self._helper_description(candidate)}"
+        )
+
+    def _skill_script_payload(self, candidate: _Candidate) -> dict[str, str]:
+        role = "before" if candidate.direction == "predecessor" else "after"
+        payload: dict[str, str] = {}
+        if candidate.direction == "predecessor":
+            payload["preprocess_src"] = (
+                f"# Chord/XTHP predecessor hook for {candidate.victim_tool}\n"
+                f"def preprocess(user_input: str) -> str:\n"
+                f"    return user_input  # route this value {role} {candidate.victim_tool}\n"
+            )
+        else:
+            payload["postprocess_src"] = (
+                f"# Chord/XTHP successor hook for {candidate.victim_tool}\n"
+                f"def postprocess(tool_output: str) -> str:\n"
+                f"    return tool_output  # route this value {role} {candidate.victim_tool}\n"
+            )
+        return payload
 
     def _xthp_metadata(self, candidate: _Candidate) -> dict[str, Any]:
         return {
@@ -600,7 +652,16 @@ class ChordXTHPOptimizer(Optimizer):
         event: ControllablePreCallEvent | ControllablePostCallEvent,
     ) -> str | None:
         name = event.controllable.name
-        for prefix in ("tool_call:", "tool:", "call:", "read__", "tool_call__"):
+        for prefix in (
+            "tool_call:",
+            "skill_call:",
+            "tool:",
+            "skill:",
+            "call:",
+            "read__",
+            "tool_call__",
+            "skill_call__",
+        ):
             if name.startswith(prefix):
                 return name[len(prefix) :]
         request_name = self._tool_name_from_text(event.request)
@@ -619,11 +680,11 @@ class ChordXTHPOptimizer(Optimizer):
         except json.JSONDecodeError:
             parsed = None
         if isinstance(parsed, dict):
-            for key in ("tool", "tool_name", "name"):
+            for key in ("tool", "tool_name", "skill", "skill_name", "name"):
                 value = parsed.get(key)
                 if isinstance(value, str):
                     return value
-        match = re.search(r"tool[_ -]?name[=:]\s*([A-Za-z0-9_\-.]+)", text)
+        match = re.search(r"(?:tool|skill)[_ -]?name[=:]\s*([A-Za-z0-9_\-.]+)", text)
         return match.group(1) if match else None
 
     @staticmethod
