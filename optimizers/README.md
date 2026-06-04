@@ -40,6 +40,7 @@ detail. This page is the plain-language tour.
 | GPTFuzzer | single-turn, many queries | yes (mutate templates) | Fuzz-tests known jailbreak templates by mutating them |
 | Many-Shot | single-turn | optional | Floods a long fake conversation of compliant examples |
 | PAIR | multi-turn refinement | yes (write + self-score) | An AI rewrites its prompt from the last response |
+| PoisonedRAG | single-turn | optional | Corrupts retrieved context so RAG answers with a planted wrong answer |
 | TAP | tree search | yes (write + judge) | Grows and prunes a tree of candidate prompts |
 
 ## Real attacks
@@ -156,6 +157,16 @@ jailbroken the answer is (1-10), and the attacker refines its next prompt from
 that feedback, running several refinement conversations in parallel "streams" at
 once. Multi-turn refinement; default 3 streams times 3 iterations. Uses an
 attacker LLM and an internal judge. See `ASSUMPTIONS.md` for the citation.
+
+### PoisonedRAG (`poisonedrag-optimizer`)
+
+Poisons a RAG target's knowledge base or retrieved-context surface with a small
+set of adversarial documents, then asks the target question so those documents
+push the answer toward an attacker-chosen incorrect answer. When no corpus
+surface is writable, it can fall back to the official RAG prompt wrapper in the
+user message. Single-turn, default 5 poison documents. Uses an LLM only when it
+needs to generate poison documents on the fly. See `ASSUMPTIONS.md` for the
+citation.
 
 ### TAP, Tree of Attacks with Pruning (`tap-optimizer`)
 
