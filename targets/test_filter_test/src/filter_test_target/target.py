@@ -158,7 +158,7 @@ class FilterTestTarget(Target):
                 content=f"{ctrl_name}={value}",
             ))
 
-    async def cleanup(self) -> None:
+    async def reset_ephemeral_state(self) -> None:
         self._injected.clear()
 
     async def teardown(self) -> None:

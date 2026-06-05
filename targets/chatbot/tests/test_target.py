@@ -2,7 +2,7 @@
 
 Tests cover: security domain structure, config/query/controllable/observable
 interfaces, single-turn and multi-turn run flow, system prompt override,
-cleanup/teardown lifecycle, and backwards-compatible alias.
+reset_ephemeral_state/teardown lifecycle.
 """
 
 from __future__ import annotations
@@ -813,19 +813,21 @@ class TestNoneContent:
 
 
 # ======================================================================
-# Cleanup and teardown
+# Reset and teardown
 # ======================================================================
 
 
 class TestLifecycle:
-    async def test_cleanup_resets_last_response(self, target: ChatbotTarget) -> None:
+    async def test_reset_ephemeral_state_resets_last_response(self, target: ChatbotTarget) -> None:
         target._last_response = "some response"
-        await target.cleanup()
+        await target.reset_ephemeral_state()
         assert target.query("last_response") == ""
 
-    async def test_cleanup_resets_conversation_history(self, target: ChatbotTarget) -> None:
+    async def test_reset_ephemeral_state_resets_conversation_history(
+        self, target: ChatbotTarget
+    ) -> None:
         target._conversation_history = [{"role": "user", "content": "hi"}]
-        await target.cleanup()
+        await target.reset_ephemeral_state()
         assert json.loads(target.query("conversation_history")) == []
 
     async def test_teardown_is_noop(self, target: ChatbotTarget) -> None:
