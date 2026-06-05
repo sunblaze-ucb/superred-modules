@@ -144,7 +144,7 @@ class BasicLLMChatTarget(Target):
             content=llm_response,
         ))
 
-    async def cleanup(self) -> None:
+    async def reset_ephemeral_state(self) -> None:
         self._last_response = ""
 
     async def teardown(self) -> None:
