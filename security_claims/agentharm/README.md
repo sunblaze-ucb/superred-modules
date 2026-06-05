@@ -30,11 +30,12 @@ from superred.core.controller import Controller
 from inspect_agent_target import USER_TAG, SYSTEM_TAG, TOOLS_TAG
 from security_claim_agentharm import agentharm_total_claim, agentharm_target_factory, aggregate
 
-MODEL = "openai/gpt-4o-2024-08-06"
-claim = agentharm_total_claim(target_model=MODEL, api_base=PROXY, api_key=KEY)   # 176
+# target_model defaults to DEFAULT_TARGET_MODEL (openai/gpt-4o-2024-08-06), the
+# AgentHarm-appropriate model on the proxy; pass it explicitly to use another.
+claim = agentharm_total_claim(api_base=PROXY, api_key=KEY)   # 176
 controller = Controller(
     optimizer_factory=MyAttackerOrPassthrough,
-    target_factory=agentharm_target_factory(target_model=MODEL, api_base=PROXY, api_key=KEY),
+    target_factory=agentharm_target_factory(api_base=PROXY, api_key=KEY),
     security_claim=claim,
     # the three root tags = the full attacker surface; narrow per experiment.
     scope=frozenset({USER_TAG, SYSTEM_TAG, TOOLS_TAG}),
@@ -44,7 +45,10 @@ metrics = aggregate([tr.best_evaluation for tr in result.task_results])
 # -> avg_score, avg_full_score, avg_refusals, avg_score_non_refusals, per-category
 ```
 
-The `target_model` passed to the claim and to the target factory MUST match.
+The `target_model` for the claim and the target factory MUST match; both default
+to `DEFAULT_TARGET_MODEL`, so the common case is matched automatically. The model
+is fixed at construction (not a config slot): neither the Task nor the attacker
+can change the agent's model.
 
 ## Tool trust-boundary scopes
 

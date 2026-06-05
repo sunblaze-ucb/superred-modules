@@ -18,6 +18,7 @@ from security_claim_agentharm.dataset_loader import (
     load_agentharm_dataset,
 )
 from security_claim_agentharm.factory import (
+    DEFAULT_TARGET_MODEL,
     agentharm_category_claim,
     agentharm_claim,
     agentharm_copyright_claim,
@@ -52,6 +53,7 @@ __all__ = [
     "agentharm_sexual_claim",
     # target wiring
     "agentharm_target_factory",
+    "DEFAULT_TARGET_MODEL",
     "TOOL_SCOPES",
     # task + metrics
     "AgentHarmTask",

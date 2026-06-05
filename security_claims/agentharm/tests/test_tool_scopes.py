@@ -62,8 +62,8 @@ def test_target_builds_valid_domain_and_scopes_controllables() -> None:
         api_base="b",
         api_key="k",
     )
-    # 13 fixed tags + 34 boundary tags (28 leaves + 6 intermediate nodes).
-    assert len(t.security_domain._tags) == 47
+    # 14 fixed tags + 34 boundary tags (28 leaves + 6 intermediate nodes).
+    assert len(t.security_domain._tags) == 48
     assert {r.name for r in t.security_domain.roots} == {"system", "user", "tools"}
     t.set_config("tool_names", '["get_webpage", "post_on_x"]')
     by_name = {c.name: c for c in t.get_controllables()}

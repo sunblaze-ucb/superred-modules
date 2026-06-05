@@ -9,7 +9,9 @@
   general :class:`InspectAgentTarget` wired with AgentHarm's tool resolver.
 
 The ``target_model`` passed to the claim and to the target factory MUST match
-(the claim computes the model-dependent faithful system prompt).
+(the claim computes the model-dependent faithful system prompt).  Both default to
+:data:`DEFAULT_TARGET_MODEL` (``openai/gpt-4o-2024-08-06``), so the common case is
+matched automatically; override BOTH together if you change it.
 """
 
 from __future__ import annotations
@@ -30,10 +32,18 @@ from security_claim_agentharm.grading_bridge import DEFAULT_JUDGE_MODEL
 from security_claim_agentharm.task import AgentHarmTask
 from security_claim_agentharm.tool_scopes import TOOL_SCOPES
 
+DEFAULT_TARGET_MODEL = "openai/gpt-4o-2024-08-06"
+"""AgentHarm-appropriate default agent model.  AgentHarm has no single canonical
+target model (it evaluates many), so this is gpt-4o-2024-08-06: upstream's judge
+model, available on the project proxy, and a primary AgentHarm-evaluated model.
+Overridable per call; the claim builders and the target factory default to the
+SAME value, so the common case stays model-matched (the faithful system prompt is
+model-dependent)."""
+
 
 def agentharm_claim(
     *,
-    target_model: str,
+    target_model: str = DEFAULT_TARGET_MODEL,
     api_base: str | None = None,
     api_key: str | None = None,
     judge_model: str = DEFAULT_JUDGE_MODEL,
@@ -47,7 +57,8 @@ def agentharm_claim(
     """Build the AgentHarm SecurityClaim (default: all 176 harmful test_public).
 
     Args:
-        target_model: the agent model id (must match the target factory's).
+        target_model: the agent model id (must match the target factory's;
+            defaults to DEFAULT_TARGET_MODEL = openai/gpt-4o-2024-08-06).
         api_base, api_key: proxy credentials for the judge models.
         judge_model: judge model id (default openai/gpt-4o-2024-08-06).
         categories: keep only behaviors in these harm categories.
@@ -99,7 +110,7 @@ def agentharm_claim(
 
 def agentharm_total_claim(
     *,
-    target_model: str,
+    target_model: str = DEFAULT_TARGET_MODEL,
     api_base: str | None = None,
     api_key: str | None = None,
     judge_model: str = DEFAULT_JUDGE_MODEL,
@@ -116,7 +127,7 @@ def agentharm_total_claim(
 def agentharm_category_claim(
     category: str,
     *,
-    target_model: str,
+    target_model: str = DEFAULT_TARGET_MODEL,
     api_base: str | None = None,
     api_key: str | None = None,
     judge_model: str = DEFAULT_JUDGE_MODEL,
@@ -139,7 +150,7 @@ def agentharm_category_claim(
 def _make_category_factory(category: str):  # type: ignore[no-untyped-def]
     def factory(
         *,
-        target_model: str,
+        target_model: str = DEFAULT_TARGET_MODEL,
         api_base: str | None = None,
         api_key: str | None = None,
         judge_model: str = DEFAULT_JUDGE_MODEL,
@@ -170,7 +181,7 @@ agentharm_sexual_claim = _make_category_factory("Sexual")
 
 def agentharm_target_factory(
     *,
-    target_model: str,
+    target_model: str = DEFAULT_TARGET_MODEL,
     api_base: str | None = None,
     api_key: str | None = None,
     concurrency: int = 8,
@@ -180,8 +191,11 @@ def agentharm_target_factory(
 ) -> TargetFactory:
     """A TargetFactory building the general target wired with AgentHarm's tools.
 
-    Pass the SAME ``target_model`` to the claim factory.  ``concurrency`` is how
-    many agents run in parallel against independent target instances.
+    ``target_model`` defaults to DEFAULT_TARGET_MODEL (the same default the claim
+    builders use, so they match without being passed); pass the SAME value to the
+    claim factory if you override it.  ``concurrency`` is how many agents run in
+    parallel against independent target instances (parallelism is the factory's
+    concern; the target instances are independent and carry no concurrency cap).
     """
 
     def create() -> Target:
