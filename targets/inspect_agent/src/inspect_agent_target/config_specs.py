@@ -12,7 +12,10 @@ framework's ``set_config(name: str, value: str)`` contract):
 - ``tool_choice`` - one of ``"auto"``, ``"any"``, ``"none"`` (default ``"auto"``).
 - ``message_limit`` - integer (as a string) cap on total messages in the
   rollout.  Empty = the target's construction default.
-- ``model`` - optional per-run litellm-style model id override.
+
+The model is deliberately NOT a config slot: it is fixed at construction (set by
+the TargetFactory), not Task- or attacker-modifiable.  Its read-only identity is
+still exposed via the ``model_identity`` observable.
 """
 
 from __future__ import annotations
@@ -20,7 +23,6 @@ from __future__ import annotations
 from superred.core.types.state import ConfigSpec
 
 from inspect_agent_target.security_tags import (
-    MODEL_IDENTITY_TAG,
     SYSTEM_PROMPT_TAG,
     SYSTEM_TAG,
     TOOL_CATALOGUE_TAG,
@@ -71,23 +73,12 @@ MESSAGE_LIMIT_SPEC: ConfigSpec = ConfigSpec(
     ),
 )
 
-MODEL_SPEC: ConfigSpec = ConfigSpec(
-    name="model",
-    security_domain=MODEL_IDENTITY_TAG,
-    description=(
-        "Optional per-run litellm-style model id override, e.g. "
-        "'openai/gpt-4o-2024-08-06'.  Empty string keeps the construction model."
-    ),
-)
-
-
 CONFIG_SPECS: list[ConfigSpec] = [
     SYSTEM_PROMPT_SPEC,
     USER_PROMPT_SPEC,
     TOOL_NAMES_SPEC,
     TOOL_CHOICE_SPEC,
     MESSAGE_LIMIT_SPEC,
-    MODEL_SPEC,
 ]
 """All ConfigSpecs returned from :attr:`InspectAgentTarget.config_specs`."""
 
@@ -101,7 +92,6 @@ __all__ = [
     "TOOL_NAMES_SPEC",
     "TOOL_CHOICE_SPEC",
     "MESSAGE_LIMIT_SPEC",
-    "MODEL_SPEC",
     "CONFIG_SPECS",
     "CONFIG_SPEC_NAMES",
 ]

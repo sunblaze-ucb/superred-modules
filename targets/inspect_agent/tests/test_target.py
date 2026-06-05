@@ -75,8 +75,9 @@ def _echo() -> Tool:
 def test_config_specs_names() -> None:
     t = _make_target()
     names = {s.name for s in t.config_specs}
+    # No 'model' slot: the model is fixed at construction, not Task-configurable.
     assert names == {
-        "system_prompt", "user_prompt", "tool_names", "tool_choice", "message_limit", "model"
+        "system_prompt", "user_prompt", "tool_names", "tool_choice", "message_limit"
     }
 
 
@@ -133,9 +134,11 @@ def test_tool_scopes_scope_per_tool_controllables_and_domain() -> None:
 def test_observables_reflect_config() -> None:
     t = _make_target()
     t.set_config("system_prompt", "SP")
+    t.set_config("message_limit", "7")
     obs = {o.observable.name: o.content for o in t.get_observables()}
     assert obs["model_identity"] == "openai/gpt-4o-mini"
     assert obs["system_prompt"] == "SP"
+    assert obs["message_limit"] == "7"  # static observable, not on the trajectory
     assert obs["tool_catalog_listing"] == []  # no tools configured here
 
 
@@ -149,13 +152,18 @@ def test_set_config_dispatch() -> None:
     t.set_config("tool_names", '["a", "b"]')
     t.set_config("tool_choice", "none")
     t.set_config("message_limit", "5")
-    t.set_config("model", "openai/x")
     assert t._system_prompt == "SP"
     assert t._user_prompt == "UP"
     assert t._tool_names == ["a", "b"]
     assert t._tool_choice == "none"
     assert t._message_limit == 5
-    assert t._run_model_id == "openai/x"
+
+
+def test_set_config_rejects_model_slot() -> None:
+    # 'model' is no longer a config slot: it is construction-only.
+    t = _make_target()
+    with pytest.raises(ValueError, match="Unknown config slot"):
+        t.set_config("model", "openai/x")
 
 
 def test_set_config_unknown_slot() -> None:
@@ -174,12 +182,6 @@ def test_message_limit_empty_uses_default() -> None:
     t = _make_target()
     t.set_config("message_limit", "")
     assert t._message_limit == t._default_message_limit
-
-
-def test_model_empty_keeps_construction_model() -> None:
-    t = _make_target()
-    t.set_config("model", "")
-    assert t._run_model_id == "openai/gpt-4o-mini"
 
 
 def test_parse_tool_names() -> None:
@@ -276,13 +278,48 @@ async def test_run_passthrough(monkeypatch: pytest.MonkeyPatch) -> None:
     assert t.query("last_response") == "answer"
     assert json.loads(t.query("function_call_trace")) == []
     assert len(json.loads(t.query("conversation_history"))) == 3
-    # 3 chat-message observables + 1 catalog-listing observable (one turn)
+    # 3 chat-message observables on the trajectory; the tool catalogue is a
+    # STATIC observable (get_observables), not emitted on the trajectory.
     msg_obs = [e for e in emitted if e.observable.name.startswith("agent_trace_message_")]
     catalog_obs = [e for e in emitted if e.observable.name == "tool_catalog_listing"]
     assert len(msg_obs) == 3
-    assert len(catalog_obs) == 1
-    await t.cleanup()
+    assert len(catalog_obs) == 0
+    await t.reset_ephemeral_state()
     assert t.messages == []
+
+
+@pytest.mark.asyncio
+async def test_generate_config_matches_agentharm_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The real GenerateConfig reaches get_model with AgentHarm's generation
+    # defaults; max_connections stays unset (the factory owns concurrency).
+    captured: dict = {}
+
+    def fake_get_model(model_id, *, base_url=None, api_key=None, config=None):  # noqa: ANN001
+        captured["model_id"] = model_id
+        captured["config"] = config
+        return _FakeModel([ChatMessageAssistant(content="x")])
+
+    monkeypatch.setattr(target_mod, "get_model", fake_get_model)
+
+    t = InspectAgentTarget(
+        model="openai/gpt-4o-mini", tool_resolver=lambda n: None, api_base="b", api_key="k"  # type: ignore[arg-type,return-value]
+    )
+    t.set_config("user_prompt", "UP")
+    t.set_config("tool_names", "[]")
+
+    async def send_event(event):  # noqa: ANN001
+        return ControllableNoInjection(event=event, controllable=event.controllable)
+
+    await t.run(lambda e: None, send_event)
+    cfg = captured["config"]
+    assert captured["model_id"] == "openai/gpt-4o-mini"
+    assert cfg.temperature == 0.0
+    assert cfg.max_tokens == 4096
+    assert cfg.seed == 0
+    assert cfg.max_retries == 3
+    assert cfg.max_connections is None
 
 
 @pytest.mark.asyncio

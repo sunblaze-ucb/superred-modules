@@ -85,6 +85,13 @@ MODEL_IDENTITY_TAG: SecurityDomainTag = SecurityDomainTag(
 )
 """Knowledge of which model the agent uses."""
 
+MESSAGE_LIMIT_READABLE_TAG: SecurityDomainTag = SecurityDomainTag(
+    "message_limit_readable", parent=SYSTEM_TAG,
+)
+"""Read-only view of the rollout's message-limit (the message_limit static
+observable).  The message_limit config slot itself is scoped to the broader
+``system`` root."""
+
 # --- agent trace (read access) ---------------------------------------------
 
 AGENT_TRACE_TAG: SecurityDomainTag = SecurityDomainTag("agent_trace", parent=SYSTEM_TAG)
@@ -145,6 +152,7 @@ FIXED_TAGS: tuple[SecurityDomainTag, ...] = (
     SYSTEM_PROMPT_TAG, SYSTEM_PROMPT_READABLE_TAG,
     TOOL_CATALOGUE_TAG, TOOL_CATALOGUE_READABLE_TAG, TOOL_CATALOGUE_ADDABLE_TAG,
     MODEL_IDENTITY_TAG,
+    MESSAGE_LIMIT_READABLE_TAG,
     AGENT_TRACE_TAG,
     AGENT_TRACE_MESSAGES_TAG, AGENT_TRACE_TOOL_CALLS_TAG, AGENT_TRACE_TOOL_RESPONSES_TAG,
     # user tree
@@ -198,6 +206,7 @@ __all__ = [
     "TOOL_CATALOGUE_READABLE_TAG",
     "TOOL_CATALOGUE_ADDABLE_TAG",
     "MODEL_IDENTITY_TAG",
+    "MESSAGE_LIMIT_READABLE_TAG",
     "AGENT_TRACE_TAG",
     "AGENT_TRACE_MESSAGES_TAG",
     "AGENT_TRACE_TOOL_CALLS_TAG",

@@ -6,15 +6,17 @@ benchmark-specific parts are injected:
 
 - the tool implementations, via a ``tool_resolver`` (name -> inspect Tool)
   passed at construction;
-- the per-run tool names, prompts, model, and controls, via ``set_config``.
+- the model, via the ``model`` construction arg (fixed per run, not a config
+  slot: neither the Task nor the attacker may change it);
+- the per-run tool names, prompts, and controls, via ``set_config``.
 
 Lifecycle:
 
 1. ``__init__``: store model id, credentials, the tool resolver, generation
    defaults.
 2. ``set_config``: a Task sets ``system_prompt``, ``user_prompt``,
-   ``tool_names`` (JSON list), and optionally ``tool_choice``,
-   ``message_limit``, ``model`` before each run.
+   ``tool_names`` (JSON list), and optionally ``tool_choice`` and
+   ``message_limit`` before each run.
 3. ``run(emit, send_event)``:
    - fire the system_prompt and user_prompt Controllables (optimizer may
      override either via ``ControllableInjection``);
@@ -22,7 +24,7 @@ Lifecycle:
    - run the tool-calling loop (:func:`run_rollout`);
    - emit per-message and per-tool-call observables.
 4. ``query``: post-run string readers; ``messages`` property: the typed trace.
-5. ``cleanup``: reset per-run state.  ``teardown``: no-op.
+5. ``reset_ephemeral_state``: reset per-run state.  ``teardown``: no-op.
 """
 
 from __future__ import annotations
@@ -59,6 +61,7 @@ from inspect_agent_target.controllables import (
     tool_output_controllable,
 )
 from inspect_agent_target.observables import (
+    MESSAGE_LIMIT_OBS,
     MODEL_IDENTITY_OBS,
     SYSTEM_PROMPT_OBS,
     TOOL_CATALOG_LISTING_OBS,
@@ -85,8 +88,8 @@ class InspectAgentTarget(Target):
 
     Args:
         model: litellm-style model id powering the agent (e.g.
-            ``openai/gpt-4o-2024-08-06``).  Overridable per-run via the
-            ``model`` config slot.
+            ``openai/gpt-4o-2024-08-06``).  Fixed for the target's lifetime:
+            changeable only here at construction, never by the Task or attacker.
         tool_resolver: maps a tool name to an inspect ``Tool``.  This is the
             benchmark-specific seam: a SecurityClaim supplies a resolver that
             wraps its tool module (e.g. AgentHarm's harmful tools).
@@ -130,7 +133,6 @@ class InspectAgentTarget(Target):
         self._tool_names: list[str] = []
         self._tool_choice: str = "auto"
         self._message_limit: int = default_message_limit
-        self._run_model_id: str = model
         # Per-run state.
         self._messages: list[ChatMessage] = []
         self._last_response: str = ""
@@ -161,8 +163,6 @@ class InspectAgentTarget(Target):
             self._tool_choice = value
         elif name == "message_limit":
             self._message_limit = int(value) if value else self._default_message_limit
-        elif name == "model":
-            self._run_model_id = value if value else self._model_id
 
     # -- post-run queries ------------------------------------------------------
 
@@ -215,8 +215,9 @@ class InspectAgentTarget(Target):
         except Exception:  # pragma: no cover - defensive: resolver/seed failure
             catalog_snapshot = []
         return [
-            ObservableValue(observable=MODEL_IDENTITY_OBS, content=self._run_model_id),
+            ObservableValue(observable=MODEL_IDENTITY_OBS, content=self._model_id),
             ObservableValue(observable=SYSTEM_PROMPT_OBS, content=self._system_prompt),
+            ObservableValue(observable=MESSAGE_LIMIT_OBS, content=str(self._message_limit)),
             ObservableValue(observable=TOOL_CATALOG_LISTING_OBS, content=catalog_snapshot),
         ]
 
@@ -250,12 +251,20 @@ class InspectAgentTarget(Target):
         # Phase 3: seed the tool catalogue + build the model.
         catalog = ToolCatalog.seed(self._tool_resolver, self._tool_names)
         self._catalog = catalog
+        # Generation config: temperature/max_tokens are construction params
+        # (AgentHarm uses 0.0 / 4096); seed=0 and max_retries=3 are AgentHarm's
+        # upstream defaults, hardcoded here as benchmark-agnostic generation
+        # defaults (not configurable).  max_connections is deliberately NOT set:
+        # cross-target parallelism is owned by the TargetFactory, not the target.
         model = get_model(
-            self._run_model_id,
+            self._model_id,
             base_url=self._api_base,
             api_key=self._api_key,
             config=GenerateConfig(
-                temperature=self._temperature, max_tokens=self._max_tokens
+                temperature=self._temperature,
+                max_tokens=self._max_tokens,
+                seed=0,
+                max_retries=3,
             ),
         )
 
@@ -265,13 +274,13 @@ class InspectAgentTarget(Target):
         # whole run.  (AgentDojo fires these before every LLM turn; we
         # deliberately fire once to avoid per-turn event noise.)  The target
         # always fires them; the Controller's scope filter decides whether the
-        # optimizer may actually inject.
+        # optimizer may actually inject.  The catalogue itself is NOT emitted onto
+        # the trajectory: it is static configuration, exposed via the
+        # TOOL_CATALOG_LISTING_OBS static observable (the configured, pre-edit
+        # snapshot).  Attacker edits are visible on the trajectory as the
+        # catalogue controllable events above; the post-edit tool set is also
+        # reflected in the agent-trace tool-call/response observables.
         await self._fire_catalog_controllables(send_event, catalog)
-        emit(
-            ObservableEvent(
-                observable=TOOL_CATALOG_LISTING_OBS, content=catalog.snapshot()
-            )
-        )
 
         # Per-tool output injection (the indirect-prompt-injection surface):
         # after each tool result, fire THAT tool's ControllablePostCallEvent
@@ -340,7 +349,7 @@ class InspectAgentTarget(Target):
                 )
             )
 
-    # -- cleanup / teardown ----------------------------------------------------
+    # -- reset / teardown ------------------------------------------------------
 
     async def _fire_catalog_controllables(
         self, send_event: EventResponseHandler, catalog: ToolCatalog
@@ -376,7 +385,9 @@ class InspectAgentTarget(Target):
                 continue
             apply(payload)
 
-    async def cleanup(self) -> None:
+    async def reset_ephemeral_state(self) -> None:
+        # All per-run state here is ephemeral (the message trace, last response,
+        # and seeded catalogue); the target holds no durable cross-run memory.
         self._messages = []
         self._last_response = ""
         self._catalog = None

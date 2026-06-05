@@ -48,7 +48,17 @@ A Task configures it per run via `set_config`:
 - `tool_names` (JSON `list[str]`)
 - `tool_choice` (`"auto"`/`"any"`/`"none"`, default `"auto"`)
 - `message_limit` (int as string)
-- `model` (optional per-run override)
+
+The **model is not a config slot** — it is fixed at construction (the `model`
+arg), so neither the Task nor the attacker can change it. Generation config
+(`temperature`/`max_tokens` from construction; `seed=0`/`max_retries=3` hardcoded
+to AgentHarm's defaults) is likewise not per-run configurable; cross-target
+parallelism is owned by the `TargetFactory`, not the target.
+
+Static configuration (`model_identity`, `system_prompt`, `message_limit`, the
+configured `tool_catalog_listing`) is exposed as **static observables**; the
+running agent trace (messages / tool calls / tool responses) is on the
+**trajectory** as `ObservableEvent`s.
 
 ## Security domain
 

@@ -24,14 +24,22 @@ needs exact long-chain parity should pin the same value the benchmark uses
 ## C. Tool order
 Tools are exposed in the order the caller supplies them (the resolved
 `tool_names`). inspect's AgentHarm `setup_tools_from_metadata` shuffles tools with
-an un-seeded `random.shuffle`, so presentation order is not reproducible upstream
-either; benchmark grading inspects which tools were called and in what call order,
-not their menu order, so this does not affect scores.
+`random.shuffle`; that shuffle is reproducible upstream (inspect seeds the RNG
+from `GenerateConfig(seed=0)`), but order does not matter either way: benchmark
+grading inspects which tools were called and in what call order, not their menu
+order, so presentation order does not affect scores.
 
 ## D. Generation config
-`temperature` (default 0.0) and `max_tokens` (default 4096) are construction
-parameters bound onto the model via `GenerateConfig`. A faithful benchmark port
-sets these to the benchmark's values (AgentHarm: 0.0 / 4096).
+The model's `GenerateConfig` is built in `run()` from: `temperature` (default 0.0)
+and `max_tokens` (default 4096), both construction parameters (AgentHarm uses
+0.0 / 4096); plus `seed=0` and `max_retries=3`, hardcoded to AgentHarm's upstream
+values as benchmark-agnostic generation defaults (not configurable, not
+constructor params). `max_connections` is deliberately NOT set: cross-target
+parallelism is owned by the `TargetFactory` (its `concurrency` + the controller's
+semaphore), not by per-target generation config, so baking a connection cap into
+the target would conflict with the factory's concurrency and risk the proxy's
+rate limit. AgentHarm sets `max_connections=100` for its own scheduler; a claim
+that needs strict parity can opt in at its target factory.
 
 ## E. Model client
 The target uses its own inspect `Model` (via `get_model`, optionally pointed at a
@@ -39,6 +47,22 @@ LiteLLM proxy with `base_url`/`api_key`), not superred's `LLMClient`. This mirro
 the AgentDojo target, which also drives its own provider client. Consequently the
 agent's own token spend is not counted in the Controller's `llm_usage` (which
 tracks the optimizer's constrained client); it is out-of-band, like an OOB judge.
+The model id is fixed at construction (the `model` arg): it is **not** a config
+slot, so neither the Task nor the attacker can change the agent's model; a per-run
+model change is not part of this surface. The read-only identity is still exposed
+via the `model_identity` observable.
+
+## E.1 Static observables vs the trajectory
+Static configuration is exposed as **static observables** (`get_observables`,
+handed to the optimizer at init): `model_identity`, `system_prompt`,
+`message_limit`, and `tool_catalog_listing` (the configured, pre-edit catalogue).
+Everything that **happens during the run** is on the **trajectory** as
+`ObservableEvent`s (the only one-way target-to-trajectory mechanism, each wrapping
+an `Observable`): the per-message / per-tool-call / per-tool-response agent trace.
+Attacker actions (prompt and catalogue injections) are on the trajectory too, as
+the controllable events. So the catalogue is intentionally NOT emitted on the
+trajectory: its static snapshot is an observable, and its dynamic edits are the
+catalogue controllable events.
 
 ## F. Tool choice modes
 Only inspect's standard `tool_choice` values are supported (`auto`/`any`/`none`).
