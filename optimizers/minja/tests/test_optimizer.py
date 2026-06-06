@@ -104,6 +104,20 @@ async def init_opt(**kwargs: Any) -> MinjaOptimizer:
     return opt
 
 
+async def _advance_through_injection(opt: MinjaOptimizer) -> None:
+    """Drive a single-victim-query schedule through all of its injection stages.
+
+    Leaves the optimizer so the next RunStartEvent opens the test (trigger) stage.
+    """
+    for _ in range(len(DEFAULT_INDICATION_PROMPTS) + 1):
+        await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+        await dispatch(
+            opt,
+            ControllablePreCallEvent(controllable=ctrl("user_prompt"), request="q"),
+        )
+        await dispatch(opt, RunEndEvent(evaluation=eval_result(False), security_domain=USER_TAG))
+
+
 @pytest.mark.asyncio
 async def test_first_run_appends_official_full_indication_prompt() -> None:
     official_questions = load_official_victim_questions(DEFAULT_PAIR)
@@ -192,10 +206,14 @@ async def test_progressive_shortening_uses_all_notes_then_plain_attack_query() -
 
 
 @pytest.mark.asyncio
-async def test_framework_success_stops_optimizer() -> None:
-    opt = MinjaOptimizer(inject_num=1, test_num=1)
+async def test_trigger_run_framework_success_stops_optimizer() -> None:
+    opt = MinjaOptimizer(inject_num=1, test_num=1, random_seed=0)
     await opt.initialize(Goal(description="poison memory"), [ctrl("user_prompt")], [], Any)  # type: ignore[arg-type]
+    await _advance_through_injection(opt)
+
+    # The next run is the clean trigger; framework success there ends the campaign.
     await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+    await dispatch(opt, ControllablePreCallEvent(controllable=ctrl("user_prompt"), request="q"))
     end = await dispatch(opt, RunEndEvent(evaluation=eval_result(True), security_domain=USER_TAG))
 
     assert isinstance(end, RunEndResponse)
@@ -204,10 +222,13 @@ async def test_framework_success_stops_optimizer() -> None:
 
 @pytest.mark.asyncio
 async def test_visible_trajectory_target_response_can_mark_success_without_feedback() -> None:
-    opt = MinjaOptimizer(inject_num=1, test_num=1)
+    opt = MinjaOptimizer(inject_num=1, test_num=1, random_seed=0)
     await opt.initialize(Goal(description="poison memory"), [ctrl("user_prompt")], [], Any)  # type: ignore[arg-type]
+    await _advance_through_injection(opt)
+
     traj = FakeTrajectory()
     await dispatch(opt, RunStartEvent(trajectory=traj))
+    await dispatch(opt, ControllablePreCallEvent(controllable=ctrl("user_prompt"), request="q"))
     traj.push(
         ObservableEvent(
             observable=Observable("response", RESPONSE_TAG),
@@ -404,3 +425,155 @@ async def test_benign_stage_does_not_poison_extra_surfaces() -> None:
             break
 
     assert found_benign is True
+
+
+@pytest.mark.asyncio
+async def test_injection_run_success_does_not_stop_optimizer() -> None:
+    # Success on an injection run is not memory retrieval; the campaign must keep
+    # going so a later clean trigger query can demonstrate the attack.
+    opt = MinjaOptimizer(inject_num=1, test_num=1, random_seed=0)
+    await opt.initialize(Goal(description="poison memory"), [ctrl("user_prompt")], [], Any)  # type: ignore[arg-type]
+    await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+    await dispatch(opt, ControllablePreCallEvent(controllable=ctrl("user_prompt"), request="q"))
+    end = await dispatch(opt, RunEndEvent(evaluation=eval_result(True), security_domain=USER_TAG))
+
+    assert isinstance(end, RunEndResponse)
+    assert end.done is False
+
+
+@pytest.mark.asyncio
+async def test_query_injection_point_discovered_by_role_not_name() -> None:
+    # The target names its query field "agent_instruction" (no "user", not on any
+    # hard-coded list); MINJA still injects there because it is the only
+    # non-capability, non-memory PreCall surface in scope.
+    official_questions = load_official_victim_questions(DEFAULT_PAIR)
+    opt = MinjaOptimizer(
+        inject_num=1, test_num=0, random_seed=0, victim_questions=official_questions[:1]
+    )
+    await opt.initialize(
+        Goal(description="poison memory"),
+        [ctrl("agent_instruction", USER_TAG)],
+        [],
+        Any,  # type: ignore[arg-type]
+    )
+    await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+
+    resp = await dispatch(
+        opt,
+        ControllablePreCallEvent(
+            controllable=ctrl("agent_instruction", USER_TAG), request="placeholder"
+        ),
+    )
+
+    assert isinstance(resp, ControllableInjection)
+    assert "High priority note" in resp.value
+    assert DEFAULT_PAIR.target in resp.value
+
+
+@pytest.mark.asyncio
+async def test_memory_hint_named_query_channel_still_receives_injection() -> None:
+    # A query channel whose name contains a memory-ish word ("context") must still
+    # receive the victim query: the channel is the first PreCall controllable, and
+    # the memory-surface heuristic only governs PostCall memory injection.
+    official_questions = load_official_victim_questions(DEFAULT_PAIR)
+    opt = MinjaOptimizer(
+        inject_num=1, test_num=0, random_seed=0, victim_questions=official_questions[:1]
+    )
+    await opt.initialize(
+        Goal(description="poison memory"),
+        [ctrl("user_context_input", USER_TAG)],
+        [],
+        Any,  # type: ignore[arg-type]
+    )
+    await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+
+    resp = await dispatch(
+        opt,
+        ControllablePreCallEvent(controllable=ctrl("user_context_input", USER_TAG), request="x"),
+    )
+
+    assert isinstance(resp, ControllableInjection)
+    assert "High priority note" in resp.value
+
+
+@pytest.mark.asyncio
+async def test_only_first_precall_controllable_is_latched_as_query_channel() -> None:
+    # With several plain PreCall controllables, the victim query goes to the first
+    # one seen; the others are left untouched (no scattering the payload).
+    official_questions = load_official_victim_questions(DEFAULT_PAIR)
+    opt = MinjaOptimizer(
+        inject_num=1, test_num=0, random_seed=0, victim_questions=official_questions[:1]
+    )
+    await opt.initialize(
+        Goal(description="poison memory"),
+        [ctrl("primary_input", USER_TAG), ctrl("secondary_input", USER_TAG)],
+        [],
+        Any,  # type: ignore[arg-type]
+    )
+    await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+
+    first = await dispatch(
+        opt, ControllablePreCallEvent(controllable=ctrl("primary_input", USER_TAG), request="x")
+    )
+    second = await dispatch(
+        opt, ControllablePreCallEvent(controllable=ctrl("secondary_input", USER_TAG), request="x")
+    )
+
+    assert isinstance(first, ControllableInjection)
+    assert isinstance(second, ControllableNoInjection)
+
+
+@pytest.mark.asyncio
+async def test_target_controllable_name_locks_injection_surface() -> None:
+    official_questions = load_official_victim_questions(DEFAULT_PAIR)
+    opt = MinjaOptimizer(
+        inject_num=1,
+        test_num=0,
+        random_seed=0,
+        victim_questions=official_questions[:1],
+        target_controllable_name="chosen_input",
+    )
+    await opt.initialize(
+        Goal(description="poison memory"),
+        [ctrl("other_input", USER_TAG), ctrl("chosen_input", USER_TAG)],
+        [],
+        Any,  # type: ignore[arg-type]
+    )
+    await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+
+    # "other_input" fires first but is ignored; only the locked name is injected.
+    other = await dispatch(
+        opt, ControllablePreCallEvent(controllable=ctrl("other_input", USER_TAG), request="x")
+    )
+    chosen = await dispatch(
+        opt, ControllablePreCallEvent(controllable=ctrl("chosen_input", USER_TAG), request="x")
+    )
+
+    assert isinstance(other, ControllableNoInjection)
+    assert isinstance(chosen, ControllableInjection)
+
+
+@pytest.mark.asyncio
+async def test_response_slot_is_never_used_as_query_channel() -> None:
+    # The model's response controllable must not be latched as the query channel.
+    official_questions = load_official_victim_questions(DEFAULT_PAIR)
+    opt = MinjaOptimizer(
+        inject_num=1, test_num=0, random_seed=0, victim_questions=official_questions[:1]
+    )
+    await opt.initialize(
+        Goal(description="poison memory"),
+        [ctrl("response", RESPONSE_TAG), ctrl("user_prompt", USER_TAG)],
+        [],
+        Any,  # type: ignore[arg-type]
+    )
+    await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+
+    response = await dispatch(
+        opt, ControllablePreCallEvent(controllable=ctrl("response", RESPONSE_TAG), request="x")
+    )
+    user = await dispatch(
+        opt, ControllablePreCallEvent(controllable=ctrl("user_prompt", USER_TAG), request="x")
+    )
+
+    assert isinstance(response, ControllableNoInjection)
+    assert isinstance(user, ControllableInjection)
