@@ -301,12 +301,12 @@ async def test_retry_loop_stops_after_three_attempts() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Cleanup: per-run state is wiped so a fresh target run starts clean
+# Reset: per-run state is wiped so a fresh target run starts clean
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_cleanup_resets_per_run_state() -> None:
+async def test_reset_ephemeral_state_resets_per_run_state() -> None:
     target = AgentDojoTarget(pipeline_model="openai/gpt-4o-2024-05-13")
     target.set_config("user_prompt", "first")
     pre_env = target._build_seed_env_with_overrides()
@@ -319,8 +319,8 @@ async def test_cleanup_resets_per_run_state() -> None:
     await _drive_run(target, pipeline)
     assert target.query("last_response") == "first-answer"
 
-    await target.cleanup()
-    # After cleanup, last_response is wiped and the conversation history
+    await target.reset_ephemeral_state()
+    # After reset, last_response is wiped and the conversation history
     # is empty so a fresh evaluation cannot accidentally reuse it.
     assert target.query("last_response") == ""
     assert json.loads(target.query("conversation_history")) == []

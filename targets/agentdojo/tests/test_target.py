@@ -1,8 +1,8 @@
 """Unit tests for :class:`AgentDojoTarget`.
 
 These tests do NOT invoke a real LLM; they verify the lifecycle
-contract, config/query slot dispatch, observable enumeration, cleanup
-semantics, and security-domain forest exposure.
+contract, config/query slot dispatch, observable enumeration,
+reset_ephemeral_state semantics, and security-domain forest exposure.
 """
 
 from __future__ import annotations
@@ -120,18 +120,18 @@ def test_query_returns_string_for_each_slot(target: AgentDojoTarget) -> None:
     assert json.loads(target.query("write_calls_made")) == []
 
 
-# ----- cleanup -----
+# ----- reset_ephemeral_state -----
 
 
 @pytest.mark.asyncio
-async def test_cleanup_resets_per_run_state(target: AgentDojoTarget) -> None:
-    """cleanup() must zero per-run state but preserve config slots."""
+async def test_reset_ephemeral_state_resets_per_run_state(target: AgentDojoTarget) -> None:
+    """reset_ephemeral_state() must zero per-run state but preserve config slots."""
     target.set_config("user_prompt", "hello")
     target._last_response = "leftover"
     target._function_call_trace.append(  # type: ignore[arg-type]
         type("FC", (), {"function": "x", "args": {}, "id": None, "placeholder_args": None})()
     )
-    await target.cleanup()
+    await target.reset_ephemeral_state()
     assert target.query("last_response") == ""
     assert json.loads(target.query("function_call_trace")) == []
     # Config slot was NOT reset.

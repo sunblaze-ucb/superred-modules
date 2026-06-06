@@ -1059,7 +1059,7 @@ class _FakeChatTarget:
         self.last_response = assistant
         emit(_Obs(observable=_response_observable(), content=assistant))
 
-    async def cleanup(self) -> None:
+    async def reset_ephemeral_state(self) -> None:
         self.last_response = ""
 
     async def teardown(self) -> None:
@@ -1230,7 +1230,7 @@ class TestEndToEndControllerIntegration:
         from superred.core.types.llm import LLMConfig
 
         # Capture per-run responses; ``target.last_response`` is cleared
-        # by ``cleanup`` between runs so we record into our own list.
+        # by ``reset_ephemeral_state`` between runs so we record into our own list.
         responses: list[str] = []
         target = _FakeChatTarget(system_prompt="default-careful")
         original_run = target.run

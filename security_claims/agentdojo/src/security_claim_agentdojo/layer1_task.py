@@ -53,12 +53,6 @@ from security_claim_agentdojo.layer1_bridge import (
 
 logger = logging.getLogger(__name__)
 
-# Import USER_TAG lazily by reading the agentdojo_target.security_tags
-# module to avoid circular references; the tag is used to scope the
-# per-task scores so the Controller's middleware only surfaces them to
-# optimizers whose scope includes the user tree.
-from agentdojo_target.security_tags import USER_TAG
-
 
 class AgentDojoPairedTask(Task[_AgentDojoTargetClass]):
     """One (user_task, injection_task) pair from a single AgentDojo v1 suite.
@@ -154,7 +148,6 @@ class AgentDojoPairedTask(Task[_AgentDojoTargetClass]):
         primary = Score(
             value=float(security),
             name="attack_succeeded",
-            security_domain=USER_TAG,
         )
         # Sub-scores carry security_domain=None so they are always visible
         # when the Controller includes feedback, regardless of the

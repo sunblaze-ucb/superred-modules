@@ -28,8 +28,8 @@ Lifecycle:
 4. ``query``: post-run readers (last_response, function_call_trace,
    pre/post env snapshot, conversation_history, tool catalog snapshot,
    write_calls_made).
-5. ``cleanup``: reset per-run state so the next call sees a fresh env
-   and a seeded catalog.
+5. ``reset_ephemeral_state``: reset per-run state so the next call sees
+   a fresh env and a seeded catalog.
 6. ``teardown``: no-op.
 """
 
@@ -348,10 +348,10 @@ class AgentDojoTarget(Target):
             )
 
     # ------------------------------------------------------------------
-    # Cleanup / teardown
+    # Reset / teardown
     # ------------------------------------------------------------------
 
-    async def cleanup(self) -> None:
+    async def reset_ephemeral_state(self) -> None:
         """Reset per-run state so the next run starts from a clean baseline.
 
         Per-task config slots (system_prompt, user_prompt, seed

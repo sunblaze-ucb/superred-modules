@@ -435,7 +435,7 @@ class _SplitPostCallTarget(Target):
                 ),
             )
 
-    async def cleanup(self) -> None:
+    async def reset_ephemeral_state(self) -> None:
         self._last_response = ""
         self.injected_messages = []
 
