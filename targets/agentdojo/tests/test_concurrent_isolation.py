@@ -183,7 +183,6 @@ class _FingerprintedTask(Task[AgentDojoTarget]):
                 success=False,
                 primary_score=Score(
                     value=0.0, name="isolation",
-                    security_domain=USER_TAG,
                 ),
                 sub_scores={},
                 rationale=(
@@ -200,7 +199,6 @@ class _FingerprintedTask(Task[AgentDojoTarget]):
                 success=False,
                 primary_score=Score(
                     value=0.0, name="isolation",
-                    security_domain=USER_TAG,
                 ),
                 sub_scores={},
                 rationale=(
@@ -214,7 +212,6 @@ class _FingerprintedTask(Task[AgentDojoTarget]):
             success=True,
             primary_score=Score(
                 value=1.0, name="isolation",
-                security_domain=USER_TAG,
             ),
             sub_scores={
                 "fingerprint": Score(
