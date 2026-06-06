@@ -27,7 +27,7 @@ class RolloutRecord:
     score: float | None = None
     rationale: str = ""
     target_observables: dict[str, str] | None = None
-    selected_surface: dict[str, str] | None = None
+    selected_surface: dict[str, Any] | None = None
     observed_surfaces: list[dict[str, str]] | None = None
     tool_return: str | None = None
     agent_observations: list[str] | None = None

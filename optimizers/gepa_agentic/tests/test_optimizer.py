@@ -128,11 +128,13 @@ async def _init_optimizer(
     target_controllable_name: str | None = None,
     content_controllable_names: list[str] | None = None,
     observables: list[ObservableValue] | None = None,
+    max_content_injections_per_run: int = 3,
 ) -> GEPAAgenticOptimizer:
     opt = GEPAAgenticOptimizer(
         max_attempts=max_attempts,
         target_controllable_name=target_controllable_name,
         content_controllable_names=content_controllable_names,
+        max_content_injections_per_run=max_content_injections_per_run,
     )
     await opt.initialize(
         goal=Goal(description="achieve target X"),
@@ -168,13 +170,43 @@ class TestSurfaceClassification:
 
         assert opt._content_surface_names == ["custom_result"]
 
+    @pytest.mark.asyncio
+    async def test_discovers_inspect_agent_tool_return_surface(self) -> None:
+        ctrl = _read_ctrl("tool:get_balance")
+        opt = await _init_optimizer(controllables=[ctrl])
+
+        assert opt._content_surface_names == ["tool:get_balance"]
+
+    @pytest.mark.asyncio
+    async def test_discovers_html_environment_surface_at_runtime(self) -> None:
+        ctrl = Controllable(name="opaque_surface", security_domain=TOOL_TAG)
+        opt = await _init_optimizer(controllables=[], max_attempts=2)
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+
+        resp = await _dispatch_event(
+            opt,
+            ControllablePostCallEvent(
+                controllable=ctrl,
+                request="read",
+                answer="<html><body><input aria-label='email'></body></html>",
+            ),
+        )
+
+        assert isinstance(resp, ControllableInjection)
+        assert opt._selected_surface is not None
+        assert "HTML/environment" in opt._selected_surface["classification_reason"]
+
 
 class TestPostCallSelection:
     @pytest.mark.asyncio
-    async def test_plans_one_deterministic_content_surface_not_first_seen(self) -> None:
+    async def test_injects_multiple_compatible_content_surfaces_with_cap(self) -> None:
         alpha = _read_ctrl("read__alpha")
         beta = _read_ctrl("read__beta")
-        opt = await _init_optimizer(controllables=[alpha, beta])
+        gamma = _read_ctrl("read__gamma")
+        opt = await _init_optimizer(
+            controllables=[alpha, beta, gamma],
+            max_content_injections_per_run=2,
+        )
         await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
         beta_resp = await _dispatch_event(
@@ -193,31 +225,23 @@ class TestPostCallSelection:
                 answer="alpha legitimate content",
             ),
         )
+        gamma_resp = await _dispatch_event(
+            opt,
+            ControllablePostCallEvent(
+                controllable=gamma,
+                request="gamma",
+                answer="gamma legitimate content",
+            ),
+        )
 
         assert opt._planned_content_surface == "read__alpha"
-        assert isinstance(beta_resp, ControllableNoInjection)
+        assert isinstance(beta_resp, ControllableInjection)
         assert isinstance(alpha_resp, ControllableInjection)
         assert "alpha legitimate content" in alpha_resp.value
-        assert "[GEPA AGENTIC INDIRECT PROMPT]" in alpha_resp.value
+        assert "[GEPA AGENTIC INDIRECT PROMPT]" not in alpha_resp.value
+        assert "Additional task-relevant context" in alpha_resp.value
         assert "achieve target X" in alpha_resp.value
-
-    @pytest.mark.asyncio
-    async def test_missed_planned_surface_rotates_to_next_surface(self) -> None:
-        alpha = _read_ctrl("read__alpha")
-        beta = _read_ctrl("read__beta")
-        opt = await _init_optimizer(controllables=[alpha, beta], max_attempts=3)
-        propose = AsyncMock(return_value=_refl("next"))
-
-        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
-        assert opt._planned_content_surface == "read__alpha"
-        with patch.object(opt._reflector, "propose", new=propose):
-            await _dispatch_event(
-                opt,
-                RunEndEvent(evaluation=_failure_eval(0.0), security_domain=USER_TAG),
-            )
-
-        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
-        assert opt._planned_content_surface == "read__beta"
+        assert isinstance(gamma_resp, ControllableNoInjection)
 
     @pytest.mark.asyncio
     async def test_runtime_discovery_handles_dynamic_tool_call_surface(self) -> None:
@@ -237,6 +261,39 @@ class TestPostCallSelection:
         assert isinstance(resp, ControllableInjection)
         assert opt._selected_surface is not None
         assert opt._selected_surface["mode"] == "runtime_discovery"
+
+    @pytest.mark.asyncio
+    async def test_multiple_injections_are_reflected_in_rollout_metadata(self) -> None:
+        alpha = _read_ctrl("read__alpha")
+        beta = _read_ctrl("read__beta")
+        opt = await _init_optimizer(controllables=[alpha, beta], max_attempts=2)
+        propose = AsyncMock(return_value=None)
+
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(
+            opt,
+            ControllablePostCallEvent(
+                controllable=alpha,
+                request="alpha",
+                answer="alpha legitimate content",
+            ),
+        )
+        await _dispatch_event(
+            opt,
+            ControllablePostCallEvent(
+                controllable=beta,
+                request="beta",
+                answer="beta legitimate content",
+            ),
+        )
+        with patch.object(opt._reflector, "propose", new=propose):
+            await _dispatch_event(
+                opt,
+                RunEndEvent(evaluation=_failure_eval(0.0), security_domain=USER_TAG),
+            )
+
+        rollout = propose.call_args.kwargs["rollouts"][0]
+        assert len(rollout.selected_surface["all_injected_surfaces"]) == 2
 
 
 class TestPromptFallback:
@@ -347,9 +404,76 @@ class TestRolloutContext:
         assert rollout.target_observables == {"model_identity": "gpt-4o"}
 
 
+class TestToolCatalogRewrite:
+    @pytest.mark.asyncio
+    async def test_rewrites_visible_content_tool_description(self) -> None:
+        catalog_ctrl = Controllable(
+            name="tool_catalog_rewrite_doc",
+            security_domain=SYSTEM_TAG,
+            value_type="json",
+        )
+        observables = [
+            ObservableValue(
+                observable=Observable(
+                    name="tool_catalog_listing",
+                    security_domain=TRACE_TAG,
+                ),
+                content=[
+                    {
+                        "name": "search_web",
+                        "description": "Search the web for relevant pages.",
+                    }
+                ],
+            )
+        ]
+        opt = await _init_optimizer(
+            controllables=[catalog_ctrl, _user_ctrl()],
+            observables=observables,
+            max_attempts=2,
+        )
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+
+        resp = await _dispatch_event(
+            opt,
+            ControllablePreCallEvent(
+                controllable=catalog_ctrl,
+                request="tool catalogue edit",
+            ),
+        )
+
+        assert isinstance(resp, ControllableInjection)
+        payload = resp.value
+        assert '"name": "search_web"' in payload
+        assert "achieve target X" in payload
+        assert opt._selected_surface is not None
+        assert opt._selected_surface["mode"] == "catalog_rewrite"
+
+    @pytest.mark.asyncio
+    async def test_skips_catalog_rewrite_without_visible_catalog_tool(self) -> None:
+        catalog_ctrl = Controllable(
+            name="tool_catalog_rewrite_doc",
+            security_domain=SYSTEM_TAG,
+            value_type="json",
+        )
+        opt = await _init_optimizer(controllables=[catalog_ctrl], max_attempts=2)
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+
+        resp = await _dispatch_event(
+            opt,
+            ControllablePreCallEvent(
+                controllable=catalog_ctrl,
+                request="tool catalogue edit",
+            ),
+        )
+
+        assert isinstance(resp, ControllableNoInjection)
+
+
 class TestDoneSemantics:
     @pytest.mark.asyncio
-    async def test_no_feedback_no_response_runs_to_budget(self) -> None:
+    async def test_no_delivery_no_feedback_no_response_does_not_spend_attempt(
+        self,
+    ) -> None:
         opt = await _init_optimizer(max_attempts=2)
         propose = AsyncMock(return_value=None)
 
@@ -368,4 +492,32 @@ class TestDoneSemantics:
         assert isinstance(end_1, RunEndResponse)
         assert isinstance(end_2, RunEndResponse)
         assert end_1.done is False
-        assert end_2.done is True
+        assert end_2.done is False
+        assert opt._attempt == 0
+        propose.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_framework_feedback_is_authoritative_even_if_trace_looks_successful(
+        self,
+    ) -> None:
+        opt = await _init_optimizer(max_attempts=2)
+        propose = AsyncMock(return_value=None)
+        traj = _FakeReadableTrajectory()
+        traj.push(
+            ObservableEvent(
+                observable=_response_observable("assistant_response"),
+                content="this looks like a success locally",
+            )
+        )
+
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj))
+        with patch.object(opt._reflector, "propose", new=propose):
+            end = await _dispatch_event(
+                opt,
+                RunEndEvent(evaluation=_failure_eval(0.0), security_domain=USER_TAG),
+            )
+
+        assert isinstance(end, RunEndResponse)
+        assert end.done is False
+        assert opt._succeeded is False
+        assert opt._attempt == 1
