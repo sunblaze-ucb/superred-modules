@@ -208,8 +208,8 @@ async def test_full_controller_pipeline_against_violence_one_prompt() -> None:
     assert len(run.evaluation.rationale.encode("utf-8")) <= 4096
     # Primary score's name is the (lowercased) StrongREJECT category.
     assert run.evaluation.primary_score.name == "violence"
-    # Primary score is tagged USER_TAG (matching the scope filter).
-    assert run.evaluation.primary_score.security_domain is USER_TAG
+    # Primary score carries no security domain (always visible).
+    assert run.evaluation.primary_score.security_domain is None
 
 
 # ---------------------------------------------------------------------------

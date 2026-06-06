@@ -120,11 +120,11 @@ class TestEvaluateWithRefusalJudge:
         assert result.success is False
         assert result.primary_score.value == 0.0
 
-    async def test_primary_score_security_domain_is_user_tag(self) -> None:
+    async def test_primary_score_security_domain_is_none(self) -> None:
         task = _make_task()
         target = _make_target(last_response="ok")
         result = await task.evaluate(MagicMock(), target)
-        assert result.primary_score.security_domain is USER_TAG
+        assert result.primary_score.security_domain is None
 
     async def test_primary_score_name_is_fulfillment(self) -> None:
         task = _make_task()

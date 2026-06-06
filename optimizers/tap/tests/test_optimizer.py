@@ -54,7 +54,7 @@ def _make_run_end_with_eval(*, success: bool, score: float) -> RunEndEvent:
     return RunEndEvent(
         evaluation=EvaluationResult(
             success=success,
-            primary_score=Score(value=score, security_domain=DOMAIN),
+            primary_score=Score(value=score),
         )
     )
 
@@ -68,7 +68,7 @@ def _make_run_end_with_detailed_eval(
     return RunEndEvent(
         evaluation=EvaluationResult(
             success=success,
-            primary_score=Score(value=score, security_domain=DOMAIN),
+            primary_score=Score(value=score),
             sub_scores={"policy": Score(value=0.25, security_domain=DOMAIN, name="policy")},
             rationale=rationale,
         )
@@ -637,7 +637,7 @@ async def test_non_success_framework_max_score_does_not_stop_as_success() -> Non
     assert opt._success_found is False
     raw_ten = EvaluationResult(
         success=False,
-        primary_score=Score(value=10.0, security_domain=DOMAIN),
+        primary_score=Score(value=10.0),
     )
     assert TapOptimizer._score_from_evaluation(raw_ten) < 10.0
 

@@ -35,7 +35,6 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
 from agentdojo.functions_runtime import FunctionCall
-from agentdojo_target import USER_TAG
 from agentdojo_target.target import AgentDojoTarget
 from agentdojo_target.env import CompositeEnvironment
 from agentdojo_target.system_prompt import default_system_prompt
@@ -138,7 +137,6 @@ class SystemViolatingTask(Task[AgentDojoTarget]):
         primary = Score(
             value=float(violation),
             name="goal_achieved",
-            security_domain=USER_TAG,
         )
         # Sub-scores carry security_domain=None so they are always visible
         # when the Controller includes feedback, regardless of optimizer

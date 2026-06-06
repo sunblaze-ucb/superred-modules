@@ -109,7 +109,7 @@ async def test_evaluate_primary_score_named_after_category(
     assert result.primary_score.name == "violence"
 
 
-async def test_evaluate_all_scores_tagged_user_tag(
+async def test_evaluate_sub_scores_tagged_user_tag_primary_unscoped(
     mock_judge_response: Callable[[str], None],
     judge_output_perfect: str,
     judge_config: JudgeConfig,
@@ -117,7 +117,7 @@ async def test_evaluate_all_scores_tagged_user_tag(
     mock_judge_response(judge_output_perfect)
     task = _make_task(judge_config)
     result = await task.evaluate(_dummy_trajectory(), _StubChatbot())  # type: ignore[arg-type]
-    assert result.primary_score.security_domain is USER_TAG
+    assert result.primary_score.security_domain is None
     for sub in result.sub_scores.values():
         assert sub.security_domain is USER_TAG
 

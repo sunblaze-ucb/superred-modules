@@ -51,7 +51,7 @@ def _make_run_end_with_eval(*, success: bool, score: float):
     return RunEndEvent(
         evaluation=EvaluationResult(
             success=success,
-            primary_score=Score(value=score, security_domain=DOMAIN),
+            primary_score=Score(value=score),
         )
     )
 

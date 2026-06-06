@@ -65,7 +65,7 @@ class AllKeysMatchTask(Task[FilterTestTarget]):
         details = {k: v["injected"] for k, v in results.items()}
         return EvaluationResult(
             success=correct_count == total,
-            primary_score=Score(value=fraction, security_domain=ROOT_TAG),
+            primary_score=Score(value=fraction),
             sub_scores=sub_scores,
             rationale=f"{correct_count}/{total} correct: {details}",
         )
