@@ -22,16 +22,6 @@ import os
 
 import pytest
 from inspect_ai.tool import Tool, tool
-
-from inspect_agent_target import (
-    AGENT_TRACE_TAG,
-    InspectAgentTarget,
-    MODEL_IDENTITY_TAG,
-    SYSTEM_PROMPT_TAG,
-    TOOL_CATALOGUE_TAG,
-    TOOLS_TAG,
-    USER_TAG,
-)
 from superred.core.controller import Controller, TargetFactory
 from superred.core.interfaces.optimizer import Optimizer
 from superred.core.interfaces.security_claim import SecurityClaim
@@ -49,6 +39,16 @@ from superred.core.types.events import (
 )
 from superred.core.types.goal import Goal
 from superred.core.types.trajectory import Trajectory
+
+from inspect_agent_target import (
+    AGENT_TRACE_TAG,
+    MODEL_IDENTITY_TAG,
+    SYSTEM_PROMPT_TAG,
+    TOOL_CATALOGUE_TAG,
+    TOOLS_TAG,
+    USER_TAG,
+    InspectAgentTarget,
+)
 
 pytestmark = pytest.mark.smoke
 
@@ -94,7 +94,7 @@ class _ProbeTask(Task):
         called = [c["function"] for c in json.loads(target.query("function_call_trace"))]
         return EvaluationResult(
             success="get_balance" in called,
-            primary_score=Score(value=1.0, name="probe", security_domain=USER_TAG),
+            primary_score=Score(value=1.0, name="probe", security_domain=None),
             sub_scores={},
             rationale=json.dumps({"response": resp, "called": called}),
         )
@@ -165,7 +165,11 @@ def _creds() -> tuple[str, str | None, str | None] | None:
             os.environ["LITELLM_API_KEY"],
         )
     if "OPENAI_API_KEY" in os.environ:
-        return (os.environ.get("OPENAI_MODEL", "openai/gpt-4o-mini"), None, os.environ["OPENAI_API_KEY"])
+        return (
+            os.environ.get("OPENAI_MODEL", "openai/gpt-4o-mini"),
+            None,
+            os.environ["OPENAI_API_KEY"],
+        )
     return None
 
 

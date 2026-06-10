@@ -7,13 +7,18 @@ import json
 import pytest
 from inspect_ai.model import ChatMessageAssistant, ChatMessageTool, ChatMessageUser
 from inspect_ai.tool import Tool, ToolCall, tool
+from superred.core.types.events import (
+    ControllableInjection,
+    ControllableNoInjection,
+)
+from superred.core.types.security_domain import SecurityDomainTag
 
 from inspect_agent_target import (
     CONTROLLABLES,
-    InspectAgentTarget,
     SYSTEM_PROMPT_CTRL,
     TOOLS_TAG,
     USER_PROMPT_CTRL,
+    InspectAgentTarget,
 )
 from inspect_agent_target import target as target_mod
 from inspect_agent_target.rollout import run_rollout, static_tools_provider
@@ -22,11 +27,6 @@ from inspect_agent_target.target import (
     _last_assistant_text,
     _parse_tool_names,
 )
-from superred.core.types.events import (
-    ControllableInjection,
-    ControllableNoInjection,
-)
-from superred.core.types.security_domain import SecurityDomainTag
 
 
 def _make_target() -> InspectAgentTarget:
@@ -335,7 +335,16 @@ async def test_run_user_prompt_injection(monkeypatch: pytest.MonkeyPatch) -> Non
     # Capture the user prompt the rollout actually uses.
     orig_run_rollout = target_mod.run_rollout
 
-    async def spy_rollout(model, *, system_prompt, user_prompt, tools_provider, tool_choice, message_limit, on_tool_results=None):  # noqa: ANN001
+    async def spy_rollout(  # noqa: ANN001
+        model,
+        *,
+        system_prompt,
+        user_prompt,
+        tools_provider,
+        tool_choice,
+        message_limit,
+        on_tool_results=None,
+    ):
         captured["user"] = user_prompt
         captured["system"] = system_prompt
         return await orig_run_rollout(
@@ -383,6 +392,35 @@ async def test_run_catalog_register_injection(monkeypatch: pytest.MonkeyPatch) -
     await t.run(lambda e: None, send_event)
     assert t._catalog is not None
     assert "injected_tool" in t._catalog.names()
+
+
+@pytest.mark.asyncio
+async def test_run_catalog_malformed_payloads_ignored_and_teardown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Malformed catalogue injections are logged and skipped (never abort the run):
+    # non-JSON on register, and valid-JSON-but-not-a-dict on replace. The seeded
+    # catalogue is left unchanged. Also exercises teardown (a no-op).
+    fake = _FakeModel([ChatMessageAssistant(content="ok")])
+    monkeypatch.setattr(target_mod, "get_model", lambda *a, **k: fake)
+
+    t = InspectAgentTarget(model="m", tool_resolver=lambda n: _echo(), api_base="b", api_key="k")
+    t.set_config("user_prompt", "UP")
+    t.set_config("tool_names", '["_echo"]')
+
+    async def send_event(event):  # noqa: ANN001
+        ctrl = getattr(event, "controllable", None)
+        if ctrl is not None and ctrl.name == "tool_catalog_register":
+            return ControllableInjection(event=event, controllable=ctrl, value="not valid json {")
+        if ctrl is not None and ctrl.name == "tool_catalog_replace":
+            # valid JSON, but a list rather than the required object.
+            return ControllableInjection(event=event, controllable=ctrl, value="[1, 2, 3]")
+        return ControllableNoInjection(event=event, controllable=event.controllable)
+
+    await t.run(lambda e: None, send_event)
+    assert t._catalog is not None
+    assert t._catalog.names() == ["_echo"]  # malformed edits ignored, catalogue intact
+    await t.teardown()  # no-op, must not raise
 
 
 @pytest.mark.asyncio
