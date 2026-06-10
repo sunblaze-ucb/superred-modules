@@ -83,7 +83,11 @@ def _resolve_config() -> tuple[str, str | None, str | None]:
             os.environ["LITELLM_API_KEY"],
         )
     if "OPENAI_API_KEY" in os.environ:
-        return (os.environ.get("OPENAI_MODEL", "openai/gpt-4o-mini"), None, os.environ["OPENAI_API_KEY"])
+        return (
+            os.environ.get("OPENAI_MODEL", "openai/gpt-4o-mini"),
+            None,
+            os.environ["OPENAI_API_KEY"],
+        )
     return ("openai/gpt-4o-mini", None, None)
 
 

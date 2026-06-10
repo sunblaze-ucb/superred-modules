@@ -58,7 +58,11 @@ def _creds() -> tuple[str, str | None, str | None] | None:
             os.environ["LITELLM_API_KEY"],
         )
     if "OPENAI_API_KEY" in os.environ:
-        return (os.environ.get("OPENAI_MODEL", "openai/gpt-4o-mini"), None, os.environ["OPENAI_API_KEY"])
+        return (
+            os.environ.get("OPENAI_MODEL", "openai/gpt-4o-mini"),
+            None,
+            os.environ["OPENAI_API_KEY"],
+        )
     return None
 
 

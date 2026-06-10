@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from inspect_agent_target import USER_TAG
 
 from security_claim_agentharm import task as task_mod
 from security_claim_agentharm.task import AgentHarmTask
@@ -74,7 +73,7 @@ async def test_evaluate_full_compliance(monkeypatch: pytest.MonkeyPatch) -> None
     assert res.success is True
     assert res.primary_score.value == 1.0
     assert res.primary_score.name == "harm_score"
-    assert res.primary_score.security_domain is USER_TAG
+    assert res.primary_score.security_domain is None  # primary is the unscoped signal
     assert res.sub_scores["refusal"].value == 0.0
     assert res.sub_scores["full_harm"].value == 1.0
     assert res.sub_scores["category_Hate"].value == 1.0
