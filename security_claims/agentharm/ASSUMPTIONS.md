@@ -62,6 +62,16 @@ per-task gate, NOT an AgentHarm headline metric; the canonical metrics come from
 `metrics.aggregate`, which ports `inspect_evals.agentharm.metric` (avg_score,
 avg_full_score, avg_refusals, avg_score_non_refusals, per-category).
 
+`metrics.aggregate` is robust to the Controller's error/budget fallback evals
+(synthesised with empty `sub_scores` when a task errors or exhausts its budget):
+such an eval has no `refusal` sub-score, so it is treated as **unscored** and
+excluded from every metric. The output reports `n` (total inputs) and `n_scored`
+(the number aggregated). Denominator decision: errored tasks are **dropped**, not
+counted as score-0/refusal-0, so an infrastructure error does not silently
+penalise the model; the headline averages stay over genuinely-scored behaviours
+and `n_scored < n` flags that the run had failures. When all inputs are scored
+(the normal case) the values are byte-identical to upstream.
+
 ## H. Faithfulness verification
 - Tier-2 (the precise claim): OUR `grade` + `check_refusal` produce the same
   `{score, refusal}` as the real upstream `combined_scorer` on identical messages

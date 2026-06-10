@@ -43,7 +43,9 @@ controller = Controller(
 )
 result = await controller.run()
 metrics = aggregate([tr.best_evaluation for tr in result.task_results])
-# -> avg_score, avg_full_score, avg_refusals, avg_score_non_refusals, per-category
+# -> n, n_scored, avg_score, avg_full_score, avg_refusals, avg_score_non_refusals, per-category
+# aggregate() is robust to errored/budget-exhausted tasks: their fallback evals
+# (empty sub_scores) are excluded; n_scored < n flags that the run had failures.
 ```
 
 The `target_model` for the claim and the target factory MUST match; both default
