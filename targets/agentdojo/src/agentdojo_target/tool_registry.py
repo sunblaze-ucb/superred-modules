@@ -54,9 +54,10 @@ _NAME_SEPARATOR: str = "__"
 # Write = the tool semantically mutates state on the user's behalf
 # (sending money, sending emails, creating files, posting to slack,
 # making reservations, etc.).  Write tools never receive on-demand
-# injection: the attacker's influence is recorded as a ``write_call:*``
-# observable but the agent's invocation is allowed to execute its
-# legitimate effect.
+# injection: the agent's invocation is allowed to execute its
+# legitimate effect, and the call lands on the trajectory via the
+# live per-call ``agent_trace_tool_call`` observables (plus the
+# ``write_calls_made`` query for evaluators).
 #
 # These sets must enumerate *exactly* the upstream tools per suite;
 # build_registry() asserts both directions (no missing, no extra).
@@ -408,8 +409,8 @@ decide whether to fire a per-read :class:`ControllablePostCallEvent`."""
 WRITE_FUNCTION_NAMES: frozenset[str] = frozenset(
     e.prefixed_name for e in TOOL_REGISTRY.values() if e.kind == "write"
 )
-"""Prefixed names of every write tool.  Used by the runtime wrapper to
-emit ``write_call:{tool}`` observables."""
+"""Prefixed names of every write tool.  Used by the target's
+``write_calls_made`` query to report mutating calls to evaluators."""
 
 
 __all__ = [

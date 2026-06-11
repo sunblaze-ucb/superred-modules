@@ -55,10 +55,13 @@ arg), so neither the Task nor the attacker can change it. Generation config
 to AgentHarm's defaults) is likewise not per-run configurable; cross-target
 parallelism is owned by the `TargetFactory`, not the target.
 
-Static configuration (`model_identity`, `system_prompt`, `message_limit`, the
-configured `tool_catalog_listing`) is exposed as **static observables**; the
-running agent trace (messages / tool calls / tool responses) is on the
-**trajectory** as `ObservableEvent`s.
+Static configuration (`model_identity`, `message_limit`, the configured
+`tool_catalog_listing`) is exposed as **static observables**; the running agent
+trace (messages / tool calls / tool responses) is on the **trajectory** as
+`ObservableEvent`s. The system prompt is not mirrored as an observable: it is
+carried exactly once, on the system-prompt controllable event at run start, so
+a Controller that lists `system_prompt` under `read_only` reads it from the
+trajectory without being able to override it.
 
 ## Security domain
 
@@ -66,10 +69,11 @@ A forest of three root trees (AgentDojo style: a scope holding a parent tag
 includes all its descendants, so a Controller can scope broadly or narrowly):
 
 - `system` (the whole agent-side surface) over:
-  - `system_prompt` (writable) -> `system_prompt_readable`
-  - `tool_catalogue` (broad registry write) -> `tool_catalogue_readable`,
-    `tool_catalogue_addable` (register-only, the weakest write)
-  - `model_identity`
+  - `system_prompt` (read-only access is granted by listing the tag in the
+    Controller's `read_only` set, not by a separate tag)
+  - `tool_catalogue` (broad registry write; the listing observable carries
+    this tag) -> `tool_catalogue_addable` (register-only, the weakest write)
+  - `model_identity`, `message_limit`
   - `agent_trace` -> `agent_trace_messages` (the full transcript) -> its two
     projections `agent_trace_tool_calls` and `agent_trace_tool_responses` (the
     transcript embeds both, so `agent_trace_messages` subsumes them; the two are
@@ -99,9 +103,11 @@ edit the tool registry before the agent runs:
   (scope `tool_catalogue`, broad): shadow / remove / re-describe an existing tool.
 
 The target **always** fires these; the Controller's scope filter decides whether
-a given optimizer may inject (out-of-scope -> auto no-injection). The resulting
-catalogue is exposed via the `tool_catalog_listing` observable
-(`tool_catalogue_readable`).  Initial tools are still set statically by the Task;
+a given optimizer may inject (out-of-scope -> auto no-injection). The configured
+(pre-edit) catalogue is exposed via the `tool_catalog_listing` observable, which
+carries the `tool_catalogue` tag itself — list that tag under `read_only`
+(rather than `scope`) for listing-only access.  Initial tools are still set
+statically by the Task;
 a passthrough optimizer leaves the catalogue untouched (so faithful benchmark
 baselines are unaffected).
 

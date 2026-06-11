@@ -20,11 +20,9 @@ from agentdojo_target.security_tags import (
     CONTENT_3P_DATA_3P_TAG,
     DOMAIN,
     MODEL_IDENTITY_TAG,
-    PROMPT_READABLE_TAG,
     PROMPT_TAG,
     SYSTEM_TAG,
     TOOL_CATALOGUE_ADDABLE_TAG,
-    TOOL_CATALOGUE_READABLE_TAG,
     TOOL_CATALOGUE_TAG,
     TOOLS_TAG,
     USER_TAG,
@@ -41,9 +39,7 @@ def test_system_tag_includes_all_system_descendants() -> None:
     """Holding the system root grants every system-side capability."""
     for descendant in (
         PROMPT_TAG,
-        PROMPT_READABLE_TAG,
         TOOL_CATALOGUE_TAG,
-        TOOL_CATALOGUE_READABLE_TAG,
         TOOL_CATALOGUE_ADDABLE_TAG,
         MODEL_IDENTITY_TAG,
         AGENT_TRACE_TAG,
@@ -55,17 +51,10 @@ def test_system_tag_includes_all_system_descendants() -> None:
 
 
 def test_tool_catalogue_subsumption() -> None:
-    """The catalogue write tag subsumes readable and addable children."""
-    assert TOOL_CATALOGUE_TAG.includes(TOOL_CATALOGUE_READABLE_TAG)
+    """The catalogue tag subsumes the register-only addable child."""
     assert TOOL_CATALOGUE_TAG.includes(TOOL_CATALOGUE_ADDABLE_TAG)
     # but addable does not imply replace/unregister capability
     assert not TOOL_CATALOGUE_ADDABLE_TAG.includes(TOOL_CATALOGUE_TAG)
-
-
-def test_prompt_subsumption() -> None:
-    """The writable prompt tag subsumes the readable child."""
-    assert PROMPT_TAG.includes(PROMPT_READABLE_TAG)
-    assert not PROMPT_READABLE_TAG.includes(PROMPT_TAG)
 
 
 def test_agent_trace_subsumption() -> None:
@@ -119,7 +108,8 @@ def test_scope_includes_uses_tags() -> None:
 
 
 def test_assembled_domain_size() -> None:
-    """All 17 declared tags appear in the assembled DOMAIN forest."""
+    """The assembled DOMAIN (15 declared tags) enumerates with the three
+    expected roots."""
     # We cannot inspect DOMAIN._tags directly (private), but distinct_combinations
     # exercises the full tag set; the empty antichain is always present, and the
     # antichain count grows monotonically with the tag count.  At minimum,

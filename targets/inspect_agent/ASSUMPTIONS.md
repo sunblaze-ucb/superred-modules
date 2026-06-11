@@ -87,9 +87,10 @@ catalogue is seeded from the static `tool_names` config), plus a
   surface; the experiment designer's scope decides exposure to the optimizer.
 - Scopes mirror AgentDojo: register is `tool_catalogue_addable` (weakest write),
   the other three and the static tool set are `tool_catalogue` (broad); the
-  listing is `tool_catalogue_readable`. Broad implies the children. The
-  `tool_catalogue` tag lives under the `system` umbrella root, alongside
-  `system_prompt`, `model_identity`, and `agent_trace`.
+  listing observable carries `tool_catalogue` itself, so keeping that tag in
+  `read_only` (rather than `scope`) grants the listing without edit capability. Broad implies
+  the register-only child. The `tool_catalogue` tag lives under the `system`
+  umbrella root, alongside `system_prompt`, `model_identity`, and `agent_trace`.
 - Initial tools remain a static Task config (`tool_names`); the catalogue is
   seeded from them each run and edited only by accepted injections.
 - **Faithfulness-safe**: a passthrough optimizer (the AgentHarm baseline) injects

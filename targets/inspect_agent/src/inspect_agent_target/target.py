@@ -63,7 +63,6 @@ from inspect_agent_target.controllables import (
 from inspect_agent_target.observables import (
     MESSAGE_LIMIT_OBS,
     MODEL_IDENTITY_OBS,
-    SYSTEM_PROMPT_OBS,
     TOOL_CATALOG_LISTING_OBS,
     agent_tool_call_observable,
     agent_tool_response_observable,
@@ -216,7 +215,6 @@ class InspectAgentTarget(Target):
             catalog_snapshot = []
         return [
             ObservableValue(observable=MODEL_IDENTITY_OBS, content=self._model_id),
-            ObservableValue(observable=SYSTEM_PROMPT_OBS, content=self._system_prompt),
             ObservableValue(observable=MESSAGE_LIMIT_OBS, content=str(self._message_limit)),
             ObservableValue(observable=TOOL_CATALOG_LISTING_OBS, content=catalog_snapshot),
         ]

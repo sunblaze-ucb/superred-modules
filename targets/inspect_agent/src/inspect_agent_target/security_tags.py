@@ -7,11 +7,15 @@ includes all its descendants, so the Controller can scope broadly or narrowly).
 - ``system``: agent-side surfaces (everything the agent IS / how it is
   configured / its own trace).  An attacker with ``system`` holds every
   agent-side capability below it.
-    - ``system_prompt`` (writable) -> ``system_prompt_readable`` (read-only).
+    - ``system_prompt``: the prompt surface.  Read-only access is not a
+      separate tag; it is granted per threat model by listing the tag in the
+      Controller's ``read_only`` set rather than its read & write ``scope``.
     - ``tool_catalogue`` (the *registry*: which tools exist and their docs;
       broad write = set tools / replace / unregister / rewrite-description) ->
-      ``tool_catalogue_readable`` (read the listing) and
-      ``tool_catalogue_addable`` (register-only, the weakest write).
+      ``tool_catalogue_addable`` (register-only, the weakest write).  The
+      catalogue-listing observable carries ``tool_catalogue`` itself, so
+      listing it under ``read_only`` (rather than ``scope``) grants the listing
+      without edit capability.
     - ``model_identity``: which model powers the agent.
     - ``agent_trace`` (read the run trace) -> ``agent_trace_messages`` (the full
       transcript), which subsumes the two narrower projections it embeds:
@@ -48,28 +52,22 @@ SYSTEM_TAG: SecurityDomainTag = SecurityDomainTag("system")
 SYSTEM_PROMPT_TAG: SecurityDomainTag = SecurityDomainTag(
     "system_prompt", parent=SYSTEM_TAG,
 )
-"""Writable agent system prompt.  Implies read via :data:`SYSTEM_PROMPT_READABLE_TAG`."""
-
-SYSTEM_PROMPT_READABLE_TAG: SecurityDomainTag = SecurityDomainTag(
-    "system_prompt_readable", parent=SYSTEM_PROMPT_TAG,
-)
-"""Read-only view of the current system prompt."""
+"""Agent system prompt surface.  When ``system_prompt`` is in the Controller's
+read & write ``scope`` the attacker may override it; listing it under
+``read_only`` instead grants see-but-not-change access."""
 
 # --- tool catalogue (the tool registry) ------------------------------------
 
 TOOL_CATALOGUE_TAG: SecurityDomainTag = SecurityDomainTag(
     "tool_catalogue", parent=SYSTEM_TAG,
 )
-"""Broad tool-registry write: set the initial tool set and perform any catalogue
-edit (replace / unregister / rewrite-description).  Implies the read-only
-:data:`TOOL_CATALOGUE_READABLE_TAG` and the register-only
-:data:`TOOL_CATALOGUE_ADDABLE_TAG`.  This is the *registry* (which tools exist),
-distinct from :data:`TOOLS_TAG` (what a tool returns)."""
-
-TOOL_CATALOGUE_READABLE_TAG: SecurityDomainTag = SecurityDomainTag(
-    "tool_catalogue_readable", parent=TOOL_CATALOGUE_TAG,
-)
-"""Read-only view of the current tool catalogue (the catalogue-listing observable)."""
+"""Broad tool-registry capability: set the initial tool set and perform any
+catalogue edit (replace / unregister / rewrite-description).  Implies the
+register-only :data:`TOOL_CATALOGUE_ADDABLE_TAG`.  The catalogue-listing
+observable carries this tag, so listing ``tool_catalogue`` under ``read_only``
+(rather than ``scope``) grants the listing without any edit capability.
+This is the *registry* (which tools exist), distinct from :data:`TOOLS_TAG`
+(what a tool returns)."""
 
 TOOL_CATALOGUE_ADDABLE_TAG: SecurityDomainTag = SecurityDomainTag(
     "tool_catalogue_addable", parent=TOOL_CATALOGUE_TAG,
@@ -85,12 +83,13 @@ MODEL_IDENTITY_TAG: SecurityDomainTag = SecurityDomainTag(
 )
 """Knowledge of which model the agent uses."""
 
-MESSAGE_LIMIT_READABLE_TAG: SecurityDomainTag = SecurityDomainTag(
-    "message_limit_readable", parent=SYSTEM_TAG,
+MESSAGE_LIMIT_TAG: SecurityDomainTag = SecurityDomainTag(
+    "message_limit", parent=SYSTEM_TAG,
 )
-"""Read-only view of the rollout's message-limit (the message_limit static
-observable).  The message_limit config slot itself is scoped to the broader
-``system`` root."""
+"""The rollout's message-limit surface (the message_limit static observable).
+There is no message-limit controllable, so the tag grants observation only,
+at any access level.  The message_limit config slot itself is scoped to the
+broader ``system`` root."""
 
 # --- agent trace (read access) ---------------------------------------------
 
@@ -149,10 +148,10 @@ sub-forest every tool falls back to this bare root.  Read side:
 FIXED_TAGS: tuple[SecurityDomainTag, ...] = (
     # system tree
     SYSTEM_TAG,
-    SYSTEM_PROMPT_TAG, SYSTEM_PROMPT_READABLE_TAG,
-    TOOL_CATALOGUE_TAG, TOOL_CATALOGUE_READABLE_TAG, TOOL_CATALOGUE_ADDABLE_TAG,
+    SYSTEM_PROMPT_TAG,
+    TOOL_CATALOGUE_TAG, TOOL_CATALOGUE_ADDABLE_TAG,
     MODEL_IDENTITY_TAG,
-    MESSAGE_LIMIT_READABLE_TAG,
+    MESSAGE_LIMIT_TAG,
     AGENT_TRACE_TAG,
     AGENT_TRACE_MESSAGES_TAG, AGENT_TRACE_TOOL_CALLS_TAG, AGENT_TRACE_TOOL_RESPONSES_TAG,
     # user tree
@@ -201,12 +200,10 @@ domain via :func:`build_domain`."""
 __all__ = [
     "SYSTEM_TAG",
     "SYSTEM_PROMPT_TAG",
-    "SYSTEM_PROMPT_READABLE_TAG",
     "TOOL_CATALOGUE_TAG",
-    "TOOL_CATALOGUE_READABLE_TAG",
     "TOOL_CATALOGUE_ADDABLE_TAG",
     "MODEL_IDENTITY_TAG",
-    "MESSAGE_LIMIT_READABLE_TAG",
+    "MESSAGE_LIMIT_TAG",
     "AGENT_TRACE_TAG",
     "AGENT_TRACE_MESSAGES_TAG",
     "AGENT_TRACE_TOOL_CALLS_TAG",

@@ -49,18 +49,19 @@ def test_controllables_exposed(target: AgentDojoTarget) -> None:
 
 
 def test_observables_exposed_with_pre_run_content(target: AgentDojoTarget) -> None:
-    """Static observables have non-None content (model id, sysprompt, catalog, env)."""
+    """Static observables have non-None content (model id, catalog, env).
+
+    The system prompt is NOT a static observable: it is carried exactly
+    once, on the Phase-1 system-prompt ControllablePreCallEvent."""
     observables = target.get_observables()
     names = {o.observable.name for o in observables}
     assert names == {
         "model_identity",
-        "system_prompt",
         "tool_catalog_listing",
         "composite_env_snapshot",
     }
     by_name = {o.observable.name: o for o in observables}
     assert by_name["model_identity"].content == "openai/gpt-4o-2024-05-13"
-    assert by_name["system_prompt"].content  # non-empty default sysprompt
     assert isinstance(by_name["tool_catalog_listing"].content, list)
     assert isinstance(by_name["composite_env_snapshot"].content, dict)
 
@@ -70,8 +71,9 @@ def test_observables_exposed_with_pre_run_content(target: AgentDojoTarget) -> No
 
 def test_set_config_system_prompt(target: AgentDojoTarget) -> None:
     target.set_config("system_prompt", "be very helpful")
-    obs = {o.observable.name: o for o in target.get_observables()}
-    assert obs["system_prompt"].content == "be very helpful"
+    # The prompt surfaces only on the Phase-1 controllable event at run
+    # time, so verify the stored value directly.
+    assert target._system_prompt == "be very helpful"
 
 
 def test_set_config_user_prompt(target: AgentDojoTarget) -> None:

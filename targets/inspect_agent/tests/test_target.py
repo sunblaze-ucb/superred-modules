@@ -133,13 +133,14 @@ def test_tool_scopes_scope_per_tool_controllables_and_domain() -> None:
 
 def test_observables_reflect_config() -> None:
     t = _make_target()
-    t.set_config("system_prompt", "SP")
     t.set_config("message_limit", "7")
     obs = {o.observable.name: o.content for o in t.get_observables()}
     assert obs["model_identity"] == "openai/gpt-4o-mini"
-    assert obs["system_prompt"] == "SP"
     assert obs["message_limit"] == "7"  # static observable, not on the trajectory
     assert obs["tool_catalog_listing"] == []  # no tools configured here
+    # The system prompt is NOT a static observable; it is carried once,
+    # on the system-prompt ControllablePreCallEvent at run start.
+    assert "system_prompt" not in obs
 
 
 # --- set_config -----------------------------------------------------------

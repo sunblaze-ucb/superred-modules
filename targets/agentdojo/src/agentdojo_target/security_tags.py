@@ -4,8 +4,10 @@ The forest has three independent root trees:
 
 - ``system``: agent-side capabilities the attacker may control.  Subtree
   layout encodes capability subsumption: an attacker holding
-  ``tool_catalogue`` automatically holds the weaker ``tool_catalogue_addable``
-  and the read-only ``tool_catalogue_readable``.
+  ``tool_catalogue`` automatically holds the weaker
+  ``tool_catalogue_addable``.  Read-only access to a surface is not a
+  separate tag; it is granted per threat model by listing the tag in the
+  Controller's ``read_only`` set rather than its read & write ``scope``.
 - ``user``: the user prompt channel.  A single tag (no children) because
   the user channel has no internal hierarchy in this threat model.
 - ``tools``: a 2x2 grid classifying every readable data store by who
@@ -33,26 +35,18 @@ SYSTEM_TAG: SecurityDomainTag = SecurityDomainTag("system")
 system-side capability below it."""
 
 PROMPT_TAG: SecurityDomainTag = SecurityDomainTag("prompt", parent=SYSTEM_TAG)
-"""Writable system prompt.  Implies read access via :data:`PROMPT_READABLE_TAG`."""
-
-PROMPT_READABLE_TAG: SecurityDomainTag = SecurityDomainTag(
-    "prompt_readable", parent=PROMPT_TAG,
-)
-"""Read-only view of the current system prompt."""
+"""System prompt surface.  When ``prompt`` is in the Controller's read &
+write ``scope`` the attacker may override it; listing it under
+``read_only`` instead grants see-but-not-change access."""
 
 TOOL_CATALOGUE_TAG: SecurityDomainTag = SecurityDomainTag(
     "tool_catalogue", parent=SYSTEM_TAG,
 )
-"""Broadest tool-catalogue write capability.  Implies replace,
-unregister, rewrite-description, and the weaker
-:data:`TOOL_CATALOGUE_ADDABLE_TAG` (register-only).  Also implies the
-read-only :data:`TOOL_CATALOGUE_READABLE_TAG`."""
-
-TOOL_CATALOGUE_READABLE_TAG: SecurityDomainTag = SecurityDomainTag(
-    "tool_catalogue_readable", parent=TOOL_CATALOGUE_TAG,
-)
-"""Read-only view of the current tool catalogue (names, descriptions,
-parameter schemas)."""
+"""Broadest tool-catalogue capability.  Implies replace, unregister,
+rewrite-description, and the weaker :data:`TOOL_CATALOGUE_ADDABLE_TAG`
+(register-only).  The catalogue-listing observable carries this tag, so
+listing ``tool_catalogue`` under ``read_only`` (rather than ``scope``)
+grants the listing without any edit capability."""
 
 TOOL_CATALOGUE_ADDABLE_TAG: SecurityDomainTag = SecurityDomainTag(
     "tool_catalogue_addable", parent=TOOL_CATALOGUE_TAG,
@@ -142,8 +136,8 @@ booking aggregator, emails received from external senders).  Examples:
 DOMAIN: SecurityDomain = SecurityDomain([
     # system tree
     SYSTEM_TAG,
-    PROMPT_TAG, PROMPT_READABLE_TAG,
-    TOOL_CATALOGUE_TAG, TOOL_CATALOGUE_READABLE_TAG, TOOL_CATALOGUE_ADDABLE_TAG,
+    PROMPT_TAG,
+    TOOL_CATALOGUE_TAG, TOOL_CATALOGUE_ADDABLE_TAG,
     MODEL_IDENTITY_TAG,
     AGENT_TRACE_TAG,
     AGENT_TRACE_MESSAGES_TAG, AGENT_TRACE_TOOL_CALLS_TAG, AGENT_TRACE_TOOL_RESPONSES_TAG,
@@ -155,14 +149,14 @@ DOMAIN: SecurityDomain = SecurityDomain([
     CONTENT_3P_DATA_1P_TAG, CONTENT_3P_DATA_3P_TAG,
 ])
 """The full security-domain forest exposed by :class:`AgentDojoTarget`.
-17 tags across three trees."""
+15 tags across three trees."""
 
 
 __all__ = [
     # system tree
     "SYSTEM_TAG",
-    "PROMPT_TAG", "PROMPT_READABLE_TAG",
-    "TOOL_CATALOGUE_TAG", "TOOL_CATALOGUE_READABLE_TAG", "TOOL_CATALOGUE_ADDABLE_TAG",
+    "PROMPT_TAG",
+    "TOOL_CATALOGUE_TAG", "TOOL_CATALOGUE_ADDABLE_TAG",
     "MODEL_IDENTITY_TAG",
     "AGENT_TRACE_TAG",
     "AGENT_TRACE_MESSAGES_TAG", "AGENT_TRACE_TOOL_CALLS_TAG", "AGENT_TRACE_TOOL_RESPONSES_TAG",

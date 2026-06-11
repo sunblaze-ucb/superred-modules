@@ -2,11 +2,14 @@
 
 Exercises:
 
-- canonical read: legitimate value computed; per-read event fired;
-  injection response substitutes the agent-visible return; observable
-  mirror emitted.
-- canonical write: legitimate body invoked; ``write_call:*`` observable
-  emitted; no injection event for writes.
+- every call: one live ``agent_trace_tool_call_NNNN`` observable at
+  invocation plus one ``agent_trace_tool_response_NNNN`` with the value
+  the agent saw.
+- canonical read: legitimate value computed; per-read event fired
+  carrying it (exactly once — no observable mirror); injection response
+  substitutes the agent-visible return.
+- canonical write: legitimate body invoked; no injection event for
+  writes.
 - attacker registered: legit body never called; per-call event fired
   with ``fake_return`` as answer; injection response overrides; no
   injection means the fake_return passes through.
@@ -137,20 +140,21 @@ def test_canonical_read_injection_replaces_return(loop, catalog, env) -> None:
     assert result == "9999.99"
 
 
-def test_canonical_read_emits_observable_mirror(loop, catalog, env) -> None:
-    """A read_data_field observable is emitted with the pre-injection value."""
+def test_canonical_read_emits_no_observable_mirror(loop, catalog, env) -> None:
+    """The legitimate value is carried exactly once, on the post-call event.
+
+    No ``read_data_field:*`` mirror is emitted; the observables for a read
+    are the live call record and the agent-seen response.  Read-without-
+    inject access is a Controller concern (the tag under ``read_only``
+    rather than ``scope``), not a second emission.
+    """
     rec = EventRecorder()
     wrapper = WrappedFunctionsRuntime(
         catalog=catalog, send_event=rec.send_event, emit=rec.emit, loop=loop,
     )
     wrapper.run_function(env, "banking__get_balance", {})
-    mirrors = [
-        o for o in rec.observables
-        if o.observable.name.startswith("read_data_field:")
-    ]
-    assert len(mirrors) == 1
-    assert mirrors[0].observable.name == "read_data_field:banking__get_balance"
-    assert float(mirrors[0].content) == env.banking.bank_account.balance
+    names = [o.observable.name for o in rec.observables]
+    assert names == ["agent_trace_tool_call_0000", "agent_trace_tool_response_0000"]
 
 
 # ---------------------------------------------------------------------------
@@ -158,9 +162,14 @@ def test_canonical_read_emits_observable_mirror(loop, catalog, env) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_canonical_write_invokes_body_and_emits_observable(loop, catalog, env) -> None:
-    """Writes call the canonical body and emit write_call:* observables;
-    no per-call injection event is fired."""
+def test_canonical_write_invokes_body_without_extra_observables(loop, catalog, env) -> None:
+    """Writes call the canonical body; no per-call injection event is fired.
+
+    No ``write_call:*`` observable either — the call lands on the
+    trajectory exactly once, as the live ``agent_trace_tool_call``
+    observable emitted at invocation (and SecurityClaim predicates use the
+    ``write_calls_made`` query).
+    """
     rec = EventRecorder()
     wrapper = WrappedFunctionsRuntime(
         catalog=catalog, send_event=rec.send_event, emit=rec.emit, loop=loop,
@@ -174,13 +183,42 @@ def test_canonical_write_invokes_body_and_emits_observable(loop, catalog, env) -
     assert len(env.workspace.inbox.emails) == pre_count + 1
     # No injection event was fired (writes do not have per-read ctrls).
     assert not rec.events
-    # write_call observable was emitted.
-    write_obs = [
+    names = [o.observable.name for o in rec.observables]
+    assert names == ["agent_trace_tool_call_0000", "agent_trace_tool_response_0000"]
+
+
+def test_every_call_emits_live_tool_call_observable(loop, catalog, env) -> None:
+    """Each runtime call — read, write, attacker-registered — emits one live
+    ``agent_trace_tool_call_NNNN`` observable at invocation, indexed in
+    trace order, carrying the function name and args."""
+    catalog.apply_register({
+        "name": "evil_tool",
+        "description": "x",
+        "fake_return": "ok",
+    })
+    rec = EventRecorder()
+    wrapper = WrappedFunctionsRuntime(
+        catalog=catalog, send_event=rec.send_event, emit=rec.emit, loop=loop,
+    )
+    wrapper.run_function(env, "banking__get_balance", {})
+    wrapper.run_function(env, "workspace__send_email", {
+        "recipients": ["a@b.c"], "subject": "s", "body": "b",
+    })
+    wrapper.run_function(env, "evil_tool", {})
+    calls = [
         o for o in rec.observables
-        if o.observable.name == "write_call:workspace__send_email"
+        if o.observable.name.startswith("agent_trace_tool_call_")
     ]
-    assert len(write_obs) == 1
-    assert write_obs[0].content["function"] == "workspace__send_email"
+    assert [o.observable.name for o in calls] == [
+        "agent_trace_tool_call_0000",
+        "agent_trace_tool_call_0001",
+        "agent_trace_tool_call_0002",
+    ]
+    assert [o.content["function"] for o in calls] == [
+        "banking__get_balance",
+        "workspace__send_email",
+        "evil_tool",
+    ]
 
 
 # ---------------------------------------------------------------------------

@@ -13,9 +13,11 @@ Two attacker capability surfaces:
 
 The security domain forest has three trees:
 
-- `system`: prompt, tool_catalogue, model_identity, agent_trace (with messages, tool_calls, tool_responses children)
+- `system`: prompt, tool_catalogue (with the register-only `tool_catalogue_addable` child), model_identity, agent_trace (with messages, tool_calls, tool_responses children)
 - `user`: a single tag for the user prompt
 - `tools`: a 2x2 grid (`content_1p_data_1p`, `content_1p_data_3p`, `content_3p_data_1p`, `content_3p_data_3p`) classifying every readable data field by content provider and data store
+
+Read-only access to a surface is not a separate tag: grant it per threat model by listing the tag in the Controller's `read_only` set instead of its read & write `scope`. For example `read_only={PROMPT_TAG}` lets the optimizer see the system prompt on the trajectory (the Phase-1 controllable event carries it) without being able to override it, and the same for `CONTENT_3P_DATA_3P_TAG` (watch those reads' legitimate values without injecting). Outside the `agent_trace` projection — which intentionally mirrors the run transcript and therefore re-carries prompts, calls, and agent-seen values under its own tags — every piece of information is emitted exactly once: values that flow through a controllable appear only on that controllable's events.
 
 ## Install
 
