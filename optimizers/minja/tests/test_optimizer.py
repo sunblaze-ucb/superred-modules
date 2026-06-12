@@ -126,6 +126,66 @@ async def test_first_run_appends_official_full_indication_prompt() -> None:
     assert "{victim}" not in resp.value
 
 
+@pytest.mark.asyncio
+async def test_default_optimizer_derives_generic_scenario_from_goal() -> None:
+    opt = MinjaOptimizer(inject_num=1, test_num=1, random_seed=0)
+    await opt.initialize(
+        Goal(description="Redirect future requests for aspirin to ibuprofen in memory retrieval."),
+        [ctrl("user_prompt")],
+        [],
+        Any,  # type: ignore[arg-type]
+    )
+
+    assert opt._scenario.victim == "aspirin"
+    assert opt._scenario.target == "ibuprofen"
+    assert len(opt._victim_questions) >= 2
+
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+    resp = await dispatch(
+        opt,
+        ControllablePreCallEvent(controllable=ctrl("user_prompt"), request="placeholder"),
+    )
+
+    assert isinstance(resp, ControllableInjection)
+    assert "aspirin" in resp.value
+    assert "ibuprofen" in resp.value
+    assert "placeholder" not in resp.value
+
+
+@pytest.mark.asyncio
+async def test_explicit_scenario_overrides_goal_derived_scenario() -> None:
+    scenario = scenario_with(
+        victim="camera",
+        target="tripod",
+        victim_questions=("find a camera for travel", "compare compact camera options"),
+        context={"target_price": "30.00"},
+    )
+    opt = MinjaOptimizer(inject_num=1, test_num=1, random_seed=0, scenario=scenario)
+    await opt.initialize(
+        Goal(description="Redirect requests for aspirin to ibuprofen."),
+        [ctrl("user_prompt")],
+        [],
+        Any,  # type: ignore[arg-type]
+    )
+
+    assert opt._scenario.victim == "camera"
+    assert opt._scenario.target == "tripod"
+
+
+@pytest.mark.asyncio
+async def test_goal_derived_target_wins_over_official_victim_fallback() -> None:
+    opt = MinjaOptimizer(inject_num=1, test_num=1, random_seed=0)
+    await opt.initialize(
+        Goal(description="Redirect requests for toothbrush to Oral-B travel kit."),
+        [ctrl("user_prompt")],
+        [],
+        Any,  # type: ignore[arg-type]
+    )
+
+    assert opt._scenario.victim == "toothbrush"
+    assert opt._scenario.target == "Oral-B travel kit"
+
+
 def test_only_used_official_data_is_packaged() -> None:
     data_files = {
         file.relative_to(DATA_DIR).as_posix() for file in DATA_DIR.rglob("*") if file.is_file()

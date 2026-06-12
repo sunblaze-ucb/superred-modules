@@ -5,11 +5,13 @@ Query-Only Interaction") for SuperRed agent targets.
 
 The attack is **scenario-driven**: a `MinjaScenario` bundles the victim term, the
 target term, the progressive-shortening indication prompts, the bridge
-(memory-record) template, and the attacker's victim questions. The default,
-`OFFICIAL_RAP_SCENARIO`, is the paper's RAP/WebShop shopping scenario; supply
-your own `MinjaScenario` to attack a non-shopping memory agent. The optimizer
-itself is content-agnostic — it only supplies the MINJA query and
-memory-injection strategy.
+(memory-record) template, and the attacker's victim questions. By default the
+optimizer derives this scenario at `initialize()` time from the SuperRed goal and
+visible static observables. If those clearly point at the paper's RAP/WebShop
+setup, it uses the official RAP content; otherwise it builds a deterministic
+victim -> target bridge from phrases such as "redirect X to Y". Supplying an
+explicit `MinjaScenario` still overrides this when a caller wants exact custom
+content.
 
 ## What matches the paper and official code
 
@@ -34,6 +36,11 @@ memory-injection strategy.
   checks visible response/action/tool-call trajectory items and also requires
   the victim term to be *absent* (a real switch), matching the upstream
   target-without-victim action check as closely as SuperRed visibility allows.
+- If no official RAP/WebShop term is visible, `MinjaOptimizer()` is still
+  self-sufficient: it derives victim/target terms from the goal or static
+  context, creates varied trigger queries, and uses a generic progressive
+  bridge. This follows MINJA's procedure but is not a published WebShop content
+  setting.
 
 ## How it maps to SuperRed
 
@@ -71,9 +78,11 @@ surface; benign and test stages stay plain.
 ## Deliberate differences from the official code
 
 - **Generality.** The optimizer is scenario-parameterized (see above); the
-  paper's WebShop content is just the default scenario. The package ships only
-  the data the optimizer reads (the three RAP files), not the full WebShop / QA /
-  EHR corpora — those belong with a target if one needs them.
+  paper's WebShop content is the default when the visible context asks for that
+  setting, and generic victim -> target scenarios are derived automatically
+  otherwise. The package ships only the data the optimizer reads (the three RAP
+  files), not the full WebShop / QA / EHR corpora — those belong with a target if
+  one needs them.
 - **Benign controls.** Optional `benign_queries` (capped by `num_benign`)
   interleave benign instructions, since SuperRed usually runs one task at a time.
 - **No duplicate loop knobs.** SuperRed targets own their internal step loop and

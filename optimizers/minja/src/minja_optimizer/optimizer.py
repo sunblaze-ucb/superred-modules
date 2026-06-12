@@ -26,7 +26,7 @@ from superred.core.types.events import (
 from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
 
-from minja_optimizer.prompts import OFFICIAL_RAP_SCENARIO, MinjaScenario
+from minja_optimizer.prompts import OFFICIAL_RAP_SCENARIO, MinjaScenario, derive_minja_scenario
 
 _SYSTEM_PROMPT_NAME = "system_prompt"
 _RESPONSE_CONTROLLABLE_NAME = "response"
@@ -74,10 +74,13 @@ class MinjaOptimizer(Optimizer):
     """MINJA query-only memory-injection optimizer.
 
     Defaults mirror the official RAP MINJA script where possible:
-    15 injected victim-query groups, 30 test queries, 5 progressive indication
-    prompts, the official toothbrush -> DenTek target pair, and 20-dollar target
-    price. SuperRed executes one target run at a time, so the generated schedule
-    is consumed across runs.
+    15 injected victim-query groups, 30 test queries, and 5 progressive
+    indication prompts.  If no explicit scenario is supplied, the optimizer
+    derives one from the SuperRed goal and visible static observables at
+    initialization time; official RAP/WebShop terms resolve to the paper's
+    toothbrush -> DenTek setup, while other clear victim -> target objectives get
+    a deterministic generic bridge. SuperRed executes one target run at a time,
+    so the generated schedule is consumed across runs.
 
     The attack relies on SuperRed's connected-run lifecycle: injection runs poison
     the target's durable memory, which survives ``reset_ephemeral_state`` between
@@ -100,7 +103,7 @@ class MinjaOptimizer(Optimizer):
     def __init__(
         self,
         *,
-        scenario: MinjaScenario = OFFICIAL_RAP_SCENARIO,
+        scenario: MinjaScenario | None = None,
         inject_num: int = 15,
         num_benign: int = 50,
         test_num: int = 30,
@@ -122,19 +125,20 @@ class MinjaOptimizer(Optimizer):
             raise ValueError("num_benign must be non-negative")
         if test_num < 0:
             raise ValueError("test_num must be non-negative")
-        if not scenario.indication_prompts:
-            raise ValueError("scenario must provide at least one indication prompt")
         if static_context_max_chars < 0:
             raise ValueError("static_context_max_chars must be non-negative")
         if probe_trigger_budget < 1:
             raise ValueError("probe_trigger_budget must be at least 1")
-        self._scenario = scenario
-        self._indication_prompts = tuple(scenario.indication_prompts)
+        if scenario is not None and not scenario.indication_prompts:
+            raise ValueError("scenario must provide at least one indication prompt")
+        self._provided_scenario: MinjaScenario | None = scenario
+        self._scenario: MinjaScenario = scenario or OFFICIAL_RAP_SCENARIO
+        self._indication_prompts: tuple[str, ...] = tuple(self._scenario.indication_prompts)
         self._inject_num = inject_num
         self._num_benign = num_benign
         self._test_num = test_num
         self._benign_queries = tuple(benign_queries or ())
-        self._victim_questions = tuple(scenario.victim_questions)
+        self._victim_questions: tuple[str, ...] = tuple(self._scenario.victim_questions)
         self._random = random.Random(random_seed)
         self._response_observable_names = frozenset(
             response_observable_names or _DEFAULT_RESPONSE_OBSERVABLE_NAMES
@@ -179,6 +183,11 @@ class MinjaOptimizer(Optimizer):
     ) -> None:
         await super().initialize(goal, controllables, observables, llm_client)
         self._static_context = self._format_static_context(observables)
+        self._scenario = self._provided_scenario or derive_minja_scenario(
+            goal.description, self._static_context
+        )
+        self._indication_prompts = tuple(self._scenario.indication_prompts)
+        self._victim_questions = tuple(self._scenario.victim_questions)
         self._tool_catalog = self._extract_tool_catalog(observables)
         # An explicit target_controllable_name pins MINJA to one channel
         # (paper-faithful query-only); the capability extensions only apply in
