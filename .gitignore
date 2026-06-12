@@ -11,3 +11,7 @@ build/
 
 .coverage
 .pytest_cache/
+
+# Local AI-agent steering pointers (machine-local, not versioned)
+CLAUDE.md
+AGENTS.md
