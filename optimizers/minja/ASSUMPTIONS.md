@@ -6,23 +6,24 @@ Query-Only Interaction") for SuperRed agent targets.
 The attack is **scenario-driven**: a `MinjaScenario` bundles the victim term, the
 target term, the progressive-shortening indication prompts, the bridge
 (memory-record) template, and the attacker's victim questions. The default,
-`OFFICIAL_RAP_SCENARIO`, is the official RAP/WebShop shopping scenario, so a
-no-argument `MinjaOptimizer()` reproduces the paper's attack; supply your own
-`MinjaScenario` to attack a non-shopping memory agent. The optimizer itself is
-content-agnostic — it only supplies the MINJA query and memory-injection
-strategy.
+`OFFICIAL_RAP_SCENARIO`, is the paper's RAP/WebShop shopping scenario; supply
+your own `MinjaScenario` to attack a non-shopping memory agent. The optimizer
+itself is content-agnostic — it only supplies the MINJA query and
+memory-injection strategy.
 
 ## What matches the paper and official code
 
-- The default scenario is built from the vendored official RAP data: the
+- The default scenario is built from official RAP/WebShop data: the
   victim -> target pair (`toothbrush` -> `DenTek …`, price 20) from
   `rap/victim_target_pair/victim_target.json`, the five indication prompts (used
-  longest to shortest) from `rap/indication_prompt_template.json`, and the victim
-  queries from `rap/victim_questions.json` (a compact subset containing only rows
-  that mention an official victim term — the data the optimizer actually reads).
+  longest to shortest) from `rap/indication_prompt_template.json`, and a compact
+  packaged subset of `rap/webshop_instructions.json` containing exactly the rows
+  that mention an official victim term — the data the optimizer actually reads.
 - The bridge/memory record follows the official
   `(attack_query, [bridging_steps, target_reasoning_steps])` shape.
 - Defaults `inject_num=15`, `num_benign=50`, `test_num=30` match `rap/minja.py`.
+  `num_benign` only takes effect when benign queries are supplied by the caller
+  or target setup; the large upstream WebShop benign pool is not bundled here.
 - Progressive Shortening Strategy: each victim query is injected first with the
   full indication prompt, then with progressively shorter ones, ending with the
   plain victim query.
@@ -30,8 +31,9 @@ strategy.
   a *trigger* run (a clean victim query with no indication prompt), so it
   reflects memory retrieval rather than an injected instruction. SuperRed
   framework evaluation is authoritative when present; the no-feedback fallback
-  also requires the victim term to be *absent* (a real switch), matching the
-  upstream check.
+  checks visible response/action/tool-call trajectory items and also requires
+  the victim term to be *absent* (a real switch), matching the upstream
+  target-without-victim action check as closely as SuperRed visibility allows.
 
 ## How it maps to SuperRed
 

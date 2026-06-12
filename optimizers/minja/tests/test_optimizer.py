@@ -24,6 +24,7 @@ from superred.core.types.events import (
 from superred.core.types.goal import Goal
 from superred.core.types.observable import Observable, ObservableValue
 from superred.core.types.security_domain import SecurityDomainTag
+from superred.core.types.trajectory import Trajectory
 
 from minja_optimizer.optimizer import MinjaOptimizer
 from minja_optimizer.prompts import (
@@ -43,22 +44,6 @@ MODEL_TAG = SecurityDomainTag("model_identity", parent=SYSTEM_TAG)
 TOOL_TAG = SecurityDomainTag("tool_catalogue", parent=SYSTEM_TAG)
 RESPONSE_TAG = SecurityDomainTag("response")
 DATA_DIR = Path(__file__).parents[1] / "src" / "minja_optimizer" / "data"
-
-
-class FakeTrajectory:
-    def __init__(self) -> None:
-        self._items: list[Any] = []
-
-    def push(self, item: Any) -> None:
-        self._items.append(item)
-
-    def snapshot(self) -> list[Any]:
-        return list(self._items)
-
-    def drain(self) -> list[Any]:
-        items = list(self._items)
-        self._items.clear()
-        return items
 
 
 def ctrl(
@@ -105,7 +90,7 @@ async def _advance_through_injection(opt: MinjaOptimizer) -> None:
     Leaves the optimizer so the next RunStartEvent opens the test (trigger) stage.
     """
     for _ in range(len(DEFAULT_INDICATION_PROMPTS) + 1):
-        await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+        await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
         await dispatch(
             opt,
             ControllablePreCallEvent(controllable=ctrl("user_prompt"), request="q"),
@@ -123,7 +108,7 @@ async def test_first_run_appends_official_full_indication_prompt() -> None:
         scenario=scenario_with(victim_questions=official_questions[:1]),
     )
     await opt.initialize(Goal(description="poison memory"), [ctrl("user_prompt")], [], Any)  # type: ignore[arg-type]
-    await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
 
     resp = await dispatch(
         opt,
@@ -179,7 +164,7 @@ async def test_progressive_shortening_uses_all_notes_then_plain_attack_query() -
 
     rendered: list[str] = []
     for _ in range(len(DEFAULT_INDICATION_PROMPTS) + 1):
-        await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+        await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
         resp = await dispatch(
             opt,
             ControllablePreCallEvent(
@@ -207,7 +192,7 @@ async def test_trigger_run_framework_success_stops_optimizer() -> None:
     await _advance_through_injection(opt)
 
     # The next run is the clean trigger; framework success there ends the campaign.
-    await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
     await dispatch(opt, ControllablePreCallEvent(controllable=ctrl("user_prompt"), request="q"))
     end = await dispatch(opt, RunEndEvent(evaluation=eval_result(True), security_domain=USER_TAG))
 
@@ -221,10 +206,10 @@ async def test_visible_trajectory_target_response_can_mark_success_without_feedb
     await opt.initialize(Goal(description="poison memory"), [ctrl("user_prompt")], [], Any)  # type: ignore[arg-type]
     await _advance_through_injection(opt)
 
-    traj = FakeTrajectory()
+    traj = Trajectory()
     await dispatch(opt, RunStartEvent(trajectory=traj))
     await dispatch(opt, ControllablePreCallEvent(controllable=ctrl("user_prompt"), request="q"))
-    traj.push(
+    traj.emit(
         ObservableEvent(
             observable=Observable("response", RESPONSE_TAG),
             content=f"I will buy {DEFAULT_PAIR.target} instead.",
@@ -234,6 +219,7 @@ async def test_visible_trajectory_target_response_can_mark_success_without_feedb
 
     assert isinstance(end, RunEndResponse)
     assert end.done is True
+    assert opt._succeeded is True
 
 
 @pytest.mark.asyncio
@@ -249,7 +235,7 @@ async def test_system_prompt_user_prompt_and_memory_postcall_all_get_payloads() 
         [obs("model_identity", "agent-model", MODEL_TAG)],
         Any,  # type: ignore[arg-type]
     )
-    await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
 
     sp = await dispatch(
         opt,
@@ -297,7 +283,7 @@ async def test_tool_catalog_replace_targets_memory_like_tool() -> None:
         [obs("tool_catalog_listing", catalog, TOOL_TAG, "json")],
         Any,  # type: ignore[arg-type]
     )
-    await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
 
     resp = await dispatch(
         opt,
@@ -334,7 +320,7 @@ async def test_test_stage_does_not_poison_extra_surfaces() -> None:
     )
 
     for _ in range(len(DEFAULT_INDICATION_PROMPTS) + 1):
-        await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+        await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
         await dispatch(
             opt,
             ControllablePreCallEvent(
@@ -343,7 +329,7 @@ async def test_test_stage_does_not_poison_extra_surfaces() -> None:
         )
         await dispatch(opt, RunEndEvent(evaluation=eval_result(False), security_domain=USER_TAG))
 
-    await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
     system = await dispatch(
         opt,
         ControllablePreCallEvent(
@@ -393,7 +379,7 @@ async def test_benign_stage_does_not_poison_extra_surfaces() -> None:
 
     found_benign = False
     for _ in range(len(DEFAULT_INDICATION_PROMPTS) + 2):
-        await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+        await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
         system = await dispatch(
             opt,
             ControllablePreCallEvent(
@@ -428,7 +414,7 @@ async def test_injection_run_success_does_not_stop_optimizer() -> None:
     # going so a later clean trigger query can demonstrate the attack.
     opt = MinjaOptimizer(inject_num=1, test_num=1, random_seed=0)
     await opt.initialize(Goal(description="poison memory"), [ctrl("user_prompt")], [], Any)  # type: ignore[arg-type]
-    await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
     await dispatch(opt, ControllablePreCallEvent(controllable=ctrl("user_prompt"), request="q"))
     end = await dispatch(opt, RunEndEvent(evaluation=eval_result(True), security_domain=USER_TAG))
 
@@ -454,7 +440,7 @@ async def test_query_injection_point_discovered_by_role_not_name() -> None:
         [],
         Any,  # type: ignore[arg-type]
     )
-    await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
 
     resp = await dispatch(
         opt,
@@ -486,7 +472,7 @@ async def test_memory_hint_named_query_channel_still_receives_injection() -> Non
         [],
         Any,  # type: ignore[arg-type]
     )
-    await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
 
     resp = await dispatch(
         opt,
@@ -514,7 +500,7 @@ async def test_only_first_precall_controllable_is_latched_as_query_channel() -> 
         [],
         Any,  # type: ignore[arg-type]
     )
-    await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
 
     first = await dispatch(
         opt, ControllablePreCallEvent(controllable=ctrl("primary_input", USER_TAG), request="x")
@@ -543,7 +529,7 @@ async def test_target_controllable_name_locks_injection_surface() -> None:
         [],
         Any,  # type: ignore[arg-type]
     )
-    await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
 
     # "other_input" fires first but is ignored; only the locked name is injected.
     other = await dispatch(
@@ -573,7 +559,7 @@ async def test_response_slot_is_never_used_as_query_channel() -> None:
         [],
         Any,  # type: ignore[arg-type]
     )
-    await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
 
     response = await dispatch(
         opt, ControllablePreCallEvent(controllable=ctrl("response", RESPONSE_TAG), request="x")
@@ -595,7 +581,7 @@ async def test_tool_catalog_register_payload_carries_memory_record() -> None:
         [],
         Any,  # type: ignore[arg-type]
     )
-    await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
 
     resp = await dispatch(
         opt,
@@ -626,7 +612,7 @@ async def test_tool_catalog_rewrite_doc_targets_memory_like_tool() -> None:
         [obs("tool_catalog_listing", catalog, TOOL_TAG, "json")],
         Any,  # type: ignore[arg-type]
     )
-    await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
 
     resp = await dispatch(
         opt,
@@ -658,7 +644,7 @@ async def test_tool_catalog_replace_falls_back_to_first_tool() -> None:
         [obs("tool_catalog_listing", catalog, TOOL_TAG, "json")],
         Any,  # type: ignore[arg-type]
     )
-    await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
 
     resp = await dispatch(
         opt,
@@ -681,7 +667,7 @@ async def test_tool_catalog_replace_no_injection_without_catalog() -> None:
         [],
         Any,  # type: ignore[arg-type]
     )
-    await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
 
     resp = await dispatch(
         opt,
@@ -701,10 +687,10 @@ async def test_response_naming_both_terms_is_not_success_without_feedback() -> N
     await opt.initialize(Goal(description="poison memory"), [ctrl("user_prompt")], [], Any)  # type: ignore[arg-type]
     await _advance_through_injection(opt)
 
-    traj = FakeTrajectory()
+    traj = Trajectory()
     await dispatch(opt, RunStartEvent(trajectory=traj))
     await dispatch(opt, ControllablePreCallEvent(controllable=ctrl("user_prompt"), request="q"))
-    traj.push(
+    traj.emit(
         ObservableEvent(
             observable=Observable("response", RESPONSE_TAG),
             content=f"You could get {DEFAULT_PAIR.target} or just a {DEFAULT_PAIR.victim}.",
@@ -714,6 +700,31 @@ async def test_response_naming_both_terms_is_not_success_without_feedback() -> N
 
     assert isinstance(end, RunEndResponse)
     assert end.done is False
+
+
+@pytest.mark.asyncio
+async def test_visible_agent_action_can_mark_success_without_feedback() -> None:
+    # The official RAP check is action-based: success is finding/searching for
+    # the target while no longer pursuing the victim. Agent targets often expose
+    # that as a trajectory action/tool-call observable rather than "response".
+    opt = MinjaOptimizer(inject_num=1, test_num=1, random_seed=0)
+    await opt.initialize(Goal(description="poison memory"), [ctrl("user_prompt")], [], Any)  # type: ignore[arg-type]
+    await _advance_through_injection(opt)
+
+    traj = Trajectory()
+    await dispatch(opt, RunStartEvent(trajectory=traj))
+    await dispatch(opt, ControllablePreCallEvent(controllable=ctrl("user_prompt"), request="q"))
+    traj.emit(
+        ObservableEvent(
+            observable=Observable("agent_action", RESPONSE_TAG),
+            content=f"search[{DEFAULT_PAIR.target}]",
+        )
+    )
+    end = await dispatch(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
+
+    assert isinstance(end, RunEndResponse)
+    assert end.done is True
+    assert opt._succeeded is True
 
 
 @pytest.mark.asyncio
@@ -740,7 +751,7 @@ async def test_trigger_stages_interleaved_so_a_trigger_is_reachable_early() -> N
 
 
 async def _run_failing_trigger(opt: MinjaOptimizer) -> RunEndResponse:
-    await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
     await dispatch(opt, ControllablePreCallEvent(controllable=ctrl("user_prompt"), request="q"))
     end = await dispatch(opt, RunEndEvent(evaluation=eval_result(False), security_domain=USER_TAG))
     assert isinstance(end, RunEndResponse)

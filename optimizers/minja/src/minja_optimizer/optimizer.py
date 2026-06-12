@@ -34,7 +34,19 @@ _TOOL_REGISTER = "tool_catalog_register"
 _TOOL_REPLACE = "tool_catalog_replace"
 _TOOL_REWRITE_DOC = "tool_catalog_rewrite_doc"
 _TOOL_CATALOG_NAMES = frozenset({_TOOL_REGISTER, _TOOL_REPLACE, _TOOL_REWRITE_DOC})
-_DEFAULT_RESPONSE_OBSERVABLE_NAMES = frozenset({"response", "model_response", "assistant_response"})
+_DEFAULT_RESPONSE_OBSERVABLE_NAMES = frozenset(
+    {
+        "response",
+        "model_response",
+        "assistant_response",
+        "action",
+        "agent_action",
+        "tool_call",
+        "tool_calls",
+        "browser_action",
+        "webshop_action",
+    }
+)
 _STATIC_CONTEXT_TRUNCATION = "...[truncated]"
 _MEMORY_SURFACE_HINTS = (
     "memory",
