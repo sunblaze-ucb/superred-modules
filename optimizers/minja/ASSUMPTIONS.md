@@ -75,12 +75,14 @@ surface; benign and test stages stay plain.
   retrieval tool so the agent sees the record.
 - Static observables (model identity, system prompt, tool catalog) are used when
   visible, with a size cap so long metadata does not crowd out the attack text.
-- Optional LLM scenario synthesis (`use_llm_scenario_synthesis=True`): after a
-  clear victim -> target pair is derived, the optimizer can ask the SuperRed LLM
-  to create richer victim questions and memory-record text. This is off by
-  default for determinism, cost control, and cleaner paper comparison. It never
-  overrides an explicit `MinjaScenario`, and official RAP/WebShop scenarios keep
-  the official content unless the caller supplies a custom scenario.
+- Optional LLM scenario synthesis (`use_llm_scenario_synthesis=True`): if
+  deterministic extraction cannot find a victim -> target pair, the optimizer
+  can ask the SuperRed LLM to infer one from the goal/static context. For
+  non-official derived scenarios, it can then ask the LLM to create richer victim
+  questions and memory-record text. This is off by default for determinism, cost
+  control, and cleaner paper comparison. It never overrides an explicit
+  `MinjaScenario`, and official RAP/WebShop scenarios keep the official content
+  unless the caller supplies a custom scenario.
 
 ## Deliberate differences from the official code
 
@@ -91,10 +93,10 @@ surface; benign and test stages stay plain.
   guessing. The package ships only the data the optimizer reads (the three RAP
   files), not the full WebShop / QA / EHR corpora — those belong with a target if
   one needs them.
-- **LLM-synthesized content is opt-in.** The paper uses fixed scenario content.
-  The optional LLM path is a SuperRed enhancement for non-WebShop targets where
-  more natural domain-specific questions and memory text may improve attack
-  success.
+- **LLM-synthesized pair/content is opt-in.** The paper uses fixed scenario
+  content. The optional LLM path is a SuperRed enhancement for non-WebShop
+  targets where regex extraction is too narrow and more natural domain-specific
+  questions and memory text may improve attack success.
 - **Benign controls.** Optional `benign_queries` (capped by `num_benign`)
   interleave benign instructions, since SuperRed usually runs one task at a time.
 - **No duplicate loop knobs.** SuperRed targets own their internal step loop and

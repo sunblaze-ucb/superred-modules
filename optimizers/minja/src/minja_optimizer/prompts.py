@@ -268,6 +268,18 @@ def _matching_official_pair(victim: str, target: str) -> VictimTargetPair | None
     return None
 
 
+def generic_minja_scenario(victim: str, target: str) -> MinjaScenario:
+    """Build a deterministic non-WebShop MINJA scenario for a victim -> target pair."""
+
+    return MinjaScenario(
+        victim=victim,
+        target=target,
+        indication_prompts=_GENERIC_INDICATION_PROMPTS,
+        memory_record_template=_GENERIC_MEMORY_RECORD_TEMPLATE,
+        victim_questions=_generic_victim_questions(victim),
+    )
+
+
 def derive_minja_scenario(
     goal_description: str,
     static_context: str | None = None,
@@ -287,13 +299,7 @@ def derive_minja_scenario(
         official_pair = _matching_official_pair(victim, target)
         if official_pair is not None:
             return official_rap_scenario(official_pair)
-        return MinjaScenario(
-            victim=victim,
-            target=target,
-            indication_prompts=_GENERIC_INDICATION_PROMPTS,
-            memory_record_template=_GENERIC_MEMORY_RECORD_TEMPLATE,
-            victim_questions=_generic_victim_questions(victim),
-        )
+        return generic_minja_scenario(victim, target)
 
     for pair in OFFICIAL_RAP_VICTIM_TARGET_PAIRS:
         if pair.victim.lower() in normalized or pair.target.lower() in normalized:
@@ -338,6 +344,7 @@ __all__ = [
     "MinjaScenario",
     "VictimTargetPair",
     "derive_minja_scenario",
+    "generic_minja_scenario",
     "is_official_rap_scenario",
     "load_official_indication_prompts",
     "load_official_rap_victim_target_pairs",
