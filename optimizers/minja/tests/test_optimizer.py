@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +29,9 @@ from minja_optimizer.optimizer import MinjaOptimizer
 from minja_optimizer.prompts import (
     DEFAULT_INDICATION_PROMPTS,
     DEFAULT_PAIR,
+    OFFICIAL_RAP_SCENARIO,
     OFFICIAL_RAP_VICTIM_TARGET_PAIRS,
+    MinjaScenario,
     load_official_victim_questions,
 )
 
@@ -91,17 +94,9 @@ async def dispatch(opt: MinjaOptimizer, event: Event) -> EventResponse:
     return await future
 
 
-async def init_opt(**kwargs: Any) -> MinjaOptimizer:
-    opt = MinjaOptimizer(**kwargs)
-    await opt.initialize(
-        goal=Goal(description="make the agent choose the target item"),
-        controllables=kwargs.pop("controllables", [ctrl("user_prompt")])
-        if "controllables" in kwargs
-        else [ctrl("user_prompt")],
-        observables=kwargs.pop("observables", []) if "observables" in kwargs else [],
-        llm_client=Any,  # type: ignore[arg-type]
-    )
-    return opt
+def scenario_with(**overrides: Any) -> MinjaScenario:
+    """Official RAP scenario with given fields overridden (e.g. victim_questions)."""
+    return replace(OFFICIAL_RAP_SCENARIO, **overrides)
 
 
 async def _advance_through_injection(opt: MinjaOptimizer) -> None:
@@ -125,7 +120,7 @@ async def test_first_run_appends_official_full_indication_prompt() -> None:
         inject_num=1,
         test_num=0,
         random_seed=0,
-        victim_questions=official_questions[:1],
+        scenario=scenario_with(victim_questions=official_questions[:1]),
     )
     await opt.initialize(Goal(description="poison memory"), [ctrl("user_prompt")], [], Any)  # type: ignore[arg-type]
     await dispatch(opt, RunStartEvent(trajectory=FakeTrajectory()))
@@ -178,7 +173,7 @@ async def test_progressive_shortening_uses_all_notes_then_plain_attack_query() -
         inject_num=1,
         test_num=0,
         random_seed=0,
-        victim_questions=official_questions[:1],
+        scenario=scenario_with(victim_questions=official_questions[:1]),
     )
     await opt.initialize(Goal(description="poison memory"), [ctrl("user_prompt")], [], Any)  # type: ignore[arg-type]
 
@@ -324,7 +319,7 @@ async def test_test_stage_does_not_poison_extra_surfaces() -> None:
     opt = MinjaOptimizer(
         inject_num=1,
         test_num=1,
-        victim_questions=official_questions[:2],
+        scenario=scenario_with(victim_questions=official_questions[:2]),
         random_seed=1,
     )
     await opt.initialize(
@@ -448,7 +443,10 @@ async def test_query_injection_point_discovered_by_role_not_name() -> None:
     # non-capability, non-memory PreCall surface in scope.
     official_questions = load_official_victim_questions(DEFAULT_PAIR)
     opt = MinjaOptimizer(
-        inject_num=1, test_num=0, random_seed=0, victim_questions=official_questions[:1]
+        inject_num=1,
+        test_num=0,
+        random_seed=0,
+        scenario=scenario_with(victim_questions=official_questions[:1]),
     )
     await opt.initialize(
         Goal(description="poison memory"),
@@ -477,7 +475,10 @@ async def test_memory_hint_named_query_channel_still_receives_injection() -> Non
     # the memory-surface heuristic only governs PostCall memory injection.
     official_questions = load_official_victim_questions(DEFAULT_PAIR)
     opt = MinjaOptimizer(
-        inject_num=1, test_num=0, random_seed=0, victim_questions=official_questions[:1]
+        inject_num=1,
+        test_num=0,
+        random_seed=0,
+        scenario=scenario_with(victim_questions=official_questions[:1]),
     )
     await opt.initialize(
         Goal(description="poison memory"),
@@ -502,7 +503,10 @@ async def test_only_first_precall_controllable_is_latched_as_query_channel() -> 
     # one seen; the others are left untouched (no scattering the payload).
     official_questions = load_official_victim_questions(DEFAULT_PAIR)
     opt = MinjaOptimizer(
-        inject_num=1, test_num=0, random_seed=0, victim_questions=official_questions[:1]
+        inject_num=1,
+        test_num=0,
+        random_seed=0,
+        scenario=scenario_with(victim_questions=official_questions[:1]),
     )
     await opt.initialize(
         Goal(description="poison memory"),
@@ -530,7 +534,7 @@ async def test_target_controllable_name_locks_injection_surface() -> None:
         inject_num=1,
         test_num=0,
         random_seed=0,
-        victim_questions=official_questions[:1],
+        scenario=scenario_with(victim_questions=official_questions[:1]),
         target_controllable_name="chosen_input",
     )
     await opt.initialize(
@@ -558,7 +562,10 @@ async def test_response_slot_is_never_used_as_query_channel() -> None:
     # The model's response controllable must not be latched as the query channel.
     official_questions = load_official_victim_questions(DEFAULT_PAIR)
     opt = MinjaOptimizer(
-        inject_num=1, test_num=0, random_seed=0, victim_questions=official_questions[:1]
+        inject_num=1,
+        test_num=0,
+        random_seed=0,
+        scenario=scenario_with(victim_questions=official_questions[:1]),
     )
     await opt.initialize(
         Goal(description="poison memory"),
@@ -714,7 +721,12 @@ async def test_trigger_stages_interleaved_so_a_trigger_is_reachable_early() -> N
     # Budget robustness: triggers are spread through the injection phase after a
     # warmup, so a run cap below the full injection count still reaches one.
     questions = load_official_victim_questions(DEFAULT_PAIR)
-    opt = MinjaOptimizer(inject_num=5, test_num=5, random_seed=0, victim_questions=questions[:10])
+    opt = MinjaOptimizer(
+        inject_num=5,
+        test_num=5,
+        random_seed=0,
+        scenario=scenario_with(victim_questions=questions[:10]),
+    )
     await opt.initialize(Goal(description="poison memory"), [ctrl("user_prompt")], [], Any)  # type: ignore[arg-type]
 
     kinds = [stage.kind for stage in opt._schedule]
