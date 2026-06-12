@@ -305,6 +305,15 @@ def derive_minja_scenario(
     )
 
 
+def is_official_rap_scenario(scenario: MinjaScenario) -> bool:
+    """Whether *scenario* corresponds to one of the official RAP/WebShop pairs."""
+
+    return any(
+        scenario.victim == pair.victim and scenario.target == pair.target
+        for pair in OFFICIAL_RAP_VICTIM_TARGET_PAIRS
+    )
+
+
 def official_rap_scenario(pair: VictimTargetPair = DEFAULT_PAIR) -> MinjaScenario:
     """Build the official RAP/WebShop scenario for one victim-target pair."""
 
@@ -329,6 +338,7 @@ __all__ = [
     "MinjaScenario",
     "VictimTargetPair",
     "derive_minja_scenario",
+    "is_official_rap_scenario",
     "load_official_indication_prompts",
     "load_official_rap_victim_target_pairs",
     "load_official_victim_questions",
