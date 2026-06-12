@@ -299,7 +299,10 @@ def derive_minja_scenario(
         if pair.victim.lower() in normalized or pair.target.lower() in normalized:
             return official_rap_scenario(pair)
 
-    return OFFICIAL_RAP_SCENARIO
+    raise ValueError(
+        "MINJA needs a victim/target pair. Provide a MinjaScenario, mention an official "
+        "RAP/WebShop victim or target, or phrase the goal like 'redirect X to Y'."
+    )
 
 
 def official_rap_scenario(pair: VictimTargetPair = DEFAULT_PAIR) -> MinjaScenario:

@@ -9,9 +9,10 @@ target term, the progressive-shortening indication prompts, the bridge
 optimizer derives this scenario at `initialize()` time from the SuperRed goal and
 visible static observables. If those clearly point at the paper's RAP/WebShop
 setup, it uses the official RAP content; otherwise it builds a deterministic
-victim -> target bridge from phrases such as "redirect X to Y". Supplying an
-explicit `MinjaScenario` still overrides this when a caller wants exact custom
-content.
+victim -> target bridge from phrases such as "redirect X to Y". If neither is
+available, initialization fails loudly and asks for a victim/target pair instead
+of silently running an unrelated fallback. Supplying an explicit `MinjaScenario`
+still overrides derivation when a caller wants exact custom content.
 
 ## What matches the paper and official code
 
@@ -37,10 +38,10 @@ content.
   the victim term to be *absent* (a real switch), matching the upstream
   target-without-victim action check as closely as SuperRed visibility allows.
 - If no official RAP/WebShop term is visible, `MinjaOptimizer()` is still
-  self-sufficient: it derives victim/target terms from the goal or static
-  context, creates varied trigger queries, and uses a generic progressive
-  bridge. This follows MINJA's procedure but is not a published WebShop content
-  setting.
+  self-sufficient when the goal or static context clearly names a victim ->
+  target redirection. It then creates varied trigger queries and uses a generic
+  progressive bridge. This follows MINJA's procedure but is not a published
+  WebShop content setting.
 
 ## How it maps to SuperRed
 
@@ -80,7 +81,8 @@ surface; benign and test stages stay plain.
 - **Generality.** The optimizer is scenario-parameterized (see above); the
   paper's WebShop content is the default when the visible context asks for that
   setting, and generic victim -> target scenarios are derived automatically
-  otherwise. The package ships only the data the optimizer reads (the three RAP
+  otherwise when the objective is clear. Ambiguous goals fail fast rather than
+  guessing. The package ships only the data the optimizer reads (the three RAP
   files), not the full WebShop / QA / EHR corpora — those belong with a target if
   one needs them.
 - **Benign controls.** Optional `benign_queries` (capped by `num_benign`)
