@@ -186,15 +186,17 @@ async def _run() -> int:
         include_feedback=True,
     ).run()
     task_result = result.task_results[0]
+    # Assert the trigger run itself (the final clean query) succeeded via the
+    # poisoned read surface -- not just "any run succeeded".
+    trigger_ok = task_result.runs[-1].evaluation.success
     summary = {
-        "success": task_result.success,
-        "best_score": task_result.best_score.value,
-        "runs": len(task_result.runs),
+        "trigger_success": trigger_ok,
+        "trigger_runs": len(task_result.runs),
         "target": DEFAULT_PAIR.target,
     }
     print("MINJA + AgentDojo-shaped read surface smoke")
     print(json.dumps(summary, indent=2))
-    return 0 if task_result.success else 1
+    return 0 if trigger_ok else 1
 
 
 def main() -> int:
