@@ -112,6 +112,7 @@ _AGENT_OBSERVABLE_HINTS: tuple[str, ...] = (
 _ROLLOUT_HISTORY_SIZE = 3
 _MAX_AGENT_OBSERVATIONS = 8
 _MAX_AGENT_OBSERVATION_CHARS = 2000
+_DEFAULT_MAX_POOL_SIZE = 8
 
 
 @dataclass
@@ -172,6 +173,7 @@ class GEPAAgenticOptimizer(Optimizer):
         content_controllable_names: Iterable[str] | None = None,
         max_no_signal_runs: int = 0,
         max_content_injections_per_run: int = 3,
+        max_pool_size: int = _DEFAULT_MAX_POOL_SIZE,
         use_tool_catalog_rewrite_when_available: bool = True,
     ) -> None:
         super().__init__()
@@ -179,12 +181,16 @@ class GEPAAgenticOptimizer(Optimizer):
             raise ValueError("max_attempts must be at least 1")
         if max_content_injections_per_run < 1:
             raise ValueError("max_content_injections_per_run must be at least 1")
+        if max_pool_size < 1:
+            raise ValueError("max_pool_size must be at least 1")
         self._max_attempts = max_attempts
         self._reflection_temperature = reflection_temperature
         self._max_content_injections_per_run = max_content_injections_per_run
+        self._max_pool_size = max_pool_size
         self._use_tool_catalog_rewrite_when_available = (
             use_tool_catalog_rewrite_when_available
         )
+        self._response_names_explicit = response_observable_names is not None
         self._response_observable_names: frozenset[str] = frozenset(
             response_observable_names
             if response_observable_names is not None
@@ -447,8 +453,11 @@ class GEPAAgenticOptimizer(Optimizer):
                     selection_reason=self._selection_reason,
                 )
             )
-            if self._current_is_fresh:
+            if self._current_is_fresh and self._should_accept_fresh_candidate(
+                self._current, evaluation
+            ):
                 self._pool.append(self._current)
+                self._prune_pool()
 
         self._update_surface_stats(score)
         if signal_seen:
@@ -511,6 +520,39 @@ class GEPAAgenticOptimizer(Optimizer):
                 best = candidate
         return best
 
+    def _should_accept_fresh_candidate(
+        self,
+        candidate: _Candidate,
+        evaluation: Any,
+    ) -> bool:
+        """Gate pool growth like GEPA's strict-improvement acceptance.
+
+        Upstream GEPA accepts a reflected proposal only when minibatch score
+        improves. SuperRed drives one rollout at a time, so the local analogue is
+        strict improvement over the parent candidate's effective score. No-score
+        threat models may still execute a pending candidate once, but do not grow
+        the persistent candidate pool without an objective signal.
+        """
+        if evaluation is not None and evaluation.success:
+            return True
+        if candidate.score is None or candidate.parent_idx is None:
+            return False
+        if not 0 <= candidate.parent_idx < len(self._pool):
+            return False
+        parent_score = self._pool[candidate.parent_idx].effective_score
+        return candidate.effective_score > parent_score
+
+    def _prune_pool(self) -> None:
+        if len(self._pool) <= self._max_pool_size:
+            return
+        seed = self._pool[0]
+        rest = sorted(
+            self._pool[1:],
+            key=lambda candidate: candidate.effective_score,
+            reverse=True,
+        )
+        self._pool = [seed, *rest[: self._max_pool_size - 1]]
+
     def _choose_content_surfaces(self) -> list[str]:
         if self._target_controllable_name is not None:
             ctrl = self._controllables.get(self._target_controllable_name)
@@ -530,11 +572,7 @@ class GEPAAgenticOptimizer(Optimizer):
         assert self._current is not None
         if not legitimate_content.strip():
             return self._current.prompt
-        return (
-            f"{legitimate_content.rstrip()}\n\n"
-            "Additional task-relevant context from this source:\n"
-            f"{self._current.prompt}"
-        )
+        return f"{legitimate_content.rstrip()}\n\n{self._current.prompt}"
 
     def _record_injection_surface(self, surface: dict[str, str]) -> None:
         self._injected_this_run = True
@@ -723,11 +761,15 @@ class GEPAAgenticOptimizer(Optimizer):
                 if _is_agent_observable(name) and content.strip():
                     self._add_agent_observation(f"{name}: {content.strip()}")
                 normalized = name.lower()
-                if (
+                name_matches_response = (
                     name in self._response_observable_names
                     or normalized in self._response_observable_names
-                    or _is_response_like_observable(name, content)
-                ) and content:
+                )
+                if not self._response_names_explicit:
+                    name_matches_response = name_matches_response or (
+                        _is_response_like_observable(name, content)
+                    )
+                if name_matches_response and content:
                     latest = content
                 continue
             if isinstance(item, ControllablePreCallEvent):
@@ -741,7 +783,7 @@ class GEPAAgenticOptimizer(Optimizer):
                 self._add_agent_observation(
                     f"controllable_post:{item.controllable.name}: {content}"
                 )
-                if content:
+                if content and not self._response_names_explicit:
                     latest = content
         return latest
 

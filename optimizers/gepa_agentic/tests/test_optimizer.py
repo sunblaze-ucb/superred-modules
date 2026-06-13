@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import sys
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -26,7 +28,7 @@ from superred.core.types.observable import Observable, ObservableValue
 from superred.core.types.security_domain import SecurityDomainTag
 
 from gepa_agentic_optimizer.optimizer import GEPAAgenticOptimizer
-from gepa_agentic_optimizer.reflector import ReflectionResult
+from gepa_agentic_optimizer.reflector import ReflectionResult, RolloutRecord
 
 
 USER_TAG = SecurityDomainTag("user")
@@ -129,12 +131,16 @@ async def _init_optimizer(
     content_controllable_names: list[str] | None = None,
     observables: list[ObservableValue] | None = None,
     max_content_injections_per_run: int = 3,
+    max_pool_size: int = 8,
+    response_observable_names: list[str] | None = None,
 ) -> GEPAAgenticOptimizer:
     opt = GEPAAgenticOptimizer(
         max_attempts=max_attempts,
         target_controllable_name=target_controllable_name,
         content_controllable_names=content_controllable_names,
         max_content_injections_per_run=max_content_injections_per_run,
+        max_pool_size=max_pool_size,
+        response_observable_names=response_observable_names,
     )
     await opt.initialize(
         goal=Goal(description="achieve target X"),
@@ -196,6 +202,101 @@ class TestSurfaceClassification:
         assert opt._selected_surface is not None
         assert "HTML/environment" in opt._selected_surface["classification_reason"]
 
+    @pytest.mark.asyncio
+    async def test_agentdojo_contract_shapes_are_classified(self) -> None:
+        repo_root = Path(__file__).resolve().parents[3]
+        agentdojo_src = repo_root / "targets" / "agentdojo" / "src"
+        sys.path.insert(0, str(agentdojo_src))
+        try:
+            from agentdojo_target.controllables import (  # type: ignore[import-not-found]
+                READ_CTRLS,
+                TOOL_CATALOG_REWRITE_DOC_CTRL,
+            )
+            from agentdojo_target.observables import (  # type: ignore[import-not-found]
+                TOOL_CATALOG_LISTING_OBS,
+                agent_tool_response_observable,
+            )
+        finally:
+            try:
+                sys.path.remove(str(agentdojo_src))
+            except ValueError:
+                pass
+
+        read_ctrl = READ_CTRLS["slack__get_webpage"]
+        opt = await _init_optimizer(
+            controllables=[read_ctrl, TOOL_CATALOG_REWRITE_DOC_CTRL],
+            observables=[
+                ObservableValue(
+                    observable=TOOL_CATALOG_LISTING_OBS,
+                    content=[
+                        {
+                            "name": "slack__get_webpage",
+                            "description": "Fetch a web page.",
+                        }
+                    ],
+                )
+            ],
+            max_attempts=2,
+        )
+
+        assert "read__slack__get_webpage" in opt._content_surface_names
+        assert opt._tool_catalog == [
+            {"name": "slack__get_webpage", "description": "Fetch a web page."}
+        ]
+
+        traj = _FakeReadableTrajectory()
+        traj.push(
+            ObservableEvent(
+                observable=agent_tool_response_observable(0),
+                content={"value": "agent saw this"},
+            )
+        )
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj))
+        await _dispatch_event(
+            opt,
+            RunEndEvent(evaluation=_failure_eval(0.1), security_domain=USER_TAG),
+        )
+
+        assert opt._pool[0].rollouts[-1].response == '{"value": "agent saw this"}'
+
+    @pytest.mark.asyncio
+    async def test_inspect_agent_contract_fixture_is_classified(self) -> None:
+        inspect_tool_ctrl = Controllable(
+            name="tool:get_balance",
+            security_domain=TOOL_TAG,
+            description=(
+                "Replace the value the 'get_balance' tool returns to the agent "
+                "(indirect prompt injection). Fired once per call to this tool; "
+                "the event's answer carries the legitimate output."
+            ),
+            value_type="text",
+        )
+        catalog_obs = Observable(
+            name="tool_catalog_listing",
+            security_domain=TRACE_TAG,
+            observable_type="json",
+        )
+        opt = await _init_optimizer(
+            controllables=[inspect_tool_ctrl],
+            observables=[
+                ObservableValue(
+                    observable=catalog_obs,
+                    content=[
+                        {
+                            "name": "get_balance",
+                            "description": "Read account balance.",
+                        }
+                    ],
+                )
+            ],
+            max_attempts=2,
+        )
+
+        assert opt._content_surface_names == ["tool:get_balance"]
+        assert opt._tool_catalog == [
+            {"name": "get_balance", "description": "Read account balance."}
+        ]
+
 
 class TestPostCallSelection:
     @pytest.mark.asyncio
@@ -239,8 +340,8 @@ class TestPostCallSelection:
         assert isinstance(alpha_resp, ControllableInjection)
         assert "alpha legitimate content" in alpha_resp.value
         assert "[GEPA AGENTIC INDIRECT PROMPT]" not in alpha_resp.value
-        assert "Additional task-relevant context" in alpha_resp.value
         assert "achieve target X" in alpha_resp.value
+        assert alpha_resp.value == "alpha legitimate content\n\nachieve target X"
         assert isinstance(gamma_resp, ControllableNoInjection)
 
     @pytest.mark.asyncio
@@ -403,6 +504,76 @@ class TestRolloutContext:
         rollout = propose.call_args.kwargs["rollouts"][0]
         assert rollout.target_observables == {"model_identity": "gpt-4o"}
 
+    @pytest.mark.asyncio
+    async def test_explicit_response_allowlist_disables_response_heuristics(self) -> None:
+        opt = await _init_optimizer(
+            controllables=[_read_ctrl()],
+            max_attempts=2,
+            response_observable_names=["final_answer"],
+        )
+        propose = AsyncMock(return_value=None)
+        traj = _FakeReadableTrajectory()
+        traj.push(
+            ObservableEvent(
+                observable=_response_observable("assistant_response"),
+                content="heuristic response should not be selected",
+            )
+        )
+        traj.push(
+            ObservableEvent(
+                observable=_response_observable("final_answer"),
+                content="explicit response",
+            )
+        )
+        traj.push(
+            ControllablePostCallEvent(
+                controllable=_read_ctrl(),
+                request="read",
+                answer="postcall tool content should not be selected",
+            )
+        )
+
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj))
+        with patch.object(opt._reflector, "propose", new=propose):
+            await _dispatch_event(
+                opt,
+                RunEndEvent(evaluation=_failure_eval(0.2), security_domain=USER_TAG),
+            )
+
+        rollout = propose.call_args.kwargs["rollouts"][0]
+        assert rollout.response == "explicit response"
+        assert rollout.agent_observations is not None
+        assert any(
+            "heuristic response should not be selected" in item
+            for item in rollout.agent_observations
+        )
+        assert any(
+            "postcall tool content should not be selected" in item
+            for item in rollout.agent_observations
+        )
+
+    @pytest.mark.asyncio
+    async def test_default_response_detection_still_uses_heuristics(self) -> None:
+        opt = await _init_optimizer(controllables=[_read_ctrl()], max_attempts=2)
+        propose = AsyncMock(return_value=None)
+        traj = _FakeReadableTrajectory()
+        traj.push(
+            ObservableEvent(
+                observable=_response_observable("assistant_response"),
+                content="heuristic response",
+            )
+        )
+
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj))
+        with patch.object(opt._reflector, "propose", new=propose):
+            await _dispatch_event(
+                opt,
+                RunEndEvent(evaluation=_failure_eval(0.2), security_domain=USER_TAG),
+            )
+
+        rollout = propose.call_args.kwargs["rollouts"][0]
+        assert rollout.response == "heuristic response"
+
 
 class TestToolCatalogRewrite:
     @pytest.mark.asyncio
@@ -467,6 +638,98 @@ class TestToolCatalogRewrite:
         )
 
         assert isinstance(resp, ControllableNoInjection)
+
+
+class TestAcceptance:
+    @pytest.mark.asyncio
+    async def test_rejects_non_improving_reflected_candidate_from_pool(self) -> None:
+        opt = await _init_optimizer(max_attempts=3)
+        propose = AsyncMock(return_value=_refl("candidate two"))
+
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        with patch.object(opt._reflector, "propose", new=propose):
+            await _dispatch_event(
+                opt,
+                RunEndEvent(evaluation=_failure_eval(0.4), security_domain=USER_TAG),
+            )
+
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        with patch.object(opt._reflector, "propose", new=AsyncMock(return_value=None)):
+            await _dispatch_event(
+                opt,
+                RunEndEvent(evaluation=_failure_eval(0.1), security_domain=USER_TAG),
+            )
+
+        assert [candidate.prompt for candidate in opt._pool] == ["achieve target X"]
+
+    @pytest.mark.asyncio
+    async def test_accepts_strictly_improving_reflected_candidate(self) -> None:
+        opt = await _init_optimizer(max_attempts=3)
+        propose = AsyncMock(return_value=_refl("candidate two"))
+
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        with patch.object(opt._reflector, "propose", new=propose):
+            await _dispatch_event(
+                opt,
+                RunEndEvent(evaluation=_failure_eval(0.1), security_domain=USER_TAG),
+            )
+
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        with patch.object(opt._reflector, "propose", new=AsyncMock(return_value=None)):
+            await _dispatch_event(
+                opt,
+                RunEndEvent(evaluation=_failure_eval(0.4), security_domain=USER_TAG),
+            )
+
+        assert [candidate.prompt for candidate in opt._pool] == [
+            "achieve target X",
+            "candidate two",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_does_not_grow_pool_without_score_signal(self) -> None:
+        opt = await _init_optimizer(max_attempts=3)
+        propose = AsyncMock(return_value=_refl("candidate two"))
+        traj = _FakeReadableTrajectory()
+        traj.push(
+            ObservableEvent(
+                observable=_response_observable("assistant_response"),
+                content="visible response",
+            )
+        )
+
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        with patch.object(opt._reflector, "propose", new=propose):
+            await _dispatch_event(
+                opt,
+                RunEndEvent(evaluation=_failure_eval(0.1), security_domain=USER_TAG),
+            )
+
+        await _dispatch_event(opt, RunStartEvent(trajectory=traj))
+        with patch.object(opt._reflector, "propose", new=AsyncMock(return_value=None)):
+            await _dispatch_event(
+                opt,
+                RunEndEvent(evaluation=None, security_domain=USER_TAG),
+            )
+
+        assert [candidate.prompt for candidate in opt._pool] == ["achieve target X"]
+
+    @pytest.mark.asyncio
+    async def test_prunes_pool_to_configured_size(self) -> None:
+        opt = await _init_optimizer(max_attempts=5, max_pool_size=2)
+        for idx, score in enumerate((0.1, 0.2, 0.3), start=1):
+            candidate = type(opt._pool[0])(prompt=f"candidate {idx}", rolled_out=True)
+            candidate.rollouts.append(
+                RolloutRecord(goal="achieve target X", prompt=candidate.prompt, score=score)
+            )
+            opt._pool.append(candidate)
+
+        opt._prune_pool()
+
+        assert [candidate.prompt for candidate in opt._pool] == [
+            "achieve target X",
+            "candidate 3",
+        ]
 
 
 class TestDoneSemantics:

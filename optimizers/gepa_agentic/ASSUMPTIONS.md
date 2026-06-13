@@ -44,6 +44,14 @@ surface appears that was not known during `initialize()`, including a
 content-like opaque return discovered from HTML/DOM-like content, the optimizer
 can inject in runtime-discovery mode and records that decision.
 
+Reflected candidates are not added to the population just because they were
+generated. A pending reflected candidate receives one rollout and is retained
+only if the run succeeds or its scored rollout strictly improves over the
+parent's effective score. This mirrors upstream GEPA's strict-improvement
+acceptance at the granularity SuperRed exposes here. Runs without objective
+feedback can still be observed and reflected on, but they do not grow the
+population.
+
 Prompt fallback is explicit: when no agentic content surface can be classified,
 the optimizer uses `system_prompt` / user prompt channels and records the
 fallback reason in the reflective rollout.
@@ -69,6 +77,10 @@ If no payload reached the target and there is no feedback or trajectory signal,
 the run does not spend a GEPA attempt. This avoids penalizing a candidate for a
 surface-delivery miss.
 
+`response_observable_names` is an override for exact response channels. When it
+is set, heuristic response-name detection is disabled; when it is unset, the
+optimizer uses default response names plus broad agent-trace heuristics.
+
 ## Deliberate Limits
 
 GEPA-Agentic is not a full replacement for specialized attacks like MINJA,
@@ -82,3 +94,9 @@ Full tool-catalog register/replace remains a follow-up. `tool_catalog_rewrite_do
 is included because it is a bounded text rewrite and fits GEPA's instruction
 evolution model; registering or replacing tools requires target-specific JSON
 payload bodies and separate tests.
+
+Full upstream GEPA Pareto-frontier maintenance is also deferred. The current
+SuperRed optimizer operates on one task rollout at a time rather than GEPA's
+multi-example minibatch/full-validation loop, so this PR implements the
+faithfulness-critical acceptance gate without inventing a frontier abstraction
+that the controller does not yet expose.
