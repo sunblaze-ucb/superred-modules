@@ -47,7 +47,8 @@ def test_synced_calendar_event_cancellation_survives() -> None:
     env = load_composite_seed()
     # Pick an event that is currently confirmed.
     eid, evt = next(
-        (eid, ev) for eid, ev in env.workspace.calendar.events.items()
+        (eid, ev)
+        for eid, ev in env.workspace.calendar.events.items()
         if str(ev.status) != "canceled"
     )
     # Mutate the event in-place to mark it canceled.
@@ -68,6 +69,7 @@ def test_synced_cloud_drive_file_create_survives() -> None:
         CloudDriveFile,
         CloudDriveFileID,
     )
+
     new_id = CloudDriveFileID("99999")
     env.workspace.cloud_drive.files[new_id] = CloudDriveFile(
         id_=new_id,

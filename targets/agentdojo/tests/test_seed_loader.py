@@ -99,4 +99,6 @@ def test_merge_overlay_validation_failure_rejected() -> None:
     env = load_composite_seed()
     # balance must be a number; passing a non-numeric should fail
     with pytest.raises(Exception):  # noqa: BLE001 - pydantic raises ValidationError
-        merge_yaml_overlay(env, "banking", '{"bank_account": {"balance": "not a number"}}')
+        merge_yaml_overlay(
+            env, "banking", '{"bank_account": {"balance": "not a number"}}'
+        )

@@ -52,10 +52,18 @@ def load_composite_seed() -> CompositeEnvironment:
         should ``model_copy(deep=True)`` if they need an isolated
         snapshot.
     """
-    banking = get_suite(BENCHMARK_VERSION, "banking").load_and_inject_default_environment({})
-    workspace = get_suite(BENCHMARK_VERSION, "workspace").load_and_inject_default_environment({})
-    slack = get_suite(BENCHMARK_VERSION, "slack").load_and_inject_default_environment({})
-    travel = get_suite(BENCHMARK_VERSION, "travel").load_and_inject_default_environment({})
+    banking = get_suite(
+        BENCHMARK_VERSION, "banking"
+    ).load_and_inject_default_environment({})
+    workspace = get_suite(
+        BENCHMARK_VERSION, "workspace"
+    ).load_and_inject_default_environment({})
+    slack = get_suite(BENCHMARK_VERSION, "slack").load_and_inject_default_environment(
+        {}
+    )
+    travel = get_suite(BENCHMARK_VERSION, "travel").load_and_inject_default_environment(
+        {}
+    )
     return CompositeEnvironment(
         banking=banking,
         workspace=workspace,
@@ -141,11 +149,7 @@ def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]
     """
     result: dict[str, Any] = dict(base)
     for key, value in overlay.items():
-        if (
-            key in result
-            and isinstance(result[key], dict)
-            and isinstance(value, dict)
-        ):
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
             result[key] = _deep_merge(result[key], value)
         else:
             result[key] = value

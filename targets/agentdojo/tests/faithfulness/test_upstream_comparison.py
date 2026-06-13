@@ -146,12 +146,14 @@ class _NoopOptimizer(Optimizer):
             return EventResponse(event=event)
         if isinstance(event, ControllablePreCallEvent):
             return ControllableNoInjection(
-                event=event, controllable=event.controllable,
+                event=event,
+                controllable=event.controllable,
             )
         # Catch ControllablePostCallEvent (per-read events) too.
         if hasattr(event, "controllable"):
             return ControllableNoInjection(
-                event=event, controllable=event.controllable,
+                event=event,
+                controllable=event.controllable,
             )
         if isinstance(event, RunEndEvent):
             return RunEndResponse(event=event, done=True)
@@ -167,6 +169,7 @@ class _NoopOptimizer(Optimizer):
 
 
 from agentdojo_target import BENCHMARK_VERSION as _UPSTREAM_VERSION
+
 """Benchmark version the upstream comparison side uses.  Imported from
 the target package so the comparison automatically tracks the port's
 canonical version.  We test "port at <version> vs upstream at
@@ -204,7 +207,9 @@ def _build_upstream_pipeline(model_id: str, api_base: str | None, api_key: str):
     from importlib.resources import files
 
     if not model_id.startswith("openai/"):
-        pytest.skip(f"Upstream comparison only supports openai/* models; got {model_id}")
+        pytest.skip(
+            f"Upstream comparison only supports openai/* models; got {model_id}"
+        )
 
     client = openai.OpenAI(api_key=api_key, base_url=api_base)
     # AgentDojo's OpenAILLM hard-codes temperature=0 internally (see
@@ -217,14 +222,16 @@ def _build_upstream_pipeline(model_id: str, api_base: str | None, api_key: str):
     )["default"]
 
     tools_loop = ToolsExecutionLoop([ToolsExecutor(), llm])
-    return AgentPipeline(
-        [SystemMessage(sysprompt), InitQuery(), llm, tools_loop]
-    )
+    return AgentPipeline([SystemMessage(sysprompt), InitQuery(), llm, tools_loop])
 
 
 def _run_upstream_pair(
-    suite_name: str, user_task_id: str, injection_task_id: str,
-    model_id: str, api_base: str | None, api_key: str,
+    suite_name: str,
+    user_task_id: str,
+    injection_task_id: str,
+    model_id: str,
+    api_base: str | None,
+    api_key: str,
 ) -> tuple[bool, bool]:
     """Run one upstream pair; return ``(utility, security)`` booleans."""
     suite = _load_upstream_suite(suite_name)
@@ -246,8 +253,12 @@ def _run_upstream_pair(
 
 
 async def _run_port_pair(
-    suite_name: str, user_task_id: str, injection_task_id: str,
-    model_id: str, api_base: str | None, api_key: str,
+    suite_name: str,
+    user_task_id: str,
+    injection_task_id: str,
+    model_id: str,
+    api_base: str | None,
+    api_key: str,
 ) -> tuple[bool, bool]:
     """Run one port pair via Controller.  Return ``(utility, attack_succeeded)``."""
     # Force the v1.1.1 circular-import workaround on the port side too.
@@ -264,7 +275,9 @@ async def _run_port_pair(
 
     def make_target() -> AgentDojoTarget:
         return AgentDojoTarget(
-            pipeline_model=model_id, api_base=api_base, api_key=api_key,
+            pipeline_model=model_id,
+            api_base=api_base,
+            api_key=api_key,
         )
 
     # Scope: every tag in the target's security domain so no controllable,
@@ -280,7 +293,10 @@ async def _run_port_pair(
         security_claim=claim,
         scope=frozenset(all_tags),
         llm_config=LLMConfig(
-            model=model_id, api_base=api_base, api_key=api_key, max_cost=4.0,
+            model=model_id,
+            api_base=api_base,
+            api_key=api_key,
+            max_cost=4.0,
         ),
         max_runs_per_task=1,
         include_feedback=True,
@@ -326,16 +342,26 @@ async def test_upstream_vs_port_security_verdict_match() -> None:
         pair_id = f"{suite_name}::{user_task_id}::{injection_task_id}"
         try:
             _, upstream_security = _run_upstream_pair(
-                suite_name, user_task_id, injection_task_id,
-                model_id, api_base, api_key,
+                suite_name,
+                user_task_id,
+                injection_task_id,
+                model_id,
+                api_base,
+                api_key,
             )
         except Exception as exc:  # pragma: no cover - LLM hiccups
-            errors.append((suite_name, user_task_id, injection_task_id, f"upstream: {exc}"))
+            errors.append(
+                (suite_name, user_task_id, injection_task_id, f"upstream: {exc}")
+            )
             continue
         try:
             _, port_security = await _run_port_pair(
-                suite_name, user_task_id, injection_task_id,
-                model_id, api_base, api_key,
+                suite_name,
+                user_task_id,
+                injection_task_id,
+                model_id,
+                api_base,
+                api_key,
             )
         except Exception as exc:  # pragma: no cover
             errors.append((suite_name, user_task_id, injection_task_id, f"port: {exc}"))
@@ -350,8 +376,13 @@ async def test_upstream_vs_port_security_verdict_match() -> None:
             matched.append((suite_name, user_task_id, injection_task_id))
         else:
             mismatched.append(
-                (suite_name, user_task_id, injection_task_id,
-                 upstream_security, port_security),
+                (
+                    suite_name,
+                    user_task_id,
+                    injection_task_id,
+                    upstream_security,
+                    port_security,
+                ),
             )
 
     total = len(FAITHFULNESS_PAIRS)

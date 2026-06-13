@@ -49,18 +49,19 @@ def test_controllables_exposed(target: AgentDojoTarget) -> None:
 
 
 def test_observables_exposed_with_pre_run_content(target: AgentDojoTarget) -> None:
-    """Static observables have non-None content (model id, sysprompt, catalog, env)."""
+    """Static observables have non-None content (model id, catalog, env).
+
+    The system prompt is NOT a static observable: it is carried exactly
+    once, on the Phase-1 system-prompt ControllablePreCallEvent."""
     observables = target.get_observables()
     names = {o.observable.name for o in observables}
     assert names == {
         "model_identity",
-        "system_prompt",
         "tool_catalog_listing",
         "composite_env_snapshot",
     }
     by_name = {o.observable.name: o for o in observables}
     assert by_name["model_identity"].content == "openai/gpt-4o-2024-05-13"
-    assert by_name["system_prompt"].content  # non-empty default sysprompt
     assert isinstance(by_name["tool_catalog_listing"].content, list)
     assert isinstance(by_name["composite_env_snapshot"].content, dict)
 
@@ -70,8 +71,9 @@ def test_observables_exposed_with_pre_run_content(target: AgentDojoTarget) -> No
 
 def test_set_config_system_prompt(target: AgentDojoTarget) -> None:
     target.set_config("system_prompt", "be very helpful")
-    obs = {o.observable.name: o for o in target.get_observables()}
-    assert obs["system_prompt"].content == "be very helpful"
+    # The prompt surfaces only on the Phase-1 controllable event at run
+    # time, so verify the stored value directly.
+    assert target._system_prompt == "be very helpful"
 
 
 def test_set_config_user_prompt(target: AgentDojoTarget) -> None:
@@ -93,7 +95,10 @@ def test_set_config_seed_override(target: AgentDojoTarget) -> None:
     # The overlay is applied at run-start; verify via the pre-run
     # observable.
     env_obs = {o.observable.name: o for o in target.get_observables()}
-    assert env_obs["composite_env_snapshot"].content["banking"]["bank_account"]["balance"] == 0.0
+    assert (
+        env_obs["composite_env_snapshot"].content["banking"]["bank_account"]["balance"]
+        == 0.0
+    )
 
 
 def test_set_config_unknown_slot_raises(target: AgentDojoTarget) -> None:
@@ -124,12 +129,18 @@ def test_query_returns_string_for_each_slot(target: AgentDojoTarget) -> None:
 
 
 @pytest.mark.asyncio
-async def test_reset_ephemeral_state_resets_per_run_state(target: AgentDojoTarget) -> None:
+async def test_reset_ephemeral_state_resets_per_run_state(
+    target: AgentDojoTarget,
+) -> None:
     """reset_ephemeral_state() must zero per-run state but preserve config slots."""
     target.set_config("user_prompt", "hello")
     target._last_response = "leftover"
     target._function_call_trace.append(  # type: ignore[arg-type]
-        type("FC", (), {"function": "x", "args": {}, "id": None, "placeholder_args": None})()
+        type(
+            "FC",
+            (),
+            {"function": "x", "args": {}, "id": None, "placeholder_args": None},
+        )()
     )
     await target.reset_ephemeral_state()
     assert target.query("last_response") == ""

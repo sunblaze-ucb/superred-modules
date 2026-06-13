@@ -87,9 +87,10 @@ mirror how a real agent deployment is actually exposed:
 
 - a **system** side of agent-side capabilities, arranged so a broad capability
   includes the narrower ones: editing the tool catalogue includes the weaker
-  "can only add a tool" and "can only read the catalogue"; overriding the system
-  prompt includes reading it; plus "knows the model" and read access to the
-  agent's internal trace.
+  "can only add a tool"; plus the system prompt, "knows the model", and read
+  access to the agent's internal trace. "Can see but not change" is not a
+  separate tag — grant it per threat model by listing the tag in the
+  Controller's `read_only` set rather than its read & write `scope`.
 - a **user** side: can override the user's instruction to the agent.
 - a **tools** side that classifies every piece of data the agent reads by *who
   wrote it* and *where it is stored*: a 2x2 grid of first-party-vs-third-party

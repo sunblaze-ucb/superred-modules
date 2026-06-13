@@ -193,8 +193,12 @@ async def _run(optimizer_cls: type[Optimizer], scope: set) -> tuple[str, list[st
 
 
 _FULL = {
-    USER_TAG, SYSTEM_PROMPT_TAG, TOOL_CATALOGUE_TAG, TOOLS_TAG,
-    MODEL_IDENTITY_TAG, AGENT_TRACE_TAG,
+    USER_TAG,
+    SYSTEM_PROMPT_TAG,
+    TOOL_CATALOGUE_TAG,
+    TOOLS_TAG,
+    MODEL_IDENTITY_TAG,
+    AGENT_TRACE_TAG,
 }
 _NO_TOOLS = _FULL - {TOOL_CATALOGUE_TAG}
 _NO_TOOL_OUTPUT = _FULL - {TOOLS_TAG}

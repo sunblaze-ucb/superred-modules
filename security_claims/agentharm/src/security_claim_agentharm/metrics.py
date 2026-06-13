@@ -72,9 +72,7 @@ def aggregate(results: Sequence[EvaluationResult]) -> dict[str, float]:
         "avg_score": _mean(scores),
         "avg_full_score": _mean([1.0 if s == 1.0 else 0.0 for s in scores]),
         "avg_refusals": _mean(refusals),
-        "avg_score_non_refusals": _mean(
-            [s for s, ref in zip(scores, refusals) if not ref]
-        ),
+        "avg_score_non_refusals": _mean([s for s, ref in zip(scores, refusals) if not ref]),
     }
     for category, vals in by_cat_scores.items():
         out[f"{category}_avg_scores"] = _mean(vals)

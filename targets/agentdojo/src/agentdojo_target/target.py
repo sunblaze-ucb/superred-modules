@@ -22,8 +22,8 @@ Lifecycle:
      AgentDojo's outer retry loop.  Only ``AbortAgentError`` (raised by
      defense pipeline elements) is caught; all other exceptions
      propagate.
-   - Phase 5: emit final observables (composite env snapshot, agent
-     trace tool-calls).
+   - Phase 5: emit the final composite-env-snapshot observable (tool
+     calls were already emitted live by the wrapped runtime).
 
 4. ``query``: post-run readers (last_response, function_call_trace,
    pre/post env snapshot, conversation_history, tool catalog snapshot,
@@ -47,7 +47,6 @@ from agentdojo.task_suite.task_suite import (
     model_output_from_messages as _upstream_model_output_from_messages,
 )
 from agentdojo.types import ChatMessage, MessageContentBlock
-from pydantic import BaseModel
 from superred.core.interfaces.target import Target
 from superred.core.types.controllable import Controllable
 from superred.core.types.event import EventHandler, EventResponseHandler
@@ -56,7 +55,7 @@ from superred.core.types.events import (
     ControllablePreCallEvent,
     ObservableEvent,
 )
-from superred.core.types.observable import Observable, ObservableValue
+from superred.core.types.observable import ObservableValue
 from superred.core.types.security_domain import SecurityDomain
 from superred.core.types.state import ConfigSpec, QuerySpec
 
@@ -77,13 +76,14 @@ from agentdojo_target.env import CompositeEnvironment, sync_initial_fields
 from agentdojo_target.observables import (
     COMPOSITE_ENV_SNAPSHOT_OBS,
     MODEL_IDENTITY_OBS,
-    SYSTEM_PROMPT_OBS,
     TOOL_CATALOG_LISTING_OBS,
-    agent_tool_call_observable,
 )
 from agentdojo_target.pipeline_bridge import build_pipeline
 from agentdojo_target.query_specs import QUERY_SPEC_NAMES, QUERY_SPECS
-from agentdojo_target.runtime_wrapper import WrappedFunctionsRuntime
+from agentdojo_target.runtime_wrapper import (
+    WrappedFunctionsRuntime,
+    function_call_to_jsonable,
+)
 from agentdojo_target.security_tags import DOMAIN
 from agentdojo_target.seed_loader import load_composite_seed, merge_yaml_overlay
 from agentdojo_target.system_prompt import default_system_prompt
@@ -185,7 +185,7 @@ class AgentDojoTarget(Target):
             return self._last_response
         if name == "function_call_trace":
             return json.dumps(
-                [_function_call_to_dict(fc) for fc in self._function_call_trace]
+                [function_call_to_jsonable(fc) for fc in self._function_call_trace]
             )
         if name == "pre_environment_snapshot":
             return _dump_env_or_empty(self._pre_env)
@@ -199,7 +199,8 @@ class AgentDojoTarget(Target):
             return json.dumps(self._catalog.snapshot())
         if name == "write_calls_made":
             writes = [
-                fc.function for fc in self._function_call_trace
+                fc.function
+                for fc in self._function_call_trace
                 if fc.function in WRITE_FUNCTION_NAMES
             ]
             return json.dumps(writes)
@@ -222,16 +223,19 @@ class AgentDojoTarget(Target):
         """Static observables with current pre-run content snapshots.
 
         Returned at ``initialize()`` time so optimizers know about the
-        model identity, current system prompt, seeded tool catalog, and
-        full composite env *before* any tool call.  Out-of-scope items
-        are filtered by the controller.
+        model identity, seeded tool catalog, and full composite env
+        *before* any tool call.  The system prompt is not mirrored here;
+        it is carried once, on the Phase-1 system-prompt
+        ControllablePreCallEvent.  Out-of-scope items are filtered by
+        the controller.
         """
         # Build a transient catalog + env snapshot to expose pre-run.
         seed_env = self._build_seed_env_with_overrides()
         seed_catalog = ToolCatalog.from_seed(ALL_FUNCTIONS)
         return [
-            ObservableValue(observable=MODEL_IDENTITY_OBS, content=self._pipeline_model),
-            ObservableValue(observable=SYSTEM_PROMPT_OBS, content=self._system_prompt),
+            ObservableValue(
+                observable=MODEL_IDENTITY_OBS, content=self._pipeline_model
+            ),
             ObservableValue(
                 observable=TOOL_CATALOG_LISTING_OBS,
                 content=seed_catalog.snapshot(),
@@ -261,7 +265,8 @@ class AgentDojoTarget(Target):
             )
         )
         effective_system = (
-            sp_resp.value if isinstance(sp_resp, ControllableInjection)
+            sp_resp.value
+            if isinstance(sp_resp, ControllableInjection)
             else self._system_prompt
         )
 
@@ -273,7 +278,8 @@ class AgentDojoTarget(Target):
             )
         )
         effective_user = (
-            up_resp.value if isinstance(up_resp, ControllableInjection)
+            up_resp.value
+            if isinstance(up_resp, ControllableInjection)
             else self._user_prompt
         )
 
@@ -333,19 +339,15 @@ class AgentDojoTarget(Target):
         )
 
         # --- Phase 5: final observables ---
+        # Tool-call observables are NOT batched here: the wrapped runtime
+        # emits one agent_trace_tool_call_NNNN live per invocation, so
+        # the calls are on the trajectory exactly once and in real time.
         emit(
             ObservableEvent(
                 observable=COMPOSITE_ENV_SNAPSHOT_OBS,
                 content=self._env.model_dump() if self._env is not None else {},
             )
         )
-        for idx, fc in enumerate(self._function_call_trace):
-            emit(
-                ObservableEvent(
-                    observable=agent_tool_call_observable(idx),
-                    content=_function_call_to_dict(fc),
-                )
-            )
 
     # ------------------------------------------------------------------
     # Reset / teardown
@@ -392,16 +394,6 @@ class AgentDojoTarget(Target):
 # ---------------------------------------------------------------------------
 
 
-def _function_call_to_dict(fc: FunctionCall) -> dict[str, Any]:
-    """Serialise a FunctionCall to a JSON-friendly dict."""
-    return {
-        "function": fc.function,
-        "args": dict(fc.args),
-        "id": fc.id,
-        "placeholder_args": dict(fc.placeholder_args) if fc.placeholder_args else None,
-    }
-
-
 def _dump_env_or_empty(env: CompositeEnvironment | None) -> str:
     """Serialise *env* to a JSON string suitable for a round-trip through
     :meth:`CompositeEnvironment.model_validate`.
@@ -434,12 +426,12 @@ def _messages_to_jsonable(messages: Sequence[ChatMessage]) -> list[dict[str, Any
         tool_calls = msg_dict.get("tool_calls")
         if isinstance(tool_calls, list):
             msg_dict["tool_calls"] = [
-                _function_call_to_dict(c) if isinstance(c, FunctionCall) else c
+                function_call_to_jsonable(c) if isinstance(c, FunctionCall) else c
                 for c in tool_calls
             ]
         tool_call = msg_dict.get("tool_call")
         if isinstance(tool_call, FunctionCall):
-            msg_dict["tool_call"] = _function_call_to_dict(tool_call)
+            msg_dict["tool_call"] = function_call_to_jsonable(tool_call)
         out.append(msg_dict)
     return out
 

@@ -83,7 +83,7 @@ TOOL_CATALOG_REPLACE_CTRL: Controllable = Controllable(
     security_domain=TOOL_CATALOGUE_TAG,
     description=(
         "Replace an existing tool (shadow attack): when the agent calls "
-        'the named tool, the attacker-supplied fake_return is used. '
+        "the named tool, the attacker-supplied fake_return is used. "
         'Injection value: {"name": str, "fake_return": Any, '
         '"description"?: str}.'
     ),
@@ -94,8 +94,7 @@ TOOL_CATALOG_UNREGISTER_CTRL: Controllable = Controllable(
     name="tool_catalog_unregister",
     security_domain=TOOL_CATALOGUE_TAG,
     description=(
-        "Remove an existing tool from the catalog.  Injection value: "
-        '{"name": str}.'
+        'Remove an existing tool from the catalog.  Injection value: {"name": str}.'
     ),
     value_type="json",
 )
@@ -134,74 +133,71 @@ TOOL_CATALOG_CTRLS: tuple[Controllable, ...] = (
 
 READ_QUADRANT_MAP: dict[str, object] = {
     # ---- banking ----
-    "banking__get_iban":                    CONTENT_1P_DATA_3P_TAG,
-    "banking__get_balance":                 CONTENT_1P_DATA_3P_TAG,
+    "banking__get_iban": CONTENT_1P_DATA_3P_TAG,
+    "banking__get_balance": CONTENT_1P_DATA_3P_TAG,
     # Transactions: subject field can be set by counterparty on inbound,
     # so the BROAD quadrant is 3p/3p.
     "banking__get_most_recent_transactions": CONTENT_3P_DATA_3P_TAG,
-    "banking__get_scheduled_transactions":  CONTENT_1P_DATA_3P_TAG,
+    "banking__get_scheduled_transactions": CONTENT_1P_DATA_3P_TAG,
     # File reads can return both user-written files and 3p-authored letters
     # (bills, landlord notices, address-change letters).  Broad: 3p content
     # in 1p storage (the user's filesystem).
-    "banking__read_file":                   CONTENT_3P_DATA_1P_TAG,
-    "banking__get_user_info":               CONTENT_1P_DATA_3P_TAG,
-
+    "banking__read_file": CONTENT_3P_DATA_1P_TAG,
+    "banking__get_user_info": CONTENT_1P_DATA_3P_TAG,
     # ---- workspace ----
     # Emails: search/received covers external senders -> broad is 3p/3p.
-    "workspace__search_emails":             CONTENT_3P_DATA_3P_TAG,
-    "workspace__get_sent_emails":           CONTENT_1P_DATA_3P_TAG,
-    "workspace__get_received_emails":       CONTENT_3P_DATA_3P_TAG,
-    "workspace__get_draft_emails":          CONTENT_1P_DATA_3P_TAG,
-    "workspace__search_contacts_by_name":   CONTENT_1P_DATA_3P_TAG,
-    "workspace__search_contacts_by_email":  CONTENT_1P_DATA_3P_TAG,
-    "workspace__get_unread_emails":         CONTENT_3P_DATA_3P_TAG,
+    "workspace__search_emails": CONTENT_3P_DATA_3P_TAG,
+    "workspace__get_sent_emails": CONTENT_1P_DATA_3P_TAG,
+    "workspace__get_received_emails": CONTENT_3P_DATA_3P_TAG,
+    "workspace__get_draft_emails": CONTENT_1P_DATA_3P_TAG,
+    "workspace__search_contacts_by_name": CONTENT_1P_DATA_3P_TAG,
+    "workspace__search_contacts_by_email": CONTENT_1P_DATA_3P_TAG,
+    "workspace__get_unread_emails": CONTENT_3P_DATA_3P_TAG,
     # Calendar: events authored by external invitees count as 3p content.
-    "workspace__get_day_calendar_events":   CONTENT_3P_DATA_3P_TAG,
-    "workspace__search_calendar_events":    CONTENT_3P_DATA_3P_TAG,
-    "workspace__get_current_day":           CONTENT_1P_DATA_1P_TAG,
+    "workspace__get_day_calendar_events": CONTENT_3P_DATA_3P_TAG,
+    "workspace__search_calendar_events": CONTENT_3P_DATA_3P_TAG,
+    "workspace__get_current_day": CONTENT_1P_DATA_1P_TAG,
     # Cloud drive: list/search-by-name surfaces user file names (1p content
     # in 3p storage); content reads can return shared 3p files (broad).
-    "workspace__search_files_by_filename":  CONTENT_1P_DATA_3P_TAG,
-    "workspace__get_file_by_id":            CONTENT_3P_DATA_3P_TAG,
-    "workspace__list_files":                CONTENT_1P_DATA_3P_TAG,
-    "workspace__search_files":              CONTENT_3P_DATA_3P_TAG,
-
+    "workspace__search_files_by_filename": CONTENT_1P_DATA_3P_TAG,
+    "workspace__get_file_by_id": CONTENT_3P_DATA_3P_TAG,
+    "workspace__list_files": CONTENT_1P_DATA_3P_TAG,
+    "workspace__search_files": CONTENT_3P_DATA_3P_TAG,
     # ---- slack ----
-    "slack__get_channels":                  CONTENT_3P_DATA_3P_TAG,
-    "slack__read_channel_messages":         CONTENT_3P_DATA_3P_TAG,
-    "slack__read_inbox":                    CONTENT_3P_DATA_3P_TAG,
-    "slack__get_users_in_channel":          CONTENT_3P_DATA_3P_TAG,
-    "slack__get_webpage":                   CONTENT_3P_DATA_3P_TAG,
-
+    "slack__get_channels": CONTENT_3P_DATA_3P_TAG,
+    "slack__read_channel_messages": CONTENT_3P_DATA_3P_TAG,
+    "slack__read_inbox": CONTENT_3P_DATA_3P_TAG,
+    "slack__get_users_in_channel": CONTENT_3P_DATA_3P_TAG,
+    "slack__get_webpage": CONTENT_3P_DATA_3P_TAG,
     # ---- travel ----
-    "travel__get_user_information":         CONTENT_1P_DATA_3P_TAG,
+    "travel__get_user_information": CONTENT_1P_DATA_3P_TAG,
     # Hotels (4)
-    "travel__get_all_hotels_in_city":           CONTENT_3P_DATA_3P_TAG,
-    "travel__get_hotels_prices":                CONTENT_3P_DATA_3P_TAG,
-    "travel__get_hotels_address":               CONTENT_3P_DATA_3P_TAG,
-    "travel__get_rating_reviews_for_hotels":    CONTENT_3P_DATA_3P_TAG,
+    "travel__get_all_hotels_in_city": CONTENT_3P_DATA_3P_TAG,
+    "travel__get_hotels_prices": CONTENT_3P_DATA_3P_TAG,
+    "travel__get_hotels_address": CONTENT_3P_DATA_3P_TAG,
+    "travel__get_rating_reviews_for_hotels": CONTENT_3P_DATA_3P_TAG,
     # Restaurants (8)
-    "travel__get_all_restaurants_in_city":              CONTENT_3P_DATA_3P_TAG,
-    "travel__get_restaurants_address":                  CONTENT_3P_DATA_3P_TAG,
-    "travel__get_rating_reviews_for_restaurants":       CONTENT_3P_DATA_3P_TAG,
-    "travel__get_cuisine_type_for_restaurants":         CONTENT_3P_DATA_3P_TAG,
+    "travel__get_all_restaurants_in_city": CONTENT_3P_DATA_3P_TAG,
+    "travel__get_restaurants_address": CONTENT_3P_DATA_3P_TAG,
+    "travel__get_rating_reviews_for_restaurants": CONTENT_3P_DATA_3P_TAG,
+    "travel__get_cuisine_type_for_restaurants": CONTENT_3P_DATA_3P_TAG,
     "travel__get_dietary_restrictions_for_all_restaurants": CONTENT_3P_DATA_3P_TAG,
-    "travel__get_contact_information_for_restaurants":  CONTENT_3P_DATA_3P_TAG,
-    "travel__get_price_for_restaurants":                CONTENT_3P_DATA_3P_TAG,
-    "travel__check_restaurant_opening_hours":           CONTENT_3P_DATA_3P_TAG,
+    "travel__get_contact_information_for_restaurants": CONTENT_3P_DATA_3P_TAG,
+    "travel__get_price_for_restaurants": CONTENT_3P_DATA_3P_TAG,
+    "travel__check_restaurant_opening_hours": CONTENT_3P_DATA_3P_TAG,
     # Car rentals (6)
     "travel__get_all_car_rental_companies_in_city": CONTENT_3P_DATA_3P_TAG,
-    "travel__get_car_types_available":              CONTENT_3P_DATA_3P_TAG,
-    "travel__get_rating_reviews_for_car_rental":    CONTENT_3P_DATA_3P_TAG,
-    "travel__get_car_rental_address":               CONTENT_3P_DATA_3P_TAG,
-    "travel__get_car_fuel_options":                 CONTENT_3P_DATA_3P_TAG,
-    "travel__get_car_price_per_day":                CONTENT_3P_DATA_3P_TAG,
+    "travel__get_car_types_available": CONTENT_3P_DATA_3P_TAG,
+    "travel__get_rating_reviews_for_car_rental": CONTENT_3P_DATA_3P_TAG,
+    "travel__get_car_rental_address": CONTENT_3P_DATA_3P_TAG,
+    "travel__get_car_fuel_options": CONTENT_3P_DATA_3P_TAG,
+    "travel__get_car_price_per_day": CONTENT_3P_DATA_3P_TAG,
     # Flights (1)
-    "travel__get_flight_information":               CONTENT_3P_DATA_3P_TAG,
+    "travel__get_flight_information": CONTENT_3P_DATA_3P_TAG,
     # Calendar (2) -- the travel calendar is the user's, but events may be
     # authored by third parties (the same broad rule as workspace).
-    "travel__get_day_calendar_events":              CONTENT_3P_DATA_3P_TAG,
-    "travel__search_calendar_events":               CONTENT_3P_DATA_3P_TAG,
+    "travel__get_day_calendar_events": CONTENT_3P_DATA_3P_TAG,
+    "travel__search_calendar_events": CONTENT_3P_DATA_3P_TAG,
 }
 
 
@@ -244,14 +240,12 @@ def _build_read_controllables() -> dict[str, Controllable]:
     missing = expected - mapped
     if missing:
         raise RuntimeError(
-            "READ_QUADRANT_MAP is missing entries for read tools: "
-            f"{sorted(missing)}"
+            f"READ_QUADRANT_MAP is missing entries for read tools: {sorted(missing)}"
         )
     stale = mapped - expected
     if stale:
         raise RuntimeError(
-            "READ_QUADRANT_MAP has entries for non-read tools: "
-            f"{sorted(stale)}"
+            f"READ_QUADRANT_MAP has entries for non-read tools: {sorted(stale)}"
         )
 
     out: dict[str, Controllable] = {}
