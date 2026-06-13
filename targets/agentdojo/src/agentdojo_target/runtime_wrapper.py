@@ -125,7 +125,9 @@ def _attacker_call_ctrl(entry: CatalogEntry) -> Controllable:
     - ``registered`` -> :data:`TOOL_CATALOGUE_ADDABLE_TAG` (weakest write).
     - ``replaced``   -> :data:`TOOL_CATALOGUE_TAG` (broader write).
     """
-    tag = TOOL_CATALOGUE_ADDABLE_TAG if entry.kind == "registered" else TOOL_CATALOGUE_TAG
+    tag = (
+        TOOL_CATALOGUE_ADDABLE_TAG if entry.kind == "registered" else TOOL_CATALOGUE_TAG
+    )
     return Controllable(
         name=f"tool_call:{entry.name}",
         security_domain=tag,
@@ -335,7 +337,9 @@ class WrappedFunctionsRuntime(FunctionsRuntime):
     # ------------------------------------------------------------------
 
     def _emit_agent_tool_response(
-        self, value: FunctionReturnType, error: str | None,
+        self,
+        value: FunctionReturnType,
+        error: str | None,
     ) -> None:
         """Emit one ``agent_trace_tool_response_NNNN`` observable per
         runtime call, carrying the value the agent will see (after any

@@ -71,7 +71,7 @@ TOOL_CATALOG_REPLACE_CTRL: Controllable = Controllable(
     security_domain=TOOL_CATALOGUE_TAG,
     description=(
         "Shadow an existing tool: when the agent calls the named tool, the "
-        'attacker-supplied canned value is returned instead.  JSON value: '
+        "attacker-supplied canned value is returned instead.  JSON value: "
         '{"name": str, "fake_return": Any, "description"?: str}.'
     ),
     value_type="json",
@@ -115,9 +115,7 @@ TOOL_CATALOG_CTRLS: tuple[Controllable, ...] = (
 # ---------------------------------------------------------------------------
 
 
-def tool_output_controllable(
-    tool_name: str, security_domain: SecurityDomainTag
-) -> Controllable:
+def tool_output_controllable(tool_name: str, security_domain: SecurityDomainTag) -> Controllable:
     """Build the per-tool output-injection Controllable for *tool_name*.
 
     Named ``tool:<tool_name>`` and scoped to *security_domain* (the tool's trust

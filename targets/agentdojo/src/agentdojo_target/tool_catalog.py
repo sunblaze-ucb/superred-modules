@@ -102,7 +102,9 @@ def _placeholder_run(*args: Any, **kwargs: Any) -> Any:
     )
 
 
-def _build_parameters_class(name: str, schema: dict[str, Any] | None) -> type[BaseModel]:
+def _build_parameters_class(
+    name: str, schema: dict[str, Any] | None
+) -> type[BaseModel]:
     """Convert an attacker-supplied JSON Schema fragment into a Pydantic model.
 
     Best-effort: only the ``properties`` + ``required`` keys are honored.
@@ -218,12 +220,14 @@ class ToolCatalog:
                 schema = entry.function.parameters.model_json_schema()
             except Exception:  # pragma: no cover - defensive
                 schema = {}
-            out.append({
-                "name": entry.name,
-                "description": entry.description,
-                "kind": entry.kind,
-                "parameters_schema": schema,
-            })
+            out.append(
+                {
+                    "name": entry.name,
+                    "description": entry.description,
+                    "kind": entry.kind,
+                    "parameters_schema": schema,
+                }
+            )
         return out
 
     # ----- mutations -----
@@ -275,8 +279,7 @@ class ToolCatalog:
             raise ValueError(f"Cannot replace {name!r}: not in catalog")
         if existing.kind != "canonical":
             raise ValueError(
-                f"Cannot replace {name!r}: already {existing.kind!r} "
-                "(unregister first)"
+                f"Cannot replace {name!r}: already {existing.kind!r} (unregister first)"
             )
         new_description = payload.get("description") or existing.description
         # Build a placeholder Function preserving the agent-visible parameter
@@ -351,9 +354,7 @@ def _require_str(payload: dict[str, Any], key: str) -> str:
     """Pull a required string key from a payload, raising ValueError on miss."""
     value = payload.get(key)
     if not isinstance(value, str) or not value:
-        raise ValueError(
-            f"payload missing required string key {key!r} (got {value!r})"
-        )
+        raise ValueError(f"payload missing required string key {key!r} (got {value!r})")
     return value
 
 

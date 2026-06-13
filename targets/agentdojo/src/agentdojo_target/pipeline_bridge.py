@@ -135,7 +135,9 @@ class _CatalogEditHook(BasePipelineElement):
         )
         applied_any = False
         for ctrl, apply_method in ops:
-            event = ControllablePreCallEvent(controllable=ctrl, request="catalog edit slot")
+            event = ControllablePreCallEvent(
+                controllable=ctrl, request="catalog edit slot"
+            )
             response = self._await_event(event)
             if isinstance(response, ControllableInjection):
                 self._try_apply(apply_method, response.value)
@@ -210,7 +212,8 @@ def _message_to_jsonable(msg: Any) -> dict:
         out["tool_calls"] = [
             (
                 {"function": tc.function, "args": dict(tc.args), "id": tc.id}
-                if hasattr(tc, "function") else tc
+                if hasattr(tc, "function")
+                else tc
             )
             for tc in tool_calls
         ]
@@ -263,7 +266,11 @@ class _CompatibleOpenAILLM(OpenAILLM):
         extra_args: dict = {},
     ) -> tuple[str, FunctionsRuntime, Env, Sequence[ChatMessage], dict]:
         out_query, out_runtime, out_env, out_messages, out_extra = super().query(
-            query, runtime, env, messages, extra_args,
+            query,
+            runtime,
+            env,
+            messages,
+            extra_args,
         )
         out_messages = list(out_messages)
         if not out_messages:
@@ -319,16 +326,20 @@ def _sanitise_tool_calls(tool_calls: Sequence[Any]) -> list[Any]:
                 inner_name = sub.get("recipient_name") or sub.get("name")
                 inner_args = sub.get("parameters") or sub.get("args") or {}
                 if isinstance(inner_name, str) and valid_re.match(inner_name):
-                    out.append(FunctionCall(
-                        function=inner_name,
-                        args=inner_args if isinstance(inner_args, dict) else {},
-                        id=getattr(call, "id", None)
-                        or (call.get("id") if isinstance(call, dict) else None),
-                    ))
+                    out.append(
+                        FunctionCall(
+                            function=inner_name,
+                            args=inner_args if isinstance(inner_args, dict) else {},
+                            id=getattr(call, "id", None)
+                            or (call.get("id") if isinstance(call, dict) else None),
+                        )
+                    )
     return out
 
 
-def _build_llm(model_id: str, *, api_base: str | None, api_key: str | None) -> BasePipelineElement:
+def _build_llm(
+    model_id: str, *, api_base: str | None, api_key: str | None
+) -> BasePipelineElement:
     """Construct an AgentDojo LLM element from a litellm-style model id.
 
     Supported providers:
@@ -373,7 +384,9 @@ def _build_llm(model_id: str, *, api_base: str | None, api_key: str | None) -> B
                 raise ValueError(
                     f"Anthropic 'thinking' suffix must be an integer, got {budget!r}"
                 ) from exc
-            return AnthropicLLM(client, base_model, thinking_budget_tokens=budget_tokens)
+            return AnthropicLLM(
+                client, base_model, thinking_budget_tokens=budget_tokens
+            )
         return AnthropicLLM(client, model_name)
     raise NotImplementedError(
         f"Provider {provider!r} not implemented in v1.  Supported: "

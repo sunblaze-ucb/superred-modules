@@ -156,9 +156,7 @@ class InspectAgentTarget(Target):
             self._tool_names = _parse_tool_names(value)
         elif name == "tool_choice":
             if value not in ("auto", "any", "none"):
-                raise ValueError(
-                    f"tool_choice must be 'auto', 'any', or 'none', got {value!r}."
-                )
+                raise ValueError(f"tool_choice must be 'auto', 'any', or 'none', got {value!r}.")
             self._tool_choice = value
         elif name == "message_limit":
             self._message_limit = int(value) if value else self._default_message_limit
@@ -202,15 +200,11 @@ class InspectAgentTarget(Target):
     def _tool_output_ctrl(self, tool_name: str) -> Controllable:
         """The per-tool output-injection Controllable, scoped to the tool's trust
         boundary (claim-supplied) or the bare ``tools`` root if unmapped."""
-        return tool_output_controllable(
-            tool_name, self._tool_scopes.get(tool_name, TOOLS_TAG)
-        )
+        return tool_output_controllable(tool_name, self._tool_scopes.get(tool_name, TOOLS_TAG))
 
     def get_observables(self) -> list[ObservableValue]:
         try:
-            catalog_snapshot = ToolCatalog.seed(
-                self._tool_resolver, self._tool_names
-            ).snapshot()
+            catalog_snapshot = ToolCatalog.seed(self._tool_resolver, self._tool_names).snapshot()
         except Exception:  # pragma: no cover - defensive: resolver/seed failure
             catalog_snapshot = []
         return [
@@ -224,26 +218,18 @@ class InspectAgentTarget(Target):
     async def run(self, emit: EventHandler, send_event: EventResponseHandler) -> None:
         # Phase 1: system prompt controllable.
         sp_resp = await send_event(
-            ControllablePreCallEvent(
-                controllable=SYSTEM_PROMPT_CTRL, request=self._system_prompt
-            )
+            ControllablePreCallEvent(controllable=SYSTEM_PROMPT_CTRL, request=self._system_prompt)
         )
         effective_system = (
-            sp_resp.value
-            if isinstance(sp_resp, ControllableInjection)
-            else self._system_prompt
+            sp_resp.value if isinstance(sp_resp, ControllableInjection) else self._system_prompt
         )
 
         # Phase 2: user prompt controllable.
         up_resp = await send_event(
-            ControllablePreCallEvent(
-                controllable=USER_PROMPT_CTRL, request=self._user_prompt
-            )
+            ControllablePreCallEvent(controllable=USER_PROMPT_CTRL, request=self._user_prompt)
         )
         effective_user = (
-            up_resp.value
-            if isinstance(up_resp, ControllableInjection)
-            else self._user_prompt
+            up_resp.value if isinstance(up_resp, ControllableInjection) else self._user_prompt
         )
 
         # Phase 3: seed the tool catalogue + build the model.
@@ -341,11 +327,7 @@ class InspectAgentTarget(Target):
                 )
             )
         for idx, call in enumerate(_function_call_trace(self._messages)):
-            emit(
-                ObservableEvent(
-                    observable=agent_tool_call_observable(idx), content=call
-                )
-            )
+            emit(ObservableEvent(observable=agent_tool_call_observable(idx), content=call))
 
     # -- reset / teardown ------------------------------------------------------
 

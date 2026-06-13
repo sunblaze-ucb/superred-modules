@@ -40,7 +40,8 @@ write ``scope`` the attacker may override it; listing it under
 ``read_only`` instead grants see-but-not-change access."""
 
 TOOL_CATALOGUE_TAG: SecurityDomainTag = SecurityDomainTag(
-    "tool_catalogue", parent=SYSTEM_TAG,
+    "tool_catalogue",
+    parent=SYSTEM_TAG,
 )
 """Broadest tool-catalogue capability.  Implies replace, unregister,
 rewrite-description, and the weaker :data:`TOOL_CATALOGUE_ADDABLE_TAG`
@@ -49,7 +50,8 @@ listing ``tool_catalogue`` under ``read_only`` (rather than ``scope``)
 grants the listing without any edit capability."""
 
 TOOL_CATALOGUE_ADDABLE_TAG: SecurityDomainTag = SecurityDomainTag(
-    "tool_catalogue_addable", parent=TOOL_CATALOGUE_TAG,
+    "tool_catalogue_addable",
+    parent=TOOL_CATALOGUE_TAG,
 )
 """Register-only catalogue write capability.  Weakest write capability:
 the attacker can add new tools but cannot replace, unregister, or rewrite
@@ -57,30 +59,35 @@ existing entries.  Models a malicious-MCP that can only contribute
 additional tools, not shadow existing ones."""
 
 MODEL_IDENTITY_TAG: SecurityDomainTag = SecurityDomainTag(
-    "model_identity", parent=SYSTEM_TAG,
+    "model_identity",
+    parent=SYSTEM_TAG,
 )
 """Knowledge of which LLM the agent uses.  Sibling of prompt/tool_catalogue
 so that 'attacker knows the victim model' can be modeled independently
 of any write capability."""
 
 AGENT_TRACE_TAG: SecurityDomainTag = SecurityDomainTag(
-    "agent_trace", parent=SYSTEM_TAG,
+    "agent_trace",
+    parent=SYSTEM_TAG,
 )
 """Aggregate read access to the agent's runtime trace.  Implies the three
 finer-grained children."""
 
 AGENT_TRACE_MESSAGES_TAG: SecurityDomainTag = SecurityDomainTag(
-    "agent_trace_messages", parent=AGENT_TRACE_TAG,
+    "agent_trace_messages",
+    parent=AGENT_TRACE_TAG,
 )
 """Read access to the agent's chat-message stream."""
 
 AGENT_TRACE_TOOL_CALLS_TAG: SecurityDomainTag = SecurityDomainTag(
-    "agent_trace_tool_calls", parent=AGENT_TRACE_TAG,
+    "agent_trace_tool_calls",
+    parent=AGENT_TRACE_TAG,
 )
 """Read access to the function calls the agent emits."""
 
 AGENT_TRACE_TOOL_RESPONSES_TAG: SecurityDomainTag = SecurityDomainTag(
-    "agent_trace_tool_responses", parent=AGENT_TRACE_TAG,
+    "agent_trace_tool_responses",
+    parent=AGENT_TRACE_TAG,
 )
 """Read access to the tool return values the agent observes (after any
 on-demand injection has been applied)."""
@@ -102,28 +109,32 @@ TOOLS_TAG: SecurityDomainTag = SecurityDomainTag("tools")
 inject into every readable tool's return value regardless of provenance."""
 
 CONTENT_1P_DATA_1P_TAG: SecurityDomainTag = SecurityDomainTag(
-    "content_1p_data_1p", parent=TOOLS_TAG,
+    "content_1p_data_1p",
+    parent=TOOLS_TAG,
 )
 """Content authored by the first party (user / our system), stored in
 first-party storage (e.g. the user's own filesystem).  Examples:
 ``banking.get_balance``, ``workspace.get_current_day``."""
 
 CONTENT_1P_DATA_3P_TAG: SecurityDomainTag = SecurityDomainTag(
-    "content_1p_data_3p", parent=TOOLS_TAG,
+    "content_1p_data_3p",
+    parent=TOOLS_TAG,
 )
 """First-party content held in third-party storage (e.g. user's PII held
 by the travel agency, the user's sent emails held by the mail provider).
 Examples: ``travel.get_user_information``, ``workspace.get_sent_emails``."""
 
 CONTENT_3P_DATA_1P_TAG: SecurityDomainTag = SecurityDomainTag(
-    "content_3p_data_1p", parent=TOOLS_TAG,
+    "content_3p_data_1p",
+    parent=TOOLS_TAG,
 )
 """Third-party content held in first-party storage (e.g. a third-party
 vendor's bill stored in the user's filesystem).  Examples:
 ``banking.read_file('bill-december-2023.txt')``."""
 
 CONTENT_3P_DATA_3P_TAG: SecurityDomainTag = SecurityDomainTag(
-    "content_3p_data_3p", parent=TOOLS_TAG,
+    "content_3p_data_3p",
+    parent=TOOLS_TAG,
 )
 """Third-party content in third-party storage (e.g. hotel reviews on a
 booking aggregator, emails received from external senders).  Examples:
@@ -133,21 +144,28 @@ booking aggregator, emails received from external senders).  Examples:
 # Assembled SecurityDomain
 # ---------------------------------------------------------------------------
 
-DOMAIN: SecurityDomain = SecurityDomain([
-    # system tree
-    SYSTEM_TAG,
-    PROMPT_TAG,
-    TOOL_CATALOGUE_TAG, TOOL_CATALOGUE_ADDABLE_TAG,
-    MODEL_IDENTITY_TAG,
-    AGENT_TRACE_TAG,
-    AGENT_TRACE_MESSAGES_TAG, AGENT_TRACE_TOOL_CALLS_TAG, AGENT_TRACE_TOOL_RESPONSES_TAG,
-    # user tree
-    USER_TAG,
-    # tools tree
-    TOOLS_TAG,
-    CONTENT_1P_DATA_1P_TAG, CONTENT_1P_DATA_3P_TAG,
-    CONTENT_3P_DATA_1P_TAG, CONTENT_3P_DATA_3P_TAG,
-])
+DOMAIN: SecurityDomain = SecurityDomain(
+    [
+        # system tree
+        SYSTEM_TAG,
+        PROMPT_TAG,
+        TOOL_CATALOGUE_TAG,
+        TOOL_CATALOGUE_ADDABLE_TAG,
+        MODEL_IDENTITY_TAG,
+        AGENT_TRACE_TAG,
+        AGENT_TRACE_MESSAGES_TAG,
+        AGENT_TRACE_TOOL_CALLS_TAG,
+        AGENT_TRACE_TOOL_RESPONSES_TAG,
+        # user tree
+        USER_TAG,
+        # tools tree
+        TOOLS_TAG,
+        CONTENT_1P_DATA_1P_TAG,
+        CONTENT_1P_DATA_3P_TAG,
+        CONTENT_3P_DATA_1P_TAG,
+        CONTENT_3P_DATA_3P_TAG,
+    ]
+)
 """The full security-domain forest exposed by :class:`AgentDojoTarget`.
 15 tags across three trees."""
 
@@ -156,16 +174,21 @@ __all__ = [
     # system tree
     "SYSTEM_TAG",
     "PROMPT_TAG",
-    "TOOL_CATALOGUE_TAG", "TOOL_CATALOGUE_ADDABLE_TAG",
+    "TOOL_CATALOGUE_TAG",
+    "TOOL_CATALOGUE_ADDABLE_TAG",
     "MODEL_IDENTITY_TAG",
     "AGENT_TRACE_TAG",
-    "AGENT_TRACE_MESSAGES_TAG", "AGENT_TRACE_TOOL_CALLS_TAG", "AGENT_TRACE_TOOL_RESPONSES_TAG",
+    "AGENT_TRACE_MESSAGES_TAG",
+    "AGENT_TRACE_TOOL_CALLS_TAG",
+    "AGENT_TRACE_TOOL_RESPONSES_TAG",
     # user tree
     "USER_TAG",
     # tools tree
     "TOOLS_TAG",
-    "CONTENT_1P_DATA_1P_TAG", "CONTENT_1P_DATA_3P_TAG",
-    "CONTENT_3P_DATA_1P_TAG", "CONTENT_3P_DATA_3P_TAG",
+    "CONTENT_1P_DATA_1P_TAG",
+    "CONTENT_1P_DATA_3P_TAG",
+    "CONTENT_3P_DATA_1P_TAG",
+    "CONTENT_3P_DATA_3P_TAG",
     # assembled forest
     "DOMAIN",
 ]

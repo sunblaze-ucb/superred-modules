@@ -36,6 +36,7 @@ import threading
 from typing import Any
 
 import pytest
+
 # Pre-import to flush AgentDojo's registration chain.
 import agentdojo.task_suite.load_suites  # noqa: F401
 from agentdojo.agent_pipeline.tool_execution import ToolsExecutor
@@ -90,7 +91,10 @@ def test_toolsexecutor_dispatches_canonical_tool(loop) -> None:
     catalog = ToolCatalog.from_seed(ALL_FUNCTIONS)
     rec = _NoOp()
     wrapper = WrappedFunctionsRuntime(
-        catalog=catalog, send_event=rec.send_event, emit=rec.emit, loop=loop,
+        catalog=catalog,
+        send_event=rec.send_event,
+        emit=rec.emit,
+        loop=loop,
     )
     executor = ToolsExecutor()
     msg = _assistant_msg_with_call("banking__get_balance", {}, "call-1")
@@ -110,7 +114,10 @@ def test_toolsexecutor_rejects_unknown_canonical_name(loop) -> None:
     catalog = ToolCatalog.from_seed(ALL_FUNCTIONS)
     rec = _NoOp()
     wrapper = WrappedFunctionsRuntime(
-        catalog=catalog, send_event=rec.send_event, emit=rec.emit, loop=loop,
+        catalog=catalog,
+        send_event=rec.send_event,
+        emit=rec.emit,
+        loop=loop,
     )
     executor = ToolsExecutor()
     msg = _assistant_msg_with_call("__not_a_real_tool__", {}, "call-x")
@@ -141,36 +148,51 @@ def test_toolsexecutor_sees_attacker_tool_after_catalog_edit(loop) -> None:
     catalog = ToolCatalog.from_seed(ALL_FUNCTIONS)
     rec = _NoOp()
     wrapper = WrappedFunctionsRuntime(
-        catalog=catalog, send_event=rec.send_event, emit=rec.emit, loop=loop,
+        catalog=catalog,
+        send_event=rec.send_event,
+        emit=rec.emit,
+        loop=loop,
     )
     executor = ToolsExecutor()  # ONE instance reused across both calls
 
     # --- Step 2: attacker tool not yet registered ---
     msg_before = _assistant_msg_with_call(
-        "__attacker_inject__", {"target": "x"}, "call-pre",
+        "__attacker_inject__",
+        {"target": "x"},
+        "call-pre",
     )
     _, _, _, before_messages, _ = executor.query(
-        "q", wrapper, env=env, messages=[msg_before],
+        "q",
+        wrapper,
+        env=env,
+        messages=[msg_before],
     )
     assert "Invalid tool" in (before_messages[-1].get("error") or "")
 
     # --- Step 3: start-of-run catalog edit + refresh, exactly as
     # _CatalogEditHook does ---
-    catalog.apply_register({
-        "name": "__attacker_inject__",
-        "description": "test injection from start-of-run catalog edit",
-        "fake_return": {"exfil": "ok"},
-    })
+    catalog.apply_register(
+        {
+            "name": "__attacker_inject__",
+            "description": "test injection from start-of-run catalog edit",
+            "fake_return": {"exfil": "ok"},
+        }
+    )
     wrapper.refresh_functions()
 
     # --- Step 4: the SAME ToolsExecutor instance now dispatches the
     # attacker tool successfully.  This is the load-bearing assertion:
     # it proves runtime.functions is consulted live, not cached. ---
     msg_after = _assistant_msg_with_call(
-        "__attacker_inject__", {"target": "y"}, "call-post",
+        "__attacker_inject__",
+        {"target": "y"},
+        "call-post",
     )
     _, _, _, after_messages, _ = executor.query(
-        "q", wrapper, env=env, messages=[msg_after],
+        "q",
+        wrapper,
+        env=env,
+        messages=[msg_after],
     )
     last = after_messages[-1]
     assert last.get("error") is None, (

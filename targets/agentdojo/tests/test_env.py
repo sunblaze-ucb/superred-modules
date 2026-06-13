@@ -15,10 +15,18 @@ from agentdojo_target.env import CompositeEnvironment
 
 def _load_default_subenvs() -> tuple[object, object, object, object]:
     """Load each suite's default (no-injection) environment via AgentDojo upstream."""
-    banking = get_suite(BENCHMARK_VERSION, "banking").load_and_inject_default_environment({})
-    workspace = get_suite(BENCHMARK_VERSION, "workspace").load_and_inject_default_environment({})
-    slack = get_suite(BENCHMARK_VERSION, "slack").load_and_inject_default_environment({})
-    travel = get_suite(BENCHMARK_VERSION, "travel").load_and_inject_default_environment({})
+    banking = get_suite(
+        BENCHMARK_VERSION, "banking"
+    ).load_and_inject_default_environment({})
+    workspace = get_suite(
+        BENCHMARK_VERSION, "workspace"
+    ).load_and_inject_default_environment({})
+    slack = get_suite(BENCHMARK_VERSION, "slack").load_and_inject_default_environment(
+        {}
+    )
+    travel = get_suite(BENCHMARK_VERSION, "travel").load_and_inject_default_environment(
+        {}
+    )
     return banking, workspace, slack, travel
 
 
@@ -26,7 +34,10 @@ def test_composite_construction() -> None:
     """All four sub-envs slot into a single composite root."""
     banking, workspace, slack, travel = _load_default_subenvs()
     env = CompositeEnvironment(
-        banking=banking, workspace=workspace, slack=slack, travel=travel,
+        banking=banking,
+        workspace=workspace,
+        slack=slack,
+        travel=travel,
     )
     assert env.banking is banking
     assert env.workspace is workspace
@@ -38,7 +49,10 @@ def test_deep_copy_isolates_subenvs() -> None:
     """``model_copy(deep=True)`` produces an independent snapshot."""
     banking, workspace, slack, travel = _load_default_subenvs()
     env = CompositeEnvironment(
-        banking=banking, workspace=workspace, slack=slack, travel=travel,
+        banking=banking,
+        workspace=workspace,
+        slack=slack,
+        travel=travel,
     )
     snapshot = env.model_copy(deep=True)
 
@@ -51,7 +65,10 @@ def test_workspace_and_travel_calendars_are_distinct() -> None:
     """Workspace and travel both hold a Calendar; the instances do not alias."""
     banking, workspace, slack, travel = _load_default_subenvs()
     env = CompositeEnvironment(
-        banking=banking, workspace=workspace, slack=slack, travel=travel,
+        banking=banking,
+        workspace=workspace,
+        slack=slack,
+        travel=travel,
     )
     assert env.workspace.calendar is not env.travel.calendar
     # Mutating one must not affect the other.
@@ -63,7 +80,10 @@ def test_workspace_and_travel_inboxes_are_distinct() -> None:
     """Workspace and travel both hold an Inbox; the instances do not alias."""
     banking, workspace, slack, travel = _load_default_subenvs()
     env = CompositeEnvironment(
-        banking=banking, workspace=workspace, slack=slack, travel=travel,
+        banking=banking,
+        workspace=workspace,
+        slack=slack,
+        travel=travel,
     )
     assert env.workspace.inbox is not env.travel.inbox
 

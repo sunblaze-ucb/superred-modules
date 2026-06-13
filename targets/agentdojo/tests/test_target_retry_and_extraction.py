@@ -172,6 +172,7 @@ class _ScriptedPipeline:
 @pytest.fixture
 def loop() -> asyncio.AbstractEventLoop:
     import threading
+
     new_loop = asyncio.new_event_loop()
     thread = threading.Thread(target=new_loop.run_forever, daemon=True)
     thread.start()
@@ -194,17 +195,21 @@ async def _drive_run(target: AgentDojoTarget, pipeline: _ScriptedPipeline) -> No
     Provides no-op event handlers since the run never needs the real
     optimizer channel for these tests.
     """
+
     async def send_event(_event: Any) -> Any:
         from superred.core.types.events import ControllableNoInjection
+
         return ControllableNoInjection(
-            event=_event, controllable=_event.controllable,
+            event=_event,
+            controllable=_event.controllable,
         )
 
     def emit(_event: Any) -> None:
         pass
 
     with patch(
-        "agentdojo_target.target.build_pipeline", return_value=pipeline,
+        "agentdojo_target.target.build_pipeline",
+        return_value=pipeline,
     ):
         await target.run(emit=emit, send_event=send_event)
 
@@ -214,12 +219,20 @@ async def test_retry_loop_succeeds_on_first_attempt() -> None:
     target = AgentDojoTarget(pipeline_model="openai/gpt-4o-2024-05-13")
     target.set_config("user_prompt", "do a thing")
     pre_env = target._build_seed_env_with_overrides()
-    pipeline = _ScriptedPipeline([
-        ("q", None, pre_env, [
-            {"role": "user", "content": "do a thing"},
-            _assistant_message("done"),
-        ], {}),
-    ])
+    pipeline = _ScriptedPipeline(
+        [
+            (
+                "q",
+                None,
+                pre_env,
+                [
+                    {"role": "user", "content": "do a thing"},
+                    _assistant_message("done"),
+                ],
+                {},
+            ),
+        ]
+    )
     await _drive_run(target, pipeline)
     assert len(pipeline.calls) == 1
     assert target.query("last_response") == "done"
@@ -266,18 +279,32 @@ async def test_retry_loop_retries_until_model_output_present() -> None:
     target = AgentDojoTarget(pipeline_model="openai/gpt-4o-2024-05-13")
     target.set_config("user_prompt", "multi-turn task")
     pre_env = target._build_seed_env_with_overrides()
-    pipeline = _ScriptedPipeline([
-        # Attempt 1: assistant has no content yet.
-        ("q", None, pre_env, [
-            {"role": "user", "content": "multi-turn task"},
-            {"role": "assistant", "content": None, "tool_calls": None},
-        ], {}),
-        # Attempt 2: assistant gives a real answer.
-        ("q", None, pre_env, [
-            {"role": "user", "content": "multi-turn task"},
-            _assistant_message("final answer"),
-        ], {}),
-    ])
+    pipeline = _ScriptedPipeline(
+        [
+            # Attempt 1: assistant has no content yet.
+            (
+                "q",
+                None,
+                pre_env,
+                [
+                    {"role": "user", "content": "multi-turn task"},
+                    {"role": "assistant", "content": None, "tool_calls": None},
+                ],
+                {},
+            ),
+            # Attempt 2: assistant gives a real answer.
+            (
+                "q",
+                None,
+                pre_env,
+                [
+                    {"role": "user", "content": "multi-turn task"},
+                    _assistant_message("final answer"),
+                ],
+                {},
+            ),
+        ]
+    )
     await _drive_run(target, pipeline)
     assert len(pipeline.calls) == 2
     assert target.query("last_response") == "final answer"
@@ -288,12 +315,21 @@ async def test_retry_loop_stops_after_three_attempts() -> None:
     target = AgentDojoTarget(pipeline_model="openai/gpt-4o-2024-05-13")
     target.set_config("user_prompt", "never settles")
     pre_env = target._build_seed_env_with_overrides()
-    pipeline = _ScriptedPipeline([
-        ("q", None, pre_env, [
-            {"role": "user", "content": "never settles"},
-            {"role": "assistant", "content": None, "tool_calls": None},
-        ], {}),
-    ] * 5)  # Plenty of outcomes; loop should stop at 3.
+    pipeline = _ScriptedPipeline(
+        [
+            (
+                "q",
+                None,
+                pre_env,
+                [
+                    {"role": "user", "content": "never settles"},
+                    {"role": "assistant", "content": None, "tool_calls": None},
+                ],
+                {},
+            ),
+        ]
+        * 5
+    )  # Plenty of outcomes; loop should stop at 3.
     await _drive_run(target, pipeline)
     assert len(pipeline.calls) == 3, (
         f"expected 3-attempt cap, got {len(pipeline.calls)}"
@@ -310,12 +346,20 @@ async def test_reset_ephemeral_state_resets_per_run_state() -> None:
     target = AgentDojoTarget(pipeline_model="openai/gpt-4o-2024-05-13")
     target.set_config("user_prompt", "first")
     pre_env = target._build_seed_env_with_overrides()
-    pipeline = _ScriptedPipeline([
-        ("q", None, pre_env, [
-            {"role": "user", "content": "first"},
-            _assistant_message("first-answer"),
-        ], {}),
-    ])
+    pipeline = _ScriptedPipeline(
+        [
+            (
+                "q",
+                None,
+                pre_env,
+                [
+                    {"role": "user", "content": "first"},
+                    _assistant_message("first-answer"),
+                ],
+                {},
+            ),
+        ]
+    )
     await _drive_run(target, pipeline)
     assert target.query("last_response") == "first-answer"
 

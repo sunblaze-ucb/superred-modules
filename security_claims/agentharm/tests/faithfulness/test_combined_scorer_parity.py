@@ -82,7 +82,9 @@ async def test_our_scoring_matches_upstream(behavior_id: str) -> None:
     from inspect_agent_target.rollout import run_rollout, static_tools_provider
 
     target_model = get_model(
-        model_id, base_url=api_base, api_key=api_key,
+        model_id,
+        base_url=api_base,
+        api_key=api_key,
         config=GenerateConfig(temperature=0.0, max_tokens=4096),
     )
     tools = [agentharm_tool_resolver(n) for n in md["target_functions"]]

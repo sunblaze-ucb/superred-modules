@@ -67,8 +67,12 @@ def test_agent_trace_subsumption() -> None:
 def test_user_has_no_children() -> None:
     """The user tree is a single tag with no internal hierarchy."""
     for tag in (
-        SYSTEM_TAG, TOOLS_TAG, PROMPT_TAG, MODEL_IDENTITY_TAG,
-        AGENT_TRACE_TAG, CONTENT_1P_DATA_1P_TAG,
+        SYSTEM_TAG,
+        TOOLS_TAG,
+        PROMPT_TAG,
+        MODEL_IDENTITY_TAG,
+        AGENT_TRACE_TAG,
+        CONTENT_1P_DATA_1P_TAG,
     ):
         assert not USER_TAG.includes(tag)
 

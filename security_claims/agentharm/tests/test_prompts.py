@@ -8,9 +8,7 @@ from security_claim_agentharm.prompts import faithful_system_prompt, faithful_us
 
 
 def test_system_prompt_default_model() -> None:
-    assert faithful_system_prompt("openai/gpt-4o-mini") == get_system_prompt(
-        "default", "standard"
-    )
+    assert faithful_system_prompt("openai/gpt-4o-mini") == get_system_prompt("default", "standard")
 
 
 def test_system_prompt_llama_model() -> None:

@@ -49,9 +49,7 @@ def test_unknown_category_raises() -> None:
 
 
 def test_target_factory_builds_general_target() -> None:
-    tf = agentharm_target_factory(
-        target_model=_M, api_base="b", api_key="k", concurrency=3
-    )
+    tf = agentharm_target_factory(target_model=_M, api_base="b", api_key="k", concurrency=3)
     assert isinstance(tf, TargetFactory)
     assert tf.concurrency == 3
     assert isinstance(tf.create(), InspectAgentTarget)

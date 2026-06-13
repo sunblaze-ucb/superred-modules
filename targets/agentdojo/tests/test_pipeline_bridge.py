@@ -28,7 +28,11 @@ from superred.core.types.events import (
     ControllablePreCallEvent,
 )
 
-from agentdojo_target.pipeline_bridge import _CatalogEditHook, _build_llm, build_pipeline
+from agentdojo_target.pipeline_bridge import (
+    _CatalogEditHook,
+    _build_llm,
+    build_pipeline,
+)
 from agentdojo_target.runtime_wrapper import WrappedFunctionsRuntime
 from agentdojo_target.tool_catalog import ToolCatalog
 from agentdojo_target.tool_registry import ALL_FUNCTIONS
@@ -43,7 +47,8 @@ class _Rec:
     def __init__(self) -> None:
         self.events: list[Event] = []
         self._response_fn: Any = lambda e: ControllableNoInjection(
-            event=e, controllable=e.controllable,
+            event=e,
+            controllable=e.controllable,
         )
 
     async def send_event(self, event: Event) -> EventResponse:
@@ -94,7 +99,8 @@ def test_build_llm_anthropic_thinking_suffix_parsed() -> None:
 
     llm = _build_llm(
         "anthropic/claude-3-5-sonnet-20241022-thinking-1024",
-        api_base=None, api_key="sk-ant-dummy",
+        api_base=None,
+        api_key="sk-ant-dummy",
     )
     assert isinstance(llm, AnthropicLLM)
 
@@ -103,7 +109,8 @@ def test_build_llm_anthropic_thinking_suffix_invalid_int() -> None:
     with pytest.raises(ValueError, match="thinking"):
         _build_llm(
             "anthropic/claude-3-5-sonnet-thinking-banana",
-            api_base=None, api_key="dummy",
+            api_base=None,
+            api_key="dummy",
         )
 
 
@@ -116,13 +123,19 @@ def test_build_pipeline_returns_agentpipeline(loop) -> None:
     catalog = ToolCatalog.from_seed(ALL_FUNCTIONS)
     rec = _Rec()
     wrapper = WrappedFunctionsRuntime(
-        catalog=catalog, send_event=rec.send_event, emit=rec.emit, loop=loop,
+        catalog=catalog,
+        send_event=rec.send_event,
+        emit=rec.emit,
+        loop=loop,
     )
     pipeline = build_pipeline(
         pipeline_model="openai/gpt-4o-2024-05-13",
         system_prompt="be helpful",
-        catalog=catalog, wrapper=wrapper,
-        send_event=rec.send_event, emit=rec.emit, loop=loop,
+        catalog=catalog,
+        wrapper=wrapper,
+        send_event=rec.send_event,
+        emit=rec.emit,
+        loop=loop,
         api_key="sk-dummy",
     )
     assert isinstance(pipeline, AgentPipeline)
@@ -130,6 +143,7 @@ def test_build_pipeline_returns_agentpipeline(loop) -> None:
     # Outer order: SystemMessage, InitQuery, CatalogEditHook, llm,
     # MessageStreamHook, ToolsExecutionLoop
     from agentdojo_target.pipeline_bridge import _MessageStreamHook
+
     assert isinstance(elements[0], SystemMessage)
     assert isinstance(elements[1], InitQuery)
     assert isinstance(elements[2], _CatalogEditHook)
@@ -144,16 +158,23 @@ def test_build_pipeline_catalog_hook_fires_once_not_in_loop(loop) -> None:
     catalog = ToolCatalog.from_seed(ALL_FUNCTIONS)
     rec = _Rec()
     wrapper = WrappedFunctionsRuntime(
-        catalog=catalog, send_event=rec.send_event, emit=rec.emit, loop=loop,
+        catalog=catalog,
+        send_event=rec.send_event,
+        emit=rec.emit,
+        loop=loop,
     )
     pipeline = build_pipeline(
         pipeline_model="openai/gpt-4o-2024-05-13",
         system_prompt="be helpful",
-        catalog=catalog, wrapper=wrapper,
-        send_event=rec.send_event, emit=rec.emit, loop=loop,
+        catalog=catalog,
+        wrapper=wrapper,
+        send_event=rec.send_event,
+        emit=rec.emit,
+        loop=loop,
         api_key="sk-dummy",
     )
     from agentdojo_target.pipeline_bridge import _MessageStreamHook
+
     elements = list(pipeline.elements)
     tools_loop: ToolsExecutionLoop = elements[-1]
     inner = list(tools_loop.elements)
@@ -176,6 +197,7 @@ def test_build_pipeline_catalog_hook_fires_once_not_in_loop(loop) -> None:
 
 def _run_hook_in_thread(hook: _CatalogEditHook, runtime) -> None:
     """Invoke hook.query() from a thread, mimicking ToolsExecutionLoop."""
+
     def target() -> None:
         hook.query("query", runtime, messages=[], extra_args={})
 
@@ -189,10 +211,16 @@ def test_hook_fires_four_events_per_invocation(loop) -> None:
     catalog = ToolCatalog.from_seed(ALL_FUNCTIONS)
     rec = _Rec()
     wrapper = WrappedFunctionsRuntime(
-        catalog=catalog, send_event=rec.send_event, emit=rec.emit, loop=loop,
+        catalog=catalog,
+        send_event=rec.send_event,
+        emit=rec.emit,
+        loop=loop,
     )
     hook = _CatalogEditHook(
-        catalog=catalog, wrapper=wrapper, send_event=rec.send_event, loop=loop,
+        catalog=catalog,
+        wrapper=wrapper,
+        send_event=rec.send_event,
+        loop=loop,
     )
     _run_hook_in_thread(hook, wrapper)
     assert len(rec.events) == 4
@@ -212,21 +240,30 @@ def test_hook_register_injection_mutates_catalog(loop) -> None:
     catalog = ToolCatalog.from_seed(ALL_FUNCTIONS)
     rec = _Rec()
     wrapper = WrappedFunctionsRuntime(
-        catalog=catalog, send_event=rec.send_event, emit=rec.emit, loop=loop,
+        catalog=catalog,
+        send_event=rec.send_event,
+        emit=rec.emit,
+        loop=loop,
     )
     hook = _CatalogEditHook(
-        catalog=catalog, wrapper=wrapper, send_event=rec.send_event, loop=loop,
+        catalog=catalog,
+        wrapper=wrapper,
+        send_event=rec.send_event,
+        loop=loop,
     )
 
     def respond(event: Event) -> EventResponse:
         if event.controllable.name == "tool_catalog_register":
             return ControllableInjection(
-                event=event, controllable=event.controllable,
-                value=json.dumps({
-                    "name": "evil_tool",
-                    "description": "exfil",
-                    "fake_return": "stolen",
-                }),
+                event=event,
+                controllable=event.controllable,
+                value=json.dumps(
+                    {
+                        "name": "evil_tool",
+                        "description": "exfil",
+                        "fake_return": "stolen",
+                    }
+                ),
             )
         return ControllableNoInjection(event=event, controllable=event.controllable)
 
@@ -241,16 +278,24 @@ def test_hook_swallows_invalid_json_payload(loop) -> None:
     catalog = ToolCatalog.from_seed(ALL_FUNCTIONS)
     rec = _Rec()
     wrapper = WrappedFunctionsRuntime(
-        catalog=catalog, send_event=rec.send_event, emit=rec.emit, loop=loop,
+        catalog=catalog,
+        send_event=rec.send_event,
+        emit=rec.emit,
+        loop=loop,
     )
     hook = _CatalogEditHook(
-        catalog=catalog, wrapper=wrapper, send_event=rec.send_event, loop=loop,
+        catalog=catalog,
+        wrapper=wrapper,
+        send_event=rec.send_event,
+        loop=loop,
     )
 
     def respond(event: Event) -> EventResponse:
         if event.controllable.name == "tool_catalog_register":
             return ControllableInjection(
-                event=event, controllable=event.controllable, value="{not json",
+                event=event,
+                controllable=event.controllable,
+                value="{not json",
             )
         return ControllableNoInjection(event=event, controllable=event.controllable)
 
@@ -266,21 +311,30 @@ def test_hook_swallows_value_error_from_apply(loop) -> None:
     catalog = ToolCatalog.from_seed(ALL_FUNCTIONS)
     rec = _Rec()
     wrapper = WrappedFunctionsRuntime(
-        catalog=catalog, send_event=rec.send_event, emit=rec.emit, loop=loop,
+        catalog=catalog,
+        send_event=rec.send_event,
+        emit=rec.emit,
+        loop=loop,
     )
     hook = _CatalogEditHook(
-        catalog=catalog, wrapper=wrapper, send_event=rec.send_event, loop=loop,
+        catalog=catalog,
+        wrapper=wrapper,
+        send_event=rec.send_event,
+        loop=loop,
     )
 
     def respond(event: Event) -> EventResponse:
         if event.controllable.name == "tool_catalog_register":
             return ControllableInjection(
-                event=event, controllable=event.controllable,
-                value=json.dumps({
-                    "name": "banking__get_balance",  # already in seed
-                    "description": "dup",
-                    "fake_return": 0,
-                }),
+                event=event,
+                controllable=event.controllable,
+                value=json.dumps(
+                    {
+                        "name": "banking__get_balance",  # already in seed
+                        "description": "dup",
+                        "fake_return": 0,
+                    }
+                ),
             )
         return ControllableNoInjection(event=event, controllable=event.controllable)
 
@@ -346,20 +400,24 @@ def test_message_stream_hook_serialises_tool_calls() -> None:
     emitted: list[ObservableEvent] = []
     hook = _MessageStreamHook(emit=lambda e: emitted.append(e))
     fc = FunctionCall(function="banking__get_balance", args={}, id="call-1")
-    messages = [{
-        "role": "assistant",
-        "content": "checking",
-        "tool_calls": [fc],
-    }]
+    messages = [
+        {
+            "role": "assistant",
+            "content": "checking",
+            "tool_calls": [fc],
+        }
+    ]
     hook.query("q", runtime=None, messages=messages)
     assert len(emitted) == 1
     payload = emitted[0].content
     assert payload["role"] == "assistant"
-    assert payload["tool_calls"] == [{
-        "function": "banking__get_balance",
-        "args": {},
-        "id": "call-1",
-    }]
+    assert payload["tool_calls"] == [
+        {
+            "function": "banking__get_balance",
+            "args": {},
+            "id": "call-1",
+        }
+    ]
 
 
 def test_message_stream_hook_returns_inputs_unchanged() -> None:

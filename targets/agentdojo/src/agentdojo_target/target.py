@@ -199,7 +199,8 @@ class AgentDojoTarget(Target):
             return json.dumps(self._catalog.snapshot())
         if name == "write_calls_made":
             writes = [
-                fc.function for fc in self._function_call_trace
+                fc.function
+                for fc in self._function_call_trace
                 if fc.function in WRITE_FUNCTION_NAMES
             ]
             return json.dumps(writes)
@@ -232,7 +233,9 @@ class AgentDojoTarget(Target):
         seed_env = self._build_seed_env_with_overrides()
         seed_catalog = ToolCatalog.from_seed(ALL_FUNCTIONS)
         return [
-            ObservableValue(observable=MODEL_IDENTITY_OBS, content=self._pipeline_model),
+            ObservableValue(
+                observable=MODEL_IDENTITY_OBS, content=self._pipeline_model
+            ),
             ObservableValue(
                 observable=TOOL_CATALOG_LISTING_OBS,
                 content=seed_catalog.snapshot(),
@@ -262,7 +265,8 @@ class AgentDojoTarget(Target):
             )
         )
         effective_system = (
-            sp_resp.value if isinstance(sp_resp, ControllableInjection)
+            sp_resp.value
+            if isinstance(sp_resp, ControllableInjection)
             else self._system_prompt
         )
 
@@ -274,7 +278,8 @@ class AgentDojoTarget(Target):
             )
         )
         effective_user = (
-            up_resp.value if isinstance(up_resp, ControllableInjection)
+            up_resp.value
+            if isinstance(up_resp, ControllableInjection)
             else self._user_prompt
         )
 

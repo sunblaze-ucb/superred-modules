@@ -85,9 +85,7 @@ def agentharm_claim(
                 f"Unknown AgentHarm category(s): {sorted(unknown)}. "
                 f"Expected a subset of {sorted(EXPECTED_CATEGORIES)}."
             )
-        ds = ds.filter(
-            lambda s: s.metadata is not None and s.metadata["category"] in cats
-        )
+        ds = ds.filter(lambda s: s.metadata is not None and s.metadata["category"] in cats)
 
     tasks: list[AgentHarmTask] = []
     for sample in ds:

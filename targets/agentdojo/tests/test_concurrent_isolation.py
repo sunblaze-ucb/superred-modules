@@ -29,6 +29,7 @@ import json
 from collections.abc import Sequence
 
 import pytest
+
 # Pre-import to flush AgentDojo's registration chain.
 import agentdojo.task_suite.load_suites  # noqa: F401
 from agentdojo.agent_pipeline.base_pipeline_element import BasePipelineElement
@@ -88,7 +89,8 @@ class _EchoingLLM(BasePipelineElement):
         # echoed may be a list of content blocks; flatten to text
         if isinstance(echoed, list):
             text = " ".join(
-                b.get("content", "") for b in echoed
+                b.get("content", "")
+                for b in echoed
                 if isinstance(b, dict) and b.get("type") == "text"
             )
         else:
@@ -172,7 +174,9 @@ class _FingerprintedTask(Task[AgentDojoTarget]):
             json.dumps({"bank_account": {"balance": float(hash(self._fp) % 100000)}}),
         )
 
-    async def evaluate(self, _trajectory: Trajectory, target: AgentDojoTarget) -> EvaluationResult:
+    async def evaluate(
+        self, _trajectory: Trajectory, target: AgentDojoTarget
+    ) -> EvaluationResult:
         last_response = target.query("last_response")
         post_env_blob = json.loads(target.query("post_environment_snapshot"))
 
@@ -182,7 +186,8 @@ class _FingerprintedTask(Task[AgentDojoTarget]):
             return EvaluationResult(
                 success=False,
                 primary_score=Score(
-                    value=0.0, name="isolation",
+                    value=0.0,
+                    name="isolation",
                 ),
                 sub_scores={},
                 rationale=(
@@ -198,7 +203,8 @@ class _FingerprintedTask(Task[AgentDojoTarget]):
             return EvaluationResult(
                 success=False,
                 primary_score=Score(
-                    value=0.0, name="isolation",
+                    value=0.0,
+                    name="isolation",
                 ),
                 sub_scores={},
                 rationale=(
@@ -211,11 +217,13 @@ class _FingerprintedTask(Task[AgentDojoTarget]):
         return EvaluationResult(
             success=True,
             primary_score=Score(
-                value=1.0, name="isolation",
+                value=1.0,
+                name="isolation",
             ),
             sub_scores={
                 "fingerprint": Score(
-                    value=1.0, name=self._fp,
+                    value=1.0,
+                    name=self._fp,
                     security_domain=USER_TAG,
                 ),
             },
@@ -236,9 +244,8 @@ async def test_four_targets_run_concurrently_without_cross_contamination() -> No
     fingerprints = ["alpha", "beta", "gamma", "delta"]
     tasks = [_FingerprintedTask(fp) for fp in fingerprints]
     from typing import cast as _cast
-    claim = SecurityClaim.from_tasks(
-        _cast(list[Task[Target]], tasks)
-    )
+
+    claim = SecurityClaim.from_tasks(_cast(list[Task[Target]], tasks))
 
     def factory() -> AgentDojoTarget:
         return AgentDojoTarget(
@@ -282,6 +289,7 @@ async def test_eight_targets_concurrent_stress() -> None:
     fingerprints = [f"task_{i}" for i in range(8)]
     tasks = [_FingerprintedTask(fp) for fp in fingerprints]
     from typing import cast as _cast
+
     claim = SecurityClaim.from_tasks(_cast(list[Task[Target]], tasks))
 
     def factory() -> AgentDojoTarget:
@@ -325,11 +333,17 @@ def test_no_module_level_mutable_state_in_target_package() -> None:
     # immutable post-import.
     KNOWN_IMMUTABLE = {
         # tool_registry
-        "TOOL_REGISTRY", "ALL_FUNCTIONS", "READ_FUNCTION_NAMES",
-        "WRITE_FUNCTION_NAMES", "READ_TOOLS", "WRITE_TOOLS",
+        "TOOL_REGISTRY",
+        "ALL_FUNCTIONS",
+        "READ_FUNCTION_NAMES",
+        "WRITE_FUNCTION_NAMES",
+        "READ_TOOLS",
+        "WRITE_TOOLS",
         "SUITE_NAMES",
         # controllables
-        "CONTROLLABLES", "READ_CTRLS", "READ_QUADRANT_MAP",
+        "CONTROLLABLES",
+        "READ_CTRLS",
+        "READ_QUADRANT_MAP",
         "TOOL_CATALOG_CTRLS",
     }
     # Each of these must exist (smoke check) and be hashable or

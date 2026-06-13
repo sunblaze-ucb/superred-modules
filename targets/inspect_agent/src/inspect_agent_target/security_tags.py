@@ -50,7 +50,8 @@ SYSTEM_TAG: SecurityDomainTag = SecurityDomainTag("system")
 # --- system prompt ---------------------------------------------------------
 
 SYSTEM_PROMPT_TAG: SecurityDomainTag = SecurityDomainTag(
-    "system_prompt", parent=SYSTEM_TAG,
+    "system_prompt",
+    parent=SYSTEM_TAG,
 )
 """Agent system prompt surface.  When ``system_prompt`` is in the Controller's
 read & write ``scope`` the attacker may override it; listing it under
@@ -59,7 +60,8 @@ read & write ``scope`` the attacker may override it; listing it under
 # --- tool catalogue (the tool registry) ------------------------------------
 
 TOOL_CATALOGUE_TAG: SecurityDomainTag = SecurityDomainTag(
-    "tool_catalogue", parent=SYSTEM_TAG,
+    "tool_catalogue",
+    parent=SYSTEM_TAG,
 )
 """Broad tool-registry capability: set the initial tool set and perform any
 catalogue edit (replace / unregister / rewrite-description).  Implies the
@@ -70,7 +72,8 @@ This is the *registry* (which tools exist), distinct from :data:`TOOLS_TAG`
 (what a tool returns)."""
 
 TOOL_CATALOGUE_ADDABLE_TAG: SecurityDomainTag = SecurityDomainTag(
-    "tool_catalogue_addable", parent=TOOL_CATALOGUE_TAG,
+    "tool_catalogue_addable",
+    parent=TOOL_CATALOGUE_TAG,
 )
 """Register-only catalogue write capability: the weakest write.  An attacker can
 add new (attacker-defined) tools but cannot replace, unregister, or rewrite
@@ -79,12 +82,14 @@ existing ones.  Models a malicious-MCP that only contributes extra tools."""
 # --- model identity --------------------------------------------------------
 
 MODEL_IDENTITY_TAG: SecurityDomainTag = SecurityDomainTag(
-    "model_identity", parent=SYSTEM_TAG,
+    "model_identity",
+    parent=SYSTEM_TAG,
 )
 """Knowledge of which model the agent uses."""
 
 MESSAGE_LIMIT_TAG: SecurityDomainTag = SecurityDomainTag(
-    "message_limit", parent=SYSTEM_TAG,
+    "message_limit",
+    parent=SYSTEM_TAG,
 )
 """The rollout's message-limit surface (the message_limit static observable).
 There is no message-limit controllable, so the tag grants observation only,
@@ -97,7 +102,8 @@ AGENT_TRACE_TAG: SecurityDomainTag = SecurityDomainTag("agent_trace", parent=SYS
 """Aggregate read access to the agent's run trace.  Implies everything below."""
 
 AGENT_TRACE_MESSAGES_TAG: SecurityDomainTag = SecurityDomainTag(
-    "agent_trace_messages", parent=AGENT_TRACE_TAG,
+    "agent_trace_messages",
+    parent=AGENT_TRACE_TAG,
 )
 """Read access to the agent's full chat-message transcript.  The transcript
 embeds the tool calls (as fields on assistant messages) and the tool responses
@@ -105,7 +111,8 @@ embeds the tool calls (as fields on assistant messages) and the tool responses
 ``agent_trace_messages`` can already read both projections."""
 
 AGENT_TRACE_TOOL_CALLS_TAG: SecurityDomainTag = SecurityDomainTag(
-    "agent_trace_tool_calls", parent=AGENT_TRACE_MESSAGES_TAG,
+    "agent_trace_tool_calls",
+    parent=AGENT_TRACE_MESSAGES_TAG,
 )
 """Narrow read: only the tool calls the agent emits (function + arguments).  A
 projection of the transcript; sibling of (not nested under)
@@ -113,7 +120,8 @@ projection of the transcript; sibling of (not nested under)
 are disjoint, so neither subsumes the other."""
 
 AGENT_TRACE_TOOL_RESPONSES_TAG: SecurityDomainTag = SecurityDomainTag(
-    "agent_trace_tool_responses", parent=AGENT_TRACE_MESSAGES_TAG,
+    "agent_trace_tool_responses",
+    parent=AGENT_TRACE_MESSAGES_TAG,
 )
 """Narrow read: only the tool return values the agent observes (after any
 tool-output injection has been applied).  A projection of the transcript;
@@ -149,11 +157,14 @@ FIXED_TAGS: tuple[SecurityDomainTag, ...] = (
     # system tree
     SYSTEM_TAG,
     SYSTEM_PROMPT_TAG,
-    TOOL_CATALOGUE_TAG, TOOL_CATALOGUE_ADDABLE_TAG,
+    TOOL_CATALOGUE_TAG,
+    TOOL_CATALOGUE_ADDABLE_TAG,
     MODEL_IDENTITY_TAG,
     MESSAGE_LIMIT_TAG,
     AGENT_TRACE_TAG,
-    AGENT_TRACE_MESSAGES_TAG, AGENT_TRACE_TOOL_CALLS_TAG, AGENT_TRACE_TOOL_RESPONSES_TAG,
+    AGENT_TRACE_MESSAGES_TAG,
+    AGENT_TRACE_TOOL_CALLS_TAG,
+    AGENT_TRACE_TOOL_RESPONSES_TAG,
     # user tree
     USER_TAG,
     # tools root (children are claim-supplied)

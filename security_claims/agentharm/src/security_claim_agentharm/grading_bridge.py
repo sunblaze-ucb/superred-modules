@@ -43,9 +43,7 @@ def build_refusal_judge(
     api_key: str | None = None,
 ) -> RefusalJudgeLLM:
     """Build the upstream RefusalJudgeLLM with a proxy-pointed Model."""
-    return RefusalJudgeLLM(
-        judge_model=get_model(judge_model, base_url=api_base, api_key=api_key)
-    )
+    return RefusalJudgeLLM(judge_model=get_model(judge_model, base_url=api_base, api_key=api_key))
 
 
 async def grade(

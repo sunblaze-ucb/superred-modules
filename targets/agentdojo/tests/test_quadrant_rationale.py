@@ -83,7 +83,6 @@ QUADRANT_RATIONALES: dict[str, tuple[str, str]] = {
         "content_1p_data_3p",
         "User PII (name, address) is 1p content; the bank's customer record is 3p storage.",
     ),
-
     # ---- workspace (14) ----
     "workspace__search_emails": (
         "content_3p_data_3p",
@@ -146,7 +145,6 @@ QUADRANT_RATIONALES: dict[str, tuple[str, str]] = {
         "content_3p_data_3p",
         "Searches file CONTENT, which may include 3p-authored shared docs.  Broader.",
     ),
-
     # ---- slack (5) ----
     "slack__get_channels": (
         "content_3p_data_3p",
@@ -169,7 +167,6 @@ QUADRANT_RATIONALES: dict[str, tuple[str, str]] = {
         "content_3p_data_3p",
         "External web content; the primary 3p/3p surface in the slack suite.",
     ),
-
     # ---- travel (22) ----
     "travel__get_user_information": (
         "content_1p_data_3p",
@@ -300,7 +297,8 @@ def test_no_stale_rationale_entries() -> None:
 
 
 @pytest.mark.parametrize(
-    "tool_name", sorted(QUADRANT_RATIONALES.keys()),
+    "tool_name",
+    sorted(QUADRANT_RATIONALES.keys()),
     ids=lambda n: n.replace("__", ":"),
 )
 def test_each_tool_in_expected_quadrant(tool_name: str) -> None:
@@ -346,8 +344,8 @@ def test_quadrant_distribution() -> None:
     # If this distribution drifts, the threat-model balance has shifted.
     # Update both the assertion and the brief's mapping commentary.
     assert dict(counts) == {
-        "content_1p_data_1p": 1,    # workspace get_current_day
-        "content_1p_data_3p": 11,   # banking + workspace 1p reads
-        "content_3p_data_1p": 1,    # banking read_file
-        "content_3p_data_3p": 34,   # the broad majority (slack + travel + mixed reads)
+        "content_1p_data_1p": 1,  # workspace get_current_day
+        "content_1p_data_3p": 11,  # banking + workspace 1p reads
+        "content_3p_data_1p": 1,  # banking read_file
+        "content_3p_data_3p": 34,  # the broad majority (slack + travel + mixed reads)
     }, f"Distribution drift: got {dict(counts)}.  Re-check assignments."

@@ -95,7 +95,10 @@ def test_set_config_seed_override(target: AgentDojoTarget) -> None:
     # The overlay is applied at run-start; verify via the pre-run
     # observable.
     env_obs = {o.observable.name: o for o in target.get_observables()}
-    assert env_obs["composite_env_snapshot"].content["banking"]["bank_account"]["balance"] == 0.0
+    assert (
+        env_obs["composite_env_snapshot"].content["banking"]["bank_account"]["balance"]
+        == 0.0
+    )
 
 
 def test_set_config_unknown_slot_raises(target: AgentDojoTarget) -> None:
@@ -126,12 +129,18 @@ def test_query_returns_string_for_each_slot(target: AgentDojoTarget) -> None:
 
 
 @pytest.mark.asyncio
-async def test_reset_ephemeral_state_resets_per_run_state(target: AgentDojoTarget) -> None:
+async def test_reset_ephemeral_state_resets_per_run_state(
+    target: AgentDojoTarget,
+) -> None:
     """reset_ephemeral_state() must zero per-run state but preserve config slots."""
     target.set_config("user_prompt", "hello")
     target._last_response = "leftover"
     target._function_call_trace.append(  # type: ignore[arg-type]
-        type("FC", (), {"function": "x", "args": {}, "id": None, "placeholder_args": None})()
+        type(
+            "FC",
+            (),
+            {"function": "x", "args": {}, "id": None, "placeholder_args": None},
+        )()
     )
     await target.reset_ephemeral_state()
     assert target.query("last_response") == ""

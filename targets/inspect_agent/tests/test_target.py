@@ -76,15 +76,15 @@ def test_config_specs_names() -> None:
     t = _make_target()
     names = {s.name for s in t.config_specs}
     # No 'model' slot: the model is fixed at construction, not Task-configurable.
-    assert names == {
-        "system_prompt", "user_prompt", "tool_names", "tool_choice", "message_limit"
-    }
+    assert names == {"system_prompt", "user_prompt", "tool_names", "tool_choice", "message_limit"}
 
 
 def test_query_specs_names() -> None:
     t = _make_target()
     assert {s.name for s in t.query_specs} == {
-        "last_response", "conversation_history", "function_call_trace"
+        "last_response",
+        "conversation_history",
+        "function_call_trace",
     }
 
 
@@ -261,7 +261,10 @@ async def test_run_passthrough(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(target_mod, "get_model", lambda *a, **k: fake)
 
     t = InspectAgentTarget(
-        model="openai/gpt-4o-mini", tool_resolver=lambda n: None, api_base="b", api_key="k"  # type: ignore[arg-type,return-value]
+        model="openai/gpt-4o-mini",
+        tool_resolver=lambda n: None,
+        api_base="b",
+        api_key="k",  # type: ignore[arg-type,return-value]
     )
     t.set_config("system_prompt", "SP")
     t.set_config("user_prompt", "UP")
@@ -305,7 +308,10 @@ async def test_generate_config_matches_agentharm_defaults(
     monkeypatch.setattr(target_mod, "get_model", fake_get_model)
 
     t = InspectAgentTarget(
-        model="openai/gpt-4o-mini", tool_resolver=lambda n: None, api_base="b", api_key="k"  # type: ignore[arg-type,return-value]
+        model="openai/gpt-4o-mini",
+        tool_resolver=lambda n: None,
+        api_base="b",
+        api_key="k",  # type: ignore[arg-type,return-value]
     )
     t.set_config("user_prompt", "UP")
     t.set_config("tool_names", "[]")
@@ -349,9 +355,13 @@ async def test_run_user_prompt_injection(monkeypatch: pytest.MonkeyPatch) -> Non
         captured["user"] = user_prompt
         captured["system"] = system_prompt
         return await orig_run_rollout(
-            model, system_prompt=system_prompt, user_prompt=user_prompt,
-            tools_provider=tools_provider, tool_choice=tool_choice,
-            message_limit=message_limit, on_tool_results=on_tool_results,
+            model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            tools_provider=tools_provider,
+            tool_choice=tool_choice,
+            message_limit=message_limit,
+            on_tool_results=on_tool_results,
         )
 
     monkeypatch.setattr(target_mod, "run_rollout", spy_rollout)
@@ -445,9 +455,7 @@ async def test_run_tool_output_injection(monkeypatch: pytest.MonkeyPatch) -> Non
     async def send_event(event):  # noqa: ANN001
         ctrl = getattr(event, "controllable", None)
         if ctrl is not None and ctrl.name == "tool:_echo":
-            return ControllableInjection(
-                event=event, controllable=ctrl, value="INJECTED-OUTPUT"
-            )
+            return ControllableInjection(event=event, controllable=ctrl, value="INJECTED-OUTPUT")
         return ControllableNoInjection(event=event, controllable=event.controllable)
 
     await t.run(lambda e: None, send_event)
