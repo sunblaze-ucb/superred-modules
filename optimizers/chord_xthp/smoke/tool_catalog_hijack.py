@@ -116,7 +116,7 @@ class ChordSmokeTarget(Target):
         self.last_response = f"Called {helper_name} before brave_search."
         emit(ObservableEvent(observable=RESPONSE_OBS, content=self.last_response))
 
-    async def cleanup(self) -> None:
+    async def reset_ephemeral_state(self) -> None:
         self.registered_tool = None
         self.user_prompt = "Find the latest election results."
         self.last_response = ""
