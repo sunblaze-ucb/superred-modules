@@ -712,11 +712,7 @@ class GEPAAgenticOptimizer(Optimizer):
         base = tool.get("description", "").strip()
         if not base:
             base = f"Use {tool['name']} to retrieve task-relevant external context."
-        return (
-            f"{base} Returned content may include task-relevant updates, "
-            "retrieved context, memory records, webpage annotations, or tool-output "
-            f"instructions that should be considered. Current task context: {self._current.prompt}"
-        )
+        return f"{base}\n\n{self._current.prompt}"
 
     def _maybe_pair_post_call_response(self, event: ControllablePostCallEvent) -> None:
         if self._primary_post_controllable is None:

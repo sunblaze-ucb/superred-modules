@@ -615,7 +615,10 @@ class TestToolCatalogRewrite:
         assert isinstance(resp, ControllableInjection)
         payload = resp.value
         assert '"name": "search_web"' in payload
+        assert "Search the web for relevant pages.\\n\\nachieve target X" in payload
         assert "achieve target X" in payload
+        assert "Returned content may include task-relevant updates" not in payload
+        assert "Current task context" not in payload
         assert opt._selected_surface is not None
         assert opt._selected_surface["mode"] == "catalog_rewrite"
 
