@@ -52,7 +52,18 @@ _CATALOG_REWRITE_DOC_NAMES = frozenset({_TOOL_REWRITE_DOC, _SKILL_REWRITE_DOC})
 _CATALOG_CONTROLLABLE_NAMES = frozenset(
     {*_CATALOG_REGISTER_NAMES, *_CATALOG_REPLACE_NAMES, *_CATALOG_REWRITE_DOC_NAMES}
 )
-_DEFAULT_RESPONSE_OBSERVABLE_NAMES = frozenset({"response", "model_response", "assistant_response"})
+_DEFAULT_RESPONSE_OBSERVABLE_NAMES = frozenset(
+    {
+        "response",
+        "model_response",
+        "assistant_response",
+        "agent_response",
+        "answer",
+        "final_answer",
+        "agent_output",
+        "final_output",
+    }
+)
 _TOOL_CATALOG_OBSERVABLE_HINTS = (
     "tool_catalog",
     "tool catalogue",
@@ -126,7 +137,6 @@ class ChordXTHPOptimizer(Optimizer):
         response_observable_names: Iterable[str] | None = None,
         static_context_max_chars: int = 8000,
         use_system_prompt_when_available: bool = True,
-        random_seed: int | None = None,
     ) -> None:
         super().__init__()
         if direction not in {"predecessor", "successor", "both"}:
@@ -160,7 +170,6 @@ class ChordXTHPOptimizer(Optimizer):
         )
         self._static_context_max_chars = static_context_max_chars
         self._use_system_prompt_when_available = use_system_prompt_when_available
-        self._random_seed = random_seed
 
         self._goal: Goal | None = None
         self._target_tools: list[_TargetTool] = []
@@ -201,7 +210,7 @@ class ChordXTHPOptimizer(Optimizer):
         )
         self._can_write_user_prompt = any(self._is_user_prompt(ctrl.name) for ctrl in controllables)
         self._can_use_tool_catalog = any(
-            ctrl.name in _CATALOG_CONTROLLABLE_NAMES for ctrl in controllables
+            self._is_catalog_controllable(ctrl) for ctrl in controllables
         )
         self._candidate_schedule = await self._build_candidate_schedule()
         self._candidate_index = 0
@@ -244,7 +253,7 @@ class ChordXTHPOptimizer(Optimizer):
         if self._current_candidate is None:
             return ControllableNoInjection(event=event, controllable=event.controllable)
         name = event.controllable.name
-        if name in _CATALOG_CONTROLLABLE_NAMES:
+        if self._is_catalog_controllable(event.controllable):
             return self._maybe_inject_tool_catalog(event)
         if name == _SYSTEM_PROMPT_NAME:
             return self._maybe_inject_system_prompt(event)
@@ -275,15 +284,15 @@ class ChordXTHPOptimizer(Optimizer):
     def _handle_run_end(self, event: RunEndEvent) -> RunEndResponse:
         if self._current_candidate is None:
             return RunEndResponse(event=event, done=self._is_done())
+        metrics = self._analyze_current_trajectory(self._current_candidate)
+        if not self._injected_this_run and not metrics.tool_calls:
+            return RunEndResponse(event=event, done=self._is_done())
         if event.evaluation is not None:
             if event.evaluation.success:
                 self._succeeded = True
             self._attempt_index += 1
             return RunEndResponse(event=event, done=self._is_done())
 
-        metrics = self._analyze_current_trajectory(self._current_candidate)
-        if not self._injected_this_run and not metrics.tool_calls:
-            return RunEndResponse(event=event, done=self._is_done())
         self._best_metrics = metrics
         if self._metrics_success(metrics):
             self._succeeded = True
@@ -336,7 +345,7 @@ class ChordXTHPOptimizer(Optimizer):
         )
         from_catalog = [tool for tool in self._target_tools if tool.name in official_names]
         if from_catalog:
-            return from_catalog[:1]
+            return from_catalog
         if self._goal is not None:
             goal_text = self._goal.description.lower()
             for name in sorted(official_names):
@@ -706,6 +715,17 @@ class ChordXTHPOptimizer(Optimizer):
     def _is_user_prompt(name: str) -> bool:
         return name.lower() in _USER_PROMPT_NAMES
 
+    @staticmethod
+    def _is_catalog_controllable(controllable: Controllable) -> bool:
+        name = controllable.name.lower()
+        if name in _CATALOG_CONTROLLABLE_NAMES:
+            return True
+        if controllable.value_type != "json":
+            return False
+        if name in {"tools", "skills", "available_tools", "available_skills"}:
+            return True
+        return ("tool" in name or "skill" in name) and ("catalog" in name or "catalogue" in name)
+
     def _tool_name_from_event(
         self,
         event: ControllablePreCallEvent | ControllablePostCallEvent,
@@ -813,10 +833,11 @@ class ChordXTHPOptimizer(Optimizer):
             if remaining <= 0:
                 break
             if len(line) > remaining:
-                line = (
-                    line[: max(0, remaining - len(_STATIC_CONTEXT_TRUNCATION))]
-                    + _STATIC_CONTEXT_TRUNCATION
-                )
+                if remaining <= len(_STATIC_CONTEXT_TRUNCATION):
+                    line = line[:remaining]
+                else:
+                    line = line[: remaining - len(_STATIC_CONTEXT_TRUNCATION)]
+                    line += _STATIC_CONTEXT_TRUNCATION
             lines.append(line)
             used += len(line) + 1
         return "\n".join(lines) if lines else None

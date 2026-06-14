@@ -74,7 +74,6 @@ async def test_registers_official_predecessor_tool_and_official_query() -> None:
         direction="predecessor",
         enabled_attacks=("hijack",),
         max_attempts=1,
-        random_seed=0,
     )
     await opt.initialize(
         Goal(description="test Chord control-flow hijack"),
@@ -169,6 +168,75 @@ async def test_untried_candidate_does_not_finish_when_no_injection_or_feedback()
 
 
 @pytest.mark.asyncio
+async def test_untried_candidate_does_not_consume_attempt_with_feedback() -> None:
+    opt = ChordXTHPOptimizer(
+        victim_tool_name="brave_search",
+        direction="predecessor",
+        enabled_attacks=("hijack",),
+        max_attempts=2,
+    )
+    await opt.initialize(
+        Goal(description="test Chord control-flow hijack"),
+        [ctrl("tool_catalog_register")],
+        [],
+        LLMClient._make_noop(),
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    end = await dispatch(
+        opt,
+        RunEndEvent(evaluation=evaluation(False, 0.0), security_domain=USER_TAG),
+    )
+
+    assert isinstance(end, RunEndResponse)
+    assert end.done is False
+    assert opt.attempt_index == 0
+
+
+@pytest.mark.asyncio
+async def test_feedback_success_without_injection_does_not_claim_chord_success() -> None:
+    opt = ChordXTHPOptimizer(
+        victim_tool_name="brave_search",
+        direction="predecessor",
+        enabled_attacks=("hijack",),
+        max_attempts=2,
+    )
+    await opt.initialize(
+        Goal(description="test Chord control-flow hijack"),
+        [ctrl("tool_catalog_register")],
+        [],
+        LLMClient._make_noop(),
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    end = await dispatch(
+        opt,
+        RunEndEvent(evaluation=evaluation(True, 1.0), security_domain=USER_TAG),
+    )
+
+    assert isinstance(end, RunEndResponse)
+    assert end.done is False
+    assert opt.attempt_index == 0
+
+
+@pytest.mark.asyncio
+async def test_static_context_respects_small_character_budget() -> None:
+    opt = ChordXTHPOptimizer(
+        victim_tool_name="brave_search",
+        static_context_max_chars=5,
+    )
+    await opt.initialize(
+        Goal(description="test Chord control-flow hijack"),
+        [ctrl("system_prompt", SYSTEM_TAG, "text")],
+        [obs("target_model", "very-long-model-name", MODEL_TAG, "text")],
+        LLMClient._make_noop(),
+    )
+
+    assert opt._static_context is not None
+    assert len(opt._static_context) <= 5
+
+
+@pytest.mark.asyncio
 async def test_framework_feedback_is_authoritative() -> None:
     opt = ChordXTHPOptimizer(
         victim_tool_name="brave_search",
@@ -183,6 +251,11 @@ async def test_framework_feedback_is_authoritative() -> None:
         LLMClient._make_noop(),
     )
     await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+    injected = await dispatch(
+        opt,
+        ControllablePreCallEvent(controllable=ctrl("tool_catalog_register"), request="{}"),
+    )
+    assert isinstance(injected, ControllableInjection)
 
     end = await dispatch(
         opt,
@@ -327,6 +400,72 @@ async def test_static_tool_catalog_selects_official_victim() -> None:
         opt,
         ControllablePreCallEvent(
             controllable=ctrl("tool_catalog_register"),
+            request="{}",
+        ),
+    )
+
+    assert isinstance(tool_resp, ControllableInjection)
+    assert json.loads(tool_resp.value)["victim_tool"] == "brave_search"
+
+
+@pytest.mark.asyncio
+async def test_static_tool_catalog_schedules_all_official_victims() -> None:
+    opt = ChordXTHPOptimizer(
+        direction="predecessor",
+        enabled_attacks=("hijack",),
+        official_query_count=1,
+        max_attempts=2,
+    )
+    catalog = [
+        {"name": "brave_search", "description": "Search the web."},
+        {"name": "arxiv", "description": "Search scholarly papers."},
+    ]
+    await opt.initialize(
+        Goal(description="test Chord control-flow hijack"),
+        [ctrl("tool_catalog_register")],
+        [obs("tool_catalog_listing", catalog)],
+        LLMClient._make_noop(),
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    first = await dispatch(
+        opt,
+        ControllablePreCallEvent(controllable=ctrl("tool_catalog_register"), request="{}"),
+    )
+    assert isinstance(first, ControllableInjection)
+    assert json.loads(first.value)["victim_tool"] == "brave_search"
+
+    await dispatch(opt, RunEndEvent(evaluation=evaluation(False, 0.0), security_domain=USER_TAG))
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+    second = await dispatch(
+        opt,
+        ControllablePreCallEvent(controllable=ctrl("tool_catalog_register"), request="{}"),
+    )
+
+    assert isinstance(second, ControllableInjection)
+    assert json.loads(second.value)["victim_tool"] == "arxiv"
+
+
+@pytest.mark.asyncio
+async def test_semantic_tool_catalog_surface_gets_helper_injection() -> None:
+    opt = ChordXTHPOptimizer(
+        victim_tool_name="brave_search",
+        direction="predecessor",
+        enabled_attacks=("hijack",),
+        max_attempts=1,
+    )
+    await opt.initialize(
+        Goal(description="test Chord control-flow hijack"),
+        [ctrl("available_tools_catalog")],
+        [],
+        LLMClient._make_noop(),
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    tool_resp = await dispatch(
+        opt,
+        ControllablePreCallEvent(
+            controllable=ctrl("available_tools_catalog"),
             request="{}",
         ),
     )
@@ -496,6 +635,49 @@ async def test_pollute_success_requires_sentinel_in_response() -> None:
         ObservableEvent(
             observable=Observable("response", RESPONSE_TAG, observable_type="text"),
             content=f"Here is the summary. {_POLLUTE_SENTINEL} adjusted result.",
+        )
+    )
+
+    end = await dispatch(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
+
+    assert isinstance(end, RunEndResponse)
+    assert opt._succeeded is True
+
+
+@pytest.mark.asyncio
+async def test_pollute_success_accepts_common_final_answer_observable() -> None:
+    opt = ChordXTHPOptimizer(
+        victim_tool_name="brave_search",
+        direction="predecessor",
+        enabled_attacks=("hijack", "pollute"),
+        max_attempts=1,
+    )
+    await opt.initialize(
+        Goal(description="pollute search results"),
+        [ctrl("tool_catalog_register")],
+        [],
+        LLMClient._make_noop(),
+    )
+    trajectory = Trajectory()
+    await dispatch(opt, RunStartEvent(trajectory=trajectory))
+    trajectory.emit(
+        ControllablePostCallEvent(
+            controllable=ctrl("tool_call:QueryFormatter", TOOLS_TAG, "text"),
+            request='{"input_query":"election results"}',
+            answer="benign formatted query",
+        )
+    )
+    trajectory.emit(
+        ControllablePostCallEvent(
+            controllable=ctrl("tool_call:brave_search", TOOLS_TAG, "text"),
+            request='{"query":"election results"}',
+            answer="search results",
+        )
+    )
+    trajectory.emit(
+        ObservableEvent(
+            observable=Observable("final_answer", RESPONSE_TAG, observable_type="text"),
+            content=f"Final answer includes {_POLLUTE_SENTINEL}.",
         )
     )
 
