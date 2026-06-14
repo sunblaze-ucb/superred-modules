@@ -47,8 +47,10 @@ from superred.core.types.goal import Goal
 from superred.core.types.trajectory import Trajectory
 
 try:
-    from agentdojo.functions_runtime import FunctionCall  # type: ignore[import-not-found]
-    from agentdojo.types import ChatMessage  # type: ignore[import-not-found]
+    from agentdojo.functions_runtime import (  # type: ignore[import-not-found, import-untyped]
+        FunctionCall,
+    )
+    from agentdojo.types import ChatMessage  # type: ignore[import-not-found, import-untyped]
     from agentdojo_target import (  # type: ignore[import-not-found]
         AgentDojoTarget,
         CONTENT_1P_DATA_3P_TAG,
@@ -65,6 +67,23 @@ except Exception as exc:  # pragma: no cover - smoke environment guard.
 READ_TOOL = "banking__get_balance"
 READ_CTRL = f"read__{READ_TOOL}"
 SMOKE_TOKEN = "AGENTDOJO_AGENTVIGIL_SMOKE_TOKEN"
+
+
+class _SmokeAgentDojoTarget(AgentDojoTarget):
+    """Instantiable across the ``cleanup`` -> ``reset_ephemeral_state`` rename.
+
+    The vendored ``AgentDojoTarget`` on this branch may still expose the older
+    per-run ``cleanup`` hook rather than the ``reset_ephemeral_state`` the
+    current ``Target`` ABC requires. Bridge both so the smoke runs whether or
+    not that target rename has landed here yet; it delegates to the real
+    method once present.
+    """
+
+    async def reset_ephemeral_state(self) -> None:
+        if "reset_ephemeral_state" in vars(AgentDojoTarget):
+            await AgentDojoTarget.reset_ephemeral_state(self)
+        else:
+            await self.cleanup()  # type: ignore[attr-defined]
 
 
 class _ScriptedReadToolPipeline:
@@ -177,7 +196,7 @@ async def _run() -> int:
             random_seed=0,
         ),
         target_factory=TargetFactory(
-            create=lambda: AgentDojoTarget(
+            create=lambda: _SmokeAgentDojoTarget(
                 pipeline_model="openai/gpt-4o-2024-05-13",
                 api_key="sk-smoke-not-used",
             ),

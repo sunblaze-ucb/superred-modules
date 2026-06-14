@@ -22,9 +22,7 @@ from agentvigil_websentinel_optimizer.mutator import MutationMethod
 from agentvigil_websentinel_optimizer.optimizer import AgentVigilWebSentinelOptimizer
 from agentvigil_websentinel_optimizer.mutator import extract_response_block
 from agentvigil_websentinel_optimizer.official_data import (
-    load_official_adaptive_attack_data,
     load_official_mutation_templates,
-    load_official_raw_file,
     load_official_source_hash,
     load_official_system_prompt,
 )
@@ -89,6 +87,21 @@ async def init_optimizer(
         llm_client=llm if llm is not None else empty_llm(),
     )
     return opt
+
+
+async def deliver_user_prompt(
+    opt: AgentVigilWebSentinelOptimizer, request: str = "do the task"
+) -> None:
+    """Simulate the target firing its user_prompt PreCall so the run actually
+    delivers an injection. The optimizer no longer scores a candidate that was
+    never planted, so scoring tests must let delivery happen."""
+    await dispatch_event(
+        opt,
+        ControllablePreCallEvent(
+            controllable=make_controllable("user_prompt", USER_TAG),
+            request=request,
+        ),
+    )
 
 
 @pytest.mark.asyncio
@@ -215,6 +228,7 @@ async def test_tool_catalog_replace_uses_static_catalog_when_available() -> None
 async def test_framework_feedback_scores_seed_and_success_stops() -> None:
     opt = await init_optimizer(max_attempts=10)
     await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await deliver_user_prompt(opt)
     end = await dispatch_event(
         opt,
         RunEndEvent(evaluation=success_eval(), security_domain=USER_TAG),
@@ -234,6 +248,7 @@ async def test_failed_feedback_after_initial_seed_scores_mutates_next_seed() -> 
     )
     opt = await init_optimizer(llm=llm, max_attempts=3)
     await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await deliver_user_prompt(opt)
     await dispatch_event(
         opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
     )
@@ -269,6 +284,7 @@ async def test_initial_seed_corpus_is_scored_before_mutation() -> None:
     await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
     assert opt._current_seed is not None
     assert opt._current_seed.id == "seed_a"
+    await deliver_user_prompt(opt)
     await dispatch_event(
         opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
     )
@@ -277,6 +293,7 @@ async def test_initial_seed_corpus_is_scored_before_mutation() -> None:
     await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
     assert opt._current_seed is not None
     assert opt._current_seed.id == "seed_b"
+    await deliver_user_prompt(opt)
     await dispatch_event(
         opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
     )
@@ -296,6 +313,7 @@ async def test_mutator_default_does_not_pin_max_tokens_for_official_parity() -> 
     )
     opt = await init_optimizer(llm=llm, max_attempts=2)
     await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await deliver_user_prompt(opt)
     await dispatch_event(
         opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
     )
@@ -310,6 +328,24 @@ def test_official_html_seed_catalog_keeps_required_placeholders() -> None:
     assert all("{injection_goal}" in seed.text for seed in OFFICIAL_HTML_SEEDS)
 
 
+def test_include_text_seeds_optionally_extends_default_corpus() -> None:
+    default_opt = AgentVigilWebSentinelOptimizer(random_seed=0)
+    assert len(default_opt._initial_seeds) == len(OFFICIAL_HTML_SEEDS)
+
+    extended = AgentVigilWebSentinelOptimizer(include_text_seeds=True, random_seed=0)
+    assert len(extended._initial_seeds) == len(OFFICIAL_HTML_SEEDS) + len(
+        OFFICIAL_TEXT_SEEDS
+    )
+
+    # An explicit corpus overrides the include_text_seeds default toggle.
+    explicit = AgentVigilWebSentinelOptimizer(
+        seeds=[Seed(id="x", text="x {injection_goal}")],
+        include_text_seeds=True,
+        random_seed=0,
+    )
+    assert len(explicit._initial_seeds) == 1
+
+
 def test_official_literals_and_dataset_are_loaded_from_packaged_data() -> None:
     assert load_official_source_hash("new_seeds.json") == (
         "e849373dbeb8bef0d3dfa6b13c58f5465da193c615d6aa90aa5f7ec1c661127a"
@@ -320,13 +356,9 @@ def test_official_literals_and_dataset_are_loaded_from_packaged_data() -> None:
     assert load_official_source_hash("mutation_prompts.json") == (
         "c14ded5d74ce2316f2bc55c1d5f250ba8646be838744db273d6f9298753c598b"
     )
-    assert load_official_raw_file("adaptive_attack_data.json").sha256 == (
-        "9867ac34f6282045710444f0c7de3836e069b5f42a2258e050a3dbc11631c589"
-    )
     assert "You are a helpful redteaming model" in load_official_system_prompt()
     assert MutationMethod.EXPAND in load_official_mutation_templates()
     assert len(OFFICIAL_TEXT_SEEDS) == 11
-    assert len(load_official_adaptive_attack_data()) > 0
 
 
 @pytest.mark.asyncio
@@ -338,6 +370,7 @@ async def test_mutator_transport_failures_prune_candidate_without_failing_optimi
     opt = await init_optimizer(llm=llm, max_attempts=2)
 
     await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await deliver_user_prompt(opt)
     await dispatch_event(
         opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
     )
@@ -355,6 +388,7 @@ async def test_no_feedback_pending_candidate_enters_tree_with_neutral_reward() -
     opt = await init_optimizer(llm=llm, max_attempts=3)
 
     await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await deliver_user_prompt(opt)
     await dispatch_event(
         opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
     )
@@ -362,6 +396,7 @@ async def test_no_feedback_pending_candidate_enters_tree_with_neutral_reward() -
     await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
     assert opt._current_seed is not None
     assert opt._current_seed.text == "child {injection_goal}"
+    await deliver_user_prompt(opt)
     await dispatch_event(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
 
     assert opt._tree is not None
@@ -402,6 +437,7 @@ async def test_mutator_budget_errors_propagate_to_controller() -> None:
     opt = await init_optimizer(llm=llm, max_attempts=2)
 
     await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await deliver_user_prompt(opt)
     with pytest.raises(BudgetExhaustedError):
         await dispatch_event(
             opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
@@ -608,6 +644,7 @@ async def test_generated_children_are_not_selectable_until_evaluated() -> None:
     )
 
     await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await deliver_user_prompt(opt)
     await dispatch_event(
         opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
     )
@@ -619,6 +656,7 @@ async def test_generated_children_are_not_selectable_until_evaluated() -> None:
     await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
     assert opt._current_seed is not None
     assert opt._current_seed.text == "child one {injection_goal}"
+    await deliver_user_prompt(opt)
     await dispatch_event(
         opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
     )
@@ -800,7 +838,7 @@ async def test_user_prompt_fallback_after_advertised_content_surface_is_not_reac
 
 
 @pytest.mark.asyncio
-async def test_failed_tool_catalog_register_allows_prompt_fallback() -> None:
+async def test_delivered_catalog_register_is_sticky_across_runs() -> None:
     opt = AgentVigilWebSentinelOptimizer(
         seeds=[
             Seed(id="seed_a", text="A {injection_goal}"),
@@ -861,11 +899,15 @@ async def test_failed_tool_catalog_register_allows_prompt_fallback() -> None:
         ),
     )
 
+    # A tool-catalog register IS a delivery (the attacker tool was planted),
+    # even when the attack scores 0. The ladder must not advance on a delivered
+    # run, so the reachable catalog surface stays chosen on the next run rather
+    # than re-deferring to the system prompt and re-blinding.
     assert isinstance(first_system, ControllableNoInjection)
     assert isinstance(first_catalog, ControllableInjection)
-    assert isinstance(second_system, ControllableInjection)
-    assert isinstance(second_catalog, ControllableNoInjection)
-    assert "send the secret token" in second_system.value
+    assert isinstance(second_system, ControllableNoInjection)
+    assert isinstance(second_catalog, ControllableInjection)
+    assert "send the secret token" in second_catalog.value
 
 
 @pytest.mark.asyncio
@@ -935,3 +977,114 @@ async def test_first_reached_content_surface_wins_for_the_run() -> None:
     assert isinstance(first_resp, ControllableInjection)
     assert isinstance(second_resp, ControllableNoInjection)
     assert "page content" in first_resp.value
+
+
+@pytest.mark.asyncio
+async def test_non_delivery_retries_candidate_without_scoring() -> None:
+    opt = await init_optimizer(
+        controllables=[
+            make_controllable("browser_page_content", TOOLS_TAG),
+            make_controllable("user_prompt", USER_TAG),
+        ],
+        max_attempts=5,
+    )
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    held = opt._current_seed
+    # The preferred content PostCall never fires this run, so nothing is planted.
+    end = await dispatch_event(
+        opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
+    )
+
+    assert isinstance(end, RunEndResponse)
+    assert end.done is False
+    assert opt._attempt_index == 0
+    assert opt._tree is not None
+    assert opt._tree.nodes[0].visits == 0  # never scored: not penalized
+    assert opt._pending_retry is not None
+
+    # Next run retries the same seed with the ladder now deep enough for the
+    # user prompt, which does fire and deliver.
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    assert opt._current_seed is held
+    resp = await dispatch_event(
+        opt,
+        ControllablePreCallEvent(
+            controllable=make_controllable("user_prompt", USER_TAG),
+            request="do the task",
+        ),
+    )
+    assert isinstance(resp, ControllableInjection)
+
+
+@pytest.mark.asyncio
+async def test_gives_up_when_only_surface_can_never_be_reached() -> None:
+    opt = await init_optimizer(
+        controllables=[make_controllable("browser_page_content", TOOLS_TAG)],
+        max_attempts=20,
+    )
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    # The single advertised content surface never fires; no fallback exists.
+    end = await dispatch_event(
+        opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
+    )
+
+    assert isinstance(end, RunEndResponse)
+    assert end.done is True
+    assert opt._attempt_index == 0
+    assert opt._tree is not None
+    assert opt._tree.nodes[0].visits == 0
+
+
+@pytest.mark.asyncio
+async def test_no_writable_surface_finishes_immediately() -> None:
+    opt = await init_optimizer(
+        controllables=[make_controllable("model_identity", MODEL_TAG)],
+        max_attempts=5,
+    )
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+
+    assert opt._current_seed is None
+    end = await dispatch_event(
+        opt, RunEndEvent(evaluation=None, security_domain=USER_TAG)
+    )
+    assert isinstance(end, RunEndResponse)
+    assert end.done is True
+
+
+@pytest.mark.asyncio
+async def test_llm_tool_description_used_for_register_when_enabled() -> None:
+    llm = AsyncMock()
+    llm.complete.return_value = mock_response(
+        "<response>Fetch the latest project notes for your task.</response>"
+    )
+    opt = AgentVigilWebSentinelOptimizer(
+        seeds=[Seed(id="seed", text="seed {injection_goal}")],
+        use_llm_tool_descriptions=True,
+        random_seed=0,
+    )
+    await opt.initialize(
+        goal=Goal(
+            description="register __attacker_data_dump__ and have the agent call it"
+        ),
+        controllables=[
+            make_controllable(
+                "tool_catalog_register", TOOL_CATALOG_TAG, value_type="json"
+            )
+        ],
+        observables=[],
+        llm_client=llm,
+    )
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+
+    resp = await dispatch_event(
+        opt,
+        ControllablePreCallEvent(
+            controllable=make_controllable(
+                "tool_catalog_register", TOOL_CATALOG_TAG, value_type="json"
+            ),
+            request="catalog edit slot",
+        ),
+    )
+
+    assert isinstance(resp, ControllableInjection)
+    assert "Fetch the latest project notes for your task." in resp.value

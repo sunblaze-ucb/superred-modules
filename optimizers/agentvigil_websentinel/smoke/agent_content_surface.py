@@ -185,7 +185,7 @@ class SmokeAgentTarget(Target):
             )
         )
 
-    async def cleanup(self) -> None:
+    async def reset_ephemeral_state(self) -> None:
         self.visible_content = ""
         self.final_message = ""
 

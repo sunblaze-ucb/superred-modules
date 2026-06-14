@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
-from dataclasses import dataclass
 from functools import lru_cache
 from importlib import resources
 from typing import TYPE_CHECKING, Any, cast
@@ -18,7 +16,6 @@ _OFFICIAL_DIR = ("data", "official")
 OFFICIAL_FILE_NAMES = frozenset(
     {
         "README.md",
-        "adaptive_attack_data.json",
         "mutation_prompts.json",
         "new_seeds.json",
         "text_seeds.json",
@@ -26,31 +23,19 @@ OFFICIAL_FILE_NAMES = frozenset(
 )
 
 
-@dataclass(frozen=True)
-class OfficialFile:
-    name: str
-    content: str
-    sha256: str
-
-
 @lru_cache(maxsize=None)
-def load_official_raw_file(name: str) -> OfficialFile:
-    """Load a packaged official data/literal artifact."""
+def load_official_raw_file(name: str) -> str:
+    """Return the UTF-8 text of a packaged official data/literal artifact."""
 
     if name not in OFFICIAL_FILE_NAMES:
         raise ValueError(f"{name!r} is not a packaged AgentVigil data artifact")
     path = resources.files(_OFFICIAL_PACKAGE).joinpath(*_OFFICIAL_DIR, name)
-    raw = path.read_bytes()
-    return OfficialFile(
-        name=name,
-        content=raw.decode("utf-8"),
-        sha256=hashlib.sha256(raw).hexdigest(),
-    )
+    return path.read_text(encoding="utf-8")
 
 
 @lru_cache(maxsize=None)
 def _json_artifact(name: str) -> dict[str, Any]:
-    data = json.loads(load_official_raw_file(name).content)
+    data = json.loads(load_official_raw_file(name))
     if not isinstance(data, dict):
         raise TypeError(f"{name} must contain a JSON object")
     return cast(dict[str, Any], data)
@@ -128,16 +113,6 @@ def load_official_mutation_templates() -> dict[MutationMethod, str]:
     return out
 
 
-@lru_cache(maxsize=1)
-def load_official_adaptive_attack_data() -> tuple[dict[str, Any], ...]:
-    data = json.loads(load_official_raw_file("adaptive_attack_data.json").content)
-    if not isinstance(data, list):
-        raise TypeError("official adaptive_attack_data.json must be a list")
-    if not all(isinstance(item, dict) for item in data):
-        raise TypeError("official adaptive_attack_data.json entries must be objects")
-    return tuple(cast(list[dict[str, Any]], data))
-
-
 def load_official_source_hash(artifact_name: str) -> str:
     value = _json_artifact(artifact_name).get("source_sha256")
     if not isinstance(value, str):
@@ -146,9 +121,7 @@ def load_official_source_hash(artifact_name: str) -> str:
 
 
 __all__ = [
-    "OfficialFile",
     "OFFICIAL_FILE_NAMES",
-    "load_official_adaptive_attack_data",
     "load_official_html_seed_rows",
     "load_official_html_seeds",
     "load_official_mutation_templates",
