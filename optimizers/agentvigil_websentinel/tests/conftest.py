@@ -21,22 +21,6 @@ TOOL_CATALOG_READABLE_TAG = SecurityDomainTag(
 TOOLS_TAG = SecurityDomainTag("tools")
 
 
-class FakeReadableTrajectory:
-    def __init__(self) -> None:
-        self._items: list[Any] = []
-
-    def push(self, item: Any) -> None:
-        self._items.append(item)
-
-    def snapshot(self) -> list[Any]:
-        return list(self._items)
-
-    def drain(self) -> list[Any]:
-        items = list(self._items)
-        self._items = []
-        return items
-
-
 def make_controllable(
     name: str = "user_prompt",
     tag: SecurityDomainTag = USER_TAG,

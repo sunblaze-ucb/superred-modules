@@ -16,6 +16,7 @@ from superred.core.types.events import (
 )
 from superred.core.types.goal import Goal
 from superred.core.types.llm import BudgetExhaustedError, LLMUsage
+from superred.core.types.trajectory import Trajectory
 
 from agentvigil_websentinel_optimizer.mcts import MonteCarloTree
 from agentvigil_websentinel_optimizer.mutator import MutationMethod
@@ -32,7 +33,6 @@ from agentvigil_websentinel_optimizer.seeds import (
     Seed,
 )
 from conftest import (
-    FakeReadableTrajectory,
     MODEL_TAG,
     PROMPT_TAG,
     SYSTEM_TAG,
@@ -109,7 +109,7 @@ async def test_read_postcall_injects_rendered_seed_into_agent_content() -> None:
     opt = await init_optimizer(
         controllables=[make_controllable("read__slack__get_webpage", TOOLS_TAG)]
     )
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
     resp = await dispatch_event(
         opt,
@@ -133,7 +133,7 @@ async def test_user_prompt_fallback_appends_payload_when_no_read_surface_fires()
     opt = await init_optimizer(
         controllables=[make_controllable("user_prompt", USER_TAG)]
     )
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
     resp = await dispatch_event(
         opt,
@@ -161,7 +161,7 @@ async def test_system_prompt_uses_bounded_static_context_when_writable() -> None
             make_observable_value("system_prompt", "safe system prompt", SYSTEM_TAG),
         ],
     )
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
     resp = await dispatch_event(
         opt,
@@ -175,6 +175,30 @@ async def test_system_prompt_uses_bounded_static_context_when_writable() -> None
     assert "default system" in resp.value
     assert "SUPERRED AGENT CAPABILITY EXTENSION" in resp.value
     assert "openai/gpt-4o" in resp.value
+
+
+@pytest.mark.asyncio
+async def test_static_context_respects_tiny_character_budget() -> None:
+    opt = AgentVigilWebSentinelOptimizer(
+        seeds=[Seed(id="seed", text="seed {injection_goal}")],
+        static_context_max_chars=5,
+        random_seed=0,
+    )
+    await opt.initialize(
+        goal=Goal(description="send the secret token"),
+        controllables=[make_controllable("system_prompt", PROMPT_TAG)],
+        observables=[
+            make_observable_value(
+                "model_identity",
+                "very-long-model-identifier",
+                MODEL_TAG,
+            )
+        ],
+        llm_client=empty_llm(),
+    )
+
+    assert opt._static_context is not None
+    assert len(opt._static_context) <= 5
 
 
 @pytest.mark.asyncio
@@ -206,7 +230,7 @@ async def test_tool_catalog_replace_uses_static_catalog_when_available() -> None
             )
         ],
     )
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
     resp = await dispatch_event(
         opt,
@@ -227,7 +251,7 @@ async def test_tool_catalog_replace_uses_static_catalog_when_available() -> None
 @pytest.mark.asyncio
 async def test_framework_feedback_scores_seed_and_success_stops() -> None:
     opt = await init_optimizer(max_attempts=10)
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
     await deliver_user_prompt(opt)
     end = await dispatch_event(
         opt,
@@ -247,13 +271,13 @@ async def test_failed_feedback_after_initial_seed_scores_mutates_next_seed() -> 
         "noise <response>mutated {injection_goal}</response> tail"
     )
     opt = await init_optimizer(llm=llm, max_attempts=3)
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
     await deliver_user_prompt(opt)
     await dispatch_event(
         opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
     )
 
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
     assert opt._current_seed is not None
     assert opt._current_seed.text == "mutated {injection_goal}"
@@ -281,7 +305,7 @@ async def test_initial_seed_corpus_is_scored_before_mutation() -> None:
         llm_client=llm,
     )
 
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
     assert opt._current_seed is not None
     assert opt._current_seed.id == "seed_a"
     await deliver_user_prompt(opt)
@@ -290,7 +314,7 @@ async def test_initial_seed_corpus_is_scored_before_mutation() -> None:
     )
     assert llm.complete.await_count == 0
 
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
     assert opt._current_seed is not None
     assert opt._current_seed.id == "seed_b"
     await deliver_user_prompt(opt)
@@ -312,7 +336,7 @@ async def test_mutator_default_does_not_pin_max_tokens_for_official_parity() -> 
         "<response>mutated {injection_goal}</response>"
     )
     opt = await init_optimizer(llm=llm, max_attempts=2)
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
     await deliver_user_prompt(opt)
     await dispatch_event(
         opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
@@ -346,6 +370,16 @@ def test_include_text_seeds_optionally_extends_default_corpus() -> None:
     assert len(explicit._initial_seeds) == 1
 
 
+def test_explicit_empty_seed_corpus_is_rejected() -> None:
+    with pytest.raises(ValueError, match="at least one seed"):
+        AgentVigilWebSentinelOptimizer(seeds=[])
+
+
+def test_mutator_max_retries_must_be_positive() -> None:
+    with pytest.raises(ValueError, match="mutator_max_retries"):
+        AgentVigilWebSentinelOptimizer(mutator_max_retries=0)
+
+
 def test_official_literals_and_dataset_are_loaded_from_packaged_data() -> None:
     assert load_official_source_hash("new_seeds.json") == (
         "e849373dbeb8bef0d3dfa6b13c58f5465da193c615d6aa90aa5f7ec1c661127a"
@@ -369,7 +403,7 @@ async def test_mutator_transport_failures_prune_candidate_without_failing_optimi
     llm.complete.side_effect = RuntimeError("temporary transport failure")
     opt = await init_optimizer(llm=llm, max_attempts=2)
 
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
     await deliver_user_prompt(opt)
     await dispatch_event(
         opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
@@ -387,13 +421,13 @@ async def test_no_feedback_pending_candidate_enters_tree_with_neutral_reward() -
     )
     opt = await init_optimizer(llm=llm, max_attempts=3)
 
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
     await deliver_user_prompt(opt)
     await dispatch_event(
         opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
     )
 
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
     assert opt._current_seed is not None
     assert opt._current_seed.text == "child {injection_goal}"
     await deliver_user_prompt(opt)
@@ -414,7 +448,7 @@ async def test_tool_response_name_is_treated_as_content_surface() -> None:
     opt = await init_optimizer(
         controllables=[make_controllable("tool_response", TOOLS_TAG)]
     )
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
     resp = await dispatch_event(
         opt,
@@ -436,12 +470,36 @@ async def test_mutator_budget_errors_propagate_to_controller() -> None:
     llm.complete.side_effect = BudgetExhaustedError("budget exhausted", LLMUsage())
     opt = await init_optimizer(llm=llm, max_attempts=2)
 
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
     await deliver_user_prompt(opt)
     with pytest.raises(BudgetExhaustedError):
         await dispatch_event(
             opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
         )
+
+
+@pytest.mark.asyncio
+async def test_llm_tool_description_budget_errors_propagate_to_controller() -> None:
+    llm = AsyncMock()
+    llm.complete.side_effect = BudgetExhaustedError("budget exhausted", LLMUsage())
+    opt = AgentVigilWebSentinelOptimizer(
+        seeds=[Seed(id="seed", text="seed {injection_goal}")],
+        use_llm_tool_descriptions=True,
+        random_seed=0,
+    )
+    await opt.initialize(
+        goal=Goal(description="register __attacker_data_dump__"),
+        controllables=[
+            make_controllable(
+                "tool_catalog_register", TOOL_CATALOG_TAG, value_type="json"
+            )
+        ],
+        observables=[],
+        llm_client=llm,
+    )
+
+    with pytest.raises(BudgetExhaustedError):
+        await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
 
 def test_multiparent_backprop_updates_child_and_each_parent_once() -> None:
@@ -521,6 +579,7 @@ async def test_crossover_candidate_keeps_both_parents() -> None:
     pending = opt._pending_nodes[0]
     assert len(pending.parents) == 2
     assert pending.seed.mutation_method == "crossover"
+    assert isinstance(pending.seed.mutation_seed, list)
     assert set(pending.seed.mutation_seed) == {"seed_a", "seed_b"}
 
 
@@ -544,7 +603,7 @@ async def test_system_prompt_includes_goal_markers_for_agentdojo_capability_clai
         observables=[],
         llm_client=empty_llm(),
     )
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
     resp = await dispatch_event(
         opt,
@@ -583,7 +642,7 @@ async def test_tool_catalog_register_uses_agentdojo_attacker_tool_name_from_goal
         observables=[],
         llm_client=empty_llm(),
     )
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
     resp = await dispatch_event(
         opt,
@@ -607,7 +666,7 @@ async def test_generic_content_postcall_injects_for_browser_or_memory_surfaces()
     opt = await init_optimizer(
         controllables=[make_controllable("browser_page_content", TOOLS_TAG)]
     )
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
     resp = await dispatch_event(
         opt,
@@ -643,7 +702,7 @@ async def test_generated_children_are_not_selectable_until_evaluated() -> None:
         llm_client=llm,
     )
 
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
     await deliver_user_prompt(opt)
     await dispatch_event(
         opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
@@ -653,7 +712,7 @@ async def test_generated_children_are_not_selectable_until_evaluated() -> None:
     assert [node.seed.id for node in opt._tree.nodes] == ["root"]
     assert len(opt._pending_nodes) == 2
 
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
     assert opt._current_seed is not None
     assert opt._current_seed.text == "child one {injection_goal}"
     await deliver_user_prompt(opt)
@@ -674,7 +733,7 @@ async def test_content_surface_detection_includes_observation_and_external_conte
     opt = await init_optimizer(
         controllables=[make_controllable("external_context", TOOLS_TAG)]
     )
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
     resp = await dispatch_event(
         opt,
@@ -705,7 +764,7 @@ async def test_configured_content_controllable_name_is_injected_even_without_hin
         observables=[],
         llm_client=empty_llm(),
     )
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
     resp = await dispatch_event(
         opt,
@@ -732,7 +791,7 @@ async def test_content_controllable_description_and_value_type_are_detection_sig
         value_type="json",
     )
     opt = await init_optimizer(controllables=[ctrl])
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
     resp = await dispatch_event(
         opt,
@@ -752,7 +811,7 @@ async def test_user_prompt_injects_when_it_is_the_only_surface() -> None:
     opt = await init_optimizer(
         controllables=[make_controllable("user_prompt", USER_TAG)]
     )
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
     resp = await dispatch_event(
         opt,
@@ -767,6 +826,30 @@ async def test_user_prompt_injects_when_it_is_the_only_surface() -> None:
 
 
 @pytest.mark.asyncio
+async def test_user_profile_is_not_treated_as_user_prompt() -> None:
+    opt = await init_optimizer(
+        controllables=[make_controllable("user_profile", USER_TAG)]
+    )
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
+
+    resp = await dispatch_event(
+        opt,
+        ControllablePreCallEvent(
+            controllable=make_controllable("user_profile", USER_TAG),
+            request="profile data",
+        ),
+    )
+    end = await dispatch_event(
+        opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
+    )
+
+    assert isinstance(resp, ControllableNoInjection)
+    assert isinstance(end, RunEndResponse)
+    assert end.done is True
+    assert opt._attempt_index == 0
+
+
+@pytest.mark.asyncio
 async def test_user_prompt_is_deferred_when_agentic_content_surface_is_available() -> (
     None
 ):
@@ -776,7 +859,7 @@ async def test_user_prompt_is_deferred_when_agentic_content_surface_is_available
             make_controllable("browser_page_content", TOOLS_TAG),
         ]
     )
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
     user_resp = await dispatch_event(
         opt,
@@ -811,7 +894,7 @@ async def test_user_prompt_fallback_after_advertised_content_surface_is_not_reac
         max_attempts=2,
     )
 
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
     first_user = await dispatch_event(
         opt,
         ControllablePreCallEvent(
@@ -823,7 +906,7 @@ async def test_user_prompt_fallback_after_advertised_content_surface_is_not_reac
         opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
     )
 
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
     second_user = await dispatch_event(
         opt,
         ControllablePreCallEvent(
@@ -860,7 +943,7 @@ async def test_delivered_catalog_register_is_sticky_across_runs() -> None:
         llm_client=empty_llm(),
     )
 
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
     first_system = await dispatch_event(
         opt,
         ControllablePreCallEvent(
@@ -881,7 +964,7 @@ async def test_delivered_catalog_register_is_sticky_across_runs() -> None:
         opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
     )
 
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
     second_system = await dispatch_event(
         opt,
         ControllablePreCallEvent(
@@ -925,7 +1008,7 @@ async def test_best_prompt_surface_is_selected_rather_than_all_prompts() -> None
         observables=[],
         llm_client=empty_llm(),
     )
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
     system_resp = await dispatch_event(
         opt,
@@ -955,7 +1038,7 @@ async def test_first_reached_content_surface_wins_for_the_run() -> None:
             make_controllable("memory_search_result", TOOLS_TAG),
         ]
     )
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
     first_resp = await dispatch_event(
         opt,
@@ -988,7 +1071,7 @@ async def test_non_delivery_retries_candidate_without_scoring() -> None:
         ],
         max_attempts=5,
     )
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
     held = opt._current_seed
     # The preferred content PostCall never fires this run, so nothing is planted.
     end = await dispatch_event(
@@ -1004,7 +1087,7 @@ async def test_non_delivery_retries_candidate_without_scoring() -> None:
 
     # Next run retries the same seed with the ladder now deep enough for the
     # user prompt, which does fire and deliver.
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
     assert opt._current_seed is held
     resp = await dispatch_event(
         opt,
@@ -1022,7 +1105,7 @@ async def test_gives_up_when_only_surface_can_never_be_reached() -> None:
         controllables=[make_controllable("browser_page_content", TOOLS_TAG)],
         max_attempts=20,
     )
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
     # The single advertised content surface never fires; no fallback exists.
     end = await dispatch_event(
         opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
@@ -1041,7 +1124,7 @@ async def test_no_writable_surface_finishes_immediately() -> None:
         controllables=[make_controllable("model_identity", MODEL_TAG)],
         max_attempts=5,
     )
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
     assert opt._current_seed is None
     end = await dispatch_event(
@@ -1074,7 +1157,7 @@ async def test_llm_tool_description_used_for_register_when_enabled() -> None:
         observables=[],
         llm_client=llm,
     )
-    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
     resp = await dispatch_event(
         opt,

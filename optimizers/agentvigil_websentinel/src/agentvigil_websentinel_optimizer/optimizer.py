@@ -190,8 +190,10 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
             raise ValueError("static_context_max_chars must be non-negative")
         if mutator_max_tokens is not None and mutator_max_tokens < 1:
             raise ValueError("mutator_max_tokens must be positive when set")
+        if mutator_max_retries < 1:
+            raise ValueError("mutator_max_retries must be at least 1")
 
-        if seeds:
+        if seeds is not None:
             chosen_seeds: tuple[Seed, ...] = tuple(seeds)
         else:
             chosen_seeds = DEFAULT_SEEDS + (
@@ -275,7 +277,7 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
             ctrl.name == _SYSTEM_PROMPT_NAME for ctrl in controllables
         )
         self._can_write_user_prompt = any(
-            self._is_user_prompt(ctrl.name) for ctrl in controllables
+            self._is_user_prompt(ctrl) for ctrl in controllables
         )
         catalog_ops = {
             ctrl.name
@@ -377,7 +379,7 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
             return self._maybe_inject_system_prompt(event)
         if name in {_TOOL_REGISTER, _TOOL_REPLACE, _TOOL_REWRITE_DOC}:
             return self._maybe_inject_tool_catalog(event)
-        if self._is_user_prompt(name):
+        if self._is_user_prompt(event.controllable):
             return self._maybe_inject_user_prompt(event)
         return ControllableNoInjection(event=event, controllable=event.controllable)
 
@@ -641,8 +643,8 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         """Optionally let the mutator LLM craft the registered tool's lure.
 
         Extends AgentVigil's "LLM mutates the injection" principle to the
-        tool-registration vector. Best-effort: on any failure it leaves the
-        static description in place so the deterministic path still works.
+        tool-registration vector. Transport/model failures fall back to the
+        static description, but budget exhaustion is a controller-level stop.
         """
         assert self._mutator is not None and self._goal is not None
         seed_text = self._current_payload or (
@@ -655,7 +657,7 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
                 tool_name=self._attacker_tool_name(),
             )
         except BudgetExhaustedError:
-            self._dynamic_tool_description = None
+            raise
         except Exception:
             self._dynamic_tool_description = None
 
@@ -707,9 +709,23 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         return _AGENTDOJO_ATTACKER_TOOL_NAMES[0]
 
     @staticmethod
-    def _is_user_prompt(name: str) -> bool:
-        normalized = name.lower()
-        return normalized in _USER_PROMPT_NAMES or "user" in normalized
+    def _is_user_prompt(controllable: Controllable) -> bool:
+        normalized = controllable.name.lower()
+        if normalized in _USER_PROMPT_NAMES:
+            return True
+        haystack = " ".join(
+            (
+                controllable.name,
+                controllable.description,
+                controllable.value_type,
+            )
+        ).lower()
+        has_user = "user" in haystack
+        has_prompt_role = any(
+            hint in haystack
+            for hint in ("message", "prompt", "query", "task", "instruction")
+        )
+        return has_user and has_prompt_role
 
     def _is_content_postcall_surface(self, controllable: Controllable) -> bool:
         normalized = controllable.name.lower()
@@ -784,10 +800,11 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
             if remaining <= 0:
                 break
             if len(line) > remaining:
-                line = (
-                    line[: max(0, remaining - len(_STATIC_CONTEXT_TRUNCATION))]
-                    + _STATIC_CONTEXT_TRUNCATION
-                )
+                if remaining <= len(_STATIC_CONTEXT_TRUNCATION):
+                    line = line[:remaining]
+                else:
+                    line = line[: remaining - len(_STATIC_CONTEXT_TRUNCATION)]
+                    line += _STATIC_CONTEXT_TRUNCATION
             lines.append(line)
             used += len(line) + 1
         if not lines:
