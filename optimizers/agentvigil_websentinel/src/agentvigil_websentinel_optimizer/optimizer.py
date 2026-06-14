@@ -238,9 +238,11 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         # once a lower surface is the one that actually fires the optimizer keeps
         # using it instead of re-blinding itself to the top surface every run.
         self._ladder_depth = 0
-        # Whether any run has ever actually delivered an injection. Used to give
-        # up early when no granted surface can ever be reached for this task.
-        self._ever_delivered = False
+        # Consecutive runs that delivered nothing, reset on any delivery. Bounds
+        # non-delivery runs (which do not consume the attempt budget): once every
+        # reachable surface has been tried in a row without landing, delivery is
+        # impossible right now and the loop stops instead of spinning.
+        self._consecutive_misses = 0
 
         self._attempt_index = 0
         self._succeeded = False
@@ -312,7 +314,7 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         self._attempt_index = 0
         self._succeeded = False
         self._ladder_depth = 0
-        self._ever_delivered = False
+        self._consecutive_misses = 0
         self._coverage_bitmap.clear()
         self._initial_queue = list(self._tree.nodes)
         self._pending_nodes.clear()
@@ -416,9 +418,10 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
             # ladder one notch deeper so a lower surface becomes eligible.
             self._pending_retry = self._held_candidate()
             self._ladder_depth += 1
+            self._consecutive_misses += 1
             return RunEndResponse(event=event, done=self._is_done())
 
-        self._ever_delivered = True
+        self._consecutive_misses = 0
         self._pending_retry = None
         reward = self._reward_from_evaluation(event.evaluation)
         node = self._materialize_current_node()
@@ -903,17 +906,13 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
     def _is_done(self) -> bool:
         if self._succeeded or self._attempt_index >= self._max_attempts:
             return True
-        available = self._available_surface_ranks()
-        if not available:
-            # Some agent targets create read/tool PostCall controllables only at
-            # runtime. Give those dynamic surfaces one chance to appear; if a
-            # run delivers nothing, stop instead of spinning forever.
-            return self._ladder_depth > 0
-        if not self._ever_delivered and self._ladder_depth >= len(available):
-            # Every granted surface has been allowed across runs and none ever
-            # fired: delivery is impossible for this task, so stop wasting runs.
-            return True
-        return False
+        # Stop once we have exhausted every reachable surface in a row without
+        # landing a single injection. ``max(1, ...)`` also covers targets whose
+        # only content/tool PostCall surfaces appear at runtime (nothing is
+        # listed up front): they still get one run to materialize, then stop.
+        # Any delivery resets the streak, so a working surface keeps running up
+        # to the attempt budget and a surface that goes silent cannot spin.
+        return self._consecutive_misses >= max(1, len(self._available_surface_ranks()))
 
 
 __all__ = ["AgentVigilWebSentinelOptimizer"]

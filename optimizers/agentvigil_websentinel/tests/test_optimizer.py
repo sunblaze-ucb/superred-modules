@@ -1202,6 +1202,34 @@ async def test_gives_up_when_only_surface_can_never_be_reached() -> None:
 
 
 @pytest.mark.asyncio
+async def test_surface_that_goes_silent_after_delivering_terminates() -> None:
+    # A surface can deliver on one run and then never fire again. Non-delivery
+    # runs do not consume the attempt budget, so without a consecutive-miss
+    # bound this would spin until the controller's own cap. It must stop.
+    opt = await init_optimizer(
+        controllables=[make_controllable("user_prompt", USER_TAG)],
+        max_attempts=20,
+    )
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
+    await deliver_user_prompt(opt)
+    end1 = await dispatch_event(
+        opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
+    )
+    assert isinstance(end1, RunEndResponse)
+    assert end1.done is False
+    assert opt._attempt_index == 1
+
+    # Next run the user prompt is not fired by the target: nothing is delivered.
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
+    end2 = await dispatch_event(
+        opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG)
+    )
+    assert isinstance(end2, RunEndResponse)
+    assert end2.done is True
+    assert opt._attempt_index == 1
+
+
+@pytest.mark.asyncio
 async def test_no_static_surface_gets_one_dynamic_surface_chance_then_stops() -> None:
     opt = await init_optimizer(
         controllables=[make_controllable("model_identity", MODEL_TAG)],
