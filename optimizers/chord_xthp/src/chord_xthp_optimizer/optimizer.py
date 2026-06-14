@@ -579,6 +579,7 @@ class ChordXTHPOptimizer(Optimizer):
         harvested_values: list[str] = []
         tool_outputs: list[str] = []
         response_text: list[str] = []
+        last_trace_assistant_text: str | None = None
         for item in trajectory.snapshot():
             if isinstance(item, ControllablePostCallEvent):
                 # A simple target surfaces a call as one PostCall event
@@ -605,9 +606,17 @@ class ChordXTHPOptimizer(Optimizer):
                         if fn == candidate.helper.name:
                             harvested_values.extend(self._values_from_args(args, expected_params))
                 elif "agent_trace_tool_response" in name:
-                    tool_outputs.append(self._stringify(item.content))
+                    fn, output = self._parse_trace_tool_response(item.content)
+                    if fn == candidate.victim_tool:
+                        tool_outputs.append(output)
+                elif "agent_trace_message" in name:
+                    assistant_text = self._parse_trace_assistant_message(item.content)
+                    if assistant_text is not None:
+                        last_trace_assistant_text = assistant_text
                 elif self._is_response_observable(item):
                     response_text.append(self._stringify(item.content))
+        if last_trace_assistant_text is not None:
+            response_text.append(last_trace_assistant_text)
         # Prefer the real agent_trace call sequence; fall back to the synthetic
         # PostCall sequence so both target styles have a working code path.
         calls = tuple(trace_calls or postcall_calls)
@@ -671,15 +680,55 @@ class ChordXTHPOptimizer(Optimizer):
             return []
         return self._values_from_args(parsed, expected_params)
 
-    @staticmethod
-    def _values_from_args(args: Mapping[str, Any], expected_params: set[str]) -> list[str]:
+    def _values_from_args(self, args: Mapping[str, Any], expected_params: set[str]) -> list[str]:
         values: list[str] = []
         for key, value in args.items():
-            if not isinstance(value, str):
-                continue
-            if not expected_params or key.lower() in expected_params:
-                values.append(value)
+            values.extend(
+                self._values_from_argument_value(
+                    value,
+                    expected_params,
+                    key_matches=key.lower() in expected_params,
+                )
+            )
         return values
+
+    def _values_from_argument_value(
+        self,
+        value: Any,
+        expected_params: set[str],
+        *,
+        key_matches: bool,
+    ) -> list[str]:
+        if isinstance(value, str):
+            if not expected_params or key_matches:
+                return [value]
+            return []
+        if isinstance(value, Mapping):
+            values: list[str] = []
+            for nested_key, nested_value in value.items():
+                nested_key_matches = key_matches or str(nested_key).lower() in expected_params
+                values.extend(
+                    self._values_from_argument_value(
+                        nested_value,
+                        expected_params,
+                        key_matches=nested_key_matches,
+                    )
+                )
+            return values
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+            values = []
+            for nested_value in value:
+                values.extend(
+                    self._values_from_argument_value(
+                        nested_value,
+                        expected_params,
+                        key_matches=key_matches,
+                    )
+                )
+            return values
+        if key_matches and value is not None:
+            return [str(value)]
+        return []
 
     def _parse_trace_call(self, content: Any) -> tuple[str | None, Mapping[str, Any]]:
         data = self._parse_json_object(content) if isinstance(content, str) else content
@@ -689,22 +738,37 @@ class ChordXTHPOptimizer(Optimizer):
         args = data.get("args")
         if not isinstance(args, Mapping):
             args = data.get("arguments")
+        if isinstance(args, str):
+            args = self._parse_json_object(args)
         if not isinstance(args, Mapping):
             args = {}
         return (name if isinstance(name, str) else None), args
 
+    def _parse_trace_tool_response(self, content: Any) -> tuple[str | None, str]:
+        data = self._parse_json_object(content) if isinstance(content, str) else content
+        if not isinstance(data, Mapping):
+            return None, self._stringify(content)
+        name = data.get("function") or data.get("name") or data.get("tool") or data.get("tool_name")
+        output = data.get("content")
+        if output is None:
+            output = data.get("value")
+        if output is None:
+            output = data.get("result")
+        if output is None:
+            output = data.get("output")
+        return (name if isinstance(name, str) else None), self._stringify(output)
+
+    def _parse_trace_assistant_message(self, content: Any) -> str | None:
+        data = self._parse_json_object(content) if isinstance(content, str) else content
+        if not isinstance(data, Mapping) or data.get("role") != "assistant":
+            return None
+        return self._stringify(data.get("content"))
+
     def _is_response_observable(self, event: ObservableEvent) -> bool:
         name = event.observable.name
-        if (
+        return (
             name in self._response_observable_names
             or name.lower() in self._response_observable_names
-        ):
-            return True
-        # Real agentic targets surface the final answer as the last assistant
-        # chat message rather than a dedicated response observable.
-        return (
-            "agent_trace_message" in name.lower()
-            and "assistant" in self._stringify(event.content).lower()
         )
 
     @staticmethod
