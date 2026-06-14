@@ -230,6 +230,7 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         self._can_write_system_prompt = False
         self._can_write_user_prompt = False
         self._can_use_tool_catalog = False
+        self._catalog_ops: set[str] = set()
         self._content_surface_available = False
         self._effective_tool_catalog_available = False
         # How far down the surface-priority ladder the optimizer is willing to
@@ -279,13 +280,13 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         self._can_write_user_prompt = any(
             self._is_user_prompt(ctrl) for ctrl in controllables
         )
-        catalog_ops = {
+        self._catalog_ops = {
             ctrl.name
             for ctrl in controllables
             if ctrl.name in {_TOOL_REGISTER, _TOOL_REPLACE, _TOOL_REWRITE_DOC}
         }
         self._can_use_tool_catalog = self._use_tool_catalog_when_available and bool(
-            catalog_ops
+            self._catalog_ops
         )
         self._content_surface_available = any(
             self._is_agent_content_surface(ctrl) for ctrl in controllables
@@ -293,7 +294,7 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         # Prefer the closest paper-equivalent surface that is available, but
         # choose the actual injection point when the corresponding event fires.
         self._effective_tool_catalog_available = self._can_use_tool_catalog and (
-            _TOOL_REGISTER in catalog_ops or bool(self._tool_catalog)
+            _TOOL_REGISTER in self._catalog_ops or bool(self._tool_catalog)
         )
         seeds = [_copy_seed(seed) for seed in self._initial_seeds]
         self._tree = MonteCarloTree(
@@ -351,6 +352,7 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
             if (
                 self._use_llm_tool_descriptions
                 and self._effective_tool_catalog_available
+                and _TOOL_REGISTER in self._catalog_ops
                 and self._surface_rank_allowed(1)
             ):
                 await self._prepare_dynamic_tool_lure()
@@ -832,10 +834,19 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         observables: list[ObservableValue],
     ) -> list[dict[str, Any]]:
         for value in observables:
-            if (
-                "tool_catalog" not in value.observable.name.lower()
-                and "tool catalogue" not in value.observable.name.lower()
-            ):
+            name = value.observable.name.lower()
+            description = value.observable.description.lower()
+            observable_type = value.observable.observable_type.lower()
+            metadata = f"{name} {description} {observable_type}"
+            looks_like_catalog = (
+                "tool_catalog" in name
+                or "tool catalogue" in name
+                or "available_tools" in name
+                or name in {"tools", "tool_inventory", "function_inventory"}
+                or ("tool" in metadata and "list" in metadata)
+                or ("function" in metadata and "list" in metadata)
+            )
+            if not looks_like_catalog:
                 continue
             content = value.content
             if isinstance(content, str):
@@ -843,9 +854,29 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
                     content = json.loads(content)
                 except json.JSONDecodeError:
                     continue
-            if isinstance(content, list):
-                return [item for item in content if isinstance(item, dict)]
+            rows = AgentVigilWebSentinelOptimizer._tool_catalog_rows(content)
+            if rows:
+                return rows
         return []
+
+    @staticmethod
+    def _tool_catalog_rows(content: Any) -> list[dict[str, Any]]:
+        if isinstance(content, list):
+            candidates = content
+        elif isinstance(content, dict):
+            candidates = []
+            for key in ("tools", "tool_catalog", "tool_catalogue", "functions"):
+                value = content.get(key)
+                if isinstance(value, list):
+                    candidates = value
+                    break
+        else:
+            return []
+        return [
+            item
+            for item in candidates
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        ]
 
     @staticmethod
     def _stringify_content(content: Any) -> str:
@@ -874,8 +905,10 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
             return True
         available = self._available_surface_ranks()
         if not available:
-            # No writable/injectable surface was granted at all.
-            return True
+            # Some agent targets create read/tool PostCall controllables only at
+            # runtime. Give those dynamic surfaces one chance to appear; if a
+            # run delivers nothing, stop instead of spinning forever.
+            return self._ladder_depth > 0
         if not self._ever_delivered and self._ladder_depth >= len(available):
             # Every granted surface has been allowed across runs and none ever
             # fired: delivery is impossible for this task, so stop wasting runs.
