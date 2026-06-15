@@ -359,3 +359,194 @@ async def test_context_surface_poison_carries_question_prefix() -> None:
 
     assert isinstance(resp, ControllableInjection)
     assert resp.value == "What is the capital of France?.Lyon is the capital."
+
+
+@pytest.mark.asyncio
+async def test_user_profile_is_not_treated_as_user_prompt() -> None:
+    opt = PoisonedRAGOptimizer(
+        target_answer="Lyon",
+        poison_texts=["Lyon poison"] * 5,
+        max_attempts=1,
+    )
+    await opt.initialize(
+        Goal(description="What is the capital of France?"),
+        [
+            Controllable(
+                "user_profile",
+                USER_TAG,
+                description="Stored account profile",
+                value_type="json",
+            )
+        ],
+        [],
+        LLMClient._make_noop(),
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    end = await dispatch(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
+
+    assert isinstance(end, RunEndResponse)
+    assert end.done is True
+    assert opt.attempt_index == 0
+
+
+@pytest.mark.asyncio
+async def test_question_controllable_is_treated_as_user_prompt() -> None:
+    opt = PoisonedRAGOptimizer(
+        target_answer="Lyon",
+        poison_texts=["Lyon poison"] * 5,
+        max_attempts=1,
+    )
+    await opt.initialize(
+        Goal(description="What is the capital of France?"),
+        [ctrl("question", USER_TAG, "text")],
+        [],
+        LLMClient._make_noop(),
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    resp = await dispatch(
+        opt,
+        ControllablePreCallEvent(
+            controllable=ctrl("question", USER_TAG, "text"), request="placeholder"
+        ),
+    )
+
+    assert isinstance(resp, ControllableInjection)
+    assert "Query: What is the capital of France?" in resp.value
+
+
+@pytest.mark.asyncio
+async def test_advertised_surface_that_never_fires_is_not_scored() -> None:
+    opt = PoisonedRAGOptimizer(
+        target_answer="Lyon",
+        poison_texts=["Lyon poison"] * 5,
+        max_attempts=3,
+    )
+    await opt.initialize(
+        Goal(description="What is the capital of France?"),
+        [ctrl("knowledge_base_insert")],
+        [],
+        LLMClient._make_noop(),
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    end = await dispatch(
+        opt, RunEndEvent(evaluation=evaluation(True, 1.0), security_domain=USER_TAG)
+    )
+
+    assert isinstance(end, RunEndResponse)
+    assert end.done is True
+    assert opt.attempt_index == 0
+
+
+@pytest.mark.asyncio
+async def test_target_controllable_name_limits_delivery_to_that_surface() -> None:
+    opt = PoisonedRAGOptimizer(
+        target_answer="Lyon",
+        poison_texts=["Lyon poison"] * 5,
+        target_controllable_name="user_message",
+        max_attempts=1,
+    )
+    await opt.initialize(
+        Goal(description="What is the capital of France?"),
+        [ctrl("knowledge_base_insert"), ctrl("user_message", USER_TAG, "text")],
+        [],
+        LLMClient._make_noop(),
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    corpus_resp = await dispatch(
+        opt,
+        ControllablePreCallEvent(
+            controllable=ctrl("knowledge_base_insert"), request="[]"
+        ),
+    )
+    user_resp = await dispatch(
+        opt,
+        ControllablePreCallEvent(
+            controllable=ctrl("user_message", USER_TAG, "text"), request="placeholder"
+        ),
+    )
+
+    assert not isinstance(corpus_resp, ControllableInjection)
+    assert isinstance(user_resp, ControllableInjection)
+    assert "Contexts: What is the capital of France?.Lyon poison" in user_resp.value
+
+
+@pytest.mark.asyncio
+async def test_explicit_system_prompt_target_delivers_poison_context() -> None:
+    opt = PoisonedRAGOptimizer(
+        target_answer="Lyon",
+        poison_texts=["Lyon poison"] * 5,
+        target_controllable_name="system_prompt",
+        max_attempts=1,
+    )
+    await opt.initialize(
+        Goal(description="What is the capital of France?"),
+        [
+            ctrl("system_prompt", SYSTEM_TAG, "text"),
+            ctrl("knowledge_base_insert"),
+            ctrl("user_message", USER_TAG, "text"),
+        ],
+        [],
+        LLMClient._make_noop(),
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    system_resp = await dispatch(
+        opt,
+        ControllablePreCallEvent(
+            controllable=ctrl("system_prompt", SYSTEM_TAG, "text"),
+            request="Original system",
+        ),
+    )
+    user_resp = await dispatch(
+        opt,
+        ControllablePreCallEvent(
+            controllable=ctrl("user_message", USER_TAG, "text"), request="placeholder"
+        ),
+    )
+
+    assert isinstance(system_resp, ControllableInjection)
+    assert "Original system" in system_resp.value
+    assert "Contexts: What is the capital of France?.Lyon poison" in system_resp.value
+    assert "Query: What is the capital of France?" in system_resp.value
+    assert not isinstance(user_resp, ControllableInjection)
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_only_scope_still_delivers_poison_context() -> None:
+    opt = PoisonedRAGOptimizer(
+        target_answer="Lyon",
+        poison_texts=["Lyon poison"] * 5,
+        max_attempts=1,
+    )
+    await opt.initialize(
+        Goal(description="What is the capital of France?"),
+        [ctrl("system_prompt", SYSTEM_TAG, "text")],
+        [],
+        LLMClient._make_noop(),
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    system_resp = await dispatch(
+        opt,
+        ControllablePreCallEvent(
+            controllable=ctrl("system_prompt", SYSTEM_TAG, "text"),
+            request="Original system",
+        ),
+    )
+
+    assert isinstance(system_resp, ControllableInjection)
+    assert "PoisonedRAG task context:" in system_resp.value
+    assert "Lyon poison" in system_resp.value
+
+
+def test_static_context_tiny_budget_is_strictly_bounded() -> None:
+    opt = PoisonedRAGOptimizer(static_context_max_chars=5)
+
+    context = opt._format_static_context([obs("very_long_observable", "x" * 100)])
+
+    assert context == "...[t"
+    assert len(context) == 5

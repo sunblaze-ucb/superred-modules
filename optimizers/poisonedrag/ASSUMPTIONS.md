@@ -40,10 +40,16 @@ question, target answer, and poison documents. Text context surfaces receive the
 poison documents as retrieved context text.
 
 When a user-like controllable is writable, the optimizer asks the official target
-question there. When `system_prompt` is writable, it adds a short instruction to
-prefer retrieved context answers. That system-prompt path is a SuperRed
-capability extension; the paper-mainline attack is still the corpus/context
-poisoning path.
+question there. User-like detection uses the controllable name plus metadata, so
+fields like `user_profile` are not treated as prompt channels just because they
+contain the word "user".
+
+When `system_prompt` is writable, it adds a short instruction to prefer retrieved
+context answers. If `system_prompt` is the only writable attack surface (or is
+chosen with `target_controllable_name="system_prompt"`), the optimizer also puts
+the official RAG wrapper plus poison contexts there so the granted capability is
+actually exercised. That system-prompt path is a SuperRed capability extension;
+the paper-mainline attack is still the corpus/context poisoning path.
 
 If no RAG corpus or retrieved-context surface is writable but the user prompt is
 writable, the optimizer falls back to the official PoisonedRAG RAG wrapper and
@@ -65,13 +71,18 @@ from the filtered trajectory first, then falls back to a paired post-call answer
 when that is in scope. If neither response nor feedback is visible, the optimizer
 runs open-loop and stops only by attempt budget.
 
-If no poison or prompt was actually injected and no feedback/response is visible,
-the optimizer does not spend an attempt. This avoids penalizing a candidate that
-never reached the target.
+If no poison or prompt was actually injected, the optimizer does not score the
+candidate from unrelated feedback/response. Because PoisonedRAG delivery uses
+static PreCall surfaces, a run that never emits the advertised surface means the
+attack cannot be delivered for that target shape, so the optimizer stops cleanly.
 
 If no injectable surface is granted at all (no corpus/context, system-prompt, or
 user-prompt controllable), the attack can never be delivered, so the optimizer
 gives up immediately rather than spinning runs that inject nothing.
+
+`target_controllable_name` is an exact delivery override. When set, the optimizer
+only uses that controllable and ignores otherwise writable corpus, system, or
+user surfaces.
 
 ## Deliberate Limits
 

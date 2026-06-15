@@ -60,7 +60,9 @@ _CORPUS_HINTS = (
     "context",
 )
 _CONTEXT_HINTS = ("retrieved_context", "rag_context", "context")
-_USER_PROMPT_NAMES = frozenset({"user_prompt", "user_message", "query", "prompt"})
+_USER_PROMPT_NAMES = frozenset(
+    {"user_prompt", "user_message", "query", "prompt", "question"}
+)
 _STATIC_CONTEXT_TRUNCATION = "...[truncated]"
 _SYSTEM_PROMPT_EXTENSION = (
     "Answer the question using the retrieved contexts. Keep the answer short and concise. "
@@ -126,10 +128,13 @@ class PoisonedRAGOptimizer(Optimizer):
         self._explicit_max_attempts = max_attempts
         self._generation_temperature = generation_temperature
         self._generation_max_tokens = generation_max_tokens
-        self._response_observable_names = frozenset(
+        response_names = (
             response_observable_names
             if response_observable_names is not None
             else _DEFAULT_RESPONSE_OBSERVABLE_NAMES
+        )
+        self._response_observable_names = frozenset(
+            name.lower() for name in response_names
         )
         self._static_context_max_chars = static_context_max_chars
         self._use_system_prompt_when_available = use_system_prompt_when_available
@@ -141,6 +146,7 @@ class PoisonedRAGOptimizer(Optimizer):
         self._static_context: str | None = None
         self._can_write_system_prompt = False
         self._has_corpus_surface = False
+        self._has_user_surface = False
         self._can_inject = False
 
         self._attempt_index = 0
@@ -186,16 +192,17 @@ class PoisonedRAGOptimizer(Optimizer):
             or self._read_answer_observable(observables, _TARGET_ANSWER_HINTS)
         )
         self._static_context = self._format_static_context(observables)
-        self._can_write_system_prompt = (
-            self._use_system_prompt_when_available
-            and self._target_controllable_name is None
-            and any(ctrl.name == _SYSTEM_PROMPT_NAME for ctrl in controllables)
+        self._can_write_system_prompt = self._use_system_prompt_when_available and any(
+            ctrl.name == _SYSTEM_PROMPT_NAME and self._surface_allowed(ctrl)
+            for ctrl in controllables
         )
         self._has_corpus_surface = any(
-            self._is_corpus_surface(ctrl.name) for ctrl in controllables
+            self._is_corpus_surface(ctrl) and self._surface_allowed(ctrl)
+            for ctrl in controllables
         )
-        has_user_surface = any(
-            self._is_user_prompt(ctrl.name) for ctrl in controllables
+        self._has_user_surface = any(
+            self._is_user_prompt(ctrl) and self._surface_allowed(ctrl)
+            for ctrl in controllables
         )
         # All PoisonedRAG injection points are PreCall surfaces advertised up
         # front (corpus/context, system prompt, user prompt). If none is
@@ -204,7 +211,7 @@ class PoisonedRAGOptimizer(Optimizer):
         self._can_inject = (
             self._has_corpus_surface
             or self._can_write_system_prompt
-            or has_user_surface
+            or self._has_user_surface
         )
         self._attempt_index = 0
         self._succeeded = False
@@ -237,14 +244,17 @@ class PoisonedRAGOptimizer(Optimizer):
     ) -> ControllableInjection | ControllableNoInjection:
         if self._current_batch is None or self._is_done():
             return ControllableNoInjection(event=event, controllable=event.controllable)
-        name = event.controllable.name
-        if name in _RESPONSE_CONTROLLABLE_NAMES:
+        controllable = event.controllable
+        name = controllable.name
+        if not self._surface_allowed(controllable):
+            return ControllableNoInjection(event=event, controllable=event.controllable)
+        if name.lower() in _RESPONSE_CONTROLLABLE_NAMES:
             return ControllableNoInjection(event=event, controllable=event.controllable)
         if name == _SYSTEM_PROMPT_NAME:
             return self._maybe_inject_system_prompt(event)
-        if self._is_corpus_surface(name):
+        if self._is_corpus_surface(controllable):
             return self._maybe_inject_corpus(event)
-        if self._is_user_prompt(name):
+        if self._is_user_prompt(controllable):
             return self._maybe_inject_user_prompt(event)
         return ControllableNoInjection(event=event, controllable=event.controllable)
 
@@ -256,7 +266,7 @@ class PoisonedRAGOptimizer(Optimizer):
                 self._last_injected_question is not None
                 and event.request == self._last_injected_question
             )
-            if request_matches or self._is_user_prompt(event.controllable.name):
+            if request_matches or self._is_user_prompt(event.controllable):
                 self._primary_post_controllable = event.controllable
             else:
                 return ControllableNoInjection(
@@ -275,11 +285,8 @@ class PoisonedRAGOptimizer(Optimizer):
         if response is None:
             response = self._pending_post_answer
 
-        if (
-            not self._injected_this_run
-            and event.evaluation is None
-            and response is None
-        ):
+        if not self._injected_this_run:
+            self._can_inject = False
             return RunEndResponse(event=event, done=self._is_done())
 
         self._attempt_index += 1
@@ -357,6 +364,18 @@ class PoisonedRAGOptimizer(Optimizer):
         pieces = [event.request.strip(), _SYSTEM_PROMPT_EXTENSION]
         if self._static_context:
             pieces.append(f"Visible RAG context:\n{self._static_context}")
+        if (
+            self._current_batch is not None
+            and not self._has_corpus_surface
+            and not self._has_user_surface
+        ):
+            pieces.append(
+                "PoisonedRAG task context:\n"
+                + wrap_prompt(
+                    self._current_batch.question,
+                    self._adv_documents(self._current_batch),
+                )
+            )
         return ControllableInjection(
             event=event,
             controllable=event.controllable,
@@ -372,7 +391,7 @@ class PoisonedRAGOptimizer(Optimizer):
         self._corpus_injected = True
         self._injected_this_run = True
         if event.controllable.value_type == "text" or self._is_context_surface(
-            event.controllable.name
+            event.controllable
         ):
             value = self._format_context_value(
                 event.request, self._adv_documents(self._current_batch)
@@ -390,11 +409,6 @@ class PoisonedRAGOptimizer(Optimizer):
         event: ControllablePreCallEvent,
     ) -> ControllableInjection | ControllableNoInjection:
         if self._user_prompt_injected or self._current_batch is None:
-            return ControllableNoInjection(event=event, controllable=event.controllable)
-        if (
-            self._target_controllable_name is not None
-            and event.controllable.name != self._target_controllable_name
-        ):
             return ControllableNoInjection(event=event, controllable=event.controllable)
         self._user_prompt_injected = True
         self._injected_this_run = True
@@ -481,20 +495,52 @@ class PoisonedRAGOptimizer(Optimizer):
     def _max_attempts(self) -> int:
         return self._explicit_max_attempts or 1
 
-    @staticmethod
-    def _is_user_prompt(name: str) -> bool:
-        normalized = name.lower()
-        return normalized in _USER_PROMPT_NAMES or "user" in normalized
+    def _surface_allowed(self, controllable: Controllable) -> bool:
+        return (
+            self._target_controllable_name is None
+            or controllable.name == self._target_controllable_name
+        )
 
     @staticmethod
-    def _is_corpus_surface(name: str) -> bool:
-        normalized = name.lower()
-        return any(hint in normalized for hint in _CORPUS_HINTS)
+    def _is_user_prompt(controllable: Controllable) -> bool:
+        normalized = controllable.name.lower()
+        if normalized in _USER_PROMPT_NAMES:
+            return True
+        haystack = " ".join(
+            (
+                controllable.name,
+                controllable.description,
+                controllable.value_type,
+            )
+        ).lower()
+        has_user = "user" in haystack
+        has_prompt_role = any(
+            hint in haystack
+            for hint in ("message", "prompt", "query", "task", "instruction")
+        )
+        return has_user and has_prompt_role
 
     @staticmethod
-    def _is_context_surface(name: str) -> bool:
-        normalized = name.lower()
-        return any(hint in normalized for hint in _CONTEXT_HINTS)
+    def _is_corpus_surface(controllable: Controllable) -> bool:
+        haystack = " ".join(
+            (
+                controllable.name,
+                controllable.description,
+                controllable.value_type,
+            )
+        ).lower()
+        return any(hint in haystack for hint in _CORPUS_HINTS)
+
+    @staticmethod
+    def _is_context_surface(controllable: Controllable) -> bool:
+        haystack = " ".join(
+            (
+                controllable.name,
+                controllable.description,
+                controllable.value_type,
+            )
+        ).lower()
+        return any(hint in haystack for hint in _CONTEXT_HINTS)
 
     @staticmethod
     def _read_answer_observable(
@@ -520,10 +566,13 @@ class PoisonedRAGOptimizer(Optimizer):
             if remaining <= 0:
                 break
             if len(line) > remaining:
-                line = (
-                    line[: max(0, remaining - len(_STATIC_CONTEXT_TRUNCATION))]
-                    + _STATIC_CONTEXT_TRUNCATION
-                )
+                if remaining <= len(_STATIC_CONTEXT_TRUNCATION):
+                    line = _STATIC_CONTEXT_TRUNCATION[:remaining]
+                else:
+                    line = (
+                        line[: remaining - len(_STATIC_CONTEXT_TRUNCATION)]
+                        + _STATIC_CONTEXT_TRUNCATION
+                    )
             lines.append(line)
             used += len(line) + 1
         return "\n".join(lines) if lines else None
