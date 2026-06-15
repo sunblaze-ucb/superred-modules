@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -43,10 +44,12 @@ _RESPONSE_CONTROLLABLE_NAMES = frozenset(
 _CORRECT_ANSWER_HINTS = ("correct_answer", "answer", "ground_truth", "gold")
 _TARGET_ANSWER_HINTS = (
     "incorrect_answer",
+    "incorrect answer",
     "target_answer",
     "poison_answer",
     "attacker_answer",
 )
+_QUERY_ID_HINTS = ("query_id", "question_id", "qid", "id")
 _CORPUS_HINTS = (
     "knowledge_base",
     "knowledgebase",
@@ -101,9 +104,12 @@ class PoisonedRAGOptimizer(Optimizer):
         max_attempts: int | None = None,
         generation_temperature: float = 1.0,
         generation_max_tokens: int | None = None,
+        generation_json_mode: bool = True,
+        official_adv_results_path: str | os.PathLike[str] | None = None,
         response_observable_names: Iterable[str] | None = None,
         static_context_max_chars: int = 8000,
         use_system_prompt_when_available: bool = True,
+        allow_dynamic_context_postcall: bool = True,
         target_controllable_name: str | None = None,
     ) -> None:
         super().__init__()
@@ -128,6 +134,12 @@ class PoisonedRAGOptimizer(Optimizer):
         self._explicit_max_attempts = max_attempts
         self._generation_temperature = generation_temperature
         self._generation_max_tokens = generation_max_tokens
+        self._generation_json_mode = generation_json_mode
+        self._official_adv_results_path = (
+            os.fspath(official_adv_results_path)
+            if official_adv_results_path is not None
+            else None
+        )
         response_names = (
             response_observable_names
             if response_observable_names is not None
@@ -138,20 +150,25 @@ class PoisonedRAGOptimizer(Optimizer):
         )
         self._static_context_max_chars = static_context_max_chars
         self._use_system_prompt_when_available = use_system_prompt_when_available
+        self._allow_dynamic_context_postcall = allow_dynamic_context_postcall
         self._target_controllable_name = target_controllable_name
 
         self._question = ""
+        self._query_id: str | None = None
         self._correct_answer: str | None = None
         self._target_answer: str | None = None
         self._static_context: str | None = None
         self._can_write_system_prompt = False
         self._has_corpus_surface = False
         self._has_user_surface = False
+        self._can_try_dynamic_context_postcall = False
         self._can_inject = False
 
         self._attempt_index = 0
         self._succeeded = False
         self._best_score = 0.0
+        self._last_retrieved_poison_count = 0
+        self._best_retrieved_poison_count = 0
 
         self._current_batch: PoisonBatch | None = None
         self._system_prompt_injected = False
@@ -161,6 +178,7 @@ class PoisonedRAGOptimizer(Optimizer):
         self._primary_post_controllable: Controllable | None = None
         self._last_injected_question: str | None = None
         self._injected_this_run = False
+        self._official_adv_results: dict[str, Any] | None = None
 
     @property
     def attempt_index(self) -> int:
@@ -174,6 +192,14 @@ class PoisonedRAGOptimizer(Optimizer):
     def correct_answer(self) -> str | None:
         return self._correct_answer
 
+    @property
+    def last_retrieved_poison_count(self) -> int:
+        return self._last_retrieved_poison_count
+
+    @property
+    def best_retrieved_poison_count(self) -> int:
+        return self._best_retrieved_poison_count
+
     async def initialize(
         self,
         goal: Goal,
@@ -183,6 +209,7 @@ class PoisonedRAGOptimizer(Optimizer):
     ) -> None:
         await super().initialize(goal, controllables, observables, llm_client)
         self._question = goal.description
+        self._query_id = self._read_answer_observable(observables, _QUERY_ID_HINTS)
         self._correct_answer = (
             self._correct_answer_override
             or self._read_answer_observable(observables, _CORRECT_ANSWER_HINTS)
@@ -204,18 +231,32 @@ class PoisonedRAGOptimizer(Optimizer):
             self._is_user_prompt(ctrl) and self._surface_allowed(ctrl)
             for ctrl in controllables
         )
+        self._can_try_dynamic_context_postcall = (
+            self._allow_dynamic_context_postcall
+            and (
+                self._target_controllable_name is None
+                or self._is_context_name(self._target_controllable_name)
+            )
+            and not (
+                self._has_corpus_surface
+                or self._can_write_system_prompt
+                or self._has_user_surface
+            )
+        )
         # All PoisonedRAG injection points are PreCall surfaces advertised up
-        # front (corpus/context, system prompt, user prompt). If none is
-        # writable, the attack can never be delivered, so give up rather than
-        # spin runs that inject nothing.
+        # front (corpus/context, system prompt, user prompt), except for
+        # agent/RAG targets that expose retrieved context as a runtime PostCall.
         self._can_inject = (
             self._has_corpus_surface
             or self._can_write_system_prompt
             or self._has_user_surface
+            or self._can_try_dynamic_context_postcall
         )
         self._attempt_index = 0
         self._succeeded = False
         self._best_score = 0.0
+        self._last_retrieved_poison_count = 0
+        self._best_retrieved_poison_count = 0
         self._reset_run_state()
 
     async def teardown(self) -> None:
@@ -260,7 +301,24 @@ class PoisonedRAGOptimizer(Optimizer):
 
     def _handle_post_call(
         self, event: ControllablePostCallEvent
-    ) -> ControllableNoInjection:
+    ) -> ControllableInjection | ControllableNoInjection:
+        if (
+            self._current_batch is not None
+            and not self._injected_this_run
+            and self._surface_allowed(event.controllable)
+            and event.controllable.name.lower() not in _RESPONSE_CONTROLLABLE_NAMES
+            and self._is_context_surface(event.controllable)
+        ):
+            self._injected_this_run = True
+            value = self._format_context_value(
+                event.answer, self._adv_documents(self._current_batch)
+            )
+            self._record_retrieval_metrics_from_content(value)
+            return ControllableInjection(
+                event=event,
+                controllable=event.controllable,
+                value=value,
+            )
         if self._primary_post_controllable is None:
             request_matches = (
                 self._last_injected_question is not None
@@ -290,6 +348,7 @@ class PoisonedRAGOptimizer(Optimizer):
             return RunEndResponse(event=event, done=self._is_done())
 
         self._attempt_index += 1
+        self._record_retrieval_metrics_from_trajectory()
         if event.evaluation is not None:
             self._apply_evaluation(event.evaluation)
         elif response is not None:
@@ -312,6 +371,9 @@ class PoisonedRAGOptimizer(Optimizer):
                 target_answer=target_answer,
                 documents=tuple(self._poison_texts_override[: self._adv_per_query]),
             )
+        official = self._official_batch()
+        if official is not None:
+            return official
         generated = await self._generate_poison_texts()
         self._target_answer = generated.target_answer
         return generated
@@ -330,6 +392,8 @@ class PoisonedRAGOptimizer(Optimizer):
         kwargs: dict[str, Any] = {"temperature": self._generation_temperature}
         if self._generation_max_tokens is not None:
             kwargs["max_tokens"] = self._generation_max_tokens
+        if self._generation_json_mode:
+            kwargs["response_format"] = {"type": "json_object"}
         try:
             response = await self.llm.complete(messages, **kwargs)
         except BudgetExhaustedError:
@@ -447,6 +511,79 @@ class PoisonedRAGOptimizer(Optimizer):
             "top_k": self._top_k,
         }
 
+    def _official_batch(self) -> PoisonBatch | None:
+        if self._official_adv_results_path is None:
+            return None
+        data = self._load_official_adv_results()
+        record = self._find_official_record(data)
+        if record is None:
+            return None
+        target_answer = (
+            self._read_record_str(
+                record,
+                ("incorrect answer", "incorrect_answer", "target_answer"),
+            )
+            or self._target_answer
+        )
+        adv_texts = record.get("adv_texts")
+        if not target_answer or not isinstance(adv_texts, list):
+            raise ValueError(
+                "Official PoisonedRAG record missing incorrect answer or adv_texts"
+            )
+        documents = tuple(
+            str(text).strip()
+            for text in adv_texts[: self._adv_per_query]
+            if str(text).strip()
+        )
+        if len(documents) < self._adv_per_query:
+            raise ValueError("Official PoisonedRAG record has too few adv_texts")
+        self._target_answer = target_answer
+        self._correct_answer = self._correct_answer or self._read_record_str(
+            record, ("correct answer", "correct_answer", "answer")
+        )
+        return PoisonBatch(
+            question=self._question,
+            target_answer=target_answer,
+            documents=documents,
+        )
+
+    def _load_official_adv_results(self) -> dict[str, Any]:
+        if self._official_adv_results is not None:
+            return self._official_adv_results
+        if self._official_adv_results_path is None:
+            return {}
+        with open(self._official_adv_results_path, encoding="utf-8") as handle:
+            loaded = json.load(handle)
+        if not isinstance(loaded, dict):
+            raise ValueError("Official PoisonedRAG results must be a JSON object")
+        self._official_adv_results = loaded
+        return loaded
+
+    def _find_official_record(
+        self, data: Mapping[str, Any]
+    ) -> Mapping[str, Any] | None:
+        if self._query_id is not None:
+            by_id = data.get(self._query_id)
+            if isinstance(by_id, Mapping):
+                return by_id
+        for value in data.values():
+            if not isinstance(value, Mapping):
+                continue
+            question = self._read_record_str(value, ("question", "query"))
+            if question is not None and clean_str(question) == clean_str(
+                self._question
+            ):
+                return value
+        return None
+
+    @staticmethod
+    def _read_record_str(record: Mapping[str, Any], keys: Sequence[str]) -> str | None:
+        for key in keys:
+            value = record.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+
     @staticmethod
     def _format_context_value(original: str, documents: Sequence[str]) -> str:
         poison_context = "\n".join(documents)
@@ -484,6 +621,39 @@ class PoisonedRAGOptimizer(Optimizer):
                 if content:
                     return content
         return None
+
+    def _record_retrieval_metrics_from_trajectory(self) -> None:
+        trajectory = self.current_trajectory
+        if trajectory is None:
+            return
+        best_count = self._last_retrieved_poison_count
+        for item in trajectory.snapshot():
+            if not isinstance(item, ObservableEvent):
+                continue
+            if not self._is_context_name(item.observable.name):
+                continue
+            best_count = max(
+                best_count, self._count_poison_docs_in_content(item.content)
+            )
+        self._last_retrieved_poison_count = best_count
+        self._best_retrieved_poison_count = max(
+            self._best_retrieved_poison_count, best_count
+        )
+
+    def _record_retrieval_metrics_from_content(self, content: Any) -> None:
+        count = self._count_poison_docs_in_content(content)
+        self._last_retrieved_poison_count = max(
+            self._last_retrieved_poison_count, count
+        )
+        self._best_retrieved_poison_count = max(
+            self._best_retrieved_poison_count, self._last_retrieved_poison_count
+        )
+
+    def _count_poison_docs_in_content(self, content: Any) -> int:
+        if self._current_batch is None:
+            return 0
+        text = self._stringify(content)
+        return sum(doc in text for doc in self._adv_documents(self._current_batch))
 
     def _is_done(self) -> bool:
         if not self._can_inject:
@@ -541,6 +711,11 @@ class PoisonedRAGOptimizer(Optimizer):
             )
         ).lower()
         return any(hint in haystack for hint in _CONTEXT_HINTS)
+
+    @staticmethod
+    def _is_context_name(name: str) -> bool:
+        normalized = name.lower()
+        return any(hint in normalized for hint in _CONTEXT_HINTS)
 
     @staticmethod
     def _read_answer_observable(

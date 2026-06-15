@@ -25,6 +25,15 @@ The defaults follow the released code where they map to SuperRed:
   generation prompt are preserved in `prompts.py`. The older single-corpus
   `ADV_PROMPT` templates are not used by this optimizer (the released code now
   recommends the joint prompt) and are not vendored.
+- If `official_adv_results_path` is provided, the optimizer can read the
+  released `results/adv_targeted_results/*.json` shape directly. It matches by
+  in-scope `query_id`/`question_id`/`id` observable first, then by question text,
+  and uses the official `incorrect answer` plus `adv_texts` before falling back
+  to LLM generation.
+- LLM poison generation asks for JSON-object output by default, matching the
+  released `query_gpt(..., return_json=True)` path. Set
+  `generation_json_mode=False` only for model backends that cannot accept that
+  option.
 
 ## Mapping To SuperRed
 
@@ -38,6 +47,14 @@ The optimizer treats names containing `knowledge_base`, `vector_store`,
 poison surfaces. JSON-like surfaces receive a payload with the attack name,
 question, target answer, and poison documents. Text context surfaces receive the
 poison documents as retrieved context text.
+
+Some agentic RAG targets do not advertise a corpus/context PreCall surface up
+front, but do expose retrieved context as a writable PostCall event when the
+agent runs. When no static poison surface is available, the optimizer allows one
+runtime attempt and injects the poison documents into `retrieved_context`,
+`rag_context`, or other context-like PostCall surfaces. This is still the same
+PoisonedRAG payload, but delivered through SuperRed's runtime capability rather
+than the official script's static corpus insertion.
 
 When a user-like controllable is writable, the optimizer asks the official target
 question there. User-like detection uses the controllable name plus metadata, so
@@ -70,6 +87,12 @@ If framework feedback is not visible, the optimizer reads response observables
 from the filtered trajectory first, then falls back to a paired post-call answer
 when that is in scope. If neither response nor feedback is visible, the optimizer
 runs open-loop and stops only by attempt budget.
+
+If retrieved-context observables are visible on the trajectory, the optimizer
+counts how many current poison documents appeared there via
+`last_retrieved_poison_count` and `best_retrieved_poison_count`. This is a small
+SuperRed analogue of the released retrieval precision/recall reporting; exact
+retriever scores remain target-owned.
 
 If no poison or prompt was actually injected, the optimizer does not score the
 candidate from unrelated feedback/response. Because PoisonedRAG delivery uses
