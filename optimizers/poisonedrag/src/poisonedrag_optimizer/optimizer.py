@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -33,8 +32,6 @@ from poisonedrag_optimizer.prompts import (
     clean_str,
     wrap_prompt,
 )
-
-logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT_NAME = "system_prompt"
 _DEFAULT_RESPONSE_OBSERVABLE_NAMES = frozenset(
@@ -138,14 +135,13 @@ class PoisonedRAGOptimizer(Optimizer):
         self._use_system_prompt_when_available = use_system_prompt_when_available
         self._target_controllable_name = target_controllable_name
 
-        self._goal: Goal | None = None
         self._question = ""
         self._correct_answer: str | None = None
         self._target_answer: str | None = None
         self._static_context: str | None = None
         self._can_write_system_prompt = False
         self._has_corpus_surface = False
-        self._has_user_surface = False
+        self._can_inject = False
 
         self._attempt_index = 0
         self._succeeded = False
@@ -180,7 +176,6 @@ class PoisonedRAGOptimizer(Optimizer):
         llm_client: LLMClient,
     ) -> None:
         await super().initialize(goal, controllables, observables, llm_client)
-        self._goal = goal
         self._question = goal.description
         self._correct_answer = (
             self._correct_answer_override
@@ -199,8 +194,17 @@ class PoisonedRAGOptimizer(Optimizer):
         self._has_corpus_surface = any(
             self._is_corpus_surface(ctrl.name) for ctrl in controllables
         )
-        self._has_user_surface = any(
+        has_user_surface = any(
             self._is_user_prompt(ctrl.name) for ctrl in controllables
+        )
+        # All PoisonedRAG injection points are PreCall surfaces advertised up
+        # front (corpus/context, system prompt, user prompt). If none is
+        # writable, the attack can never be delivered, so give up rather than
+        # spin runs that inject nothing.
+        self._can_inject = (
+            self._has_corpus_surface
+            or self._can_write_system_prompt
+            or has_user_surface
         )
         self._attempt_index = 0
         self._succeeded = False
@@ -371,7 +375,7 @@ class PoisonedRAGOptimizer(Optimizer):
             event.controllable.name
         ):
             value = self._format_context_value(
-                event.request, self._current_batch.documents
+                event.request, self._adv_documents(self._current_batch)
             )
         else:
             value = json.dumps(
@@ -397,7 +401,8 @@ class PoisonedRAGOptimizer(Optimizer):
         value = self._current_batch.question
         if not self._has_corpus_surface:
             value = wrap_prompt(
-                self._current_batch.question, self._current_batch.documents, prompt_id=4
+                self._current_batch.question,
+                self._adv_documents(self._current_batch),
             )
         self._last_injected_question = value
         return ControllableInjection(
@@ -406,12 +411,24 @@ class PoisonedRAGOptimizer(Optimizer):
             value=value,
         )
 
+    def _adv_documents(self, batch: PoisonBatch) -> tuple[str, ...]:
+        """Build the PoisonedRAG black-box adversarial texts.
+
+        Each adversarial text is ``question + "." + corpus`` (official
+        ``src/attack.py`` ``get_attack``, ``LM_targeted`` path). The question
+        prefix is the retrieval-optimizing "S" component that makes the poison
+        rank for the target query; the stored corpus is the generation-steering
+        "I" component. Without the prefix the poison is far less likely to be
+        retrieved, so this prefix is core to the attack rather than cosmetic.
+        """
+        return tuple(f"{batch.question}.{doc}" for doc in batch.documents)
+
     def _corpus_payload(self, batch: PoisonBatch) -> dict[str, Any]:
         return {
             "attack": "PoisonedRAG",
             "question": batch.question,
             "target_answer": batch.target_answer,
-            "documents": list(batch.documents),
+            "documents": list(self._adv_documents(batch)),
             "adv_per_query": self._adv_per_query,
             "top_k": self._top_k,
         }
@@ -455,6 +472,9 @@ class PoisonedRAGOptimizer(Optimizer):
         return None
 
     def _is_done(self) -> bool:
+        if not self._can_inject:
+            # No writable injection surface was granted: nothing to attempt.
+            return True
         return self._succeeded or self._attempt_index >= self._max_attempts
 
     @property
