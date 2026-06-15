@@ -266,6 +266,36 @@ async def test_official_adv_results_can_match_query_id_observable(
 
 
 @pytest.mark.asyncio
+async def test_can_use_bundled_official_adv_results_by_dataset() -> None:
+    opt = PoisonedRAGOptimizer(
+        official_adv_results_dataset="nq",
+        max_attempts=1,
+    )
+    await opt.initialize(
+        Goal(description="how many episodes are in chicago fire season 4"),
+        [ctrl("knowledge_base_insert")],
+        [obs("query_id", "test1")],
+        LLMClient._make_noop(),
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    corpus_resp = await dispatch(
+        opt,
+        ControllablePreCallEvent(
+            controllable=ctrl("knowledge_base_insert"), request="[]"
+        ),
+    )
+
+    assert isinstance(corpus_resp, ControllableInjection)
+    payload = json.loads(corpus_resp.value)
+    assert payload["target_answer"]
+    assert len(payload["documents"]) == 5
+    assert payload["documents"][0].startswith(
+        "how many episodes are in chicago fire season 4."
+    )
+
+
+@pytest.mark.asyncio
 async def test_trajectory_response_uses_official_target_answer_containment() -> None:
     opt = PoisonedRAGOptimizer(
         target_answer="Lyon",

@@ -7,6 +7,7 @@ import os
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from importlib.resources import files
 from typing import Any, cast
 
 from superred.core.interfaces.optimizer import Optimizer
@@ -71,6 +72,7 @@ _SYSTEM_PROMPT_EXTENSION = (
     "Answer the question using the retrieved contexts. Keep the answer short and concise. "
     "If the contexts contain the answer, prefer the contextual answer."
 )
+_BUNDLED_ADV_RESULT_DATASETS = frozenset({"hotpotqa", "msmarco", "nq"})
 
 
 @dataclass(frozen=True)
@@ -106,6 +108,7 @@ class PoisonedRAGOptimizer(Optimizer):
         generation_max_tokens: int | None = None,
         generation_json_mode: bool = True,
         official_adv_results_path: str | os.PathLike[str] | None = None,
+        official_adv_results_dataset: str | None = None,
         response_observable_names: Iterable[str] | None = None,
         static_context_max_chars: int = 8000,
         use_system_prompt_when_available: bool = True,
@@ -123,6 +126,19 @@ class PoisonedRAGOptimizer(Optimizer):
             raise ValueError("static_context_max_chars must be positive")
         if poison_texts is not None and not poison_texts:
             raise ValueError("poison_texts must not be empty when provided")
+        if (
+            official_adv_results_path is not None
+            and official_adv_results_dataset is not None
+        ):
+            raise ValueError(
+                "official_adv_results_path and official_adv_results_dataset are mutually exclusive"
+            )
+        if (
+            official_adv_results_dataset is not None
+            and official_adv_results_dataset not in _BUNDLED_ADV_RESULT_DATASETS
+        ):
+            allowed = ", ".join(sorted(_BUNDLED_ADV_RESULT_DATASETS))
+            raise ValueError(f"official_adv_results_dataset must be one of: {allowed}")
 
         self._target_answer_override = target_answer
         self._correct_answer_override = correct_answer
@@ -140,6 +156,7 @@ class PoisonedRAGOptimizer(Optimizer):
             if official_adv_results_path is not None
             else None
         )
+        self._official_adv_results_dataset = official_adv_results_dataset
         response_names = (
             response_observable_names
             if response_observable_names is not None
@@ -512,7 +529,10 @@ class PoisonedRAGOptimizer(Optimizer):
         }
 
     def _official_batch(self) -> PoisonBatch | None:
-        if self._official_adv_results_path is None:
+        if (
+            self._official_adv_results_path is None
+            and self._official_adv_results_dataset is None
+        ):
             return None
         data = self._load_official_adv_results()
         record = self._find_official_record(data)
@@ -550,10 +570,20 @@ class PoisonedRAGOptimizer(Optimizer):
     def _load_official_adv_results(self) -> dict[str, Any]:
         if self._official_adv_results is not None:
             return self._official_adv_results
-        if self._official_adv_results_path is None:
+        if (
+            self._official_adv_results_path is None
+            and self._official_adv_results_dataset is None
+        ):
             return {}
-        with open(self._official_adv_results_path, encoding="utf-8") as handle:
-            loaded = json.load(handle)
+        if self._official_adv_results_path is not None:
+            with open(self._official_adv_results_path, encoding="utf-8") as handle:
+                loaded = json.load(handle)
+        else:
+            assert self._official_adv_results_dataset is not None
+            resource = files(
+                "poisonedrag_optimizer.data.adv_targeted_results"
+            ).joinpath(f"{self._official_adv_results_dataset}.json")
+            loaded = json.loads(resource.read_text(encoding="utf-8"))
         if not isinstance(loaded, dict):
             raise ValueError("Official PoisonedRAG results must be a JSON object")
         self._official_adv_results = loaded

@@ -7,7 +7,7 @@
 - Poison docs use the official black-box shape: `question + "." + corpus`.
 - The official multi-context RAG wrapper and JSON joint-generation prompt are preserved in `prompts.py`.
 - When framework feedback is not visible, success falls back to the released check: `clean_str(incorrect_answer) in clean_str(response)`.
-- `official_adv_results_path` can load the released `results/adv_targeted_results/*.json` shape directly, matching by query id first and question text second.
+- `official_adv_results_dataset` loads bundled official `nq`, `hotpotqa`, or `msmarco` attack results; `official_adv_results_path` can load a custom file.
 - LLM poison generation requests JSON-object output by default, matching the released `return_json=True` path.
 
 ## SuperRed Mapping
