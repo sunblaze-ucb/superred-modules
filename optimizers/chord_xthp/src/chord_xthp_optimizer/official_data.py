@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib import resources
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 Direction = Literal["predecessor", "successor"]
 AttackName = Literal["hijack", "harvest", "pollute"]
@@ -45,7 +45,7 @@ def load_official_malicious_tools(direction: Direction) -> dict[str, ChordToolIn
     if not isinstance(data, dict):
         raise TypeError("official Chord malicious_tools.json must be an object")
     out: dict[str, ChordToolInfo] = {}
-    for row in _direction_items(cast(JsonObject, data), direction):
+    for row in _direction_items(data, direction):
         for victim, info in row.items():
             if not isinstance(victim, str) or not isinstance(info, dict):
                 continue
