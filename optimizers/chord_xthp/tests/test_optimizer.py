@@ -62,6 +62,17 @@ class _ScriptedLLM(LLMClient):
         return _LLMResponse(self.responses.pop(0))
 
 
+class _RaisingLLM(LLMClient):
+    """LLM whose ``complete`` raises a generic (non-budget) transport error."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(self, messages: list[dict[str, str]], **kwargs: Any) -> Any:
+        self.calls += 1
+        raise RuntimeError("transient LLM failure")
+
+
 def ctrl(name: str, tag: SecurityDomainTag = TOOLS_TAG, value_type: str = "json") -> Controllable:
     return Controllable(name=name, security_domain=tag, value_type=value_type)
 
@@ -375,6 +386,88 @@ async def test_harvest_fails_when_argument_is_hallucinated() -> None:
     assert isinstance(end, RunEndResponse)
     assert opt._succeeded is False
     assert end.done is True
+
+
+@pytest.mark.asyncio
+async def test_harvest_judge_error_does_not_crash_and_is_not_claimed() -> None:
+    llm = _RaisingLLM()
+    opt = ChordXTHPOptimizer(
+        victim_tool_name="brave_search",
+        direction="predecessor",
+        enabled_attacks=("hijack", "harvest"),
+        max_attempts=1,
+    )
+    await opt.initialize(
+        Goal(description="harvest search query"),
+        [ctrl("tool_catalog_register")],
+        [],
+        llm,
+    )
+    trajectory = Trajectory()
+    await dispatch(opt, RunStartEvent(trajectory=trajectory))
+    trajectory.emit(
+        ControllablePostCallEvent(
+            controllable=ctrl("tool_call:QueryFormatter", TOOLS_TAG, "text"),
+            request='{"input_query":"outcomes of recent elections in Germany"}',
+            answer="Done",
+        )
+    )
+    trajectory.emit(
+        ControllablePostCallEvent(
+            controllable=ctrl("tool_call:brave_search", TOOLS_TAG, "text"),
+            request='{"query":"outcomes of recent elections in Germany"}',
+            answer="search results",
+        )
+    )
+
+    # A transient judge failure must not crash run-end; harvest is conservatively
+    # not claimed.
+    end = await dispatch(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
+
+    assert isinstance(end, RunEndResponse)
+    assert llm.calls >= 1
+    assert opt._succeeded is False
+    assert end.done is True
+
+
+@pytest.mark.asyncio
+async def test_no_catalog_surface_gives_up_even_with_prompt_access() -> None:
+    opt = ChordXTHPOptimizer(
+        victim_tool_name="brave_search",
+        direction="predecessor",
+        enabled_attacks=("hijack",),
+        max_attempts=5,
+    )
+    await opt.initialize(
+        Goal(description="test Chord control-flow hijack"),
+        [ctrl("system_prompt", SYSTEM_TAG, "text"), ctrl("user_prompt", USER_TAG, "text")],
+        [],
+        LLMClient._make_noop(),
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    # System/user prompts are writable but no tool/skill catalog controllable is:
+    # the helper can never be registered, so the attack cannot land and the
+    # optimizer gives up instead of burning attempts on the prompt-only path.
+    sys_resp = await dispatch(
+        opt,
+        ControllablePreCallEvent(
+            controllable=ctrl("system_prompt", SYSTEM_TAG, "text"), request="orig"
+        ),
+    )
+    user_resp = await dispatch(
+        opt,
+        ControllablePreCallEvent(
+            controllable=ctrl("user_prompt", USER_TAG, "text"), request="orig"
+        ),
+    )
+    end = await dispatch(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
+
+    assert isinstance(sys_resp, ControllableNoInjection)
+    assert isinstance(user_resp, ControllableNoInjection)
+    assert isinstance(end, RunEndResponse)
+    assert end.done is True
+    assert opt.attempt_index == 0
 
 
 @pytest.mark.asyncio

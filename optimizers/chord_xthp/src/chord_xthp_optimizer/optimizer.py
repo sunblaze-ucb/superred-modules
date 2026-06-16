@@ -216,11 +216,15 @@ class ChordXTHPOptimizer(Optimizer):
         )
         self._catalog_controllable_names = await self._select_catalog_controllables(controllables)
         self._has_user_prompt = any(self._is_user_prompt(ctrl.name) for ctrl in controllables)
-        self._can_inject = (
-            bool(self._catalog_controllable_names)
-            or self._can_write_system_prompt
-            or self._has_user_prompt
-        )
+        # Every Chord attack (hijack/harvest/pollute) needs the helper tool to be
+        # registered or edited so the agent can call it, which is only possible
+        # through a writable tool/skill catalog controllable. A writable system
+        # or user prompt is a supplement (it delivers the task or describes the
+        # helper alongside a catalog injection) but cannot get an unregistered
+        # helper onto the trajectory, so it is not sufficient on its own. Without
+        # a catalog surface the attack can never land, so give up immediately
+        # rather than burn the run budget on guaranteed misses.
+        self._can_inject = bool(self._catalog_controllable_names)
         self._candidate_schedule = await self._build_candidate_schedule()
         self._candidate_index = 0
         self._attempt_index = 0
@@ -845,7 +849,16 @@ class ChordXTHPOptimizer(Optimizer):
                 ),
             },
         ]
-        response = await self.llm.complete(messages, temperature=0.0, max_tokens=10)
+        try:
+            response = await self.llm.complete(messages, temperature=0.0, max_tokens=10)
+        except BudgetExhaustedError:
+            raise
+        except Exception:
+            # A failed judge cannot confirm the value is genuine harvested data;
+            # treat it conservatively as not a successful harvest instead of
+            # crashing run-end, matching the degrade-on-error policy used by the
+            # optimizer's other LLM calls.
+            return False
         content = self._response_content(response).upper()
         return "NO" in content and "YES" not in content
 
