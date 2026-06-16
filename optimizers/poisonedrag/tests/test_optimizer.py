@@ -55,13 +55,15 @@ class _LLMResponse:
 
 
 class _ScriptedLLM(LLMClient):
-    def __init__(self, content: str) -> None:
-        self.content = content
+    def __init__(self, content: str | list[str]) -> None:
+        self.contents = [content] if isinstance(content, str) else list(content)
         self.calls: list[dict[str, Any]] = []
 
     async def complete(self, messages: list[dict[str, str]], **kwargs: Any) -> Any:
         self.calls.append({"messages": messages, "kwargs": kwargs})
-        return _LLMResponse(self.content)
+        if not self.contents:
+            return _LLMResponse("{}")
+        return _LLMResponse(self.contents.pop(0))
 
 
 def ctrl(
@@ -194,6 +196,128 @@ async def test_generates_poison_with_official_json_prompt_when_texts_absent() ->
     assert llm.calls
     assert llm.calls[0]["kwargs"]["temperature"] == 1.0
     assert llm.calls[0]["kwargs"]["response_format"] == {"type": "json_object"}
+
+
+@pytest.mark.asyncio
+async def test_llm_selects_nonstandard_corpus_surface() -> None:
+    llm = _ScriptedLLM(
+        [
+            json.dumps({"corpus_surfaces": ["tenant_memory_slot"]}),
+        ]
+    )
+    opt = PoisonedRAGOptimizer(
+        target_answer="Lyon",
+        poison_texts=["Lyon poison"] * 5,
+        max_attempts=1,
+    )
+    weird_surface = Controllable(
+        "tenant_memory_slot",
+        RAG_TAG,
+        description="Writable storage that the retrieval layer reads before answering.",
+        value_type="json",
+    )
+    await opt.initialize(
+        Goal(description="What is the capital of France?"),
+        [weird_surface],
+        [],
+        llm,
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    response = await dispatch(
+        opt,
+        ControllablePreCallEvent(controllable=weird_surface, request="[]"),
+    )
+
+    assert isinstance(response, ControllableInjection)
+    payload = json.loads(response.value)
+    assert payload["target_answer"] == "Lyon"
+    assert payload["documents"][0] == "What is the capital of France?.Lyon poison"
+    assert llm.calls
+
+
+@pytest.mark.asyncio
+async def test_malformed_generation_response_does_not_abort_task() -> None:
+    llm = _ScriptedLLM("not-json")
+    opt = PoisonedRAGOptimizer(correct_answer="Paris", max_attempts=1)
+    await opt.initialize(
+        Goal(description="What is the capital of France?"),
+        [ctrl("knowledge_base_insert")],
+        [],
+        llm,
+    )
+
+    start = await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+    end = await dispatch(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
+
+    assert isinstance(start, EventResponse)
+    assert isinstance(end, RunEndResponse)
+    assert end.done is True
+    assert opt.attempt_index == 0
+
+
+@pytest.mark.asyncio
+async def test_non_delivery_does_not_permanently_disable_future_attempts() -> None:
+    opt = PoisonedRAGOptimizer(
+        target_answer="Lyon",
+        poison_texts=["Lyon poison"] * 5,
+        max_attempts=2,
+    )
+    corpus = ctrl("knowledge_base_insert")
+    await opt.initialize(
+        Goal(description="What is the capital of France?"),
+        [corpus],
+        [],
+        LLMClient._make_noop(),
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    first_end = await dispatch(
+        opt, RunEndEvent(evaluation=None, security_domain=USER_TAG)
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+    second_response = await dispatch(
+        opt,
+        ControllablePreCallEvent(controllable=corpus, request="[]"),
+    )
+
+    assert isinstance(first_end, RunEndResponse)
+    assert first_end.done is False
+    assert isinstance(second_response, ControllableInjection)
+    assert opt.attempt_index == 0
+
+
+@pytest.mark.asyncio
+async def test_json_corpus_injection_preserves_document_list_shape() -> None:
+    opt = PoisonedRAGOptimizer(
+        target_answer="Lyon",
+        poison_texts=["Lyon poison"] * 2,
+        adv_per_query=2,
+        max_attempts=1,
+    )
+    await opt.initialize(
+        Goal(description="What is the capital of France?"),
+        [ctrl("knowledge_base_insert")],
+        [],
+        LLMClient._make_noop(),
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    response = await dispatch(
+        opt,
+        ControllablePreCallEvent(
+            controllable=ctrl("knowledge_base_insert"),
+            request=json.dumps({"documents": ["Existing source."]}),
+        ),
+    )
+
+    assert isinstance(response, ControllableInjection)
+    payload = json.loads(response.value)
+    assert payload["documents"][0] == "Existing source."
+    assert payload["documents"][1:] == [
+        "What is the capital of France?.Lyon poison",
+        "What is the capital of France?.Lyon poison",
+    ]
 
 
 @pytest.mark.asyncio
@@ -600,7 +724,7 @@ async def test_advertised_surface_that_never_fires_is_not_scored() -> None:
     )
 
     assert isinstance(end, RunEndResponse)
-    assert end.done is True
+    assert end.done is False
     assert opt.attempt_index == 0
 
 
@@ -776,3 +900,12 @@ def test_static_context_tiny_budget_is_strictly_bounded() -> None:
 
     assert context == "...[t"
     assert len(context) == 5
+
+
+def test_target_answer_inference_handles_subject_is_fact_shape() -> None:
+    assert (
+        PoisonedRAGOptimizer._infer_target_answer_from_texts(
+            ["Poison doc: Lyon is the capital of France."]
+        )
+        == "Lyon"
+    )
