@@ -2,9 +2,16 @@
 
 Builds the three real chatbot harmful-instruction benchmarks shipped in
 superred-modules -- HarmBench, SORRY-Bench, StrongREJECT -- and unions them
-into one strong overall claim via :func:`combine_claims`, deduplicating
-functionally-equivalent prompts and (optionally) taking a stratified
-per-category subset.
+into one strong overall claim via :func:`combine_claims`, removing both exact
+duplicates and **semantic near-duplicates** (the same harmful behaviour worded
+differently across benchmarks) and, optionally, taking a stratified per-category
+subset.
+
+Semantic dedup is on by default: it embeds every goal with a litellm embedding
+model (built from the judge credentials) and drops a task whose goal is within a
+cosine threshold of an already-kept task. This is the whole point of combining
+independently-curated benchmarks -- the same behaviour recurs under different
+phrasing, and re-testing it wastes attacker/judge tokens without new insight.
 
 Each surviving task keeps its native judge:
 - SORRY-Bench: the ``#thescore`` LLM judge (canonical ``gpt-4-1106-preview``;
@@ -12,13 +19,14 @@ Each surviving task keeps its native judge:
 - HarmBench: the Llama-2-cls-prompt judge (default ``openai/gpt-4o-mini``).
 - StrongREJECT: the rubric judge (pinned ``openai/gpt-4o-mini``).
 
-All judges run on their own clients, so judge cost is out of band and never
-counts against an optimizer's per-task budget.
+All judges and the embedder run on their own clients, so their cost is out of
+band and never counts against an optimizer's per-task budget.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
+from pathlib import Path
 
 from secclaim_harmbench import harmbench_claim
 from security_claim_sorry_bench import sorry_bench_claim
@@ -28,6 +36,9 @@ from superred.core.types.llm import LLMConfig
 
 from security_claim_chatbot_suite.combine import (
     CombineStats,
+    Embedder,
+    LiteLLMEmbedder,
+    SemanticDrop,
     TaskRecord,
     combine_claims,
 )
@@ -40,6 +51,8 @@ from security_claim_chatbot_suite.combine import (
 # StrongREJECT pins gpt-4o-mini inside its own module (not configurable here).
 DEFAULT_SORRY_JUDGE_MODEL = "openai/gpt-4-turbo-2024-04-09"
 DEFAULT_HARMBENCH_JUDGE_MODEL = "openai/gpt-4o-mini"
+DEFAULT_EMBEDDING_MODEL = "openai/text-embedding-3-small"
+DEFAULT_SEMANTIC_THRESHOLD = 0.85
 
 
 def chatbot_suite_claim(
@@ -52,6 +65,11 @@ def chatbot_suite_claim(
     include_sorrybench: bool = True,
     include_strongreject: bool = True,
     dedup: bool = True,
+    semantic_dedup: bool = True,
+    embedding_model: str = DEFAULT_EMBEDDING_MODEL,
+    semantic_threshold: float = DEFAULT_SEMANTIC_THRESHOLD,
+    embedding_cache_path: str | Path | None = None,
+    embedder: Embedder | None = None,
     sorry_judge_model: str = DEFAULT_SORRY_JUDGE_MODEL,
     sorry_judge_max_cost: float | None = None,
     sorry_dataset_path: str | None = None,
@@ -67,23 +85,31 @@ def chatbot_suite_claim(
         target_model_id: victim model id; only used to pick SORRY-Bench's
             faithful system prompt (HarmBench/StrongREJECT use an empty
             system prompt). The target itself is wired by the experiment.
-        judge_api_base / judge_api_key: proxy credentials for every judge.
+        judge_api_base / judge_api_key: proxy credentials for every judge and
+            for the default embedder.
         per_category: keep at most this many prompts per source-benchmark
             category (1 -> the smallest stratified sample spanning all
             categories; ``None`` -> no cap, i.e. the full benchmarks).
         include_*: toggle each source benchmark.
-        dedup: drop tasks whose normalized goal text already appeared.
-        sorry_judge_model: SORRY-Bench judge model (proxy id).
-        sorry_judge_max_cost: USD cap on SORRY-Bench's judge client
-            (``None`` = unlimited; judge spend is out of band either way).
-        sorry_dataset_path: explicit path to SORRY-Bench ``question.jsonl``
-            (else the HF cache is used).
-        harmbench_judge_model: HarmBench judge model (proxy id).
-        harmbench_split: ``"test"`` (320) or ``"val"`` (80) HarmBench split.
-        strongreject_success_threshold: continuous-score threshold above
-            which a StrongREJECT task counts as a success (0.5 = conventional
-            binary-style reporting; StrongREJECT's own default is the strict
-            1.0). The continuous ``primary_score`` is preserved regardless.
+        dedup: drop exact/trivial-variant duplicate goal text.
+        semantic_dedup: drop semantic near-duplicates via embedding cosine.
+            On by default. Requires reachable embeddings (set ``False`` for a
+            purely offline/exact-only build, e.g. in tests).
+        embedding_model: litellm embedding model for the default embedder.
+        semantic_threshold: cosine at/above which two goals are the "same"
+            behaviour (higher = stricter, drops fewer). Inspect
+            ``CombineStats.semantic_drops`` to tune.
+        embedding_cache_path: persists text->vector so dedup is identical and
+            cheap across many builds (one per matrix cell).
+        embedder: explicit ``Embedder`` override (else a ``LiteLLMEmbedder`` is
+            built from the judge credentials when ``semantic_dedup``).
+        sorry_judge_model / sorry_judge_max_cost / sorry_dataset_path: SORRY
+            options. Judge spend is out of band regardless of the cap.
+        harmbench_judge_model / harmbench_split: HarmBench options.
+        strongreject_success_threshold: continuous-score threshold above which
+            a StrongREJECT task counts as success (0.5 = conventional binary;
+            StrongREJECT's own default is the strict 1.0). The continuous
+            ``primary_score`` is preserved regardless.
         manifest_out / stats_out: optional sinks for provenance/stats.
 
     Returns:
@@ -95,9 +121,9 @@ def chatbot_suite_claim(
     if not (include_harmbench or include_sorrybench or include_strongreject):
         raise ValueError("chatbot_suite_claim: at least one source must be enabled")
 
-    # Sources in priority order: the first to contribute a given normalized
-    # prompt wins the dedup. SORRY-Bench first (finest taxonomy, 44 cats),
-    # then HarmBench, then StrongREJECT.
+    # Sources in priority order: the first to contribute a given prompt wins
+    # the dedup. SORRY-Bench first (finest taxonomy, 44 cats), then HarmBench,
+    # then StrongREJECT.
     sources: list[tuple[str, SecurityClaim]] = []
 
     if include_sorrybench:
@@ -144,10 +170,21 @@ def chatbot_suite_claim(
             )
         )
 
+    active_embedder: Embedder | None = embedder
+    if active_embedder is None and semantic_dedup:
+        active_embedder = LiteLLMEmbedder(
+            model=embedding_model,
+            api_base=judge_api_base,
+            api_key=judge_api_key,
+            cache_path=embedding_cache_path,
+        )
+
     return combine_claims(
         sources,
         dedup=dedup,
         max_per_category=per_category,
+        embedder=active_embedder,
+        similarity_threshold=semantic_threshold,
         manifest_out=manifest_out,
         stats_out=stats_out,
     )
@@ -164,4 +201,18 @@ def manifest_to_dicts(manifest: Iterable[TaskRecord]) -> list[dict[str, object]]
             "goal_preview": r.goal_preview,
         }
         for r in manifest
+    ]
+
+
+def semantic_drops_to_dicts(drops: Iterable[SemanticDrop]) -> list[dict[str, object]]:
+    """Serialise the semantic-dedup audit (for inspection / threshold tuning)."""
+    return [
+        {
+            "dropped_source": d.dropped_source,
+            "dropped_goal_preview": d.dropped_goal_preview,
+            "matched_kept_index": d.matched_kept_index,
+            "matched_kept_preview": d.matched_kept_preview,
+            "similarity": d.similarity,
+        }
+        for d in drops
     ]

@@ -12,10 +12,38 @@ from collections import Counter
 
 import pytest
 
-from security_claim_chatbot_suite import TaskRecord, chatbot_suite_claim
+from security_claim_chatbot_suite import (
+    TaskRecord,
+    chatbot_suite_claim,
+    normalize_goal,
+)
 
 _JUDGE_BASE = "http://example.invalid"  # never called during construction
 _JUDGE_KEY = "sk-test"
+
+
+class _FakeOrthogonalEmbedder:
+    """Distinct unit vector per distinct goal: all cosines 0, no semantic drops."""
+
+    def embed(self, texts):
+        keys: list[str] = []
+        for t in texts:
+            k = normalize_goal(t)
+            if k not in keys:
+                keys.append(k)
+        out = []
+        for t in texts:
+            v = [0.0] * len(keys)
+            v[keys.index(normalize_goal(t))] = 1.0
+            out.append(v)
+        return out
+
+
+class _FakeIdenticalEmbedder:
+    """One vector for everything: every task after the first is a semantic dup."""
+
+    def embed(self, texts):
+        return [[1.0, 0.0] for _ in texts]
 
 
 def test_harmbench_plus_strongreject_offline() -> None:
@@ -26,6 +54,7 @@ def test_harmbench_plus_strongreject_offline() -> None:
         judge_api_key=_JUDGE_KEY,
         per_category=1,
         include_sorrybench=False,
+        semantic_dedup=False,  # offline: no embedding network call
         manifest_out=manifest,
     )
     tasks = list(claim)
@@ -57,6 +86,7 @@ def test_per_category_scales_subset_size() -> None:
         judge_api_key=_JUDGE_KEY,
         per_category=1,
         include_sorrybench=False,
+        semantic_dedup=False,
     )
     claim2 = chatbot_suite_claim(
         target_model_id="m",
@@ -64,8 +94,36 @@ def test_per_category_scales_subset_size() -> None:
         judge_api_key=_JUDGE_KEY,
         per_category=2,
         include_sorrybench=False,
+        semantic_dedup=False,
     )
     assert len(list(claim2)) > len(list(claim1))
+
+
+def test_suite_wires_embedder_orthogonal_keeps_all() -> None:
+    claim = chatbot_suite_claim(
+        target_model_id="m",
+        judge_api_base=_JUDGE_BASE,
+        judge_api_key=_JUDGE_KEY,
+        per_category=1,
+        include_sorrybench=False,
+        embedder=_FakeOrthogonalEmbedder(),
+    )
+    # Orthogonal embeddings -> nothing collapses -> same 13 as the exact-only run.
+    assert len(list(claim)) == 13
+
+
+def test_suite_wires_embedder_identical_collapses() -> None:
+    claim = chatbot_suite_claim(
+        target_model_id="m",
+        judge_api_base=_JUDGE_BASE,
+        judge_api_key=_JUDGE_KEY,
+        per_category=1,
+        include_sorrybench=False,
+        embedder=_FakeIdenticalEmbedder(),
+        semantic_threshold=0.5,
+    )
+    # All goals embed identically -> all but the first are semantic duplicates.
+    assert len(list(claim)) == 1
 
 
 def _sorry_dataset_available() -> bool:
@@ -99,6 +157,7 @@ def test_full_suite_with_sorrybench() -> None:
         judge_api_base=_JUDGE_BASE,
         judge_api_key=_JUDGE_KEY,
         per_category=1,
+        semantic_dedup=False,  # offline: exact dedup only
         manifest_out=manifest,
     )
     tasks = list(claim)

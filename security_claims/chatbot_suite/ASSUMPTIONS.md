@@ -23,18 +23,43 @@ leftover directory, not a real claim.
 
 ## Deduplication
 
-- **Key**: `normalize_goal(task.goal.description)` =
-  whitespace-collapsed, case-folded goal text.
-- **Catches**: exact and trivial-variant duplicates (case, whitespace).
-- **Does NOT catch**: semantic near-duplicates (paraphrases). Detecting those
-  would need embeddings or an LLM, adding cost and nondeterminism, which
-  defeats the point (avoid token waste, stay deterministic). In practice the
-  three datasets are independently curated, so cross-benchmark exact overlap
-  is ~0 at `per_category=1`; the dedup is a correctness guarantee, not a large
-  reducer.
-- **First-seen wins**: sources are processed in list order, so the first
-  source to contribute a normalized prompt keeps it. `chatbot_suite_claim`
-  orders sources **SORRY-Bench → HarmBench → StrongREJECT**.
+Removing duplicate harmful behaviours is the whole point of combining three
+independently-curated benchmarks, so dedup has two layers.
+
+**1. Exact / trivial-variant** (`dedup=True`):
+- Key: `normalize_goal(task.goal.description)` = whitespace-collapsed,
+  case-folded goal text. Catches exact and trivial-variant duplicates.
+
+**2. Semantic near-duplicates** (`semantic_dedup=True`, the main mechanism):
+- Each goal is embedded (`LiteLLMEmbedder`, default
+  `openai/text-embedding-3-small`); a candidate is dropped when its goal is
+  within `semantic_threshold` cosine (default **0.85**) of an already-kept goal.
+  This catches the same behaviour worded differently across benchmarks
+  ("make a bomb" vs "give instructions to build an explosive device"), which
+  exact-text dedup misses.
+- **Threshold rationale**: validated live on the real prompts. At
+  `per_category=4` (228 prompts), 0.85 removes genuine near-duplicates (e.g. a
+  0.975 drone-surveillance pair, a 0.94 HarmBench pair) and sweeping the cut
+  down to 0.75 removed nothing extra, i.e. there is a wide margin between clear
+  duplicates (>0.94) and distinct prompts (<0.75) — so 0.85 catches dups without
+  over-merging distinct behaviours. Every drop is recorded in
+  `CombineStats.semantic_drops` (dropped goal, matched kept task, cosine) so the
+  threshold is auditable and tunable per dataset.
+- **Limitation**: embedding-cosine catches lexical and close-semantic
+  paraphrases; two *very* differently-surfaced statements of one intent can
+  score below threshold. Lower the threshold (watch the audit for over-merging)
+  or swap in an LLM-judge `Embedder`/deduplicator for higher recall.
+- **Determinism / cost**: embeddings are deterministic per model snapshot, and
+  `embedding_cache_path` persists text→vector so every claim build (e.g. one per
+  matrix cell) makes the *same* decisions and pays the embedding cost once.
+  Embedding spend is out of band, like the judges.
+- **Sparse-sample note**: the default `per_category=1` stratified sample (57
+  tasks) is already diverse, so semantic dedup usually removes nothing there; it
+  bites as `per_category` grows.
+
+**First-seen wins** (both layers): sources are processed in list order, so the
+first source to contribute a prompt keeps it. `chatbot_suite_claim` orders
+sources **SORRY-Bench → HarmBench → StrongREJECT**.
 
 ## Per-category stratified subset
 
