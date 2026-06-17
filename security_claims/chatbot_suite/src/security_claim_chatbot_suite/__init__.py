@@ -3,12 +3,15 @@
 Unions the chatbot harmful-instruction benchmarks (HarmBench, SORRY-Bench,
 StrongREJECT) into one strong overall claim, removing exact AND semantic
 duplicate harmful behaviours (the same intent worded differently across
-benchmarks) so no attacker/judge tokens are spent re-testing the same thing.
+benchmarks). The semantic selection is pre-computed and committed, so the claim
+builds deterministically with no embedding at runtime.
 
-- :func:`chatbot_suite_claim` -- the headline factory (the three benchmarks).
+- :func:`chatbot_suite_claim` -- the headline factory; call it with a target id
+  and judge credentials to get the canonical 79-task claim.
 - :func:`combine_claims` -- the generic, benchmark-agnostic combinator.
 """
 
+from security_claim_chatbot_suite._static_dedup import STATIC_SEMANTIC_DUPLICATES
 from security_claim_chatbot_suite.combine import (
     CombineStats,
     Embedder,
@@ -41,6 +44,7 @@ __all__ = [
     "CombineStats",
     "TaskRecord",
     "SemanticDrop",
+    "STATIC_SEMANTIC_DUPLICATES",
     "manifest_to_dicts",
     "semantic_drops_to_dicts",
     "DEFAULT_SORRY_JUDGE_MODEL",

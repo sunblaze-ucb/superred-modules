@@ -193,6 +193,7 @@ class SemanticDrop:
     """An auditable record of one task dropped as a semantic near-duplicate."""
 
     dropped_source: str
+    dropped_goal: str  # full goal text (for regenerating the static set)
     dropped_goal_preview: str
     matched_kept_index: int  # 1-based index of the surviving task it matched
     matched_kept_preview: str
@@ -206,6 +207,7 @@ class CombineStats:
     total_input: int = 0
     kept: int = 0
     dropped_duplicate: int = 0
+    dropped_static: int = 0
     dropped_over_cap: int = 0
     dropped_semantic: int = 0
     kept_per_source: dict[str, int] = field(default_factory=dict)
@@ -229,6 +231,7 @@ def combine_claims(
     normalizer: Callable[[str], str] = normalize_goal,
     max_per_category: int | dict[str, int] | None = None,
     category_getter: Callable[[Task], str] = category_of,
+    exclude_normalized: frozenset[str] | None = None,
     embedder: Embedder | None = None,
     similarity_threshold: float = 0.85,
     manifest_out: list[TaskRecord] | None = None,
@@ -251,7 +254,12 @@ def combine_claims(
             label applies a per-source cap (missing keys = uncapped), so each
             benchmark can be sampled at a different depth.
         category_getter: task -> category key.
-        embedder: if given, enable semantic near-duplicate removal.
+        exclude_normalized: drop any task whose normalized goal is in this set.
+            This is the STATIC, pre-computed dedup path: pass a frozen, committed
+            set of known semantic-duplicate prompts and no embedding happens at
+            runtime. (Use ``embedder`` instead only to *recompute* that set.)
+        embedder: if given, recompute semantic near-duplicates at runtime (the
+            generation/regeneration path; not used in the static default).
         similarity_threshold: cosine at/above which two goals are the "same"
             behaviour. Higher = stricter (drops fewer). Tune via
             ``CombineStats.semantic_drops``.
@@ -286,6 +294,18 @@ def combine_claims(
             category_counts[category] = category_counts.get(category, 0) + 1
             candidates.append((task, source_name, category))
 
+    # --- Static semantic-duplicate removal (committed, no embedding) -------
+    # Applied AFTER the cap (like the embedder pass) so dropping a duplicate
+    # does not let the per-category cap back-fill its slot.
+    if exclude_normalized:
+        kept_candidates: list[tuple[Task, str, str]] = []
+        for task, source_name, category in candidates:
+            if normalizer(task.goal.description) in exclude_normalized:
+                stats.dropped_static += 1
+                continue
+            kept_candidates.append((task, source_name, category))
+        candidates = kept_candidates
+
     # --- Stage 2: semantic near-duplicate removal --------------------------
     if embedder is not None and candidates:
         embeddings = embedder.embed([t.goal.description for t, _, _ in candidates])
@@ -306,6 +326,7 @@ def combine_claims(
                 stats.semantic_drops.append(
                     SemanticDrop(
                         dropped_source=source_name,
+                        dropped_goal=task.goal.description,
                         dropped_goal_preview=task.goal.description[:120],
                         matched_kept_index=best_j + 1,
                         matched_kept_preview=matched_task.goal.description[:120],
@@ -345,10 +366,12 @@ def combine_claims(
 
     logger.info(
         "combine_claims: kept %d of %d tasks "
-        "(%d exact dup, %d over per-category cap, %d semantic dup); per-source: %s",
+        "(%d exact dup, %d static dup, %d over per-category cap, %d semantic dup); "
+        "per-source: %s",
         stats.kept,
         stats.total_input,
         stats.dropped_duplicate,
+        stats.dropped_static,
         stats.dropped_over_cap,
         stats.dropped_semantic,
         stats.kept_per_source,
