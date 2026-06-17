@@ -1,0 +1,68 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "asb-target"
+version = "0.1.0"
+description = "Agent Security Bench (ASB) composite agent target for superred: runs ASB's real plan-then-execute agent loop (vendored, pinned to upstream 1f561dcc) with event-based injection at the four ASB surfaces (DPI/OPI/PoT/MP), routed through a litellm proxy."
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "superred>=0.1.0",
+    "litellm>=1.40",
+    "pandas>=2.0",
+    "openai>=1.20",
+    "python-dotenv>=1.0",
+    "jsonlines>=4.0",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=6.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/asb_target"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "--strict-markers"
+testpaths = ["tests"]
+markers = [
+    "faithfulness: offline faithfulness checks (no network)",
+    "live: tiny-cost real-LLM smoke via the litellm proxy (needs LITELLM_API_KEY/BASE)",
+    "faithfulness_upstream: live ASB-replay vs vendored-ASB verdict comparison (credentials, cost)",
+]
+
+[tool.coverage.run]
+omit = ["*/_asb_vendor/*"]
+
+[tool.coverage.report]
+fail_under = 90
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "\\.\\.\\.",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = ["src/asb_target/_asb_vendor"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.mypy]
+strict = true
+python_version = "3.13"
+# The vendored ASB tree is third-party code, not type-checked under strict.
+exclude = ['src/asb_target/_asb_vendor/']
+
+[[tool.mypy.overrides]]
+module = ["pyopenagi.*", "aios.*"]
+ignore_missing_imports = true
+follow_imports = "skip"

@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "security-claim-asb"
+version = "0.1.0"
+description = "Agent Security Bench (ASB) security claim for the ASB target: one task per (agent, benign task, attacker tool), with ASB's attack-success / utility / refusal predicates ported verbatim and hierarchical factories by scenario, aggressiveness, and attack type."
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "superred>=0.1.0",
+    "asb-target>=0.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=6.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/security_claim_asb"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "--strict-markers"
+testpaths = ["tests"]
+markers = [
+    "faithfulness: offline faithfulness checks (no network)",
+    "faithfulness_upstream: live ASB-replay vs vendored-ASB verdict comparison (credentials, cost)",
+]
+
+[tool.coverage.report]
+fail_under = 90
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "\\.\\.\\.",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.mypy]
+strict = true
+python_version = "3.13"
+
+[[tool.mypy.overrides]]
+module = ["pyopenagi.*", "aios.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
