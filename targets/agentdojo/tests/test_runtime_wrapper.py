@@ -487,6 +487,9 @@ def test_tool_response_observable_emitted_for_canonical_read(
     assert responses[0].observable.name == "agent_trace_tool_response_0000"
     assert float(responses[0].content["value"]) == env.banking.bank_account.balance
     assert responses[0].content["error"] is None
+    # The response record is self-identifying: it carries the producing
+    # tool's name without needing the call observable.
+    assert responses[0].content["function"] == "banking__get_balance"
 
 
 def test_tool_response_observable_carries_injected_value(loop, catalog, env) -> None:
@@ -514,6 +517,7 @@ def test_tool_response_observable_carries_injected_value(loop, catalog, env) -> 
     ]
     assert len(responses) == 1
     assert responses[0].content["value"] == "HIJACKED"
+    assert responses[0].content["function"] == "banking__get_balance"
 
 
 def test_tool_response_observable_emitted_for_canonical_write(
@@ -544,6 +548,8 @@ def test_tool_response_observable_emitted_for_canonical_write(
         if o.observable.name.startswith("agent_trace_tool_response_")
     ]
     assert len(responses) == 1
+    # The write path's response record is self-identifying too.
+    assert responses[0].content["function"] == "workspace__send_email"
 
 
 def test_tool_response_observable_emitted_for_attacker_tool(
@@ -573,6 +579,9 @@ def test_tool_response_observable_emitted_for_attacker_tool(
         if o.observable.name.startswith("agent_trace_tool_response_")
     ]
     assert len(responses) == 1
+    # The attacker-managed path is also self-identifying: the record names
+    # the attacker tool that produced the value.
+    assert responses[0].content["function"] == "evil"
 
 
 def test_tool_response_observable_index_is_monotonic(loop, catalog, env) -> None:
@@ -631,3 +640,5 @@ def test_tool_response_observable_records_error_when_canonical_errs(
     ]
     assert len(responses) == 1
     assert responses[0].content["error"] is not None
+    # Even on the errored path the record names the producing tool.
+    assert responses[0].content["function"] == "banking__send_money"
