@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "security-claim-chatbot-suite"
+version = "0.1.0"
+description = "Combined chatbot safety SecurityClaim (HarmBench + SORRY-Bench + StrongREJECT, deduplicated) for superred"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "superred>=0.1.0",
+    "secclaim-harmbench>=0.1.0",
+    "security-claim-sorry-bench>=0.1.0",
+    "strongreject-claim>=0.1.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-asyncio"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/security_claim_chatbot_suite"]
