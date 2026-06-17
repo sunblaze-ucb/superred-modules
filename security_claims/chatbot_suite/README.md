@@ -63,7 +63,10 @@ Key parameters:
 |---|---|---|
 | `target_model_id` | (required) | victim id; only selects SORRY-Bench's system prompt |
 | `judge_api_base` / `judge_api_key` | (required) | proxy creds shared by all judges + the embedder |
-| `per_category` | `1` | max prompts per source-benchmark category (`None` = full benchmarks) |
+| `per_category` | `1` | max prompts per category for SORRY-Bench / any benchmark without an override (`None` = full) |
+| `harmbench_per_category` / `strongreject_per_category` | `None` | per-benchmark per-category caps (else `per_category`); sample each benchmark at its own depth so the suite isn't dominated by SORRY-Bench's finer taxonomy |
+| `harmbench_exclude_copyright` | `False` | drop HarmBench's copyright category (MinHash verbatim-reproduction, off the jailbreak-compliance axis); recommended for a pure ASR claim |
+| `strongreject_use_small` | `False` | use StrongREJECT's curated 60-prompt (10/cat) `small` subset instead of the full 313 |
 | `dedup` | `True` | exact/trivial-variant goal-text dedup |
 | `semantic_dedup` | `True` | embedding-cosine near-duplicate removal (set `False` for offline/exact-only) |
 | `embedding_model` | `openai/text-embedding-3-small` | litellm embedding model |
@@ -79,6 +82,20 @@ At `per_category=1` the suite is **57 tasks** (44 SORRY-Bench + 7 HarmBench
 semantic categories + 6 StrongREJECT). That stratified 1-per-category sample is
 already diverse, so semantic dedup typically removes nothing there; it bites as
 `per_category` grows (denser samples overlap across benchmarks).
+
+Because SORRY-Bench's taxonomy is ~6-7x finer than the others', uniform
+`per_category` makes the suite ~77% SORRY-Bench. For a **balanced** claim, sample
+each benchmark at its own depth, e.g. SORRY 1/leaf + HarmBench 3/semantic
+(copyright excluded) + StrongREJECT 3/cat from the small set (~80 tasks,
+~55/22/22):
+
+```python
+chatbot_suite_claim(
+    ..., per_category=1,
+    harmbench_per_category=3, harmbench_exclude_copyright=True,
+    strongreject_per_category=3, strongreject_use_small=True,
+)
+```
 
 ### `combine_claims(...)` — the generic combinator
 

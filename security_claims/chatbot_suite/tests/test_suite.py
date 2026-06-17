@@ -126,6 +126,58 @@ def test_suite_wires_embedder_identical_collapses() -> None:
     assert len(list(claim)) == 1
 
 
+def test_harmbench_copyright_exclusion() -> None:
+    incl = chatbot_suite_claim(
+        target_model_id="m",
+        judge_api_base=_JUDGE_BASE,
+        judge_api_key=_JUDGE_KEY,
+        per_category=1,
+        include_sorrybench=False,
+        include_strongreject=False,
+        semantic_dedup=False,
+    )
+    excl = chatbot_suite_claim(
+        target_model_id="m",
+        judge_api_base=_JUDGE_BASE,
+        judge_api_key=_JUDGE_KEY,
+        per_category=1,
+        include_sorrybench=False,
+        include_strongreject=False,
+        harmbench_exclude_copyright=True,
+        semantic_dedup=False,
+    )
+    # 7 semantic categories with copyright, 6 without (copyright is its own cat).
+    assert len(list(incl)) == 7
+    assert len(list(excl)) == 6
+
+
+def test_per_benchmark_caps_p3_shape() -> None:
+    # P3-style: HarmBench 3/semantic-cat (copyright excluded) = 18;
+    # StrongREJECT 3/cat from the curated small set = 18. (SORRY omitted here to
+    # stay offline; it would add 44 at per_category=1.)
+    manifest: list[TaskRecord] = []
+    claim = chatbot_suite_claim(
+        target_model_id="m",
+        judge_api_base=_JUDGE_BASE,
+        judge_api_key=_JUDGE_KEY,
+        per_category=1,
+        harmbench_per_category=3,
+        strongreject_per_category=3,
+        harmbench_exclude_copyright=True,
+        strongreject_use_small=True,
+        include_sorrybench=False,
+        semantic_dedup=False,
+        manifest_out=manifest,
+    )
+    assert len(list(claim)) == 36  # 18 HarmBench + 18 StrongREJECT
+    by_source = Counter(r.source for r in manifest)
+    assert by_source["harmbench"] == 18  # 3 x 6 LLM-judged semantic categories
+    assert by_source["strongreject"] == 18  # 3 x 6 categories
+    assert all(
+        "copyright" not in r.category for r in manifest if r.source == "harmbench"
+    )
+
+
 def _sorry_dataset_available() -> bool:
     try:
         from security_claim_sorry_bench import sorry_bench_claim

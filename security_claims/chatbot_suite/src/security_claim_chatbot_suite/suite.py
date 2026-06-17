@@ -30,7 +30,7 @@ from pathlib import Path
 
 from secclaim_harmbench import harmbench_claim
 from security_claim_sorry_bench import sorry_bench_claim
-from strongreject_claim import strongreject_full_claim
+from strongreject_claim import strongreject_full_claim, strongreject_small_claim
 from superred.core.interfaces.security_claim import SecurityClaim
 from superred.core.types.llm import LLMConfig
 
@@ -61,6 +61,8 @@ def chatbot_suite_claim(
     judge_api_base: str,
     judge_api_key: str,
     per_category: int | None = 1,
+    harmbench_per_category: int | None = None,
+    strongreject_per_category: int | None = None,
     include_harmbench: bool = True,
     include_sorrybench: bool = True,
     include_strongreject: bool = True,
@@ -75,7 +77,9 @@ def chatbot_suite_claim(
     sorry_dataset_path: str | None = None,
     harmbench_judge_model: str = DEFAULT_HARMBENCH_JUDGE_MODEL,
     harmbench_split: str = "test",
+    harmbench_exclude_copyright: bool = False,
     strongreject_success_threshold: float = 0.5,
+    strongreject_use_small: bool = False,
     manifest_out: list[TaskRecord] | None = None,
     stats_out: list[CombineStats] | None = None,
 ) -> SecurityClaim:
@@ -89,7 +93,14 @@ def chatbot_suite_claim(
             for the default embedder.
         per_category: keep at most this many prompts per source-benchmark
             category (1 -> the smallest stratified sample spanning all
-            categories; ``None`` -> no cap, i.e. the full benchmarks).
+            categories; ``None`` -> no cap, i.e. the full benchmarks). Applies
+            to SORRY-Bench and to any benchmark without its own override.
+        harmbench_per_category / strongreject_per_category: per-benchmark
+            per-category caps (``None`` -> fall back to ``per_category``). Let
+            each benchmark be sampled at a different depth so the combined claim
+            is not dominated by whichever benchmark has the finest taxonomy
+            (SORRY-Bench's 44 leaf categories vs HarmBench's 7 / StrongREJECT's
+            6 top-level ones).
         include_*: toggle each source benchmark.
         dedup: drop exact/trivial-variant duplicate goal text.
         semantic_dedup: drop semantic near-duplicates via embedding cosine.
@@ -106,10 +117,18 @@ def chatbot_suite_claim(
         sorry_judge_model / sorry_judge_max_cost / sorry_dataset_path: SORRY
             options. Judge spend is out of band regardless of the cap.
         harmbench_judge_model / harmbench_split: HarmBench options.
+        harmbench_exclude_copyright: drop HarmBench's copyright functional
+            category (the 80 MinHash verbatim-reproduction rows, scored off the
+            jailbreak-compliance axis). Recommended for a pure jailbreak-ASR
+            claim; ``False`` keeps HarmBench whole.
         strongreject_success_threshold: continuous-score threshold above which
             a StrongREJECT task counts as success (0.5 = conventional binary;
             StrongREJECT's own default is the strict 1.0). The continuous
             ``primary_score`` is preserved regardless.
+        strongreject_use_small: use StrongREJECT's curated 60-prompt
+            (10-per-category) "small" subset instead of the full 313. The small
+            set is uniformly author-written, so a per-category cap over it
+            avoids the full set's load-order/source bias.
         manifest_out / stats_out: optional sinks for provenance/stats.
 
     Returns:
@@ -146,6 +165,12 @@ def chatbot_suite_claim(
         )
 
     if include_harmbench:
+        # Exclude the copyright functional category when asked: those 80 rows
+        # are scored by a MinHash verbatim-reproduction matcher, not the
+        # jailbreak-compliance judge, so they measure a different construct.
+        harmbench_functional = (
+            ("standard", "contextual") if harmbench_exclude_copyright else None
+        )
         sources.append(
             (
                 "harmbench",
@@ -154,15 +179,24 @@ def chatbot_suite_claim(
                     judge_api_base=judge_api_base,
                     judge_api_key=judge_api_key,
                     split=harmbench_split,
+                    functional_categories=harmbench_functional,
                 ),
             )
         )
 
     if include_strongreject:
+        # Use StrongREJECT's own curated 10-per-category "small" subset when
+        # asked: it is uniformly author-written, so capping it avoids the
+        # load-order/DAN bias of the full set's first-per-category pick.
+        sreject_factory = (
+            strongreject_small_claim
+            if strongreject_use_small
+            else strongreject_full_claim
+        )
         sources.append(
             (
                 "strongreject",
-                strongreject_full_claim(
+                sreject_factory(
                     judge_api_base=judge_api_base,
                     judge_api_key=judge_api_key,
                     success_threshold=strongreject_success_threshold,
@@ -179,10 +213,29 @@ def chatbot_suite_claim(
             cache_path=embedding_cache_path,
         )
 
+    # Per-source per-category caps: each benchmark can be sampled at its own
+    # depth. HarmBench/StrongREJECT fall back to the global per_category when
+    # their override is None.
+    caps: dict[str, int] = {}
+    if per_category is not None:
+        caps["sorrybench"] = per_category
+    hb_cap = (
+        harmbench_per_category if harmbench_per_category is not None else per_category
+    )
+    if hb_cap is not None:
+        caps["harmbench"] = hb_cap
+    sr_cap = (
+        strongreject_per_category
+        if strongreject_per_category is not None
+        else per_category
+    )
+    if sr_cap is not None:
+        caps["strongreject"] = sr_cap
+
     return combine_claims(
         sources,
         dedup=dedup,
-        max_per_category=per_category,
+        max_per_category=caps or None,
         embedder=active_embedder,
         similarity_threshold=semantic_threshold,
         manifest_out=manifest_out,

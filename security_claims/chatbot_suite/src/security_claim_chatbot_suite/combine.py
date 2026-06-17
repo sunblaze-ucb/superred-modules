@@ -213,12 +213,21 @@ class CombineStats:
     semantic_drops: list[SemanticDrop] = field(default_factory=list)
 
 
+def _resolve_cap(
+    max_per_category: int | dict[str, int] | None, source_name: str
+) -> int | None:
+    """Effective per-category cap for *source_name* (int = uniform, dict = per-source)."""
+    if isinstance(max_per_category, dict):
+        return max_per_category.get(source_name)
+    return max_per_category
+
+
 def combine_claims(
     sources: Iterable[tuple[str, SecurityClaim]],
     *,
     dedup: bool = True,
     normalizer: Callable[[str], str] = normalize_goal,
-    max_per_category: int | None = None,
+    max_per_category: int | dict[str, int] | None = None,
     category_getter: Callable[[Task], str] = category_of,
     embedder: Embedder | None = None,
     similarity_threshold: float = 0.85,
@@ -237,7 +246,10 @@ def combine_claims(
         sources: ``(label, claim)`` pairs; the label tags provenance.
         dedup: drop exact/trivial-variant duplicate goal text.
         normalizer: goal-text -> exact dedup key.
-        max_per_category: keep at most this many tasks per category key.
+        max_per_category: keep at most this many tasks per category key. An
+            ``int`` applies one cap to every source; a ``dict`` keyed by source
+            label applies a per-source cap (missing keys = uncapped), so each
+            benchmark can be sampled at a different depth.
         category_getter: task -> category key.
         embedder: if given, enable semantic near-duplicate removal.
         similarity_threshold: cosine at/above which two goals are the "same"
@@ -266,10 +278,8 @@ def combine_claims(
                 stats.dropped_duplicate += 1
                 continue
             category = category_getter(task)
-            if (
-                max_per_category is not None
-                and category_counts.get(category, 0) >= max_per_category
-            ):
+            cap = _resolve_cap(max_per_category, source_name)
+            if cap is not None and category_counts.get(category, 0) >= cap:
                 stats.dropped_over_cap += 1
                 continue
             seen_keys.add(key)
