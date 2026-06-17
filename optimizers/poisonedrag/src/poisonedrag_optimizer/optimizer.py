@@ -265,7 +265,6 @@ class PoisonedRAGOptimizer(Optimizer):
                 self._target_controllable_name is None
                 or self._is_context_name(self._target_controllable_name)
             )
-            and not controllables
             and not (
                 self._has_corpus_surface
                 or self._can_write_system_prompt
@@ -297,7 +296,7 @@ class PoisonedRAGOptimizer(Optimizer):
         if isinstance(event, ControllablePreCallEvent):
             return self._handle_pre_call(event)
         if isinstance(event, ControllablePostCallEvent):
-            return self._handle_post_call(event)
+            return await self._handle_post_call(event)
         if isinstance(event, RunEndEvent):
             return self._handle_run_end(event)
         return EventResponse(event=event)
@@ -305,6 +304,11 @@ class PoisonedRAGOptimizer(Optimizer):
     async def _handle_run_start(self, event: RunStartEvent) -> EventResponse:
         self._reset_run_state()
         if self._is_done():
+            return EventResponse(event=event)
+        if self._can_try_dynamic_context_postcall:
+            # Defer poison generation until a retrieved-context PostCall actually
+            # fires (see _handle_post_call), so an LLM call is not spent when the
+            # runtime context surface never appears.
             return EventResponse(event=event)
         try:
             self._current_batch = await self._prepare_batch()
@@ -336,20 +340,28 @@ class PoisonedRAGOptimizer(Optimizer):
             return self._maybe_inject_user_prompt(event)
         return ControllableNoInjection(event=event, controllable=event.controllable)
 
-    def _handle_post_call(
+    async def _handle_post_call(
         self, event: ControllablePostCallEvent
     ) -> ControllableInjection | ControllableNoInjection:
         if (
-            self._current_batch is not None
+            not self._is_done()
             and not self._injected_this_run
             and self._surface_allowed(event.controllable)
             and event.controllable.name.lower() not in _RESPONSE_CONTROLLABLE_NAMES
             and self._is_context_surface(event.controllable)
         ):
+            batch = self._current_batch
+            if batch is None:
+                try:
+                    batch = await self._prepare_batch()
+                except _PoisonGenerationError:
+                    self._can_inject = False
+                    return ControllableNoInjection(
+                        event=event, controllable=event.controllable
+                    )
+                self._current_batch = batch
             self._injected_this_run = True
-            value = self._format_context_value(
-                event.answer, self._adv_documents(self._current_batch)
-            )
+            value = self._format_context_value(event.answer, self._adv_documents(batch))
             self._record_retrieval_metrics_from_content(value)
             return ControllableInjection(
                 event=event,
@@ -374,6 +386,8 @@ class PoisonedRAGOptimizer(Optimizer):
 
     def _handle_run_end(self, event: RunEndEvent) -> RunEndResponse:
         if self._current_batch is None:
+            if self._can_try_dynamic_context_postcall and not self._injected_this_run:
+                self._can_inject = False
             return RunEndResponse(event=event, done=self._is_done())
 
         response = self._read_response_from_trajectory()
@@ -381,6 +395,8 @@ class PoisonedRAGOptimizer(Optimizer):
             response = self._pending_post_answer
 
         if not self._injected_this_run:
+            if self._can_try_dynamic_context_postcall:
+                self._can_inject = False
             return RunEndResponse(event=event, done=self._is_done())
 
         self._attempt_index += 1
@@ -437,7 +453,19 @@ class PoisonedRAGOptimizer(Optimizer):
             kwargs["max_tokens"] = self._generation_max_tokens
         if self._generation_json_mode:
             kwargs["response_format"] = {"type": "json_object"}
-        response = await self.llm.complete(messages, **kwargs)
+        try:
+            response = await self.llm.complete(messages, **kwargs)
+        except BudgetExhaustedError:
+            raise
+        except Exception as exc:
+            # Any non-budget generation failure (transport error, a model that
+            # rejects response_format, etc.) becomes a clean give-up for this
+            # task rather than aborting the whole run, matching how a malformed
+            # response is handled below.
+            logger.warning("PoisonedRAG poison generation LLM call failed: %s", exc)
+            raise _PoisonGenerationError(
+                "PoisonedRAG generation LLM call failed"
+            ) from exc
         content = self._response_content(response)
         parsed = self._parse_json_object(content)
         if parsed is None:

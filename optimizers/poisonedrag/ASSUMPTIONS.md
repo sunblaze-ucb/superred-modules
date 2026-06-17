@@ -19,7 +19,7 @@
 - If only `user_message` is writable, the optimizer uses the official RAG wrapper in the user prompt. This is a capability fallback, not true database poisoning.
 - If only `system_prompt` is writable, the optimizer can place the official RAG wrapper and poison contexts there. This is also a SuperRed capability extension.
 - Framework `RunEndEvent.evaluation` is authoritative when visible; otherwise the optimizer reads response observables from trajectory first, then scoped PostCall answers.
-- If no poison was actually injected, the candidate is not scored and the optimizer remains available for a later run where the surface may fire.
+- If an advertised writable surface does not fire, the candidate is not scored and the optimizer can try again. If only speculative runtime context poisoning was possible and no context event appears, the optimizer gives up to avoid empty retries.
 
 ## Limits
 

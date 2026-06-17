@@ -66,6 +66,17 @@ class _ScriptedLLM(LLMClient):
         return _LLMResponse(self.contents.pop(0))
 
 
+class _RaisingLLM(LLMClient):
+    """LLM whose ``complete`` raises a generic (non-budget) transport error."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(self, messages: list[dict[str, str]], **kwargs: Any) -> Any:
+        self.calls += 1
+        raise RuntimeError("transient LLM transport failure")
+
+
 def ctrl(
     name: str, tag: SecurityDomainTag = RAG_TAG, value_type: str = "json"
 ) -> Controllable:
@@ -254,6 +265,29 @@ async def test_malformed_generation_response_does_not_abort_task() -> None:
     assert isinstance(end, RunEndResponse)
     assert end.done is True
     assert opt.attempt_index == 0
+
+
+@pytest.mark.asyncio
+async def test_generation_transport_error_does_not_abort_task() -> None:
+    llm = _RaisingLLM()
+    opt = PoisonedRAGOptimizer(correct_answer="Paris", max_attempts=1)
+    await opt.initialize(
+        Goal(description="What is the capital of France?"),
+        [ctrl("knowledge_base_insert")],
+        [],
+        llm,
+    )
+
+    # A non-budget LLM failure during poison generation must give up cleanly for
+    # the task rather than aborting the whole run.
+    start = await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+    end = await dispatch(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
+
+    assert isinstance(start, EventResponse)
+    assert isinstance(end, RunEndResponse)
+    assert end.done is True
+    assert opt.attempt_index == 0
+    assert llm.calls >= 1
 
 
 @pytest.mark.asyncio
@@ -759,6 +793,127 @@ async def test_dynamic_retrieved_context_postcall_injects_poison_context() -> No
     assert isinstance(end, RunEndResponse)
     assert end.done is True
     assert opt.attempt_index == 1
+
+
+@pytest.mark.asyncio
+async def test_dynamic_context_postcall_works_with_unrelated_precall_surface() -> None:
+    opt = PoisonedRAGOptimizer(
+        target_answer="Lyon",
+        poison_texts=["Lyon poison"] * 5,
+        max_attempts=1,
+    )
+    await opt.initialize(
+        Goal(description="What is the capital of France?"),
+        [ctrl("session_state")],
+        [],
+        LLMClient._make_noop(),
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+    ignored = await dispatch(
+        opt,
+        ControllablePreCallEvent(
+            controllable=ctrl("session_state"), request="ordinary state"
+        ),
+    )
+
+    post_resp = await dispatch(
+        opt,
+        ControllablePostCallEvent(
+            controllable=ctrl("retrieved_context", RAG_TAG, "text"),
+            request="What is the capital of France?",
+            answer="Original retrieved context.",
+        ),
+    )
+    end = await dispatch(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
+
+    assert not isinstance(ignored, ControllableInjection)
+    assert isinstance(post_resp, ControllableInjection)
+    assert post_resp.value.startswith("What is the capital of France?.Lyon poison")
+    assert isinstance(end, RunEndResponse)
+    assert end.done is True
+    assert opt.attempt_index == 1
+
+
+@pytest.mark.asyncio
+async def test_dynamic_context_fallback_gives_up_after_no_delivery() -> None:
+    opt = PoisonedRAGOptimizer(
+        target_answer="Lyon",
+        poison_texts=["Lyon poison"] * 5,
+        max_attempts=3,
+    )
+    await opt.initialize(
+        Goal(description="What is the capital of France?"),
+        [ctrl("session_state")],
+        [],
+        LLMClient._make_noop(),
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    end = await dispatch(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
+
+    assert isinstance(end, RunEndResponse)
+    assert end.done is True
+    assert opt.attempt_index == 0
+
+
+@pytest.mark.asyncio
+async def test_dynamic_context_fallback_does_not_generate_before_delivery() -> None:
+    llm = _ScriptedLLM(
+        json.dumps(
+            {
+                "incorrect_answer": "Lyon",
+                **{f"corpus{i}": f"Lyon generated {i}" for i in range(1, 6)},
+            }
+        )
+    )
+    opt = PoisonedRAGOptimizer(correct_answer="Paris", max_attempts=3)
+    await opt.initialize(
+        Goal(description="What is the capital of France?"),
+        [ctrl("session_state")],
+        [],
+        llm,
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    end = await dispatch(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
+
+    assert isinstance(end, RunEndResponse)
+    assert end.done is True
+    assert opt.attempt_index == 0
+    assert llm.calls == []
+
+
+@pytest.mark.asyncio
+async def test_dynamic_context_fallback_generates_on_delivery() -> None:
+    llm = _ScriptedLLM(
+        json.dumps(
+            {
+                "incorrect_answer": "Lyon",
+                **{f"corpus{i}": f"Lyon generated {i}" for i in range(1, 6)},
+            }
+        )
+    )
+    opt = PoisonedRAGOptimizer(correct_answer="Paris", max_attempts=1)
+    await opt.initialize(
+        Goal(description="What is the capital of France?"),
+        [ctrl("session_state")],
+        [],
+        llm,
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    post_resp = await dispatch(
+        opt,
+        ControllablePostCallEvent(
+            controllable=ctrl("retrieved_context", RAG_TAG, "text"),
+            request="What is the capital of France?",
+            answer="Original retrieved context.",
+        ),
+    )
+
+    assert isinstance(post_resp, ControllableInjection)
+    assert "What is the capital of France?.Lyon generated 1" in post_resp.value
+    assert len(llm.calls) == 1
 
 
 @pytest.mark.asyncio
