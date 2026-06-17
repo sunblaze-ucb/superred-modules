@@ -909,3 +909,101 @@ def test_target_answer_inference_handles_subject_is_fact_shape() -> None:
         )
         == "Lyon"
     )
+
+
+@pytest.mark.asyncio
+async def test_multiple_attempts_regenerate_fresh_poison() -> None:
+    llm = _ScriptedLLM(
+        [
+            json.dumps(
+                {
+                    "incorrect_answer": "Lyon",
+                    **{f"corpus{i}": f"A{i}" for i in range(1, 6)},
+                }
+            ),
+            json.dumps(
+                {
+                    "incorrect_answer": "Lyon",
+                    **{f"corpus{i}": f"B{i}" for i in range(1, 6)},
+                }
+            ),
+        ]
+    )
+    opt = PoisonedRAGOptimizer(correct_answer="Paris", max_attempts=2)
+    await opt.initialize(
+        Goal(description="What is the capital of France?"),
+        [ctrl("knowledge_base_insert")],
+        [],
+        llm,
+    )
+
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+    first = await dispatch(
+        opt,
+        ControllablePreCallEvent(
+            controllable=ctrl("knowledge_base_insert"), request="[]"
+        ),
+    )
+    await dispatch(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+    second = await dispatch(
+        opt,
+        ControllablePreCallEvent(
+            controllable=ctrl("knowledge_base_insert"), request="[]"
+        ),
+    )
+
+    assert isinstance(first, ControllableInjection)
+    assert isinstance(second, ControllableInjection)
+    first_docs = json.loads(first.value)["documents"]
+    second_docs = json.loads(second.value)["documents"]
+    # A second attempt regenerates fresh poison rather than re-running the same.
+    assert first_docs != second_docs
+    assert "A1" in first_docs[0] and "B1" in second_docs[0]
+    generation_calls = [
+        call
+        for call in llm.calls
+        if "incorrect answer" in call["messages"][-1]["content"]
+    ]
+    assert len(generation_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_malformed_official_results_do_not_abort_task(tmp_path: Path) -> None:
+    official_path = tmp_path / "nq.json"
+    official_path.write_text(
+        json.dumps(
+            {
+                "nq-1": {
+                    "id": "nq-1",
+                    "question": "What is the capital of France?",
+                    "incorrect answer": "Lyon",
+                    "adv_texts": ["only one adv text"],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    opt = PoisonedRAGOptimizer(official_adv_results_path=official_path, max_attempts=1)
+    await opt.initialize(
+        Goal(description="What is the capital of France?"),
+        [ctrl("knowledge_base_insert")],
+        [],
+        LLMClient._make_noop(),
+    )
+
+    # Too few adv_texts is malformed official data: the optimizer gives up
+    # cleanly for this task instead of aborting the whole run with a ValueError.
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+    corpus_resp = await dispatch(
+        opt,
+        ControllablePreCallEvent(
+            controllable=ctrl("knowledge_base_insert"), request="[]"
+        ),
+    )
+    end = await dispatch(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
+
+    assert not isinstance(corpus_resp, ControllableInjection)
+    assert isinstance(end, RunEndResponse)
+    assert end.done is True
+    assert opt.attempt_index == 0

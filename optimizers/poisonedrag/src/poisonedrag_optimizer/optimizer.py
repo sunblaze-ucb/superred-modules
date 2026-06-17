@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from collections.abc import Iterable, Mapping, Sequence
@@ -34,6 +35,8 @@ from poisonedrag_optimizer.prompts import (
     clean_str,
     wrap_prompt,
 )
+
+logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT_NAME = "system_prompt"
 _DEFAULT_RESPONSE_OBSERVABLE_NAMES = frozenset(
@@ -305,9 +308,11 @@ class PoisonedRAGOptimizer(Optimizer):
             return EventResponse(event=event)
         try:
             self._current_batch = await self._prepare_batch()
-        except BudgetExhaustedError:
-            raise
         except _PoisonGenerationError:
+            # The poison batch could not be produced (malformed generation or
+            # official data). Give up cleanly for this task instead of aborting
+            # the whole run; BudgetExhaustedError is not a _PoisonGenerationError
+            # and still propagates so the controller can stop on budget.
             self._can_inject = False
             self._current_batch = None
         return EventResponse(event=event)
@@ -395,6 +400,13 @@ class PoisonedRAGOptimizer(Optimizer):
             if not target_answer:
                 target_answer = self._infer_target_answer_from_texts(
                     self._poison_texts_override
+                )
+            if not target_answer:
+                logger.warning(
+                    "PoisonedRAG: no target_answer supplied and none could be inferred "
+                    "from poison_texts; local target-answer success scoring is disabled "
+                    "for this task (framework evaluation, if visible, is still used). "
+                    "Pass target_answer to enable local scoring."
                 )
             self._target_answer = target_answer
             return PoisonBatch(
@@ -599,7 +611,7 @@ class PoisonedRAGOptimizer(Optimizer):
         )
         adv_texts = record.get("adv_texts")
         if not target_answer or not isinstance(adv_texts, list):
-            raise ValueError(
+            raise _PoisonGenerationError(
                 "Official PoisonedRAG record missing incorrect answer or adv_texts"
             )
         documents = tuple(
@@ -608,7 +620,9 @@ class PoisonedRAGOptimizer(Optimizer):
             if str(text).strip()
         )
         if len(documents) < self._adv_per_query:
-            raise ValueError("Official PoisonedRAG record has too few adv_texts")
+            raise _PoisonGenerationError(
+                "Official PoisonedRAG record has too few adv_texts"
+            )
         self._target_answer = target_answer
         self._correct_answer = self._correct_answer or self._read_record_str(
             record, ("correct answer", "correct_answer", "answer")
@@ -637,7 +651,9 @@ class PoisonedRAGOptimizer(Optimizer):
             ).joinpath(f"{self._official_adv_results_dataset}.json")
             loaded = json.loads(resource.read_text(encoding="utf-8"))
         if not isinstance(loaded, dict):
-            raise ValueError("Official PoisonedRAG results must be a JSON object")
+            raise _PoisonGenerationError(
+                "Official PoisonedRAG results must be a JSON object"
+            )
         self._official_adv_results = loaded
         return loaded
 
