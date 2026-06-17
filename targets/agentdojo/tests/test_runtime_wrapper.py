@@ -548,6 +548,8 @@ def test_tool_response_observable_emitted_for_canonical_write(
         if o.observable.name.startswith("agent_trace_tool_response_")
     ]
     assert len(responses) == 1
+    # The write path's response record is self-identifying too.
+    assert responses[0].content["function"] == "workspace__send_email"
 
 
 def test_tool_response_observable_emitted_for_attacker_tool(
@@ -638,3 +640,5 @@ def test_tool_response_observable_records_error_when_canonical_errs(
     ]
     assert len(responses) == 1
     assert responses[0].content["error"] is not None
+    # Even on the errored path the record names the producing tool.
+    assert responses[0].content["function"] == "banking__send_money"
