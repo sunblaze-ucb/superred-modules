@@ -105,13 +105,20 @@ def agent_tool_call_observable(call_index: int) -> Observable:
 
 
 def agent_tool_response_observable(call_index: int) -> Observable:
-    """Observable for one tool return value (post-injection, as the agent saw it)."""
+    """Observable for one tool return value (post-injection, as the agent saw it).
+
+    The content is ``{"function": <suite-prefixed tool name>, "value": ...,
+    "error": ...}``: the producing tool's name travels in the same record as
+    its output, so a single response is self-identifying without
+    cross-referencing the call observable by index.
+    """
     return Observable(
         name=f"agent_trace_tool_response_{call_index:04d}",
         security_domain=AGENT_TRACE_TOOL_RESPONSES_TAG,
         description=(
             "The return value the agent observed for tool call "
-            f"{call_index} (after any on-demand injection was applied)."
+            f"{call_index} (after any on-demand injection was applied), with "
+            "the producing tool's suite-prefixed name under 'function'."
         ),
         observable_type="json",
     )

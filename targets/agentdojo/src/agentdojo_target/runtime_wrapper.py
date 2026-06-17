@@ -318,14 +318,14 @@ class WrappedFunctionsRuntime(FunctionsRuntime):
                 # Inject the raw string; agent-side formatter renders it
                 # straight into the prompt.
                 agent_seen_value = response.value
-            self._emit_agent_tool_response(agent_seen_value, error)
+            self._emit_agent_tool_response(function, agent_seen_value, error)
             return agent_seen_value, error
 
         # Write-side canonical calls and errored reads: the call itself
         # was already emitted live as agent_trace_tool_call_NNNN at
         # invocation (SecurityClaim predicates use the write_calls_made
         # query for mutation detection).
-        self._emit_agent_tool_response(agent_seen_value, error)
+        self._emit_agent_tool_response(function, agent_seen_value, error)
         # For a successful write, also emit a one-way observation tagged at
         # the store the write mutates, so a service-scoped attacker sees the
         # action it provoked under the same boundary it reads from (reading
@@ -366,7 +366,7 @@ class WrappedFunctionsRuntime(FunctionsRuntime):
             agent_seen_value: FunctionReturnType = response.value
         else:
             agent_seen_value = entry.fake_return
-        self._emit_agent_tool_response(agent_seen_value, None)
+        self._emit_agent_tool_response(function, agent_seen_value, None)
         return agent_seen_value, None
 
     # ------------------------------------------------------------------
@@ -375,12 +375,20 @@ class WrappedFunctionsRuntime(FunctionsRuntime):
 
     def _emit_agent_tool_response(
         self,
+        function: str,
         value: FunctionReturnType,
         error: str | None,
     ) -> None:
         """Emit one ``agent_trace_tool_response_NNNN`` observable per
         runtime call, carrying the value the agent will see (after any
         substitution).
+
+        The record also carries ``function`` (the suite-prefixed tool name
+        that produced the value) so a single response record is
+        self-identifying: a consumer can tell which tool produced an output
+        without cross-referencing the ``agent_trace_tool_call_NNNN``
+        observable by index.  The index correlation is preserved as well;
+        ``function`` is additive.
 
         Index is monotonically increasing across the run; consumers can
         correlate ``agent_trace_tool_call_NNNN`` (emitted live per call by
@@ -396,6 +404,7 @@ class WrappedFunctionsRuntime(FunctionsRuntime):
             ObservableEvent(
                 observable=agent_tool_response_observable(idx),
                 content={
+                    "function": function,
                     "value": _serialize_for_event(value),
                     "error": error,
                 },
