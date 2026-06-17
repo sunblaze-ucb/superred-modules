@@ -9,15 +9,19 @@ One `AgentDojoTarget` instance exposes the **union of all four AgentDojo suites*
 Two attacker capability surfaces:
 
 1. **On-demand content injection** on every readable tool. When the agent reads, the wrapper computes the legitimate value, fires a `ControllablePostCallEvent`, and substitutes the agent-visible return with the optimizer's `ControllableInjection.value` if any. This is strictly more expressive than AgentDojo's static `{slot}` substitution.
-2. **Tool catalogue editing** as four separate controllables: register a new tool, replace an existing tool, unregister, rewrite description. Catalogue edits fire once per agent turn before the LLM call.
+2. **Tool catalogue editing** as four separate controllables: register a new tool, replace an existing tool, unregister, rewrite description. Catalogue edits fire once at run start, before the first LLM call, then stay fixed for the run.
+
+The model is a construction concern, fixed by the `AgentDojoTarget(pipeline_model=...)` constructor argument, not a per-run config slot; calling `set_config("pipeline_model", ...)` raises.
 
 The security domain forest has three trees:
 
 - `system`: prompt, tool_catalogue (with the register-only `tool_catalogue_addable` child), model_identity, agent_trace (with messages, tool_calls, tool_responses children)
 - `user`: a single tag for the user prompt
-- `tools`: a 2x2 grid (`content_1p_data_1p`, `content_1p_data_3p`, `content_3p_data_1p`, `content_3p_data_3p`) classifying every readable data field by content provider and data store
+- `tools`: a per-service, per-store forest. `TOOLS_TAG` is a pure grouping root (nothing is emitted at it). Under it sit four service nodes (`BANKING_TAG`, `WORKSPACE_TAG`, `SLACK_TAG`, `TRAVEL_TAG`), and under each service sit store leaves matching the real data stores: banking has `banking_bank_account`, `banking_filesystem`, `banking_user_account`; workspace has `workspace_inbox`, `workspace_calendar`, `workspace_cloud_drive`; slack has `slack_slack`, `slack_web`; travel has `travel_hotels`, `travel_restaurants`, `travel_car_rental`, `travel_flights`, `travel_user`, `travel_calendar`, `travel_reservation`, `travel_inbox`. Granting a service grants its stores; granting `TOOLS_TAG` grants everything. Each read tool is tagged at the store leaf it reads from, and each write tool's observation is tagged at the store leaf it mutates, so reading from and acting on the same store share one label.
 
-Read-only access to a surface is not a separate tag: grant it per threat model by listing the tag in the Controller's `read_only` set instead of its read & write `scope`. For example `read_only={PROMPT_TAG}` lets the optimizer see the system prompt on the trajectory (the Phase-1 controllable event carries it) without being able to override it, and the same for `CONTENT_3P_DATA_3P_TAG` (watch those reads' legitimate values without injecting). Outside the `agent_trace` projection — which intentionally mirrors the run transcript and therefore re-carries prompts, calls, and agent-seen values under its own tags — every piece of information is emitted exactly once: values that flow through a controllable appear only on that controllable's events.
+Store contents are not mirrored as observables: values reachable through a read controllable appear only on that controllable's events, and the full environment is available only post-run to the scorer via the query specs. Writes additionally surface a one-way `write_call` observation tagged at the store they mutate (alongside the `agent_trace` tool-call stream).
+
+Read-only access to a surface is not a separate tag: grant it per threat model by listing the tag in the Controller's `read_only` set instead of its read & write `scope`. For example `read_only={PROMPT_TAG}` lets the optimizer see the system prompt on the trajectory (the Phase-1 controllable event carries it) without being able to override it, and `read_only={WORKSPACE_INBOX_TAG}` lets the optimizer watch the agent's inbox reads without injecting into them. Outside the `agent_trace` projection (which intentionally mirrors the run transcript and therefore re-carries prompts, calls, and agent-seen values under its own tags), every piece of information is emitted exactly once: values that flow through a controllable appear only on that controllable's events.
 
 ## Install
 

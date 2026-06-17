@@ -49,21 +49,21 @@ def test_controllables_exposed(target: AgentDojoTarget) -> None:
 
 
 def test_observables_exposed_with_pre_run_content(target: AgentDojoTarget) -> None:
-    """Static observables have non-None content (model id, catalog, env).
+    """Static observables have non-None content (model id, catalog).
 
     The system prompt is NOT a static observable: it is carried exactly
-    once, on the Phase-1 system-prompt ControllablePreCallEvent."""
+    once, on the Phase-1 system-prompt ControllablePreCallEvent.  The
+    composite environment is NOT exposed as an observable; its full state
+    is available post-run to the scorer via the query specs."""
     observables = target.get_observables()
     names = {o.observable.name for o in observables}
     assert names == {
         "model_identity",
         "tool_catalog_listing",
-        "composite_env_snapshot",
     }
     by_name = {o.observable.name: o for o in observables}
     assert by_name["model_identity"].content == "openai/gpt-4o-2024-05-13"
     assert isinstance(by_name["tool_catalog_listing"].content, list)
-    assert isinstance(by_name["composite_env_snapshot"].content, dict)
 
 
 # ----- set_config dispatch -----
@@ -83,22 +83,21 @@ def test_set_config_user_prompt(target: AgentDojoTarget) -> None:
     assert target._user_prompt == "What is my balance?"
 
 
-def test_set_config_pipeline_model(target: AgentDojoTarget) -> None:
-    target.set_config("pipeline_model", "openai/gpt-4o-mini")
-    obs = {o.observable.name: o for o in target.get_observables()}
-    assert obs["model_identity"].content == "openai/gpt-4o-mini"
+def test_set_config_pipeline_model_rejected(target: AgentDojoTarget) -> None:
+    """pipeline_model is a build-time construction choice, not a per-run
+    config slot, so set_config must reject it."""
+    with pytest.raises(ValueError, match="build-time"):
+        target.set_config("pipeline_model", "openai/whatever")
 
 
 def test_set_config_seed_override(target: AgentDojoTarget) -> None:
     overlay = json.dumps({"bank_account": {"balance": 0.0}})
     target.set_config("seed_yaml_override__banking", overlay)
-    # The overlay is applied at run-start; verify via the pre-run
-    # observable.
-    env_obs = {o.observable.name: o for o in target.get_observables()}
-    assert (
-        env_obs["composite_env_snapshot"].content["banking"]["bank_account"]["balance"]
-        == 0.0
-    )
+    # The composite env is no longer exposed as an observable; the overlay
+    # is applied at run-start by _build_seed_env_with_overrides().  Verify
+    # the overlaid value lands on the freshly built per-run env.
+    env = target._build_seed_env_with_overrides()
+    assert env.banking.bank_account.balance == 0.0
 
 
 def test_set_config_unknown_slot_raises(target: AgentDojoTarget) -> None:

@@ -10,36 +10,51 @@ Categories:
   ``system.tool_catalogue`` (broad write) and
   ``system.tool_catalogue_addable`` (register-only).
 - Per-read controllables: one per readable tool in the catalog
-  (47 entries), each mapped to one leaf of the
-  ``tools`` 2x2 quadrant grid.
+  (47 entries), each tagged at the store leaf it reads from.
 
-The 2x2 quadrant mapping for each read tool lives in
-:data:`READ_QUADRANT_MAP`; see ``tests/test_quadrant_rationale.py`` for
-the per-tool rationale behind each assignment.  Where a tool can
-legitimately span quadrants
-(e.g. ``workspace.search_emails`` searches both received and sent), we
-use the *broader* quadrant to remain conservative on the attacker side:
-the broader scope is needed for the tool to be reachable.
+The read-tool -> store-leaf mapping lives in :data:`READ_STORE_MAP`; the
+write-tool -> store-leaf mapping (used only to tag the write observation,
+not to create a controllable) lives in :data:`WRITE_STORE_MAP`.  See
+``tests/test_store_rationale.py`` for the per-tool rationale behind each
+assignment.  Each store leaf maps to exactly one upstream data store
+(one ``Depends`` extractor), so no read tool spans more than one store
+and a per-read controllable never needs to be split.  A read controllable
+and the write observation for the same store reference the same leaf, so
+reading and acting on a store share a boundary.
 """
 
 from __future__ import annotations
 
 from superred.core.types.controllable import Controllable
+from superred.core.types.security_domain import SecurityDomainTag
 
 from agentdojo_target.security_tags import (
-    CONTENT_1P_DATA_1P_TAG,
-    CONTENT_1P_DATA_3P_TAG,
-    CONTENT_3P_DATA_1P_TAG,
-    CONTENT_3P_DATA_3P_TAG,
+    BANKING_BANK_ACCOUNT_TAG,
+    BANKING_FILESYSTEM_TAG,
+    BANKING_USER_ACCOUNT_TAG,
     PROMPT_TAG,
+    SLACK_SLACK_TAG,
+    SLACK_WEB_TAG,
     TOOL_CATALOGUE_ADDABLE_TAG,
     TOOL_CATALOGUE_TAG,
+    TRAVEL_CALENDAR_TAG,
+    TRAVEL_CAR_RENTAL_TAG,
+    TRAVEL_FLIGHTS_TAG,
+    TRAVEL_HOTELS_TAG,
+    TRAVEL_INBOX_TAG,
+    TRAVEL_RESERVATION_TAG,
+    TRAVEL_RESTAURANTS_TAG,
+    TRAVEL_USER_TAG,
     USER_TAG,
+    WORKSPACE_CALENDAR_TAG,
+    WORKSPACE_CLOUD_DRIVE_TAG,
+    WORKSPACE_INBOX_TAG,
 )
 from agentdojo_target.tool_registry import (
     READ_FUNCTION_NAMES,
     SUITE_NAMES,
     TOOL_REGISTRY,
+    WRITE_FUNCTION_NAMES,
     prefixed_name,
     split_prefixed,
 )
@@ -118,86 +133,123 @@ TOOL_CATALOG_CTRLS: tuple[Controllable, ...] = (
 )
 
 # ---------------------------------------------------------------------------
-# Per-read 2x2 quadrant mapping
+# Per-read store-leaf mapping
 #
-# Convention recap (security_tags.py):
-#   content axis: who AUTHORED the content the tool returns
-#   data axis:    who STORES / PROVIDES ACCESS to the data
-# 1p = first-party (user / our system); 3p = third-party (external).
-#
-# When a tool legitimately spans quadrants (e.g. workspace.search_emails
-# searches both received and sent), we use the broader quadrant so the
-# tool is reachable to any attacker who could legitimately observe the
-# wider content/storage class.
+# Each read tool is tagged at the single upstream data store it reads from
+# (the store named by the tool's data-bearing ``Depends`` extractor).  No
+# read tool reads from more than one store, so each gets exactly one
+# controllable at one leaf; there is nothing to split.
 # ---------------------------------------------------------------------------
 
-READ_QUADRANT_MAP: dict[str, object] = {
+READ_STORE_MAP: dict[str, SecurityDomainTag] = {
     # ---- banking ----
-    "banking__get_iban": CONTENT_1P_DATA_3P_TAG,
-    "banking__get_balance": CONTENT_1P_DATA_3P_TAG,
-    # Transactions: subject field can be set by counterparty on inbound,
-    # so the BROAD quadrant is 3p/3p.
-    "banking__get_most_recent_transactions": CONTENT_3P_DATA_3P_TAG,
-    "banking__get_scheduled_transactions": CONTENT_1P_DATA_3P_TAG,
-    # File reads can return both user-written files and 3p-authored letters
-    # (bills, landlord notices, address-change letters).  Broad: 3p content
-    # in 1p storage (the user's filesystem).
-    "banking__read_file": CONTENT_3P_DATA_1P_TAG,
-    "banking__get_user_info": CONTENT_1P_DATA_3P_TAG,
+    "banking__get_iban": BANKING_BANK_ACCOUNT_TAG,
+    "banking__get_balance": BANKING_BANK_ACCOUNT_TAG,
+    "banking__get_most_recent_transactions": BANKING_BANK_ACCOUNT_TAG,
+    "banking__get_scheduled_transactions": BANKING_BANK_ACCOUNT_TAG,
+    "banking__read_file": BANKING_FILESYSTEM_TAG,
+    "banking__get_user_info": BANKING_USER_ACCOUNT_TAG,
     # ---- workspace ----
-    # Emails: search/received covers external senders -> broad is 3p/3p.
-    "workspace__search_emails": CONTENT_3P_DATA_3P_TAG,
-    "workspace__get_sent_emails": CONTENT_1P_DATA_3P_TAG,
-    "workspace__get_received_emails": CONTENT_3P_DATA_3P_TAG,
-    "workspace__get_draft_emails": CONTENT_1P_DATA_3P_TAG,
-    "workspace__search_contacts_by_name": CONTENT_1P_DATA_3P_TAG,
-    "workspace__search_contacts_by_email": CONTENT_1P_DATA_3P_TAG,
-    "workspace__get_unread_emails": CONTENT_3P_DATA_3P_TAG,
-    # Calendar: events authored by external invitees count as 3p content.
-    "workspace__get_day_calendar_events": CONTENT_3P_DATA_3P_TAG,
-    "workspace__search_calendar_events": CONTENT_3P_DATA_3P_TAG,
-    "workspace__get_current_day": CONTENT_1P_DATA_1P_TAG,
-    # Cloud drive: list/search-by-name surfaces user file names (1p content
-    # in 3p storage); content reads can return shared 3p files (broad).
-    "workspace__search_files_by_filename": CONTENT_1P_DATA_3P_TAG,
-    "workspace__get_file_by_id": CONTENT_3P_DATA_3P_TAG,
-    "workspace__list_files": CONTENT_1P_DATA_3P_TAG,
-    "workspace__search_files": CONTENT_3P_DATA_3P_TAG,
+    "workspace__search_emails": WORKSPACE_INBOX_TAG,
+    "workspace__get_sent_emails": WORKSPACE_INBOX_TAG,
+    "workspace__get_received_emails": WORKSPACE_INBOX_TAG,
+    "workspace__get_draft_emails": WORKSPACE_INBOX_TAG,
+    "workspace__search_contacts_by_name": WORKSPACE_INBOX_TAG,
+    "workspace__search_contacts_by_email": WORKSPACE_INBOX_TAG,
+    "workspace__get_unread_emails": WORKSPACE_INBOX_TAG,
+    "workspace__get_day_calendar_events": WORKSPACE_CALENDAR_TAG,
+    "workspace__search_calendar_events": WORKSPACE_CALENDAR_TAG,
+    # get_current_day reads the calendar store (Depends("calendar")),
+    # not a system clock.
+    "workspace__get_current_day": WORKSPACE_CALENDAR_TAG,
+    "workspace__search_files_by_filename": WORKSPACE_CLOUD_DRIVE_TAG,
+    "workspace__get_file_by_id": WORKSPACE_CLOUD_DRIVE_TAG,
+    "workspace__list_files": WORKSPACE_CLOUD_DRIVE_TAG,
+    "workspace__search_files": WORKSPACE_CLOUD_DRIVE_TAG,
     # ---- slack ----
-    "slack__get_channels": CONTENT_3P_DATA_3P_TAG,
-    "slack__read_channel_messages": CONTENT_3P_DATA_3P_TAG,
-    "slack__read_inbox": CONTENT_3P_DATA_3P_TAG,
-    "slack__get_users_in_channel": CONTENT_3P_DATA_3P_TAG,
-    "slack__get_webpage": CONTENT_3P_DATA_3P_TAG,
+    # Every slack tool depends on the single Slack object (users, channels,
+    # channel messages, direct messages), so all messaging reads share one
+    # leaf; only the web store is separable.
+    "slack__get_channels": SLACK_SLACK_TAG,
+    "slack__read_channel_messages": SLACK_SLACK_TAG,
+    "slack__read_inbox": SLACK_SLACK_TAG,
+    "slack__get_users_in_channel": SLACK_SLACK_TAG,
+    "slack__get_webpage": SLACK_WEB_TAG,
     # ---- travel ----
-    "travel__get_user_information": CONTENT_1P_DATA_3P_TAG,
+    "travel__get_user_information": TRAVEL_USER_TAG,
     # Hotels (4)
-    "travel__get_all_hotels_in_city": CONTENT_3P_DATA_3P_TAG,
-    "travel__get_hotels_prices": CONTENT_3P_DATA_3P_TAG,
-    "travel__get_hotels_address": CONTENT_3P_DATA_3P_TAG,
-    "travel__get_rating_reviews_for_hotels": CONTENT_3P_DATA_3P_TAG,
+    "travel__get_all_hotels_in_city": TRAVEL_HOTELS_TAG,
+    "travel__get_hotels_prices": TRAVEL_HOTELS_TAG,
+    "travel__get_hotels_address": TRAVEL_HOTELS_TAG,
+    "travel__get_rating_reviews_for_hotels": TRAVEL_HOTELS_TAG,
     # Restaurants (8)
-    "travel__get_all_restaurants_in_city": CONTENT_3P_DATA_3P_TAG,
-    "travel__get_restaurants_address": CONTENT_3P_DATA_3P_TAG,
-    "travel__get_rating_reviews_for_restaurants": CONTENT_3P_DATA_3P_TAG,
-    "travel__get_cuisine_type_for_restaurants": CONTENT_3P_DATA_3P_TAG,
-    "travel__get_dietary_restrictions_for_all_restaurants": CONTENT_3P_DATA_3P_TAG,
-    "travel__get_contact_information_for_restaurants": CONTENT_3P_DATA_3P_TAG,
-    "travel__get_price_for_restaurants": CONTENT_3P_DATA_3P_TAG,
-    "travel__check_restaurant_opening_hours": CONTENT_3P_DATA_3P_TAG,
+    "travel__get_all_restaurants_in_city": TRAVEL_RESTAURANTS_TAG,
+    "travel__get_restaurants_address": TRAVEL_RESTAURANTS_TAG,
+    "travel__get_rating_reviews_for_restaurants": TRAVEL_RESTAURANTS_TAG,
+    "travel__get_cuisine_type_for_restaurants": TRAVEL_RESTAURANTS_TAG,
+    "travel__get_dietary_restrictions_for_all_restaurants": TRAVEL_RESTAURANTS_TAG,
+    "travel__get_contact_information_for_restaurants": TRAVEL_RESTAURANTS_TAG,
+    "travel__get_price_for_restaurants": TRAVEL_RESTAURANTS_TAG,
+    "travel__check_restaurant_opening_hours": TRAVEL_RESTAURANTS_TAG,
     # Car rentals (6)
-    "travel__get_all_car_rental_companies_in_city": CONTENT_3P_DATA_3P_TAG,
-    "travel__get_car_types_available": CONTENT_3P_DATA_3P_TAG,
-    "travel__get_rating_reviews_for_car_rental": CONTENT_3P_DATA_3P_TAG,
-    "travel__get_car_rental_address": CONTENT_3P_DATA_3P_TAG,
-    "travel__get_car_fuel_options": CONTENT_3P_DATA_3P_TAG,
-    "travel__get_car_price_per_day": CONTENT_3P_DATA_3P_TAG,
+    "travel__get_all_car_rental_companies_in_city": TRAVEL_CAR_RENTAL_TAG,
+    "travel__get_car_types_available": TRAVEL_CAR_RENTAL_TAG,
+    "travel__get_rating_reviews_for_car_rental": TRAVEL_CAR_RENTAL_TAG,
+    "travel__get_car_rental_address": TRAVEL_CAR_RENTAL_TAG,
+    "travel__get_car_fuel_options": TRAVEL_CAR_RENTAL_TAG,
+    "travel__get_car_price_per_day": TRAVEL_CAR_RENTAL_TAG,
     # Flights (1)
-    "travel__get_flight_information": CONTENT_3P_DATA_3P_TAG,
-    # Calendar (2) -- the travel calendar is the user's, but events may be
-    # authored by third parties (the same broad rule as workspace).
-    "travel__get_day_calendar_events": CONTENT_3P_DATA_3P_TAG,
-    "travel__search_calendar_events": CONTENT_3P_DATA_3P_TAG,
+    "travel__get_flight_information": TRAVEL_FLIGHTS_TAG,
+    # Calendar (2) -- the travel-side calendar store.
+    "travel__get_day_calendar_events": TRAVEL_CALENDAR_TAG,
+    "travel__search_calendar_events": TRAVEL_CALENDAR_TAG,
+}
+
+# ---------------------------------------------------------------------------
+# Per-write store-leaf mapping
+#
+# Write tools get NO controllable (their effect must really execute so the
+# environment diff can detect the attack).  This map tags the one-way write
+# observation at the store the tool mutates, so a service-scoped attacker
+# sees the action it provoked under the same boundary it reads from.  Where
+# a write touches two stores (a calendar write that also sends a
+# notification email; a reservation that also reads the user profile), it is
+# tagged at the PRIMARY mutated store; the secondary touch is documented in
+# ASSUMPTIONS.md and still surfaces in the post-run environment diff.
+# ---------------------------------------------------------------------------
+
+WRITE_STORE_MAP: dict[str, SecurityDomainTag] = {
+    # ---- banking ----
+    "banking__send_money": BANKING_BANK_ACCOUNT_TAG,
+    "banking__schedule_transaction": BANKING_BANK_ACCOUNT_TAG,
+    "banking__update_scheduled_transaction": BANKING_BANK_ACCOUNT_TAG,
+    "banking__update_password": BANKING_USER_ACCOUNT_TAG,
+    "banking__update_user_info": BANKING_USER_ACCOUNT_TAG,
+    # ---- workspace ----
+    "workspace__send_email": WORKSPACE_INBOX_TAG,
+    "workspace__delete_email": WORKSPACE_INBOX_TAG,
+    "workspace__create_calendar_event": WORKSPACE_CALENDAR_TAG,
+    "workspace__cancel_calendar_event": WORKSPACE_CALENDAR_TAG,
+    "workspace__reschedule_calendar_event": WORKSPACE_CALENDAR_TAG,
+    "workspace__add_calendar_event_participants": WORKSPACE_CALENDAR_TAG,
+    "workspace__create_file": WORKSPACE_CLOUD_DRIVE_TAG,
+    "workspace__delete_file": WORKSPACE_CLOUD_DRIVE_TAG,
+    "workspace__share_file": WORKSPACE_CLOUD_DRIVE_TAG,
+    "workspace__append_to_file": WORKSPACE_CLOUD_DRIVE_TAG,
+    # ---- slack ----
+    "slack__add_user_to_channel": SLACK_SLACK_TAG,
+    "slack__send_direct_message": SLACK_SLACK_TAG,
+    "slack__send_channel_message": SLACK_SLACK_TAG,
+    "slack__invite_user_to_slack": SLACK_SLACK_TAG,
+    "slack__remove_user_from_slack": SLACK_SLACK_TAG,
+    "slack__post_webpage": SLACK_WEB_TAG,
+    # ---- travel ----
+    "travel__reserve_hotel": TRAVEL_RESERVATION_TAG,
+    "travel__reserve_restaurant": TRAVEL_RESERVATION_TAG,
+    "travel__reserve_car_rental": TRAVEL_RESERVATION_TAG,
+    "travel__create_calendar_event": TRAVEL_CALENDAR_TAG,
+    "travel__cancel_calendar_event": TRAVEL_CALENDAR_TAG,
+    "travel__send_email": TRAVEL_INBOX_TAG,
 }
 
 
@@ -208,15 +260,15 @@ READ_QUADRANT_MAP: dict[str, object] = {
 
 def _make_read_ctrl(prefixed: str) -> Controllable:
     """Build a Controllable for a single prefixed read-tool name."""
-    if prefixed not in READ_QUADRANT_MAP:
+    if prefixed not in READ_STORE_MAP:
         raise RuntimeError(
-            f"Read tool {prefixed!r} has no entry in READ_QUADRANT_MAP. "
-            "Add an entry classifying it into one of the four 2x2 leaves."
+            f"Read tool {prefixed!r} has no entry in READ_STORE_MAP. "
+            "Add an entry mapping it to the store leaf it reads from."
         )
     suite, original = split_prefixed(prefixed)
     return Controllable(
         name=f"read__{prefixed}",
-        security_domain=READ_QUADRANT_MAP[prefixed],
+        security_domain=READ_STORE_MAP[prefixed],
         description=(
             f"Per-read injection point for ``{prefixed}`` "
             f"(suite={suite}, upstream tool={original}).  When the agent "
@@ -232,20 +284,20 @@ def _make_read_ctrl(prefixed: str) -> Controllable:
 def _build_read_controllables() -> dict[str, Controllable]:
     """Build one Controllable per read tool, in deterministic order.
 
-    Validates that :data:`READ_QUADRANT_MAP` covers every read tool and
+    Validates that :data:`READ_STORE_MAP` covers every read tool and
     contains no extras (no stale mappings).
     """
-    mapped = set(READ_QUADRANT_MAP)
+    mapped = set(READ_STORE_MAP)
     expected = set(READ_FUNCTION_NAMES)
     missing = expected - mapped
     if missing:
         raise RuntimeError(
-            f"READ_QUADRANT_MAP is missing entries for read tools: {sorted(missing)}"
+            f"READ_STORE_MAP is missing entries for read tools: {sorted(missing)}"
         )
     stale = mapped - expected
     if stale:
         raise RuntimeError(
-            f"READ_QUADRANT_MAP has entries for non-read tools: {sorted(stale)}"
+            f"READ_STORE_MAP has entries for non-read tools: {sorted(stale)}"
         )
 
     out: dict[str, Controllable] = {}
@@ -266,6 +318,30 @@ READ_CTRLS: dict[str, Controllable] = _build_read_controllables()
 
 The wrapped runtime uses this map to look up the right Controllable
 when firing per-call events."""
+
+
+def _validate_write_store_map() -> None:
+    """Validate :data:`WRITE_STORE_MAP` covers exactly the write tools.
+
+    Mirrors the read-side exhaustiveness guard so upstream tool drift
+    (a write added or removed) fails loudly at import time rather than
+    silently leaving a write untagged.
+    """
+    mapped = set(WRITE_STORE_MAP)
+    expected = set(WRITE_FUNCTION_NAMES)
+    missing = expected - mapped
+    if missing:
+        raise RuntimeError(
+            f"WRITE_STORE_MAP is missing entries for write tools: {sorted(missing)}"
+        )
+    stale = mapped - expected
+    if stale:
+        raise RuntimeError(
+            f"WRITE_STORE_MAP has entries for non-write tools: {sorted(stale)}"
+        )
+
+
+_validate_write_store_map()
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +367,8 @@ __all__ = [
     "TOOL_CATALOG_UNREGISTER_CTRL",
     "TOOL_CATALOG_REWRITE_DOC_CTRL",
     "TOOL_CATALOG_CTRLS",
-    "READ_QUADRANT_MAP",
+    "READ_STORE_MAP",
+    "WRITE_STORE_MAP",
     "READ_CTRLS",
     "CONTROLLABLES",
 ]

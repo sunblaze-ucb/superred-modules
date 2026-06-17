@@ -30,9 +30,9 @@ import sys
 
 from agentdojo_target import (
     AgentDojoTarget,
-    CONTENT_3P_DATA_3P_TAG,
     PROMPT_TAG,
     TOOL_CATALOGUE_TAG,
+    TOOLS_TAG,
     USER_TAG,
 )
 from superred.core.controller import Controller, TargetFactory
@@ -119,7 +119,7 @@ async def main() -> int:
         target_factory=TargetFactory(create=factory, concurrency=1),
         security_claim=claim,
         scope=frozenset({
-            USER_TAG, PROMPT_TAG, TOOL_CATALOGUE_TAG, CONTENT_3P_DATA_3P_TAG,
+            USER_TAG, PROMPT_TAG, TOOL_CATALOGUE_TAG, TOOLS_TAG,
         }),
         max_runs_per_task=1,
     )

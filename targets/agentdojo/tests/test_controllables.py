@@ -5,23 +5,56 @@ from __future__ import annotations
 from agentdojo_target.controllables import (
     CONTROLLABLES,
     READ_CTRLS,
-    READ_QUADRANT_MAP,
+    READ_STORE_MAP,
     SYSTEM_PROMPT_CTRL,
     TOOL_CATALOG_CTRLS,
     USER_PROMPT_CTRL,
+    WRITE_STORE_MAP,
 )
 from agentdojo_target.security_tags import (
-    CONTENT_1P_DATA_1P_TAG,
-    CONTENT_1P_DATA_3P_TAG,
-    CONTENT_3P_DATA_1P_TAG,
-    CONTENT_3P_DATA_3P_TAG,
+    BANKING_BANK_ACCOUNT_TAG,
+    BANKING_FILESYSTEM_TAG,
+    BANKING_USER_ACCOUNT_TAG,
     PROMPT_TAG,
+    SLACK_SLACK_TAG,
+    SLACK_WEB_TAG,
     TOOL_CATALOGUE_ADDABLE_TAG,
     TOOL_CATALOGUE_TAG,
     TOOLS_TAG,
+    TRAVEL_CALENDAR_TAG,
+    TRAVEL_CAR_RENTAL_TAG,
+    TRAVEL_FLIGHTS_TAG,
+    TRAVEL_HOTELS_TAG,
+    TRAVEL_INBOX_TAG,
+    TRAVEL_RESERVATION_TAG,
+    TRAVEL_RESTAURANTS_TAG,
+    TRAVEL_USER_TAG,
     USER_TAG,
+    WORKSPACE_CALENDAR_TAG,
+    WORKSPACE_CLOUD_DRIVE_TAG,
+    WORKSPACE_INBOX_TAG,
 )
-from agentdojo_target.tool_registry import READ_FUNCTION_NAMES
+from agentdojo_target.tool_registry import READ_FUNCTION_NAMES, WRITE_FUNCTION_NAMES
+
+# The 16 per-store leaf tags, all of which live under TOOLS_TAG.
+STORE_LEAVES = {
+    BANKING_BANK_ACCOUNT_TAG,
+    BANKING_FILESYSTEM_TAG,
+    BANKING_USER_ACCOUNT_TAG,
+    WORKSPACE_INBOX_TAG,
+    WORKSPACE_CALENDAR_TAG,
+    WORKSPACE_CLOUD_DRIVE_TAG,
+    SLACK_SLACK_TAG,
+    SLACK_WEB_TAG,
+    TRAVEL_HOTELS_TAG,
+    TRAVEL_RESTAURANTS_TAG,
+    TRAVEL_CAR_RENTAL_TAG,
+    TRAVEL_FLIGHTS_TAG,
+    TRAVEL_USER_TAG,
+    TRAVEL_CALENDAR_TAG,
+    TRAVEL_RESERVATION_TAG,
+    TRAVEL_INBOX_TAG,
+}
 
 
 def test_system_prompt_ctrl_is_on_prompt_tag() -> None:
@@ -60,17 +93,12 @@ def test_one_read_ctrl_per_read_tool() -> None:
     assert len(READ_CTRLS) == 47
 
 
-def test_every_read_ctrl_is_on_a_tools_leaf() -> None:
-    """All per-read Controllables sit on one of the 2x2-grid leaves."""
-    leaves = {
-        CONTENT_1P_DATA_1P_TAG,
-        CONTENT_1P_DATA_3P_TAG,
-        CONTENT_3P_DATA_1P_TAG,
-        CONTENT_3P_DATA_3P_TAG,
-    }
+def test_every_read_ctrl_is_on_a_store_leaf() -> None:
+    """All per-read Controllables sit on one of the 16 per-store leaves,
+    each of which is subsumed by the tools root."""
     for ctrl in READ_CTRLS.values():
-        assert ctrl.security_domain in leaves
-        # Sanity: the tools root subsumes every leaf.
+        assert ctrl.security_domain in STORE_LEAVES
+        # Sanity: the tools root subsumes every store leaf.
         assert TOOLS_TAG.includes(ctrl.security_domain)
 
 
@@ -85,25 +113,74 @@ def test_aggregate_controllables_size() -> None:
     assert len(CONTROLLABLES) == 53
 
 
-def test_read_quadrant_map_total_by_quadrant() -> None:
-    """Sanity-check the per-quadrant distribution against the rationale
-    laid out in the controllables module docstring.
+def test_read_store_map_values_are_store_leaves_under_tools() -> None:
+    """Every read tool maps to a per-store leaf that lives under TOOLS_TAG,
+    and the entries cover exactly the 47 read Controllables."""
+    for tag in READ_STORE_MAP.values():
+        assert tag in STORE_LEAVES
+        assert TOOLS_TAG.includes(tag)
+    assert set(READ_STORE_MAP) == set(READ_CTRLS)
+    assert len(READ_STORE_MAP) == len(READ_CTRLS) == 47
 
-    Most reads land in 3p/3p (most external content); a smaller cluster
-    in 1p/3p (user PII held by 3p providers); one 3p/1p (banking
-    read_file returns vendor-authored files in the user's filesystem);
-    one 1p/1p (workspace.get_current_day system clock).
-    """
-    counts = {
-        CONTENT_1P_DATA_1P_TAG: 0,
-        CONTENT_1P_DATA_3P_TAG: 0,
-        CONTENT_3P_DATA_1P_TAG: 0,
-        CONTENT_3P_DATA_3P_TAG: 0,
-    }
-    for tag in READ_QUADRANT_MAP.values():
+
+def test_read_store_map_per_store_distribution() -> None:
+    """Pin the per-store read distribution; the counts sum to 47."""
+    counts: dict = {leaf: 0 for leaf in STORE_LEAVES}
+    for tag in READ_STORE_MAP.values():
         counts[tag] += 1
-    assert counts[CONTENT_1P_DATA_1P_TAG] >= 1
-    assert counts[CONTENT_3P_DATA_1P_TAG] >= 1
-    assert counts[CONTENT_1P_DATA_3P_TAG] >= 10
-    assert counts[CONTENT_3P_DATA_3P_TAG] >= 25
-    assert sum(counts.values()) == len(READ_CTRLS)
+    expected = {
+        BANKING_BANK_ACCOUNT_TAG: 4,
+        BANKING_FILESYSTEM_TAG: 1,
+        BANKING_USER_ACCOUNT_TAG: 1,
+        WORKSPACE_INBOX_TAG: 7,
+        WORKSPACE_CALENDAR_TAG: 3,
+        WORKSPACE_CLOUD_DRIVE_TAG: 4,
+        SLACK_SLACK_TAG: 4,
+        SLACK_WEB_TAG: 1,
+        TRAVEL_USER_TAG: 1,
+        TRAVEL_HOTELS_TAG: 4,
+        TRAVEL_RESTAURANTS_TAG: 8,
+        TRAVEL_CAR_RENTAL_TAG: 6,
+        TRAVEL_FLIGHTS_TAG: 1,
+        TRAVEL_CALENDAR_TAG: 2,
+    }
+    for leaf, n in expected.items():
+        assert counts[leaf] == n
+    # Leaves with no read tool stay at zero.
+    for leaf in STORE_LEAVES - set(expected):
+        assert counts[leaf] == 0
+    assert sum(counts.values()) == len(READ_CTRLS) == 47
+
+
+def test_write_store_map_covers_write_tools_on_store_leaves() -> None:
+    """Writes get NO Controllable but are still mapped to the store leaf
+    they mutate: WRITE_STORE_MAP covers exactly the write tools, and every
+    value is a per-store leaf subsumed by TOOLS_TAG."""
+    assert set(WRITE_STORE_MAP) == set(WRITE_FUNCTION_NAMES)
+    for tag in WRITE_STORE_MAP.values():
+        assert tag in STORE_LEAVES
+        assert TOOLS_TAG.includes(tag)
+
+
+def test_write_store_map_per_store_distribution() -> None:
+    """Pin the per-store write distribution; the counts sum to 27."""
+    counts: dict = {leaf: 0 for leaf in STORE_LEAVES}
+    for tag in WRITE_STORE_MAP.values():
+        counts[tag] += 1
+    expected = {
+        BANKING_BANK_ACCOUNT_TAG: 3,
+        BANKING_USER_ACCOUNT_TAG: 2,
+        WORKSPACE_INBOX_TAG: 2,
+        WORKSPACE_CALENDAR_TAG: 4,
+        WORKSPACE_CLOUD_DRIVE_TAG: 4,
+        SLACK_SLACK_TAG: 5,
+        SLACK_WEB_TAG: 1,
+        TRAVEL_RESERVATION_TAG: 3,
+        TRAVEL_CALENDAR_TAG: 2,
+        TRAVEL_INBOX_TAG: 1,
+    }
+    for leaf, n in expected.items():
+        assert counts[leaf] == n
+    for leaf in STORE_LEAVES - set(expected):
+        assert counts[leaf] == 0
+    assert sum(counts.values()) == len(WRITE_STORE_MAP) == 27

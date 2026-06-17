@@ -14,19 +14,64 @@ from agentdojo_target.security_tags import (
     AGENT_TRACE_TAG,
     AGENT_TRACE_TOOL_CALLS_TAG,
     AGENT_TRACE_TOOL_RESPONSES_TAG,
-    CONTENT_1P_DATA_1P_TAG,
-    CONTENT_1P_DATA_3P_TAG,
-    CONTENT_3P_DATA_1P_TAG,
-    CONTENT_3P_DATA_3P_TAG,
+    BANKING_BANK_ACCOUNT_TAG,
+    BANKING_FILESYSTEM_TAG,
+    BANKING_TAG,
+    BANKING_USER_ACCOUNT_TAG,
     DOMAIN,
     MODEL_IDENTITY_TAG,
     PROMPT_TAG,
+    SLACK_SLACK_TAG,
+    SLACK_TAG,
+    SLACK_WEB_TAG,
     SYSTEM_TAG,
     TOOL_CATALOGUE_ADDABLE_TAG,
     TOOL_CATALOGUE_TAG,
     TOOLS_TAG,
+    TRAVEL_CALENDAR_TAG,
+    TRAVEL_CAR_RENTAL_TAG,
+    TRAVEL_FLIGHTS_TAG,
+    TRAVEL_HOTELS_TAG,
+    TRAVEL_INBOX_TAG,
+    TRAVEL_RESERVATION_TAG,
+    TRAVEL_RESTAURANTS_TAG,
+    TRAVEL_TAG,
+    TRAVEL_USER_TAG,
     USER_TAG,
+    WORKSPACE_CALENDAR_TAG,
+    WORKSPACE_CLOUD_DRIVE_TAG,
+    WORKSPACE_INBOX_TAG,
+    WORKSPACE_TAG,
 )
+
+# Per-service grouping: each service node and the store leaves directly
+# under it.  Used by the tools-subtree subsumption tests.
+SERVICE_STORES = {
+    BANKING_TAG: (
+        BANKING_BANK_ACCOUNT_TAG,
+        BANKING_FILESYSTEM_TAG,
+        BANKING_USER_ACCOUNT_TAG,
+    ),
+    WORKSPACE_TAG: (
+        WORKSPACE_INBOX_TAG,
+        WORKSPACE_CALENDAR_TAG,
+        WORKSPACE_CLOUD_DRIVE_TAG,
+    ),
+    SLACK_TAG: (
+        SLACK_SLACK_TAG,
+        SLACK_WEB_TAG,
+    ),
+    TRAVEL_TAG: (
+        TRAVEL_HOTELS_TAG,
+        TRAVEL_RESTAURANTS_TAG,
+        TRAVEL_CAR_RENTAL_TAG,
+        TRAVEL_FLIGHTS_TAG,
+        TRAVEL_USER_TAG,
+        TRAVEL_CALENDAR_TAG,
+        TRAVEL_RESERVATION_TAG,
+        TRAVEL_INBOX_TAG,
+    ),
+}
 
 
 def test_domain_has_three_roots() -> None:
@@ -72,24 +117,71 @@ def test_user_has_no_children() -> None:
         PROMPT_TAG,
         MODEL_IDENTITY_TAG,
         AGENT_TRACE_TAG,
-        CONTENT_1P_DATA_1P_TAG,
+        BANKING_BANK_ACCOUNT_TAG,
     ):
         assert not USER_TAG.includes(tag)
 
 
-def test_tools_2x2_grid_siblings() -> None:
-    """The four 2x2-grid leaves are siblings under tools; none subsumes any other."""
-    leaves = (
-        CONTENT_1P_DATA_1P_TAG,
-        CONTENT_1P_DATA_3P_TAG,
-        CONTENT_3P_DATA_1P_TAG,
-        CONTENT_3P_DATA_3P_TAG,
-    )
-    for a in leaves:
-        assert TOOLS_TAG.includes(a)
-        for b in leaves:
+def test_tools_root_subsumes_every_service_and_store() -> None:
+    """The grouping root subsumes all four services and every store leaf."""
+    for service, stores in SERVICE_STORES.items():
+        assert TOOLS_TAG.includes(service), service.name
+        for store in stores:
+            assert TOOLS_TAG.includes(store), store.name
+
+
+def test_service_subsumes_own_stores() -> None:
+    """Each service node subsumes exactly the store leaves below it."""
+    for service, stores in SERVICE_STORES.items():
+        for store in stores:
+            assert service.includes(store), (
+                f"{service.name} should include {store.name}"
+            )
+            # a store leaf does not subsume its parent service
+            assert not store.includes(service), (
+                f"{store.name} should not include {service.name}"
+            )
+
+
+def test_service_does_not_subsume_other_services_stores() -> None:
+    """A service does not include another service's store leaves."""
+    for service, stores in SERVICE_STORES.items():
+        for other_service, other_stores in SERVICE_STORES.items():
+            if other_service is service:
+                continue
+            for other_store in other_stores:
+                assert not service.includes(other_store), (
+                    f"{service.name} should not include {other_store.name}"
+                )
+
+
+def test_sibling_services_do_not_subsume_each_other() -> None:
+    """The four service nodes are siblings; none subsumes another."""
+    services = list(SERVICE_STORES)
+    for a in services:
+        for b in services:
             if a is not b:
                 assert not a.includes(b), f"{a.name} should not include {b.name}"
+
+
+def test_sibling_stores_do_not_subsume_each_other() -> None:
+    """Store leaves never subsume one another, within or across services."""
+    all_stores = [store for stores in SERVICE_STORES.values() for store in stores]
+    for a in all_stores:
+        for b in all_stores:
+            if a is not b:
+                assert not a.includes(b), f"{a.name} should not include {b.name}"
+
+
+def test_workspace_and_travel_calendars_are_distinct() -> None:
+    """The workspace and travel calendars are separate store instances:
+    holding one grants no access to the other (and likewise for the two
+    inboxes the two suites each own)."""
+    assert WORKSPACE_CALENDAR_TAG is not TRAVEL_CALENDAR_TAG
+    assert not WORKSPACE_CALENDAR_TAG.includes(TRAVEL_CALENDAR_TAG)
+    assert not TRAVEL_CALENDAR_TAG.includes(WORKSPACE_CALENDAR_TAG)
+    assert not WORKSPACE_INBOX_TAG.includes(TRAVEL_INBOX_TAG)
+    assert not TRAVEL_INBOX_TAG.includes(WORKSPACE_INBOX_TAG)
 
 
 def test_independent_trees_do_not_cross() -> None:
@@ -108,12 +200,12 @@ def test_scope_includes_uses_tags() -> None:
     assert scope_includes(scope, PROMPT_TAG)
     assert scope_includes(scope, AGENT_TRACE_MESSAGES_TAG)
     assert not scope_includes(scope, USER_TAG)
-    assert not scope_includes(scope, CONTENT_1P_DATA_1P_TAG)
+    assert not scope_includes(scope, BANKING_BANK_ACCOUNT_TAG)
 
 
 def test_assembled_domain_size() -> None:
-    """The assembled DOMAIN (15 declared tags) enumerates with the three
-    expected roots."""
+    """The assembled DOMAIN (31 declared tags: system 9, user 1, tools 21)
+    enumerates with the three expected roots."""
     # We cannot inspect DOMAIN._tags directly (private), but distinct_combinations
     # exercises the full tag set; the empty antichain is always present, and the
     # antichain count grows monotonically with the tag count.  At minimum,
@@ -121,3 +213,17 @@ def test_assembled_domain_size() -> None:
     combos = DOMAIN.distinct_combinations()
     root_names = {t.name for c in combos for t in c if t.parent is None}
     assert root_names == {"system", "user", "tools"}
+
+
+def test_assembled_domain_tag_count() -> None:
+    """The DOMAIN forest holds exactly 31 distinct tags."""
+    all_tags = {t for c in DOMAIN.distinct_combinations() for t in c}
+    seen = set(all_tags)
+    # Walk up to ancestors so non-leaf tags (which never appear alone in an
+    # antichain alongside their descendants) are also counted.
+    for tag in all_tags:
+        node = tag.parent
+        while node is not None:
+            seen.add(node)
+            node = node.parent
+    assert len(seen) == 31

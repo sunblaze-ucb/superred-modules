@@ -63,10 +63,12 @@ from superred.core.types.events import (
     ObservableEvent,
 )
 
-from agentdojo_target.controllables import READ_CTRLS
+from agentdojo_target.controllables import READ_CTRLS, WRITE_STORE_MAP
 from agentdojo_target.observables import (
     agent_tool_call_observable,
     agent_tool_response_observable,
+    tool_menu_rebuild_observable,
+    write_observation_observable,
 )
 from agentdojo_target.security_tags import (
     TOOL_CATALOGUE_ADDABLE_TAG,
@@ -184,6 +186,8 @@ class WrappedFunctionsRuntime(FunctionsRuntime):
         self._loop = loop
         self._trace: list[FunctionCall] = []
         self._tool_response_counter: int = 0
+        self._write_observation_counter: int = 0
+        self._menu_rebuild_counter: int = 0
 
     @property
     def trace(self) -> list[FunctionCall]:
@@ -202,8 +206,23 @@ class WrappedFunctionsRuntime(FunctionsRuntime):
         Call after a catalog edit (e.g. attacker register/unregister)
         so the next agent turn sees the new tool list.  The internal
         ``self.functions`` dict is replaced atomically.
+
+        After the swap, emits a one-way ``tool_menu_rebuild_NNNN``
+        observable so a trace-scoped reader sees the menu changed.  The
+        emit is fire-and-forget and happens after the assignment, so it
+        cannot perturb ``self.functions``.
         """
         self.functions = {f.name: f for f in self._catalog.functions_for_runtime()}
+        self._emit(
+            ObservableEvent(
+                observable=tool_menu_rebuild_observable(self._menu_rebuild_counter),
+                content={
+                    "tool_names": sorted(self.functions),
+                    "count": len(self.functions),
+                },
+            )
+        )
+        self._menu_rebuild_counter += 1
 
     # ------------------------------------------------------------------
     # Sync-to-async bridge
@@ -257,7 +276,9 @@ class WrappedFunctionsRuntime(FunctionsRuntime):
             return super().run_function(env, function, kwargs, raise_on_error)
 
         if entry.kind == "canonical":
-            return self._run_canonical(env, entry, function, kwargs, raise_on_error)
+            return self._run_canonical(
+                env, entry, function, kwargs, raise_on_error, call
+            )
         # Attacker-managed: short-circuit to a synthetic event.
         return self._run_attacker(entry, function, kwargs)
 
@@ -272,6 +293,7 @@ class WrappedFunctionsRuntime(FunctionsRuntime):
         function: str,
         kwargs: Mapping[str, FunctionCallArgTypes],
         raise_on_error: bool,
+        call: FunctionCall,
     ) -> tuple[FunctionReturnType, str | None]:
         result, error = super().run_function(env, function, kwargs, raise_on_error)
         # Track the final value the agent will see (after any injection
@@ -299,12 +321,27 @@ class WrappedFunctionsRuntime(FunctionsRuntime):
             self._emit_agent_tool_response(agent_seen_value, error)
             return agent_seen_value, error
 
-        # Write-side canonical calls and errored reads: only the
-        # agent-seen response observable remains here — the call itself
+        # Write-side canonical calls and errored reads: the call itself
         # was already emitted live as agent_trace_tool_call_NNNN at
         # invocation (SecurityClaim predicates use the write_calls_made
         # query for mutation detection).
         self._emit_agent_tool_response(agent_seen_value, error)
+        # For a successful write, also emit a one-way observation tagged at
+        # the store the write mutates, so a service-scoped attacker sees the
+        # action it provoked under the same boundary it reads from (reading
+        # and acting on a store share a label).  Fire-and-forget after the
+        # response observable; never gates the call or alters its result.
+        store_tag = WRITE_STORE_MAP.get(function)
+        if store_tag is not None and error is None:
+            self._emit(
+                ObservableEvent(
+                    observable=write_observation_observable(
+                        self._write_observation_counter, store_tag
+                    ),
+                    content=function_call_to_jsonable(call),
+                )
+            )
+            self._write_observation_counter += 1
         return result, error
 
     # ------------------------------------------------------------------

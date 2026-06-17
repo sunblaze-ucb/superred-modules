@@ -26,9 +26,9 @@ from agentdojo.functions_runtime import EmptyEnv, Env, FunctionsRuntime
 from agentdojo.types import ChatMessage
 from agentdojo_target import (
     AgentDojoTarget,
-    CONTENT_3P_DATA_3P_TAG,
     PROMPT_TAG,
     TOOL_CATALOGUE_TAG,
+    TOOLS_TAG,
     USER_TAG,
 )
 from superred.core.controller import Controller, TargetFactory
@@ -136,7 +136,7 @@ class _PassthroughOptimizer(Optimizer):
 def _wide_scope():
     """Scope that grants the optimizer every relevant capability."""
     return frozenset({
-        USER_TAG, PROMPT_TAG, TOOL_CATALOGUE_TAG, CONTENT_3P_DATA_3P_TAG,
+        USER_TAG, PROMPT_TAG, TOOL_CATALOGUE_TAG, TOOLS_TAG,
     })
 
 
