@@ -1,4 +1,4 @@
-# ASSUMPTIONS — security_claim_asb
+# ASSUMPTIONS: security_claim_asb
 
 Deviations from upstream Agent Security Bench (ASB, `agiresearch/ASB`, commit
 `1f561dcc`, MIT). The success / utility / refusal predicates are ported from
@@ -58,7 +58,7 @@ attacker tool).
 - **C.3 Sub-scores**: `utility`, `refused`, `workflow_failure`, `targeted`
   (attack AND utility), plus `memory_found` (memory mode only). The earlier
   config-echo sub-scores (`aggressive`, `attack_type_<...>`, `agent_<name>`)
-  are **dropped** — they restated immutable config under per-case-unique keys
+  are **dropped**: they restated immutable config under per-case-unique keys
   and broke schema uniformity; the dataset axes are recovered by the factory
   roll-ups instead.
 

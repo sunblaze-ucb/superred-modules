@@ -50,6 +50,7 @@ class AsbAttackTask(Task[AsbTarget]):
         row: dict[str, str],
         judge: RefusalJudge | None = None,
         memory: bool = False,
+        force_attacker_tool: bool = False,
     ) -> None:
         self._agent_name = agent_name
         self._benign_task = benign_task
@@ -61,6 +62,7 @@ class AsbAttackTask(Task[AsbTarget]):
         self._aggressive = str(row.get("Aggressive", "")).strip().lower() == "true"
         self._judge = judge
         self._memory_mode = memory
+        self._force_attacker_tool = force_attacker_tool
         self._goal = Goal(description=self._attack_goal)
 
     # -- Read-only properties ------------------------------------------------
@@ -89,6 +91,8 @@ class AsbAttackTask(Task[AsbTarget]):
         target.set_config("attacker_tool", json.dumps(self._row))
         if self._memory_mode:
             target.set_config("memory_mode", "on")
+        if self._force_attacker_tool:
+            target.set_config("attacker_tool_forcing", "on")
 
     async def evaluate(self, _trajectory: Trajectory, target: AsbTarget) -> EvaluationResult:
         messages = _coerce_messages(target.query("messages"))

@@ -51,6 +51,7 @@ def asb_claim(
     tasks_per_agent: int | None = 1,
     attacker_tools_path: str = ALL_ATTACK_TOOLS_PATH,
     memory: bool = False,
+    force_attacker_tool: bool = False,
     judge: RefusalJudge | None = None,
     judge_llm_config: LLMConfig | None = None,
 ) -> SecurityClaim[AsbTarget]:
@@ -67,6 +68,10 @@ def asb_claim(
         memory: enable the target's durable memory mode for each task (so a
             multi-run attacker can poison-then-exploit and ``memory_found`` is
             scored). Default off.
+        force_attacker_tool: reproduce upstream's ``attacker_tool_injection``
+            (force the attacker tool into every plan step), which ASB applies on
+            a DPI/OPI attack run. Set this for a context-injection (DPI/OPI)
+            sweep; leave off for a clean baseline or a PoT/MP sweep. Default off.
         judge / judge_llm_config: out-of-band refusal judge (gpt-4o-mini).
     """
     agent_tasks = load_agent_tasks()
@@ -115,6 +120,7 @@ def asb_claim(
                         row=row,
                         judge=judge_obj,
                         memory=memory,
+                        force_attacker_tool=force_attacker_tool,
                     )
                 )
 
@@ -174,9 +180,12 @@ def asb_target_factory(
 ) -> TargetFactory:
     """A ``TargetFactory`` for the ASB target (concurrency locked to 1).
 
-    ASB uses a process-global request queue + single scheduler, so the
-    target must not be parallelized; ``concurrency=1`` is enforced. The
-    memory store embeds through the same proxy (``embed_model``).
+    ASB uses a process-global request queue, a singleton scheduler, and other
+    process globals, so ``concurrency=1`` serializes tasks within one Controller
+    AND only one ASB Controller may run per process: sweep multiple ASB threat
+    models sequentially, not via a concurrent ``asyncio.gather`` of ASB
+    Controllers (see the target's ASSUMPTIONS G.1). The memory store embeds
+    through the same proxy (``embed_model``).
     """
     return TargetFactory(
         create=lambda: AsbTarget(

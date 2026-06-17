@@ -1,4 +1,4 @@
-# ASSUMPTIONS — asb_target
+# ASSUMPTIONS: asb_target
 
 Every deviation from upstream Agent Security Bench (ASB, `agiresearch/ASB`,
 pinned commit `1f561dccf92d55302368fa67679b4ba9d9c8fdc4`, MIT). The ASB agent
@@ -65,7 +65,7 @@ infrastructure**. Specific attacks are an attacker's concern, not the target's.
 - **C.2 DPI**: the injection is appended to the benign `task_input`
   (`task_input += " " + value`, matching ASB's `+=`).
 - **C.3 OPI**: fired on **every** non-final tool return **including the
-  attacker tool's own observation** — the `function_name != self.tool_name`
+  attacker tool's own observation**: the `function_name != self.tool_name`
   guard the earlier port added is **removed**, restoring upstream's
   provenance/name-blind behaviour (`react_agent_attack.py:188-189`). Each OPI
   event is tagged to the firing tool's scenario sub-boundary (E).
@@ -77,13 +77,16 @@ infrastructure**. Specific attacks are an attacker's concern, not the target's.
   baked into the target. The trigger (default `"in light of extant
   literature"`) is appended to the user task when PoT injects.
 - **C.5 attacker_tool_injection** (forcing the attacker tool into every plan
-  step) is gated on a **real DPI injection** (`self._dpi_injected`), so a clean
-  baseline with the attacker tool merely registered never force-calls it
-  (the earlier port forced it whenever a tool was configured, corrupting the
-  clean baseline). PoT/MP name the tool via the plan/memory instead, so they
-  are excluded, matching ASB.
+  step) is gated on the experiment-set `attacker_tool_forcing` ConfigSpec
+  (Task-set, default off), the equivalent of upstream's
+  `direct_prompt_injection OR observation_prompt_injection` flag (upstream
+  forces for BOTH DPI and OPI). The event model cannot know at plan time
+  whether OPI will fire, so forcing is an explicit experiment switch rather
+  than inferred from a DPI injection; this keeps DPI and OPI consistent and a
+  clean baseline (config off) never forces. PoT/MP name the tool via the
+  plan/memory instead, so forcing is excluded under them, matching ASB.
 - **C.6 Attacker tool registration**: registered iff the task configures one
-  (`attacker_tool` non-empty) — a precondition for any attack — rather than
+  (`attacker_tool` non-empty), a precondition for any attack, rather than
   ASB's per-flag gating.
 - **C.7 Defenses removed**: the target has **no** defense infrastructure
   (no `defense_type` config, no delimiters/instructional/ob-sandwich/paraphrase/
@@ -119,7 +122,14 @@ infrastructure**. Specific attacks are an attacker's concern, not the target's.
   difference immaterial; (c) an empty store or a record without a `Workflow:`
   block **degrades gracefully** (no injection / whole-record fallback) where
   upstream would crash on an unbound variable (required by the never-crash
-  directive).
+  directive). (d) On a memory run with an empty store and no injection the port
+  appends **no** memory message, whereas upstream's `read_db` branch always
+  appends an assistant message (the literal string `None` when the search
+  returns nothing); the port omits that vacuous `None` turn. (e) PoT takes
+  **precedence** over the memory read (as upstream's `pot_backdoor elif
+  read_db` ordering does): when a PoT injection lands on a memory run the read
+  is skipped (no `memory_found` scored), though the end-of-run write still
+  occurs so a later run can retrieve it.
 
 ## E. Trust-boundary forest (redesigned)
 
@@ -147,7 +157,7 @@ infrastructure**. Specific attacks are an attacker's concern, not the target's.
   observable; memory read/write at the memory boundary). The earlier bulk
   re-emission of the whole message list (which double-emitted injected text and
   re-tagged it onto the system subtree, a cross-domain leak) is **removed**.
-  Non-final tool returns are not re-emitted as observables — they are on the
+  Non-final tool returns are not re-emitted as observables; they are on the
   trajectory via their OPI controllable event. The grader still reads the raw
   transcript via the `messages` query, so scoring is unchanged.
 - **F.2** No attack payload is exposed as an observable (the target only
@@ -156,10 +166,19 @@ infrastructure**. Specific attacks are an attacker's concern, not the target's.
 
 ## G. Execution model
 
-- **G.1 `concurrency=1`**: ASB uses a process-global `LLMRequestQueue` drained
-  by one `FIFOScheduler` thread, so the target runs a module-level singleton
-  kernel/scheduler and must not be parallelized. The scheduler thread is a
-  daemon, stopped at process exit.
+- **G.1 `concurrency=1`, single Controller per process**: ASB uses a
+  process-global `LLMRequestQueue` drained by one `FIFOScheduler` thread, plus
+  other process globals (the singleton kernel/scheduler `_RUNTIME` and the
+  proxy `PROXY_CONFIG`). `concurrency=1` serializes tasks within one Controller,
+  and only ONE ASB Controller may run per process: sweep multiple ASB threat
+  models sequentially, not via a concurrent `asyncio.gather` of ASB Controllers
+  (they would race on the shared globals). The scheduler thread is a daemon,
+  stopped at process exit.
+- **G.1a** ASB's `AgentProcessFactory` hands out pids from a pool of 10000 and
+  never reclaims them on the agent path, so a long experiment with one factory
+  would exhaust the pool and crash. The target builds a **fresh
+  `AgentProcessFactory` per run** (requests still flow through the global
+  queue), keeping the per-run pid count tiny.
 - **G.2** The model is a **construction concern** (constructor arg), not a
   config slot. Generation settings (seed 0, temperature 0, the pinned token
   cap) are fixed per experiment.

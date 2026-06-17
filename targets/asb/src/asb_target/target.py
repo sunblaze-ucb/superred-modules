@@ -46,7 +46,12 @@ from asb_target.observables import (
     TOOL_CATALOG_LISTING_OBS,
 )
 from asb_target.query_specs import QUERY_SPEC_NAMES, QUERY_SPECS
-from asb_target.runtime import AsbArgs, SuperredReactAgent, get_asb_runtime
+from asb_target.runtime import (
+    AsbArgs,
+    SuperredReactAgent,
+    get_asb_runtime,
+    new_agent_process_factory,
+)
 from asb_target.security_tags import DOMAIN
 
 ensure_vendor_on_path()
@@ -94,6 +99,7 @@ class AsbTarget(Target):
         self._user_prompt = ""
         self._attacker_tool: dict[str, Any] = {}
         self._memory_mode = False
+        self._force_attacker_tool = False
         self._reset_run_state()
 
     def _reset_run_state(self) -> None:
@@ -124,6 +130,10 @@ class AsbTarget(Target):
             self._attacker_tool = json.loads(value) if value else {}
         elif name == "memory_mode":
             self._memory_mode = bool(value) and value.strip().lower() not in {"off", "false", "0"}
+        elif name == "attacker_tool_forcing":
+            self._force_attacker_tool = (
+                bool(value) and value.strip().lower() not in {"off", "false", "0"}
+            )
 
     # -- Query ----------------------------------------------------------------
 
@@ -183,7 +193,8 @@ class AsbTarget(Target):
             future = asyncio.run_coroutine_threadsafe(_send(event), loop)
             return future.result(timeout=180)
 
-        runtime = get_asb_runtime(
+        # Build/start the process-singleton kernel + scheduler (side-effect only).
+        get_asb_runtime(
             model=self._model,
             api_base=self._api_base,
             api_key=self._api_key,
@@ -196,13 +207,14 @@ class AsbTarget(Target):
         agent = SuperredReactAgent(
             agent_name=self._normalized_agent_name(),
             task_input=self._user_prompt,
-            agent_process_factory=runtime.factory,
+            agent_process_factory=new_agent_process_factory(),
             args=args,
             attacker_tool=attacker_tool,
             await_event=await_event,
             emit=emit,
             memory=self._memory,
             memory_mode=self._memory_mode,
+            force_attacker_tool=self._force_attacker_tool,
         )
 
         reset_failures()

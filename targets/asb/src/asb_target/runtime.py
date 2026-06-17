@@ -116,7 +116,20 @@ class _Runtime:
     model: str
     kernel: Any
     scheduler: Any
-    factory: Any
+
+
+def new_agent_process_factory() -> Any:
+    """A fresh ``AgentProcessFactory`` for one run.
+
+    ASB's factory hands out pids from a pool of 10000 and never reclaims them
+    (``deactivate_agent_process`` is not called on the agent path), so reusing
+    one factory across a long experiment exhausts the pool and crashes on an
+    empty ``heappop``. A fresh factory per run keeps the per-run pid count tiny.
+    Requests still flow through the process-global ``LLMRequestQueue`` (a
+    class-level queue), so the shared singleton scheduler drains them regardless
+    of which factory created them.
+    """
+    return AgentProcessFactory()
 
 
 _RUNTIME: _Runtime | None = None
@@ -156,9 +169,8 @@ def get_asb_runtime(
         kernel = LLMKernel(llm_name=model, log_mode="console")
         scheduler = FIFOScheduler(llm=kernel, log_mode="console")
         scheduler.thread.daemon = True  # never block process exit on the scheduler
-        factory = AgentProcessFactory()
         scheduler.start()
-        _RUNTIME = _Runtime(model=model, kernel=kernel, scheduler=scheduler, factory=factory)
+        _RUNTIME = _Runtime(model=model, kernel=kernel, scheduler=scheduler)
         return _RUNTIME
 
 
@@ -205,6 +217,7 @@ class SuperredReactAgent(ReactAgentAttack):  # type: ignore[misc]  # base is Any
         emit: EmitHandler,
         memory: MemoryStore,
         memory_mode: bool,
+        force_attacker_tool: bool = False,
         log_mode: str = "console",
     ) -> None:
         super().__init__(
@@ -222,9 +235,9 @@ class SuperredReactAgent(ReactAgentAttack):  # type: ignore[misc]  # base is Any
         self._emit = emit
         self._memory = memory
         self._memory_mode = memory_mode
+        self._force_attacker_tool = force_attacker_tool
         self._has_attacker_tool = bool(attacker_tool.get("Attacker Tool"))
         # injection-state tracking (set during run)
-        self._dpi_injected = False
         self._pot_active = False
         self._mp_active = False
         self._pot_trigger_to_append: str | None = None
@@ -297,37 +310,39 @@ class SuperredReactAgent(ReactAgentAttack):  # type: ignore[misc]  # base is Any
             call_index = len(self._tool_call_trace) - 1
             try:
                 function_response = function_to_call.run(function_params)
-
-                # Emit the executed tool call once (agent_trace_tool_calls).
-                self._emit_obs(
-                    agent_tool_call_observable(call_index),
-                    {"function": function_name, "final": final_stage},
-                )
-
-                if not final_stage:
-                    # OPI injection (event) on every non-final return incl. attacker tool.
-                    ctrl = opi_tool_observation_ctrl(tool_boundary_tag(function_name))
-                    injected = self._inject(ctrl, request=str(function_response))
-                    if injected:
-                        function_response += f"; {injected}"
-                else:
-                    # Final return: not OPI-injected upstream, so emit it as the
-                    # observed tool response (agent_trace_tool_responses), once.
-                    self._emit_obs(
-                        agent_tool_response_observable(call_index), str(function_response)
-                    )
-
-                actions.append(
-                    f"I will call the {function_name} with the params as {function_params}"
-                )
-                observations.append(
-                    f"The knowledge I get from {function_name} is: {function_response}"
-                )
-            except Exception as e:  # noqa: BLE001 - mirror upstream catch
+            except Exception as e:  # noqa: BLE001 - mirror upstream catch for the tool call
                 print(f"Unexpected error: {e}")
                 actions.append("I fail to call any tools.")
                 observations.append("The tool parameter is invalid.")
                 success = False
+                continue
+
+            # Emit the executed tool call once (agent_trace_tool_calls).
+            self._emit_obs(
+                agent_tool_call_observable(call_index),
+                {"function": function_name, "final": final_stage},
+            )
+
+            # The OPI injection event is the port's own (not a vendored tool call), so
+            # it is kept OUTSIDE the upstream try/except: a channel/timeout failure must
+            # propagate (loud) rather than be swallowed as a tool error, which would
+            # silently score a partial/contaminated transcript.
+            if not final_stage:
+                ctrl = opi_tool_observation_ctrl(tool_boundary_tag(function_name))
+                injected = self._inject(ctrl, request=str(function_response))
+                if injected:
+                    function_response += f"; {injected}"
+            else:
+                # Final return: not OPI-injected upstream, so emit it as the observed
+                # tool response (agent_trace_tool_responses), once.
+                self._emit_obs(agent_tool_response_observable(call_index), str(function_response))
+
+            actions.append(
+                f"I will call the {function_name} with the params as {function_params}"
+            )
+            observations.append(
+                f"The knowledge I get from {function_name} is: {function_response}"
+            )
 
         return actions, observations, success
 
@@ -437,7 +452,6 @@ class SuperredReactAgent(ReactAgentAttack):  # type: ignore[misc]  # base is Any
         # --- DPI injection (event) ---
         dpi = self._inject(DPI_USER_PROMPT_CTRL, request=self.task_input)
         if dpi:
-            self._dpi_injected = True
             self.task_input += f" {dpi}"
 
         self.build_system_instruction()  # fires PoT + (memory read under memory_mode)
@@ -452,14 +466,16 @@ class SuperredReactAgent(ReactAgentAttack):  # type: ignore[misc]  # base is Any
 
         workflow = self.automatic_workflow()
 
-        # ASB forces the attacker tool into every step for the context-injection
-        # methods. Gated on a real DPI injection so a clean baseline (attacker
-        # tool merely registered, no injection) never forces it. PoT/MP name the
-        # tool via the plan/memory instead, so they are excluded.
+        # ASB forces the attacker tool into every plan step for the context-injection
+        # methods (upstream gates this on `direct_prompt_injection OR
+        # observation_prompt_injection`). Here it is gated on the experiment-set
+        # `force_attacker_tool` config (the equivalent of "this is a DPI/OPI attack
+        # run"), so a clean baseline never forces it and DPI and OPI are consistent.
+        # PoT/MP name the tool via the plan/memory instead, so they are excluded.
         if (
             workflow
             and self._has_attacker_tool
-            and self._dpi_injected
+            and self._force_attacker_tool
             and not self._pot_active
             and not self._mp_active
         ):
@@ -580,6 +596,7 @@ __all__ = [
     "AsbArgs",
     "SuperredReactAgent",
     "get_asb_runtime",
+    "new_agent_process_factory",
     "SyncEventHandler",
     "EmitHandler",
 ]

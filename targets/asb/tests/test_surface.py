@@ -51,13 +51,20 @@ def test_mp_description_has_no_stale_single_run_text() -> None:
     assert "no cross-run" not in mp.description.lower()
 
 
-def test_config_slots_exactly_four() -> None:
-    assert CONFIG_SPEC_NAMES == {"agent_name", "user_prompt", "attacker_tool", "memory_mode"}
+def test_config_slots() -> None:
+    assert CONFIG_SPEC_NAMES == {
+        "agent_name",
+        "user_prompt",
+        "attacker_tool",
+        "memory_mode",
+        "attacker_tool_forcing",
+    }
     by = {s.name: s for s in CONFIG_SPECS}
     assert by["attacker_tool"].security_domain is SYSTEM_TAG
     assert by["memory_mode"].security_domain is MEMORY_TAG
     assert by["agent_name"].security_domain is SYSTEM_TAG
     assert by["user_prompt"].security_domain is USER_TAG
+    assert by["attacker_tool_forcing"].security_domain is SYSTEM_TAG
 
 
 def test_removed_config_slots_absent() -> None:

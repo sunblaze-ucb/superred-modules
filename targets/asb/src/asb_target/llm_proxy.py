@@ -49,7 +49,10 @@ class _ProxyConfig:
     max_output_tokens: int = 1024
     #: Hard failures (connection/auth/status/bad-request/unexpected) seen since
     #: the last reset. The target resets this before each run and aborts the run
-    #: if it is non-empty afterwards. concurrency=1 makes this per-run safe.
+    #: if it is non-empty afterwards. This is process-global, so it is per-run
+    #: safe only with a single in-process ASB Controller (the target's
+    #: serial-by-design model, ASSUMPTIONS G.1); two concurrently-gathered ASB
+    #: Controllers would race on it (run ASB threat models sequentially).
     failures: list[str] = field(default_factory=list)
 
 

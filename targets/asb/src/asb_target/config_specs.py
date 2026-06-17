@@ -58,11 +58,25 @@ MEMORY_MODE_SPEC = ConfigSpec(
     ),
 )
 
+ATTACKER_TOOL_FORCING_SPEC = ConfigSpec(
+    name="attacker_tool_forcing",
+    security_domain=SYSTEM_TAG,
+    description=(
+        "Whether to force the attacker tool into every plan step (ASB's "
+        "attacker_tool_injection). Empty / 'off' = no forcing (clean baseline). "
+        "Any truthy value reproduces upstream's forcing, which it applies on a "
+        "DPI or OPI attack run; the experiment sets this for a context-injection "
+        "(DPI/OPI) sweep. Set by the Task, not the attacker; ignored under "
+        "PoT/MP, which name the attacker tool via the plan/memory instead."
+    ),
+)
+
 CONFIG_SPECS: list[ConfigSpec] = [
     AGENT_NAME_SPEC,
     USER_PROMPT_SPEC,
     ATTACKER_TOOL_SPEC,
     MEMORY_MODE_SPEC,
+    ATTACKER_TOOL_FORCING_SPEC,
 ]
 
 CONFIG_SPEC_NAMES: frozenset[str] = frozenset(s.name for s in CONFIG_SPECS)
@@ -72,6 +86,7 @@ __all__ = [
     "USER_PROMPT_SPEC",
     "ATTACKER_TOOL_SPEC",
     "MEMORY_MODE_SPEC",
+    "ATTACKER_TOOL_FORCING_SPEC",
     "CONFIG_SPECS",
     "CONFIG_SPEC_NAMES",
 ]
