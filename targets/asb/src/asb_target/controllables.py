@@ -23,8 +23,8 @@ from superred.core.types.security_domain import SecurityDomainTag
 
 from asb_target.security_tags import (
     MEMORY_TAG,
-    SCENARIO_TOOL_TAGS,
     SYSTEM_PROMPT_TAG,
+    TOOL_OBSERVATION_TAGS,
     USER_TAG,
 )
 
@@ -82,13 +82,14 @@ def opi_tool_observation_ctrl(tag: SecurityDomainTag) -> Controllable:
     )
 
 
-#: Full advertised surface: DPI, PoT, MP, plus one OPI Controllable per
-#: scenario sub-boundary (so any tools.* scope sees an OPI surface).
+#: Full advertised surface: DPI, PoT, MP, plus one OPI Controllable per tool
+#: leaf (so any tools.* scope, whole-ecosystem / scenario / single-tool, sees
+#: an OPI surface).
 CONTROLLABLES: list[Controllable] = [
     DPI_USER_PROMPT_CTRL,
     POT_SYSTEM_DEMONSTRATION_CTRL,
     MP_RETRIEVED_WORKFLOW_CTRL,
-    *(opi_tool_observation_ctrl(tag) for tag in SCENARIO_TOOL_TAGS.values()),
+    *(opi_tool_observation_ctrl(tag) for tag in TOOL_OBSERVATION_TAGS.values()),
 ]
 
 __all__ = [

@@ -337,12 +337,8 @@ class SuperredReactAgent(ReactAgentAttack):  # type: ignore[misc]  # base is Any
                 # tool response (agent_trace_tool_responses), once.
                 self._emit_obs(agent_tool_response_observable(call_index), str(function_response))
 
-            actions.append(
-                f"I will call the {function_name} with the params as {function_params}"
-            )
-            observations.append(
-                f"The knowledge I get from {function_name} is: {function_response}"
-            )
+            actions.append(f"I will call the {function_name} with the params as {function_params}")
+            observations.append(f"The knowledge I get from {function_name} is: {function_response}")
 
         return actions, observations, success
 

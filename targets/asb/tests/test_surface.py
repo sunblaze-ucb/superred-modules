@@ -8,7 +8,6 @@ from asb_target.controllables import CONTROLLABLES, opi_tool_observation_ctrl
 from asb_target.observables import STATIC_OBSERVABLE_SPECS
 from asb_target.security_tags import (
     MEMORY_TAG,
-    SCENARIO_TOOL_TAGS,
     SYSTEM_PROMPT_TAG,
     SYSTEM_TAG,
     TOOL_OBSERVATION_TAGS,
@@ -32,14 +31,14 @@ def test_controllables_one_per_method_plus_opi_leaves() -> None:
     assert by_name["dpi_user_prompt"][0].security_domain is USER_TAG
     assert by_name["pot_system_demonstration"][0].security_domain is SYSTEM_PROMPT_TAG
     assert by_name["mp_retrieved_workflow"][0].security_domain is MEMORY_TAG
-    # one OPI controllable per scenario sub-boundary
-    assert len(by_name["opi_tool_observation"]) == len(SCENARIO_TOOL_TAGS)
+    # one OPI controllable per tool leaf (fully per-tool granular)
+    assert len(by_name["opi_tool_observation"]) == len(TOOL_OBSERVATION_TAGS) == 20
     opi_domains = {c.security_domain for c in by_name["opi_tool_observation"]}
-    assert opi_domains == set(SCENARIO_TOOL_TAGS.values())
+    assert opi_domains == set(TOOL_OBSERVATION_TAGS.values())
 
 
 def test_opi_builder_carries_passed_tag() -> None:
-    tag = SCENARIO_TOOL_TAGS["financial_analyst"]
+    tag = TOOL_OBSERVATION_TAGS["market_data_api"]
     ctrl = opi_tool_observation_ctrl(tag)
     assert ctrl.name == "opi_tool_observation"
     assert ctrl.security_domain is tag

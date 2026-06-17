@@ -1,10 +1,8 @@
-"""Unit tests for the redesigned trust-boundary forest."""
+"""Unit tests for the redesigned trust-boundary forest (tools > scenario > tool)."""
 
 from __future__ import annotations
 
-import time
-
-from superred.core.types.security_domain import scope_includes
+from superred.core.types.security_domain import SecurityDomain, SecurityDomainTag, scope_includes
 
 from asb_target.security_tags import (
     AGENT_TRACE_MESSAGES_TAG,
@@ -37,12 +35,12 @@ def _all_tags() -> list:
         MEMORY_TAG,
     ]
     tags.extend(SCENARIO_TOOL_TAGS.values())
+    tags.extend(TOOL_OBSERVATION_TAGS.values())
     return tags
 
 
 def test_four_roots_present() -> None:
-    root_names = {r.name for r in DOMAIN.roots}
-    assert root_names == {"user", "system", "tools", "memory"}
+    assert {r.name for r in DOMAIN.roots} == {"user", "system", "tools", "memory"}
 
 
 def test_no_removed_tags() -> None:
@@ -58,35 +56,43 @@ def test_no_removed_tags() -> None:
         "system_prompt_readable",
         "memory_readable",
     }
-    assert not (names & forbidden), f"removed tags still present: {names & forbidden}"
+    assert not (names & forbidden)
     assert not any(n.endswith("_readable") for n in names)
 
 
-def test_one_scenario_leaf_per_scenario() -> None:
+def test_tools_tree_is_three_levels_per_tool() -> None:
     assert len(NORMAL_TOOL_NAMES) == 20
-    assert len(SCENARIO_TOOL_TAGS) == 10
-    assert len(TOOLS_BY_SCENARIO) == 10
-    # every tool maps to a scenario tag
-    assert set(TOOL_OBSERVATION_TAGS) == set(NORMAL_TOOL_NAMES)
-    # the two tools of a scenario share that scenario's tag
+    assert len(SCENARIO_TOOL_TAGS) == 10  # scenario nodes
+    assert len(TOOL_OBSERVATION_TAGS) == 20  # one leaf per tool (fully representative)
+    # every tool has a distinct leaf whose parent is its scenario node
+    leaves = list(TOOL_OBSERVATION_TAGS.values())
+    assert len(set(id(t) for t in leaves)) == 20
     for scenario, tools in TOOLS_BY_SCENARIO.items():
-        tag = SCENARIO_TOOL_TAGS[scenario]
+        scenario_tag = SCENARIO_TOOL_TAGS[scenario]
+        assert scenario_tag.parent is TOOLS_TAG
         for tool in tools:
-            assert TOOL_OBSERVATION_TAGS[tool] is tag
+            leaf = TOOL_OBSERVATION_TAGS[tool]
+            assert leaf.parent is scenario_tag
+            assert leaf.name == f"tools.{scenario}.{tool}"
 
 
-def test_tools_root_subsumes_every_scenario() -> None:
+def test_subsumption_at_every_level() -> None:
     tools_scope = frozenset({TOOLS_TAG})
-    for tag in SCENARIO_TOOL_TAGS.values():
+    # {tools} subsumes every scenario node and every tool leaf
+    for tag in list(SCENARIO_TOOL_TAGS.values()) + list(TOOL_OBSERVATION_TAGS.values()):
         assert scope_includes(tools_scope, tag)
-
-
-def test_single_scenario_scope_is_narrow() -> None:
+    # a scenario scope subsumes its own tools but not another scenario's
     fin = SCENARIO_TOOL_TAGS["financial_analyst"]
-    admin = SCENARIO_TOOL_TAGS["system_admin"]
-    assert scope_includes(frozenset({fin}), fin)
-    assert not scope_includes(frozenset({fin}), admin)
-    assert not scope_includes(frozenset({fin}), TOOLS_TAG)
+    fin_scope = frozenset({fin})
+    assert scope_includes(fin_scope, TOOL_OBSERVATION_TAGS["market_data_api"])
+    assert scope_includes(fin_scope, TOOL_OBSERVATION_TAGS["portfolio_manager"])
+    assert not scope_includes(fin_scope, TOOL_OBSERVATION_TAGS["sys_monitor"])
+    assert not scope_includes(fin_scope, TOOLS_TAG)
+    # a single-tool scope is the narrowest: only that tool
+    leaf_scope = frozenset({TOOL_OBSERVATION_TAGS["market_data_api"]})
+    assert scope_includes(leaf_scope, TOOL_OBSERVATION_TAGS["market_data_api"])
+    assert not scope_includes(leaf_scope, TOOL_OBSERVATION_TAGS["portfolio_manager"])
+    assert not scope_includes(leaf_scope, fin)
 
 
 def test_system_subsumes_prompt_and_trace() -> None:
@@ -107,15 +113,19 @@ def test_memory_is_its_own_root() -> None:
     assert scope_includes(frozenset({MEMORY_TAG}), MEMORY_TAG)
 
 
-def test_distinct_combinations_feasible_and_cross_channel() -> None:
-    start = time.perf_counter()
-    combos = DOMAIN.distinct_combinations()
-    elapsed = time.perf_counter() - start
-    assert combos
-    # must stay cheap (the child-count is bounded so the antichain count does
-    # not explode) -- this guards against a future per-tool-leaf regression.
-    assert elapsed < 2.0, f"distinct_combinations too slow ({elapsed:.2f}s)"
-    fin = SCENARIO_TOOL_TAGS["financial_analyst"]
-    assert any(
-        scope_includes(frozenset(c), USER_TAG) and scope_includes(frozenset(c), fin) for c in combos
-    )
+def test_distinct_combinations_on_a_subtree() -> None:
+    # distinct_combinations is exponential in child count, so it is impractical
+    # on the full per-tool forest (and is never called on the run path, which
+    # uses scope_includes). Verify the antichain enumeration is correct on a
+    # small tools > scenario > tool subtree.
+    root = SecurityDomainTag("tools")
+    scen = SecurityDomainTag("tools.s", parent=root)
+    t1 = SecurityDomainTag("tools.s.a", parent=scen)
+    t2 = SecurityDomainTag("tools.s.b", parent=scen)
+    combos = SecurityDomain([root, scen, t1, t2]).distinct_combinations()
+    combos_set = {frozenset(c) for c in combos}
+    # antichains: {}, {root}, {scen}, {t1}, {t2}, {t1,t2}
+    assert frozenset({root}) in combos_set
+    assert frozenset({scen}) in combos_set
+    assert frozenset({t1, t2}) in combos_set
+    assert frozenset({root, scen}) not in combos_set  # root subsumes scen -> not an antichain

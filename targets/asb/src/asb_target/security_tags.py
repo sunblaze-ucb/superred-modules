@@ -2,11 +2,11 @@
 
 Agent Security Bench (ASB) attacks a tool-calling agent at four injection
 points. We model the target's attack surface as a forest of **trust
-boundaries**, the loci an attacker could separately compromise, with
-hierarchy where a boundary genuinely contains separable sub-boundaries
-(parent grants its children). There is NO data-provenance split and NO
-separate read/write tags: read-only access to any tag is granted natively by
-the Controller's read-only scope, so a tag means "can tamper here".
+boundaries**, the loci an attacker could separately compromise, with hierarchy
+where a boundary genuinely contains separable sub-boundaries (parent grants its
+children). There is NO data-provenance split and NO separate read/write tags:
+read-only access to any tag is granted natively by the Controller's read-only
+scope, so a tag means "can tamper here".
 
 Four root boundaries:
 
@@ -17,14 +17,15 @@ Four root boundaries:
   plan-format scaffolding itself is the target's own and always present.
   ``agent_trace`` is the read-only observability subtree for the agent's own
   generations. Scope for PoT: ``{system_prompt}``.
-- ``tools`` -- the tool ecosystem. Observation Prompt Injection (OPI)
-  tampers with what a tool returns. ASB's tools belong to ten operational
-  scenarios; each scenario's tool environment is a separately compromisable
-  system, so the root has one mechanical sub-boundary per scenario
-  (``tools.<scenario>``), each grouping that scenario's tools. The
-  upstream-faithful, provenance-blind OPI scope is the ``{tools}`` root (it
-  subsumes every scenario), and a threat model can restrict an attacker to a
-  single scenario's tools. Scope for OPI: ``{tools}`` or a ``tools.<scenario>``.
+- ``tools`` -- the tool ecosystem. Observation Prompt Injection (OPI) tampers
+  with what a tool returns. ASB's tools belong to ten operational scenarios,
+  and each tool is its own backing system, so the tree is three levels:
+  ``tools`` (the whole ecosystem) -> ``tools.<scenario>`` (one scenario's tool
+  environment, e.g. the financial-analyst suite) -> ``tools.<scenario>.<tool>``
+  (a single tool/service). An attacker can be scoped to one tool, one
+  scenario's tools, or the whole ecosystem; the upstream-faithful,
+  provenance-blind OPI scope is the ``{tools}`` root (it subsumes every
+  scenario and tool). Scope for OPI: ``{tools}`` or any ``tools.*`` node.
 - ``memory`` -- the durable agent memory store (a separately compromisable
   component). Memory Poisoning (MP) tampers at the memory-read point.
   Scope: ``{memory}``.
@@ -32,15 +33,18 @@ Four root boundaries:
 Method -> scope:
     DPI -> {user}
     PoT -> {system_prompt}
-    OPI -> {tools}  (or a single tools.<scenario>)
+    OPI -> {tools}  (or a scenario / single-tool sub-node)
     MP  -> {memory}
 
-The scenario sub-boundaries are built mechanically from
+The scenario and tool nodes are built mechanically from
 :data:`TOOLS_BY_SCENARIO` (each tool maps to its scenario by the dataset's
-``Corresponding Agent``, no hand-authored grouping). Per-tool leaves were
-deliberately not used: the framework's antichain enumeration
-(``distinct_combinations``) is exponential in a node's child count, so 20
-sibling tool leaves are infeasible while ten scenario leaves are cheap.
+``Corresponding Agent``; no hand-authored grouping). This forest is fully
+per-tool granular, so the *run path* (which uses ``scope_includes``, cheap on
+any size) is unaffected, but the framework's ``distinct_combinations``
+antichain enumeration -- a standalone research utility, never called on the run
+path -- is impractical on the full forest (millions of antichains, the
+inherent cost of granularity); enumerate antichains on a chosen subtree, or
+build scopes directly.
 """
 
 from __future__ import annotations
@@ -92,7 +96,7 @@ AGENT_TRACE_TOOL_RESPONSES_TAG: SecurityDomainTag = SecurityDomainTag(
 are on the trajectory via their OPI controllable event)."""
 
 # ---------------------------------------------------------------------------
-# Tree 3: tools  (the tool ecosystem) -- OPI, one leaf per scenario
+# Tree 3: tools  (the tool ecosystem) -- OPI, three levels: tools > scenario > tool
 # ---------------------------------------------------------------------------
 
 TOOLS_TAG: SecurityDomainTag = SecurityDomainTag("tools")
@@ -120,15 +124,16 @@ NORMAL_TOOL_NAMES: tuple[str, ...] = tuple(
     tool for tools in TOOLS_BY_SCENARIO.values() for tool in tools
 )
 
-#: One OPI leaf per scenario, child of :data:`TOOLS_TAG`. Keyed by scenario.
+#: Scenario nodes (mid level), children of :data:`TOOLS_TAG`. Keyed by scenario.
 SCENARIO_TOOL_TAGS: dict[str, SecurityDomainTag] = {
     scenario: SecurityDomainTag(f"tools.{scenario}", parent=TOOLS_TAG)
     for scenario in TOOLS_BY_SCENARIO
 }
 
-#: Reverse map: tool name -> its scenario's OPI tag.
+#: Tool leaves (deepest level), each a child of its scenario node. Keyed by
+#: tool name; this is the OPI tag a specific tool's observation fires under.
 TOOL_OBSERVATION_TAGS: dict[str, SecurityDomainTag] = {
-    tool: SCENARIO_TOOL_TAGS[scenario]
+    tool: SecurityDomainTag(f"tools.{scenario}.{tool}", parent=SCENARIO_TOOL_TAGS[scenario])
     for scenario, tools in TOOLS_BY_SCENARIO.items()
     for tool in tools
 }
@@ -158,15 +163,17 @@ DOMAIN: SecurityDomain = SecurityDomain(
         AGENT_TRACE_MESSAGES_TAG,
         AGENT_TRACE_TOOL_CALLS_TAG,
         AGENT_TRACE_TOOL_RESPONSES_TAG,
-        # tools tree (root + one leaf per scenario)
+        # tools tree (root -> scenario nodes -> tool leaves)
         TOOLS_TAG,
         *SCENARIO_TOOL_TAGS.values(),
+        *TOOL_OBSERVATION_TAGS.values(),
         # memory tree
         MEMORY_TAG,
     ]
 )
 """The full trust-boundary forest exposed by :class:`AsbTarget`: four roots
-(user, system, tools, memory), 17 tags total."""
+(user, system, tools, memory); the tools tree is per-tool granular (10
+scenario nodes + 20 tool leaves)."""
 
 
 __all__ = [

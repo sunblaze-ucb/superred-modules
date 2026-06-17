@@ -131,9 +131,11 @@ class AsbTarget(Target):
         elif name == "memory_mode":
             self._memory_mode = bool(value) and value.strip().lower() not in {"off", "false", "0"}
         elif name == "attacker_tool_forcing":
-            self._force_attacker_tool = (
-                bool(value) and value.strip().lower() not in {"off", "false", "0"}
-            )
+            self._force_attacker_tool = bool(value) and value.strip().lower() not in {
+                "off",
+                "false",
+                "0",
+            }
 
     # -- Query ----------------------------------------------------------------
 

@@ -140,14 +140,19 @@ infrastructure**. Specific attacks are an attacker's concern, not the target's.
   read-only scope grants see-but-not-inject on any tag). `model_identity` and
   `tool_catalog` tags are removed (model is construction-only; the attacker
   tool is Task setup, not an attacker-controlled write).
-- **E.2** `tools` has one **mechanical** sub-boundary per scenario
-  (`tools.<scenario>`, ten of them; each scenario's two tools share its tag,
-  derived from the dataset's `Corresponding Agent`). The upstream-faithful,
-  provenance-blind OPI scope is the `{tools}` root. Per-tool leaves were
-  **deliberately not used**: the framework's `distinct_combinations` antichain
-  enumeration is exponential in a node's child count, so 20 sibling leaves are
-  infeasible (~10^6 antichains) while ten scenario leaves are cheap. This is a
-  beyond-upstream additive refinement (ASB draws no per-tool distinction).
+- **E.2** The `tools` tree is **fully per-tool granular**, three levels:
+  `tools` (the whole ecosystem) -> `tools.<scenario>` (one scenario's tool
+  environment, ten of them) -> `tools.<scenario>.<tool>` (a single tool/service,
+  twenty leaves), built mechanically from the dataset's `Corresponding Agent`
+  (no hand-authored grouping). An attacker can be scoped to one tool, one
+  scenario's tools, or the whole ecosystem; the upstream-faithful,
+  provenance-blind OPI scope is the `{tools}` root (a faithful uniform-OPI run
+  uses it). The per-tool/per-scenario nodes are a beyond-upstream additive
+  refinement (ASB draws no per-tool distinction). The framework's
+  `distinct_combinations` antichain enumeration is exponential in child count
+  and is impractical on this granular forest; it is a standalone research
+  utility never called on the run path (which uses the cheap `scope_includes`),
+  so enumerate antichains on a chosen subtree, or build scopes directly.
 
 ## F. Trajectory / observables
 
