@@ -9,7 +9,7 @@ description = "AgentDojo composite target for superred: union of all four AgentD
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "superred>=0.1.0",
-    "agentdojo>=0.1.35",
+    "agentdojo==0.1.35",
     "pydantic>=2.7",
     "pyyaml>=6.0",
 ]

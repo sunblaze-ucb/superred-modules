@@ -33,12 +33,15 @@ from superred.core.types.events import (
     ControllablePostCallEvent,
     ObservableEvent,
 )
-from superred.core.types.observable import Observable
 
-from agentdojo_target.runtime_wrapper import WrappedFunctionsRuntime
+from agentdojo_target.controllables import WRITE_STORE_MAP
+from agentdojo_target.runtime_wrapper import (
+    WrappedFunctionsRuntime,
+)
 from agentdojo_target.security_tags import (
     TOOL_CATALOGUE_ADDABLE_TAG,
     TOOL_CATALOGUE_TAG,
+    WORKSPACE_INBOX_TAG,
 )
 from agentdojo_target.seed_loader import load_composite_seed
 from agentdojo_target.tool_catalog import ToolCatalog
@@ -176,15 +179,14 @@ def test_canonical_read_emits_no_observable_mirror(loop, catalog, env) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_canonical_write_invokes_body_without_extra_observables(
-    loop, catalog, env
-) -> None:
+def test_canonical_write_invokes_body_and_emits_write_call(loop, catalog, env) -> None:
     """Writes call the canonical body; no per-call injection event is fired.
 
-    No ``write_call:*`` observable either — the call lands on the
-    trajectory exactly once, as the live ``agent_trace_tool_call``
-    observable emitted at invocation (and SecurityClaim predicates use the
-    ``write_calls_made`` query).
+    A successful canonical write emits a third observable, ``write_call_NNNN``,
+    after the response observable.  It is tagged at the store the write mutates
+    (``WRITE_STORE_MAP[function]``) and its content reproduces the FunctionCall
+    (function name + args), so a service-scoped attacker sees the action it
+    provoked under the boundary it reads from.
     """
     rec = EventRecorder()
     wrapper = WrappedFunctionsRuntime(
@@ -194,22 +196,76 @@ def test_canonical_write_invokes_body_without_extra_observables(
         loop=loop,
     )
     pre_count = len(env.workspace.inbox.emails)
-    result, error = wrapper.run_function(
-        env,
-        "workspace__send_email",
-        {
-            "recipients": ["test@example.com"],
-            "subject": "hi",
-            "body": "test",
-        },
-    )
+    args = {
+        "recipients": ["test@example.com"],
+        "subject": "hi",
+        "body": "test",
+    }
+    result, error = wrapper.run_function(env, "workspace__send_email", args)
     assert error is None, error
     # Inbox grew by 1.
     assert len(env.workspace.inbox.emails) == pre_count + 1
     # No injection event was fired (writes do not have per-read ctrls).
     assert not rec.events
+    # The successful write emits the write_call observable AFTER the response.
+    names = [o.observable.name for o in rec.observables]
+    assert names == [
+        "agent_trace_tool_call_0000",
+        "agent_trace_tool_response_0000",
+        "write_call_0000",
+    ]
+    # write_call is tagged at the store the write mutates.
+    write_obs = rec.observables[2]
+    assert write_obs.observable.security_domain is WORKSPACE_INBOX_TAG
+    assert (
+        write_obs.observable.security_domain is WRITE_STORE_MAP["workspace__send_email"]
+    )
+    # Its content reproduces the FunctionCall (name + args).
+    assert write_obs.content["function"] == "workspace__send_email"
+    assert write_obs.content["args"] == args
+
+
+def test_errored_canonical_write_emits_no_write_call(loop, catalog, env) -> None:
+    """A write that errors emits no write_call observable.
+
+    The write observation only fires when ``error is None``; an errored
+    write (here a missing-required-arg validation error on a write tool)
+    produces only the two trace observables.
+    """
+    rec = EventRecorder()
+    wrapper = WrappedFunctionsRuntime(
+        catalog=catalog,
+        send_event=rec.send_event,
+        emit=rec.emit,
+        loop=loop,
+    )
+    # banking__send_money is a write tool (in WRITE_STORE_MAP); calling it
+    # with no args triggers an upstream validation error.
+    assert "banking__send_money" in WRITE_STORE_MAP
+    _, error = wrapper.run_function(env, "banking__send_money", {})
+    assert error is not None
     names = [o.observable.name for o in rec.observables]
     assert names == ["agent_trace_tool_call_0000", "agent_trace_tool_response_0000"]
+    assert not any(n.startswith("write_call_") for n in names)
+
+
+def test_refresh_functions_emits_tool_menu_rebuild_observable(
+    loop, catalog, env
+) -> None:
+    """refresh_functions emits a tool_menu_rebuild observable after the swap."""
+    rec = EventRecorder()
+    wrapper = WrappedFunctionsRuntime(
+        catalog=catalog,
+        send_event=rec.send_event,
+        emit=rec.emit,
+        loop=loop,
+    )
+    wrapper.refresh_functions()
+    rebuilds = [
+        o for o in rec.observables if o.observable.name.startswith("tool_menu_rebuild_")
+    ]
+    assert len(rebuilds) == 1
+    assert rebuilds[0].observable.name == "tool_menu_rebuild_0000"
 
 
 def test_every_call_emits_live_tool_call_observable(loop, catalog, env) -> None:

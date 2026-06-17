@@ -34,7 +34,7 @@ controller = Controller(
     optimizer_factory=lambda: MyOptimizer(),
     target_factory=target_factory,
     security_claim=claim,
-    scope=frozenset({USER_TAG, CONTENT_3P_DATA_3P_TAG}),  # example scope
+    scope=frozenset({USER_TAG, TOOLS_TAG}),  # example scope
 )
 await controller.run()
 ```

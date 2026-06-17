@@ -23,7 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import re
@@ -52,11 +52,25 @@ from agentdojo_target.controllables import (
     TOOL_CATALOG_REWRITE_DOC_CTRL,
     TOOL_CATALOG_UNREGISTER_CTRL,
 )
-from agentdojo_target.observables import chat_message_observable
+from agentdojo_target.observables import (
+    catalog_edit_outcome_observable,
+    chat_message_observable,
+    discarded_action_observable,
+)
 from agentdojo_target.runtime_wrapper import WrappedFunctionsRuntime
+from agentdojo_target.security_tags import (
+    TOOL_CATALOGUE_ADDABLE_TAG,
+    TOOL_CATALOGUE_TAG,
+)
 from agentdojo_target.tool_catalog import ToolCatalog
 
 logger = logging.getLogger(__name__)
+
+
+def _noop_emit(event: Any) -> None:
+    """Default no-op emit so elements constructed without an emitter (e.g.
+    in existing unit tests) stay fire-and-forget silent."""
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -90,11 +104,13 @@ class _CatalogEditHook(BasePipelineElement):
         wrapper: WrappedFunctionsRuntime,
         send_event: EventResponseHandler,
         loop: asyncio.AbstractEventLoop,
+        emit: EventHandler = _noop_emit,
     ) -> None:
         self._catalog = catalog
         self._wrapper = wrapper
         self._send_event = send_event
         self._loop = loop
+        self._emit = emit
 
     _OPTIMIZER_RESPONSE_TIMEOUT_SECONDS: float = 180.0
 
@@ -102,22 +118,45 @@ class _CatalogEditHook(BasePipelineElement):
         future = asyncio.run_coroutine_threadsafe(self._send_event(event), self._loop)
         return future.result(timeout=self._OPTIMIZER_RESPONSE_TIMEOUT_SECONDS)
 
-    def _try_apply(self, method: Any, raw: str) -> None:
+    def _emit_outcome(
+        self, operation: str, tag: Any, status: str, detail: str | None
+    ) -> None:
+        """Emit a one-way observable recording one catalogue-edit outcome.
+
+        Fire-and-forget; never alters the apply/reject decision."""
+        self._emit(
+            ObservableEvent(
+                observable=catalog_edit_outcome_observable(operation, tag),
+                content={"operation": operation, "status": status, "detail": detail},
+            )
+        )
+
+    def _try_apply(self, method: Any, raw: str, operation: str, tag: Any) -> None:
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError as exc:
             logger.warning("Catalog injection payload was not valid JSON: %s", exc)
+            self._emit_outcome(operation, tag, "rejected", f"invalid JSON: {exc}")
             return
         if not isinstance(payload, dict):
             logger.warning(
                 "Catalog injection payload must be a dict, got %s",
                 type(payload).__name__,
             )
+            self._emit_outcome(
+                operation,
+                tag,
+                "rejected",
+                f"payload not a dict: {type(payload).__name__}",
+            )
             return
         try:
             method(payload)
         except (ValueError, ValidationError) as exc:
             logger.warning("Catalog mutation rejected: %s", exc)
+            self._emit_outcome(operation, tag, "rejected", str(exc))
+            return
+        self._emit_outcome(operation, tag, "applied", None)
 
     def query(
         self,
@@ -128,19 +167,39 @@ class _CatalogEditHook(BasePipelineElement):
         extra_args: dict = {},
     ) -> tuple[str, FunctionsRuntime, Env, Sequence[ChatMessage], dict]:
         ops = (
-            (TOOL_CATALOG_REGISTER_CTRL, self._catalog.apply_register),
-            (TOOL_CATALOG_REPLACE_CTRL, self._catalog.apply_replace),
-            (TOOL_CATALOG_UNREGISTER_CTRL, self._catalog.apply_unregister),
-            (TOOL_CATALOG_REWRITE_DOC_CTRL, self._catalog.apply_rewrite_doc),
+            (
+                TOOL_CATALOG_REGISTER_CTRL,
+                self._catalog.apply_register,
+                "register",
+                TOOL_CATALOGUE_ADDABLE_TAG,
+            ),
+            (
+                TOOL_CATALOG_REPLACE_CTRL,
+                self._catalog.apply_replace,
+                "replace",
+                TOOL_CATALOGUE_TAG,
+            ),
+            (
+                TOOL_CATALOG_UNREGISTER_CTRL,
+                self._catalog.apply_unregister,
+                "unregister",
+                TOOL_CATALOGUE_TAG,
+            ),
+            (
+                TOOL_CATALOG_REWRITE_DOC_CTRL,
+                self._catalog.apply_rewrite_doc,
+                "rewrite_doc",
+                TOOL_CATALOGUE_TAG,
+            ),
         )
         applied_any = False
-        for ctrl, apply_method in ops:
+        for ctrl, apply_method, op_label, op_tag in ops:
             event = ControllablePreCallEvent(
                 controllable=ctrl, request="catalog edit slot"
             )
             response = self._await_event(event)
             if isinstance(response, ControllableInjection):
-                self._try_apply(apply_method, response.value)
+                self._try_apply(apply_method, response.value, op_label, op_tag)
                 applied_any = True
         if applied_any:
             self._wrapper.refresh_functions()
@@ -257,6 +316,17 @@ class _CompatibleOpenAILLM(OpenAILLM):
 
     _VALID_NAME_RE: Any = re.compile(r"^[a-zA-Z0-9_-]+$")
 
+    def __init__(
+        self,
+        client: openai.OpenAI,
+        model: str,
+        *,
+        emit: EventHandler = _noop_emit,
+    ) -> None:
+        super().__init__(client, model)
+        self._emit = emit
+        self._discard_counter = 0
+
     def query(  # type: ignore[override]
         self,
         query: str,
@@ -283,13 +353,43 @@ class _CompatibleOpenAILLM(OpenAILLM):
             return out_query, out_runtime, out_env, out_messages, out_extra
         sanitised = _sanitise_tool_calls(tool_calls)
         if sanitised != tool_calls:
+            dropped_names = [
+                name
+                for call in tool_calls
+                if not (
+                    isinstance((name := _tool_call_name(call)), str)
+                    and self._VALID_NAME_RE.match(name)
+                )
+            ]
             logger.warning(
                 "Filtered %d malformed tool_call name(s) from the assistant "
                 "response (parallel-wrapper compatibility)",
-                len(tool_calls) - len(sanitised),
+                len(dropped_names),
             )
             out_messages[-1] = {**last, "tool_calls": sanitised}
+            # One-way notice that a malformed action the model requested was
+            # discarded, so a trace-scoped reader sees it rather than the
+            # call silently vanishing.  Fire-and-forget; the sanitise
+            # decision above is unchanged.
+            self._emit(
+                ObservableEvent(
+                    observable=discarded_action_observable(self._discard_counter),
+                    content={
+                        "dropped_names": dropped_names,
+                        "dropped_count": len(dropped_names),
+                    },
+                )
+            )
+            self._discard_counter += 1
         return out_query, out_runtime, out_env, out_messages, out_extra
+
+
+def _tool_call_name(call: Any) -> Any:
+    """Extract the function name from a FunctionCall object or a dict."""
+    name = getattr(call, "function", None)
+    if name is None and isinstance(call, dict):
+        name = call.get("function")
+    return name
 
 
 def _sanitise_tool_calls(tool_calls: Sequence[Any]) -> list[Any]:
@@ -338,8 +438,12 @@ def _sanitise_tool_calls(tool_calls: Sequence[Any]) -> list[Any]:
 
 
 def _build_llm(
-    model_id: str, *, api_base: str | None, api_key: str | None
-) -> BasePipelineElement:
+    model_id: str,
+    *,
+    api_base: str | None,
+    api_key: str | None,
+    emit: EventHandler = _noop_emit,
+) -> tuple[BasePipelineElement, Callable[[], None]]:
     """Construct an AgentDojo LLM element from a litellm-style model id.
 
     Supported providers:
@@ -354,6 +458,13 @@ def _build_llm(
         model_id: e.g. ``openai/gpt-4o-2024-05-13``.
         api_base: Override base URL (most relevant for litellm-proxy).
         api_key: Override API key (defaults to environment lookup).
+        emit: Trajectory emitter passed to the LLM element for one-way
+            control observables (e.g. a discarded malformed action).
+
+    Returns:
+        A ``(element, close)`` pair.  ``close`` releases the underlying
+        provider client's connection pool; the caller must invoke it once
+        the run is finished (including on the failure path).
 
     Raises:
         NotImplementedError: If the provider prefix is not openai or
@@ -370,9 +481,9 @@ def _build_llm(
             api_key=api_key,
             base_url=api_base,
         )
-        return _CompatibleOpenAILLM(client, model_name)
+        return _CompatibleOpenAILLM(client, model_name, emit=emit), client.close
     if provider == "anthropic":
-        client = anthropic.Anthropic(
+        anthropic_client = anthropic.Anthropic(
             api_key=api_key,
             base_url=api_base,
         )
@@ -384,10 +495,13 @@ def _build_llm(
                 raise ValueError(
                     f"Anthropic 'thinking' suffix must be an integer, got {budget!r}"
                 ) from exc
-            return AnthropicLLM(
-                client, base_model, thinking_budget_tokens=budget_tokens
+            return (
+                AnthropicLLM(
+                    anthropic_client, base_model, thinking_budget_tokens=budget_tokens
+                ),
+                anthropic_client.close,
             )
-        return AnthropicLLM(client, model_name)
+        return AnthropicLLM(anthropic_client, model_name), anthropic_client.close
     raise NotImplementedError(
         f"Provider {provider!r} not implemented in v1.  Supported: "
         "openai, anthropic.  Extending is mechanical; see "
@@ -407,7 +521,7 @@ def build_pipeline(
     loop: asyncio.AbstractEventLoop,
     api_base: str | None = None,
     api_key: str | None = None,
-) -> AgentPipeline:
+) -> tuple[AgentPipeline, Callable[[], None]]:
     """Build the AgentDojo :class:`AgentPipeline` for one run.
 
     Splices two hooks into the pipeline:
@@ -455,14 +569,22 @@ def build_pipeline(
     hook references the same wrapper instance so its
     :meth:`WrappedFunctionsRuntime.refresh_functions` can be invoked
     in-place.
+
+    Returns:
+        A ``(pipeline, close)`` pair.  ``close`` releases the underlying
+        provider client opened for this run; the caller must invoke it
+        when the run finishes, including on the failure path.
     """
-    llm = _build_llm(pipeline_model, api_base=api_base, api_key=api_key)
+    llm, close_llm = _build_llm(
+        pipeline_model, api_base=api_base, api_key=api_key, emit=emit
+    )
     msg_hook = _MessageStreamHook(emit=emit)
     hook = _CatalogEditHook(
         catalog=catalog,
         wrapper=wrapper,
         send_event=send_event,
         loop=loop,
+        emit=emit,
     )
     # Inner loop: per-turn tool execution -> message-stream emission ->
     # next LLM call -> emit the assistant turn output.  The catalog-edit hook
@@ -487,7 +609,7 @@ def build_pipeline(
         ]
     )
     pipeline.name = pipeline_model
-    return pipeline
+    return pipeline, close_llm
 
 
 __all__ = ["build_pipeline"]

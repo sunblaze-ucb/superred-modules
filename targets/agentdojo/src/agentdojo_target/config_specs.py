@@ -13,9 +13,11 @@ Slots:
   to the composite environment after seed load and before run start.
   Tasks use this to replay AgentDojo's per-task ``init_environment``
   mutations.  Empty string is treated as "no overlay."
-- ``pipeline_model`` - litellm-style model id for the underlying
-  AgentDojo :class:`AgentPipeline`.  Provider prefix determines the
-  AgentDojo LLM backend (v1: ``openai/``, ``anthropic/``).
+
+The model that powers the agent is a construction concern fixed for the
+experiment (the ``pipeline_model`` constructor argument of
+:class:`AgentDojoTarget`), not a per-run config slot, so every run in one
+experiment measures the same defender.
 
 All slots accept text.  The descriptions are the only contracts.
 """
@@ -25,12 +27,23 @@ from __future__ import annotations
 from superred.core.types.state import ConfigSpec
 
 from agentdojo_target.security_tags import (
-    CONTENT_1P_DATA_1P_TAG,
-    MODEL_IDENTITY_TAG,
+    BANKING_TAG,
     PROMPT_TAG,
+    SLACK_TAG,
+    TRAVEL_TAG,
     USER_TAG,
+    WORKSPACE_TAG,
 )
 from agentdojo_target.tool_registry import SUITE_NAMES
+
+# A per-suite seed overlay can touch any store in that suite, so it is
+# tagged at the suite's service node rather than any single store leaf.
+_SERVICE_TAG_BY_SUITE = {
+    "banking": BANKING_TAG,
+    "workspace": WORKSPACE_TAG,
+    "slack": SLACK_TAG,
+    "travel": TRAVEL_TAG,
+}
 
 SYSTEM_PROMPT_SPEC: ConfigSpec = ConfigSpec(
     name="system_prompt",
@@ -53,21 +66,11 @@ USER_PROMPT_SPEC: ConfigSpec = ConfigSpec(
     ),
 )
 
-PIPELINE_MODEL_SPEC: ConfigSpec = ConfigSpec(
-    name="pipeline_model",
-    security_domain=MODEL_IDENTITY_TAG,
-    description=(
-        "litellm-style model id, e.g. 'openai/gpt-4o-2024-05-13' or "
-        "'anthropic/claude-3-5-sonnet-20241022'.  v1 supports openai/ "
-        "and anthropic/ prefixes."
-    ),
-)
-
 
 def _seed_yaml_override_spec(suite: str) -> ConfigSpec:
     return ConfigSpec(
         name=f"seed_yaml_override__{suite}",
-        security_domain=CONTENT_1P_DATA_1P_TAG,
+        security_domain=_SERVICE_TAG_BY_SUITE[suite],
         description=(
             f"JSON or YAML overlay merged into env.{suite} before run "
             "start.  Used by Tasks to replay AgentDojo per-task "
@@ -84,7 +87,6 @@ SEED_OVERRIDE_SPECS: tuple[ConfigSpec, ...] = tuple(
 CONFIG_SPECS: list[ConfigSpec] = [
     SYSTEM_PROMPT_SPEC,
     USER_PROMPT_SPEC,
-    PIPELINE_MODEL_SPEC,
     *SEED_OVERRIDE_SPECS,
 ]
 """All ConfigSpecs returned from :attr:`AgentDojoTarget.config_specs`,
@@ -97,7 +99,6 @@ CONFIG_SPEC_NAMES: frozenset[str] = frozenset(s.name for s in CONFIG_SPECS)
 __all__ = [
     "SYSTEM_PROMPT_SPEC",
     "USER_PROMPT_SPEC",
-    "PIPELINE_MODEL_SPEC",
     "SEED_OVERRIDE_SPECS",
     "CONFIG_SPECS",
     "CONFIG_SPEC_NAMES",

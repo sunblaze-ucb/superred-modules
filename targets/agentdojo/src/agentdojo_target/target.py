@@ -7,9 +7,10 @@ query specs, pipeline bridge.
 Lifecycle:
 
 1. ``__init__``: build the canonical seed env + tool list once.
-2. ``set_config``: Tasks set ``system_prompt``, ``user_prompt``, the
-   per-suite ``seed_yaml_override__*`` slots, and optionally
-   ``pipeline_model`` before each run.
+2. ``set_config``: Tasks set ``system_prompt``, ``user_prompt``, and the
+   per-suite ``seed_yaml_override__*`` slots before each run.  The model
+   is a construction concern (the ``pipeline_model`` constructor
+   argument), not a per-run slot.
 3. ``run(emit, send_event)``: five-phase execution.
 
    - Phase 1: system_prompt controllable event; optimizer may override.
@@ -22,8 +23,10 @@ Lifecycle:
      AgentDojo's outer retry loop.  Only ``AbortAgentError`` (raised by
      defense pipeline elements) is caught; all other exceptions
      propagate.
-   - Phase 5: emit the final composite-env-snapshot observable (tool
-     calls were already emitted live by the wrapped runtime).
+   - Phase 5: none.  No whole-environment observable is emitted; store
+     contents reachable via a read controllable are not mirrored, and the
+     full post-run environment is available to the scorer via the query
+     specs.  The per-run provider connection is closed in a ``finally``.
 
 4. ``query``: post-run readers (last_response, function_call_trace,
    pre/post env snapshot, conversation_history, tool catalog snapshot,
@@ -53,7 +56,6 @@ from superred.core.types.event import EventHandler, EventResponseHandler
 from superred.core.types.events import (
     ControllableInjection,
     ControllablePreCallEvent,
-    ObservableEvent,
 )
 from superred.core.types.observable import ObservableValue
 from superred.core.types.security_domain import SecurityDomain
@@ -62,7 +64,6 @@ from superred.core.types.state import ConfigSpec, QuerySpec
 from agentdojo_target.config_specs import (
     CONFIG_SPEC_NAMES,
     CONFIG_SPECS,
-    PIPELINE_MODEL_SPEC,
     SEED_OVERRIDE_SPECS,
     SYSTEM_PROMPT_SPEC,
     USER_PROMPT_SPEC,
@@ -74,7 +75,6 @@ from agentdojo_target.controllables import (
 )
 from agentdojo_target.env import CompositeEnvironment, sync_initial_fields
 from agentdojo_target.observables import (
-    COMPOSITE_ENV_SNAPSHOT_OBS,
     MODEL_IDENTITY_OBS,
     TOOL_CATALOG_LISTING_OBS,
 )
@@ -105,8 +105,8 @@ class AgentDojoTarget(Target):
     Args:
         pipeline_model: litellm-style model id for the underlying
             AgentDojo agent pipeline (e.g. ``openai/gpt-4o-2024-05-13``).
-            Tasks may override per-run via the ``pipeline_model`` config
-            slot.
+            Fixed for the experiment at construction; it is not a per-run
+            config slot, so every run measures the same defender.
         api_base: Optional API base URL (e.g. for a litellm proxy).
         api_key: Optional API key.  Falls back to the provider client's
             environment variables when unset.
@@ -144,6 +144,13 @@ class AgentDojoTarget(Target):
         return list(CONFIG_SPECS)
 
     def set_config(self, name: str, value: str) -> None:
+        if name == "pipeline_model":
+            raise ValueError(
+                "pipeline_model is a build-time construction choice (the "
+                "AgentDojoTarget constructor argument), not a per-run config "
+                "slot, so that every run in an experiment measures the same "
+                "model.  Set it when constructing the target."
+            )
         if name not in CONFIG_SPEC_NAMES:
             raise ValueError(
                 f"Unknown config slot {name!r}.  Expected one of "
@@ -153,8 +160,6 @@ class AgentDojoTarget(Target):
             self._system_prompt = value
         elif name == USER_PROMPT_SPEC.name:
             self._user_prompt = value
-        elif name == PIPELINE_MODEL_SPEC.name:
-            self._pipeline_model = value
         else:
             # Per-suite seed overlay.  The slot name is
             # ``seed_yaml_override__{suite}``.
@@ -223,14 +228,14 @@ class AgentDojoTarget(Target):
         """Static observables with current pre-run content snapshots.
 
         Returned at ``initialize()`` time so optimizers know about the
-        model identity, seeded tool catalog, and full composite env
-        *before* any tool call.  The system prompt is not mirrored here;
-        it is carried once, on the Phase-1 system-prompt
-        ControllablePreCallEvent.  Out-of-scope items are filtered by
-        the controller.
+        model identity and the seeded tool catalog *before* any tool
+        call.  The system prompt is not mirrored here; it is carried
+        once, on the Phase-1 system-prompt ControllablePreCallEvent.  The
+        composite environment is NOT exposed as an observable: store
+        contents reachable via a read controllable are not mirrored, and
+        the full state is available post-run to the scorer via the query
+        specs.  Out-of-scope items are filtered by the controller.
         """
-        # Build a transient catalog + env snapshot to expose pre-run.
-        seed_env = self._build_seed_env_with_overrides()
         seed_catalog = ToolCatalog.from_seed(ALL_FUNCTIONS)
         return [
             ObservableValue(
@@ -239,10 +244,6 @@ class AgentDojoTarget(Target):
             ObservableValue(
                 observable=TOOL_CATALOG_LISTING_OBS,
                 content=seed_catalog.snapshot(),
-            ),
-            ObservableValue(
-                observable=COMPOSITE_ENV_SNAPSHOT_OBS,
-                content=seed_env.model_dump(),
             ),
         ]
 
@@ -294,7 +295,7 @@ class AgentDojoTarget(Target):
             emit=emit,
             loop=loop,
         )
-        pipeline = build_pipeline(
+        pipeline, close_pipeline = build_pipeline(
             pipeline_model=self._pipeline_model,
             system_prompt=effective_system,
             catalog=self._catalog,
@@ -309,45 +310,47 @@ class AgentDojoTarget(Target):
         # Snapshot pre-environment AFTER phases 1+2 but BEFORE any tools run.
         self._pre_env = self._env.model_copy(deep=True)
 
-        model_output: list[MessageContentBlock] | None = None
-        for _ in range(3):
-            try:
-                _q, _runtime, new_env, messages, _extra = await asyncio.to_thread(
-                    pipeline.query,
-                    effective_user,
-                    self._wrapped_runtime,
-                    self._env,
-                )
-            except AbortAgentError as e:
-                new_env = e.task_environment
-                messages = e.messages
-            self._env = new_env
-            self._messages = messages
-            model_output = _model_output_from_messages(messages)
-            if model_output is not None:
-                break
+        try:
+            model_output: list[MessageContentBlock] | None = None
+            for _ in range(3):
+                try:
+                    _q, _runtime, new_env, messages, _extra = await asyncio.to_thread(
+                        pipeline.query,
+                        effective_user,
+                        self._wrapped_runtime,
+                        self._env,
+                    )
+                except AbortAgentError as e:
+                    new_env = e.task_environment
+                    messages = e.messages
+                self._env = new_env
+                self._messages = messages
+                model_output = _model_output_from_messages(messages)
+                if model_output is not None:
+                    break
 
-        if model_output is None:
-            logger.warning("Model output was None after 3 pipeline attempts")
+            if model_output is None:
+                logger.warning("Model output was None after 3 pipeline attempts")
 
-        self._last_response = _content_blocks_to_text(model_output)
-        # The wrapped runtime's trace mirrors AgentDojo's
-        # functions_stack_trace_from_messages but is recorded eagerly so
-        # it survives mid-run exceptions.
-        self._function_call_trace = (
-            self._wrapped_runtime.trace if self._wrapped_runtime is not None else []
-        )
-
-        # --- Phase 5: final observables ---
-        # Tool-call observables are NOT batched here: the wrapped runtime
-        # emits one agent_trace_tool_call_NNNN live per invocation, so
-        # the calls are on the trajectory exactly once and in real time.
-        emit(
-            ObservableEvent(
-                observable=COMPOSITE_ENV_SNAPSHOT_OBS,
-                content=self._env.model_dump() if self._env is not None else {},
+            self._last_response = _content_blocks_to_text(model_output)
+            # The wrapped runtime's trace mirrors AgentDojo's
+            # functions_stack_trace_from_messages but is recorded eagerly so
+            # it survives mid-run exceptions.
+            self._function_call_trace = (
+                self._wrapped_runtime.trace if self._wrapped_runtime is not None else []
             )
-        )
+        finally:
+            # Release the per-run provider connection, including on the
+            # failure path (a mid-run exception or an optimizer-response
+            # timeout), so connections do not accumulate across a sweep.
+            close_pipeline()
+
+        # --- Phase 5: none ---
+        # No whole-environment observable is emitted (store contents
+        # reachable via a read controllable are not mirrored; the full
+        # post-run env is available to the scorer via the query specs).
+        # Tool calls and the per-store write observations were already
+        # emitted live by the wrapped runtime.
 
     # ------------------------------------------------------------------
     # Reset / teardown

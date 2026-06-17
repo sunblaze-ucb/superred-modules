@@ -207,9 +207,11 @@ async def _drive_run(target: AgentDojoTarget, pipeline: _ScriptedPipeline) -> No
     def emit(_event: Any) -> None:
         pass
 
+    # build_pipeline now returns (pipeline, close); the scripted pipeline
+    # has no real client, so the closer is a no-op.
     with patch(
         "agentdojo_target.target.build_pipeline",
-        return_value=pipeline,
+        return_value=(pipeline, lambda: None),
     ):
         await target.run(emit=emit, send_event=send_event)
 

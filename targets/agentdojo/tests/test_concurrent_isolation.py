@@ -24,7 +24,6 @@ instances).
 
 from __future__ import annotations
 
-import asyncio
 import json
 from collections.abc import Sequence
 
@@ -108,8 +107,8 @@ def patch_llm_build(monkeypatch: pytest.MonkeyPatch):
     """Force build_pipeline to use the echoing fake LLM (no real network)."""
     from agentdojo_target import pipeline_bridge
 
-    def fake_build(model_id, *, api_base, api_key):  # noqa: ARG001
-        return _EchoingLLM()
+    def fake_build(model_id, *, api_base, api_key, emit=None):  # noqa: ARG001
+        return _EchoingLLM(), lambda: None
 
     monkeypatch.setattr(pipeline_bridge, "_build_llm", fake_build)
     yield
@@ -322,9 +321,7 @@ def test_no_module_level_mutable_state_in_target_package() -> None:
     the future will fail this test, forcing the author to confirm the
     new symbol is either immutable or per-Target.
     """
-    import agentdojo_target
     import agentdojo_target.controllables as ctrls
-    import agentdojo_target.observables as obs
     import agentdojo_target.tool_registry as treg
     import agentdojo_target.security_tags as stags
 
@@ -343,7 +340,8 @@ def test_no_module_level_mutable_state_in_target_package() -> None:
         # controllables
         "CONTROLLABLES",
         "READ_CTRLS",
-        "READ_QUADRANT_MAP",
+        "READ_STORE_MAP",
+        "WRITE_STORE_MAP",
         "TOOL_CATALOG_CTRLS",
     }
     # Each of these must exist (smoke check) and be hashable or

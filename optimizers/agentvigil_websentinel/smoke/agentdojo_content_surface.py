@@ -53,9 +53,9 @@ try:
     from agentdojo.types import ChatMessage  # type: ignore[import-not-found, import-untyped]
     from agentdojo_target import (  # type: ignore[import-not-found]
         AgentDojoTarget,
-        CONTENT_1P_DATA_3P_TAG,
         PROMPT_TAG,
         TOOL_CATALOGUE_TAG,
+        TOOLS_TAG,
         USER_TAG,
     )
 except Exception as exc:  # pragma: no cover - smoke environment guard.
@@ -208,7 +208,7 @@ async def _run() -> int:
                 USER_TAG,
                 PROMPT_TAG,
                 TOOL_CATALOGUE_TAG,
-                CONTENT_1P_DATA_3P_TAG,
+                TOOLS_TAG,
             }
         ),
         max_runs_per_task=1,
