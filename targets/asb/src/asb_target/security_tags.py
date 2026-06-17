@@ -72,8 +72,9 @@ SYSTEM_PROMPT_TAG: SecurityDomainTag = SecurityDomainTag("system_prompt", parent
 and always present regardless of any injection here."""
 
 AGENT_TRACE_TAG: SecurityDomainTag = SecurityDomainTag("agent_trace", parent=SYSTEM_TAG)
-"""Read-only observability of the agent's runtime generations. Implies its
-three finer-grained children."""
+"""Read-only observability of the agent's OWN generations (plan, thinking, and
+tool-call decisions). A tool's RETURNED data is not here: it is the tool's own
+data, tagged under that tool's boundary in the ``tools`` tree."""
 
 AGENT_TRACE_MESSAGES_TAG: SecurityDomainTag = SecurityDomainTag(
     "agent_trace_messages",
@@ -86,14 +87,8 @@ AGENT_TRACE_TOOL_CALLS_TAG: SecurityDomainTag = SecurityDomainTag(
     "agent_trace_tool_calls",
     parent=AGENT_TRACE_TAG,
 )
-"""The tool-call decisions the agent executes."""
-
-AGENT_TRACE_TOOL_RESPONSES_TAG: SecurityDomainTag = SecurityDomainTag(
-    "agent_trace_tool_responses",
-    parent=AGENT_TRACE_TAG,
-)
-"""The tool return the agent observed on the final step (non-final returns
-are on the trajectory via their OPI controllable event)."""
+"""The tool-call decisions the agent generated (which tool it chose). The
+tool's RESPONSE is the tool's data, tagged under its ``tools.*`` leaf."""
 
 # ---------------------------------------------------------------------------
 # Tree 3: tools  (the tool ecosystem) -- OPI, three levels: tools > scenario > tool
@@ -162,8 +157,8 @@ DOMAIN: SecurityDomain = SecurityDomain(
         AGENT_TRACE_TAG,
         AGENT_TRACE_MESSAGES_TAG,
         AGENT_TRACE_TOOL_CALLS_TAG,
-        AGENT_TRACE_TOOL_RESPONSES_TAG,
-        # tools tree (root -> scenario nodes -> tool leaves)
+        # tools tree (root -> scenario nodes -> tool leaves; a tool's response
+        # is the tool's own data, so it lives here, not under agent_trace)
         TOOLS_TAG,
         *SCENARIO_TOOL_TAGS.values(),
         *TOOL_OBSERVATION_TAGS.values(),
@@ -183,7 +178,6 @@ __all__ = [
     "AGENT_TRACE_TAG",
     "AGENT_TRACE_MESSAGES_TAG",
     "AGENT_TRACE_TOOL_CALLS_TAG",
-    "AGENT_TRACE_TOOL_RESPONSES_TAG",
     "TOOLS_TAG",
     "TOOLS_BY_SCENARIO",
     "NORMAL_TOOL_NAMES",

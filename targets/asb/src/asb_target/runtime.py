@@ -50,8 +50,8 @@ from asb_target.observables import (
     agent_model_output_observable,
     agent_plan_observable,
     agent_tool_call_observable,
-    agent_tool_response_observable,
     memory_event_observable,
+    tool_response_observable,
 )
 from asb_target.tool_boundary import tool_boundary_tag
 
@@ -333,9 +333,12 @@ class SuperredReactAgent(ReactAgentAttack):  # type: ignore[misc]  # base is Any
                 if injected:
                     function_response += f"; {injected}"
             else:
-                # Final return: not OPI-injected upstream, so emit it as the observed
-                # tool response (agent_trace_tool_responses), once.
-                self._emit_obs(agent_tool_response_observable(call_index), str(function_response))
+                # Final return: not OPI-injected upstream (no controllable for it), so
+                # emit it as an observable tagged to the tool's OWN boundary, once.
+                self._emit_obs(
+                    tool_response_observable(call_index, tool_boundary_tag(function_name)),
+                    str(function_response),
+                )
 
             actions.append(f"I will call the {function_name} with the params as {function_params}")
             observations.append(f"The knowledge I get from {function_name} is: {function_response}")

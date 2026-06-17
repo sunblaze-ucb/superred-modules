@@ -12,10 +12,13 @@ causal order (no bulk message dump, no cross-zone leak):
 
 - ``agent_plan``               : the planning workflow JSON the model produced.
 - ``agent_model_output_NNNN``  : a per-step model output ([Thinking] text).
-- ``agent_tool_call_NNNN``     : an executed tool-call decision.
-- ``agent_tool_response_NNNN`` : the tool return observed on the FINAL step
-  (non-final returns ride on the trajectory via their OPI controllable event,
-  so they are not re-emitted here).
+- ``agent_tool_call_NNNN``     : an executed tool-call decision (the agent's
+  own output, under ``agent_trace``).
+- ``tool_response_NNNN``       : the tool return observed on the FINAL step,
+  tagged to the firing tool's own ``tools.*`` leaf (the response is the tool's
+  data, not the agent's). Non-final returns ride on the trajectory via their
+  OPI controllable event (also under the tool), so each tool response is
+  emitted exactly once, under its tool.
 - ``memory_read`` / ``memory_write`` : a durable-memory read/write event.
 
 The attack payload is NOT exposed (the target only exposes injection points;
@@ -26,11 +29,11 @@ attacks are an attacker concern), and model identity is not an observable
 from __future__ import annotations
 
 from superred.core.types.observable import Observable
+from superred.core.types.security_domain import SecurityDomainTag
 
 from asb_target.security_tags import (
     AGENT_TRACE_MESSAGES_TAG,
     AGENT_TRACE_TOOL_CALLS_TAG,
-    AGENT_TRACE_TOOL_RESPONSES_TAG,
     MEMORY_TAG,
     SYSTEM_PROMPT_TAG,
     TOOLS_TAG,
@@ -97,13 +100,16 @@ def agent_tool_call_observable(call_index: int) -> Observable:
     )
 
 
-def agent_tool_response_observable(call_index: int) -> Observable:
-    """The tool return the agent observed on the FINAL step (non-final returns
-    are recorded via their OPI controllable event)."""
+def tool_response_observable(call_index: int, tag: SecurityDomainTag) -> Observable:
+    """The tool return observed on the FINAL step, tagged to the firing tool's
+    own boundary (*tag*, a ``tools.*`` leaf), since the response is the tool's
+    data. Non-final returns are recorded via their OPI controllable event (also
+    under the tool), so each tool response is emitted exactly once under its
+    tool."""
     return Observable(
-        name=f"agent_tool_response_{call_index:04d}",
-        security_domain=AGENT_TRACE_TOOL_RESPONSES_TAG,
-        description=(f"The return value the agent observed for final-step tool call {call_index}."),
+        name=f"tool_response_{call_index:04d}",
+        security_domain=tag,
+        description=(f"The return value the tool produced for final-step call {call_index}."),
         observable_type="text",
     )
 
@@ -125,6 +131,6 @@ __all__ = [
     "agent_plan_observable",
     "agent_model_output_observable",
     "agent_tool_call_observable",
-    "agent_tool_response_observable",
+    "tool_response_observable",
     "memory_event_observable",
 ]

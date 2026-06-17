@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from superred.core.types.security_domain import SecurityDomain, SecurityDomainTag, scope_includes
 
+from asb_target import security_tags as st
 from asb_target.security_tags import (
     AGENT_TRACE_MESSAGES_TAG,
     AGENT_TRACE_TAG,
     AGENT_TRACE_TOOL_CALLS_TAG,
-    AGENT_TRACE_TOOL_RESPONSES_TAG,
     DOMAIN,
     MEMORY_TAG,
     NORMAL_TOOL_NAMES,
@@ -30,7 +33,6 @@ def _all_tags() -> list:
         AGENT_TRACE_TAG,
         AGENT_TRACE_MESSAGES_TAG,
         AGENT_TRACE_TOOL_CALLS_TAG,
-        AGENT_TRACE_TOOL_RESPONSES_TAG,
         TOOLS_TAG,
         MEMORY_TAG,
     ]
@@ -102,9 +104,35 @@ def test_system_subsumes_prompt_and_trace() -> None:
         AGENT_TRACE_TAG,
         AGENT_TRACE_MESSAGES_TAG,
         AGENT_TRACE_TOOL_CALLS_TAG,
-        AGENT_TRACE_TOOL_RESPONSES_TAG,
     ):
         assert scope_includes(system_scope, child)
+
+
+def test_agent_trace_holds_only_agent_generations_not_tool_data() -> None:
+    # A tool's RESPONSE is the tool's data and must be reachable only with that
+    # tool's scope, never via {system}. agent_trace has no tool-responses tag;
+    # its children are the agent's own generations (messages + tool-call decisions).
+    names = {t.name for t in _all_tags()}
+    assert "agent_trace_tool_responses" not in names
+    agent_trace_children = {AGENT_TRACE_MESSAGES_TAG.name, AGENT_TRACE_TOOL_CALLS_TAG.name}
+    assert {t.name for t in _all_tags() if t.parent is AGENT_TRACE_TAG} == agent_trace_children
+    # a {system} attacker cannot read any tool's response surface
+    system_scope = frozenset({SYSTEM_TAG})
+    for leaf in TOOL_OBSERVATION_TAGS.values():
+        assert not scope_includes(system_scope, leaf)
+
+
+def test_tools_by_scenario_matches_dataset() -> None:
+    # The forest's scenario->tool map is provably the real ASB dataset, not an
+    # assumed regular pattern; this guards against silent drift.
+    data = Path(st.__file__).parent / "data" / "all_normal_tools.jsonl"
+    rows = [json.loads(line) for line in data.read_text().splitlines() if line.strip()]
+    by_agent: dict[str, list[str]] = {}
+    for r in rows:
+        by_agent.setdefault(r["Corresponding Agent"], []).append(r["Tool Name"])
+    expected = {agent[: -len("_agent")]: tuple(tools) for agent, tools in by_agent.items()}
+    assert TOOLS_BY_SCENARIO == expected
+    assert all(len(tools) == 2 for tools in TOOLS_BY_SCENARIO.values())
 
 
 def test_memory_is_its_own_root() -> None:
