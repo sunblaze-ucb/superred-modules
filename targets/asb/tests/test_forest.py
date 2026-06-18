@@ -12,10 +12,15 @@ from asb_target.security_tags import (
     AGENT_TRACE_TAG,
     DOMAIN,
     MEMORY_TAG,
+    MODEL_IDENTITY_TAG,
     NORMAL_TOOL_NAMES,
     SCENARIO_TOOL_TAGS,
     SYSTEM_PROMPT_TAG,
     SYSTEM_TAG,
+    TOOL_CATALOGUE_ADD_TAG,
+    TOOL_CATALOGUE_EDIT_TAG,
+    TOOL_CATALOGUE_REMOVE_TAG,
+    TOOL_CATALOGUE_TAG,
     TOOL_OBSERVATION_TAGS,
     TOOLS_BY_SCENARIO,
     TOOLS_TAG,
@@ -29,6 +34,11 @@ def _all_tags() -> list:
         SYSTEM_TAG,
         SYSTEM_PROMPT_TAG,
         AGENT_TRACE_TAG,
+        MODEL_IDENTITY_TAG,
+        TOOL_CATALOGUE_TAG,
+        TOOL_CATALOGUE_ADD_TAG,
+        TOOL_CATALOGUE_EDIT_TAG,
+        TOOL_CATALOGUE_REMOVE_TAG,
         TOOLS_TAG,
         MEMORY_TAG,
     ]
@@ -48,7 +58,6 @@ def test_no_removed_tags() -> None:
         "internal",
         "external_tool_observation",
         "internal_tool_observation",
-        "model_identity",
         "tool_catalog_readable",
         "user_readable",
         "system_prompt_readable",
@@ -93,10 +102,49 @@ def test_subsumption_at_every_level() -> None:
     assert not scope_includes(leaf_scope, fin)
 
 
-def test_system_subsumes_prompt_and_trace() -> None:
+def test_system_subsumes_its_children() -> None:
     system_scope = frozenset({SYSTEM_TAG})
-    for child in (SYSTEM_PROMPT_TAG, AGENT_TRACE_TAG):
+    for child in (
+        SYSTEM_PROMPT_TAG,
+        AGENT_TRACE_TAG,
+        MODEL_IDENTITY_TAG,
+        TOOL_CATALOGUE_TAG,
+        TOOL_CATALOGUE_ADD_TAG,
+        TOOL_CATALOGUE_EDIT_TAG,
+        TOOL_CATALOGUE_REMOVE_TAG,
+    ):
         assert scope_includes(system_scope, child)
+    # tool_catalogue is a grouping root over its three edit capabilities
+    cat_scope = frozenset({TOOL_CATALOGUE_TAG})
+    for child in (TOOL_CATALOGUE_ADD_TAG, TOOL_CATALOGUE_EDIT_TAG, TOOL_CATALOGUE_REMOVE_TAG):
+        assert scope_includes(cat_scope, child)
+    # a single edit capability does not subsume its siblings
+    assert not scope_includes(frozenset({TOOL_CATALOGUE_EDIT_TAG}), TOOL_CATALOGUE_ADD_TAG)
+    assert not scope_includes(frozenset({TOOL_CATALOGUE_ADD_TAG}), TOOL_CATALOGUE_REMOVE_TAG)
+
+
+def test_tool_catalogue_is_separate_from_tool_interactions() -> None:
+    # The fixed flaw: reading the tool-catalogue LISTING (which tools exist) must
+    # NOT imply reading every tool's returned observation. The listing is tagged
+    # at tool_catalogue (a system child); tool interactions live under the
+    # independent tools root. So tool_catalogue is NOT an ancestor of any tool
+    # node, and {tools} does not grant the catalogue capability.
+    cat_scope = frozenset({TOOL_CATALOGUE_TAG})
+    assert not scope_includes(cat_scope, TOOLS_TAG)
+    for scen in SCENARIO_TOOL_TAGS.values():
+        assert not scope_includes(cat_scope, scen)
+    for leaf in TOOL_OBSERVATION_TAGS.values():
+        assert not scope_includes(cat_scope, leaf)
+    assert not scope_includes(frozenset({TOOLS_TAG}), TOOL_CATALOGUE_TAG)
+
+
+def test_model_identity_is_a_read_only_system_child() -> None:
+    assert MODEL_IDENTITY_TAG.parent is SYSTEM_TAG
+    # knowing the model is independent of any write capability
+    mi_scope = frozenset({MODEL_IDENTITY_TAG})
+    assert not scope_includes(mi_scope, SYSTEM_PROMPT_TAG)
+    assert not scope_includes(mi_scope, TOOL_CATALOGUE_TAG)
+    assert not scope_includes(mi_scope, AGENT_TRACE_TAG)
 
 
 def test_agent_trace_holds_only_agent_generations_not_tool_data() -> None:

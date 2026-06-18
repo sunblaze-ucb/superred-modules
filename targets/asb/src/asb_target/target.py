@@ -42,6 +42,7 @@ from asb_target.controllables import CONTROLLABLES
 from asb_target.llm_proxy import reset_failures, take_failures
 from asb_target.memory_store import DEFAULT_EMBED_MODEL, EmbedFn, MemoryStore
 from asb_target.observables import (
+    MODEL_IDENTITY_OBS,
     SYSTEM_PROMPT_OBS,
     TOOL_CATALOG_LISTING_OBS,
 )
@@ -183,6 +184,7 @@ class AsbTarget(Target):
         catalog = self._tool_catalog_listing()
         return [
             ObservableValue(observable=SYSTEM_PROMPT_OBS, content=persona),
+            ObservableValue(observable=MODEL_IDENTITY_OBS, content=self._model),
             ObservableValue(observable=TOOL_CATALOG_LISTING_OBS, content=catalog),
         ]
 

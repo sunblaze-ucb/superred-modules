@@ -16,7 +16,14 @@ Four root boundaries:
   ``system_prompt`` is the Plan-of-Thought (PoT) backdoor surface; the
   plan-format scaffolding itself is the target's own and always present.
   ``agent_trace`` is the read-only observability subtree for the agent's own
-  generations. Scope for PoT: ``{system_prompt}``.
+  generations. ``model_identity`` is read-only knowledge of which model powers
+  the agent. ``tool_catalogue`` is the tool REGISTRY capability (which tools
+  exist + their docs), a grouping root over ``tool_catalogue_add`` /
+  ``tool_catalogue_edit`` / ``tool_catalogue_remove``; it is deliberately
+  SEPARATE from the ``tools`` tree (what a tool RETURNS) so reading the
+  catalogue listing does not imply reading every tool's observation. Scope for
+  PoT: ``{system_prompt}``; for catalogue edits: ``{tool_catalogue}`` or a
+  single add/edit/remove child.
 - ``tools`` -- the tool ecosystem. Observation Prompt Injection (OPI) tampers
   with what a tool returns. ASB's tools belong to ten operational scenarios,
   and each tool is its own backing system, so the tree is three levels:
@@ -78,6 +85,50 @@ planning workflow JSON and each per-step [Thinking] output. A tool interaction
 and is carried under that tool's boundary in the ``tools`` tree -- the tool's
 event carries the call + return, and an attacker can change the return there.
 Neither the tool call nor the tool response is recorded here."""
+
+MODEL_IDENTITY_TAG: SecurityDomainTag = SecurityDomainTag("model_identity", parent=SYSTEM_TAG)
+"""Knowledge of which model powers the agent. Read-only observability (never a
+controllable: the model is a construction concern). Sibling of
+system_prompt/agent_trace so "the attacker knows the victim model" can be
+granted or denied independently of any write capability, matching the agentdojo
+and inspect-agent targets."""
+
+# --- tool catalogue (the tool REGISTRY: which tools exist + their docs) -------
+# Distinct from the ``tools`` tree (what a tool RETURNS, the OPI surface): the
+# registry is a system-side capability, so it lives under ``system``. Reading
+# the catalogue listing (which tools exist) must NOT imply reading every tool's
+# returned observation -- those live under the separate ``tools`` root -- so the
+# listing is tagged here, not at ``tools``.
+
+TOOL_CATALOGUE_TAG: SecurityDomainTag = SecurityDomainTag("tool_catalogue", parent=SYSTEM_TAG)
+"""Grouping root of the tool-registry capability. The catalogue-listing
+observable carries this tag, so granting it reveals which tools exist without
+granting read of any tool's returned observations (the separate ``tools``
+tree). Holding ``tool_catalogue`` subsumes the three edit capabilities below."""
+
+TOOL_CATALOGUE_ADD_TAG: SecurityDomainTag = SecurityDomainTag(
+    "tool_catalogue_add", parent=TOOL_CATALOGUE_TAG
+)
+"""Add-a-tool capability: register a NEW attacker-defined tool into the agent's
+catalogue. When the agent calls an added tool the attacker supplies its return
+directly (an added tool has no genuine implementation), via a per-call event
+carried under this tag."""
+
+TOOL_CATALOGUE_EDIT_TAG: SecurityDomainTag = SecurityDomainTag(
+    "tool_catalogue_edit", parent=TOOL_CATALOGUE_TAG
+)
+"""Edit-an-existing-tool capability: change a tool's DESCRIPTION (what the model
+reads when choosing tools) and/or its BEHAVIOR. A behavior edit shadows the
+tool: when it is called the attacker supplies the return directly and the
+original tool is NOT run. The per-call shadow event is carried under this tag,
+so holding it grants control of an edited tool's call even when that tool's own
+``tools.*`` leaf is out of scope."""
+
+TOOL_CATALOGUE_REMOVE_TAG: SecurityDomainTag = SecurityDomainTag(
+    "tool_catalogue_remove", parent=TOOL_CATALOGUE_TAG
+)
+"""Remove-a-tool capability: drop an existing tool from the catalogue so the
+agent can no longer select it."""
 
 # ---------------------------------------------------------------------------
 # Tree 3: tools  (the tool ecosystem) -- OPI, three levels: tools > scenario > tool
@@ -144,6 +195,11 @@ DOMAIN: SecurityDomain = SecurityDomain(
         SYSTEM_TAG,
         SYSTEM_PROMPT_TAG,
         AGENT_TRACE_TAG,
+        MODEL_IDENTITY_TAG,
+        TOOL_CATALOGUE_TAG,
+        TOOL_CATALOGUE_ADD_TAG,
+        TOOL_CATALOGUE_EDIT_TAG,
+        TOOL_CATALOGUE_REMOVE_TAG,
         # tools tree (root -> scenario nodes -> tool leaves; a tool's whole
         # interaction (call + return) is the tool's own data, so it lives here,
         # not under agent_trace)
@@ -155,7 +211,9 @@ DOMAIN: SecurityDomain = SecurityDomain(
     ]
 )
 """The full trust-boundary forest exposed by :class:`AsbTarget`: four roots
-(user, system, tools, memory); the tools tree is per-tool granular (10
+(user, system, tools, memory). The system tree carries system_prompt,
+agent_trace, model_identity, and the tool_catalogue registry capability
+(tool_catalogue -> add/edit/remove). The tools tree is per-tool granular (10
 scenario nodes + 20 tool leaves)."""
 
 
@@ -164,6 +222,11 @@ __all__ = [
     "SYSTEM_TAG",
     "SYSTEM_PROMPT_TAG",
     "AGENT_TRACE_TAG",
+    "MODEL_IDENTITY_TAG",
+    "TOOL_CATALOGUE_TAG",
+    "TOOL_CATALOGUE_ADD_TAG",
+    "TOOL_CATALOGUE_EDIT_TAG",
+    "TOOL_CATALOGUE_REMOVE_TAG",
     "TOOLS_TAG",
     "TOOLS_BY_SCENARIO",
     "NORMAL_TOOL_NAMES",

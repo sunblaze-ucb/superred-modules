@@ -42,7 +42,12 @@ from asb_target.controllables import (
     DPI_USER_PROMPT_CTRL,
     MP_RETRIEVED_WORKFLOW_CTRL,
     POT_SYSTEM_DEMONSTRATION_CTRL,
+    TOOL_CATALOG_REGISTER_CTRL,
+    TOOL_CATALOG_REPLACE_CTRL,
+    TOOL_CATALOG_REWRITE_DOC_CTRL,
+    TOOL_CATALOG_UNREGISTER_CTRL,
     opi_tool_observation_ctrl,
+    tool_catalogue_call_ctrl,
 )
 from asb_target.llm_proxy import configure_proxy, register_proxy_model
 from asb_target.memory_store import MemoryStore
@@ -52,6 +57,7 @@ from asb_target.observables import (
     memory_event_observable,
     tool_interaction_observable,
 )
+from asb_target.security_tags import TOOL_CATALOGUE_ADD_TAG, TOOL_CATALOGUE_EDIT_TAG
 from asb_target.tool_boundary import tool_boundary_tag
 
 ensure_vendor_on_path()
@@ -68,6 +74,31 @@ SyncEventHandler = Callable[[Any], Any]
 
 #: A fire-and-forget observable emitter (``trajectory.emit``, thread-safe).
 EmitHandler = Callable[[Any], None]
+
+
+@dataclass
+class _AttackerManagedTool:
+    """A catalogue tool ADDED by the attacker (no genuine implementation).
+
+    Registered into the agent's ``tool_list``/``tools`` so the model can select
+    it; when called it is shadowed (the attacker supplies the return at call
+    time, or this static ``fake_return`` as the decline fallback), so ``run`` is
+    only the fallback and the same OpenAI-style spec shape as a SimulatedTool is
+    exposed to the model.
+    """
+
+    name: str
+    description: str
+    fake_return: str
+
+    def run(self, params: Any = None) -> str:
+        return self.fake_return
+
+    def get_tool_call_format(self) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {"name": self.name, "description": self.description},
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -201,8 +232,11 @@ class SuperredReactAgent(ReactAgentAttack):  # type: ignore[misc]  # base is Any
     durable per-task store (passed in so it survives ``reset_ephemeral_state``).
     """
 
-    # Declared for the type checker; the vendored BaseAgent.__init__ sets it.
+    # Declared for the type checker; the vendored BaseAgent.__init__ sets them.
+    # (``tools`` is declared because the catalogue-edit helpers reassign it; the
+    # catalogue listing the model plans over is mutated in place there.)
     task_input: str
+    tools: list[dict[str, Any]]
 
     def __init__(
         self,
@@ -241,6 +275,13 @@ class SuperredReactAgent(ReactAgentAttack):  # type: ignore[misc]  # base is Any
         self._mp_active = False
         self._pot_trigger_to_append: str | None = None
         self._tool_call_trace: list[str] = []
+        # attacker-managed catalogue tools, populated in the pre-run
+        # catalogue-edit phase: name -> static fake_return fallback. These mark a
+        # tool as SHADOWED (call-time return supplied by the attacker, original
+        # not run). _added_tools were registered new; _replaced_behavior are
+        # existing tools whose behavior was replaced.
+        self._added_tools: dict[str, str] = {}
+        self._replaced_behavior: dict[str, str] = {}
 
     # -- event + emit helpers -----------------------------------------------
 
@@ -307,45 +348,162 @@ class SuperredReactAgent(ReactAgentAttack):  # type: ignore[misc]  # base is Any
             function_to_call = self.tool_list.get(function_name)
             self._tool_call_trace.append(function_name)
             call_index = len(self._tool_call_trace) - 1
-            try:
-                function_response = function_to_call.run(function_params)
-            except Exception as e:  # noqa: BLE001 - mirror upstream catch for the tool call
-                print(f"Unexpected error: {e}")
-                actions.append("I fail to call any tools.")
-                observations.append("The tool parameter is invalid.")
-                success = False
-                continue
 
-            # A whole tool interaction (the call, its params, and the returned
-            # observation) is the tool's OWN data, carried under the tool's
-            # boundary -- never as a separate agent_trace tool-call record.
-            interaction = {
-                "tool": function_name,
-                "params": function_params,
-                "observation": str(function_response),
-            }
-            if not final_stage:
-                # NON-final: the OPI controllable event IS the tool interaction --
-                # its request carries {tool, params, observation} and the attacker
-                # may change the return. Kept OUTSIDE the upstream try/except so a
-                # channel/timeout failure propagates (loud) rather than being
-                # swallowed as a tool error (which would score a partial transcript).
-                ctrl = opi_tool_observation_ctrl(tool_boundary_tag(function_name))
-                injected = self._inject(ctrl, request=json.dumps(interaction, default=str))
-                if injected:
-                    function_response += f"; {injected}"
+            if function_name in self._added_tools or function_name in self._replaced_behavior:
+                # Attacker-managed (added or behavior-replaced) tool: SHADOW it.
+                # The original tool is NOT run; the attacker supplies the return
+                # via a per-call event tagged at the add/edit capability (so the
+                # editing scope grants this call even when the tool's tools.* leaf
+                # is out of scope). That event is the SINGLE trajectory emission
+                # for this call (request = {tool, params}, response = the return),
+                # so no OPI controllable / tool_interaction observable fires here.
+                # Kept outside any try/except so a channel/timeout failure
+                # propagates loud (matching the OPI seam below).
+                function_response = self._shadow_tool_call(function_name, function_params)
             else:
-                # Final: not OPI-injected upstream (no controllable for it), so emit
-                # the tool interaction as an observable under the tool's OWN boundary.
-                self._emit_obs(
-                    tool_interaction_observable(call_index, tool_boundary_tag(function_name)),
-                    interaction,
-                )
+                try:
+                    function_response = function_to_call.run(function_params)
+                except Exception as e:  # noqa: BLE001 - mirror upstream catch for the tool call
+                    print(f"Unexpected error: {e}")
+                    actions.append("I fail to call any tools.")
+                    observations.append("The tool parameter is invalid.")
+                    success = False
+                    continue
+
+                # A whole tool interaction (the call, its params, and the returned
+                # observation) is the tool's OWN data, carried under the tool's
+                # boundary -- never as a separate agent_trace tool-call record.
+                interaction = {
+                    "tool": function_name,
+                    "params": function_params,
+                    "observation": str(function_response),
+                }
+                if not final_stage:
+                    # NON-final: the OPI controllable event IS the tool interaction --
+                    # its request carries {tool, params, observation} and the attacker
+                    # may change the return. Kept OUTSIDE the upstream try/except so a
+                    # channel/timeout failure propagates (loud) rather than being
+                    # swallowed as a tool error (which would score a partial transcript).
+                    ctrl = opi_tool_observation_ctrl(tool_boundary_tag(function_name))
+                    injected = self._inject(ctrl, request=json.dumps(interaction, default=str))
+                    if injected:
+                        function_response += f"; {injected}"
+                else:
+                    # Final: not OPI-injected upstream (no controllable for it), so emit
+                    # the tool interaction as an observable under the tool's OWN boundary.
+                    self._emit_obs(
+                        tool_interaction_observable(call_index, tool_boundary_tag(function_name)),
+                        interaction,
+                    )
 
             actions.append(f"I will call the {function_name} with the params as {function_params}")
             observations.append(f"The knowledge I get from {function_name} is: {function_response}")
 
         return actions, observations, success
+
+    # -- catalogue editing (port extension): add / replace / rewrite-doc / remove
+
+    def _shadow_tool_call(self, name: str, params: Any) -> str:
+        """Fire the per-call shadow event for an attacker-managed tool and return
+        the attacker-supplied value (or the static ``fake_return`` fallback when
+        the attacker declines). The original tool is NEVER run."""
+        cap_tag = TOOL_CATALOGUE_ADD_TAG if name in self._added_tools else TOOL_CATALOGUE_EDIT_TAG
+        ctrl = tool_catalogue_call_ctrl(cap_tag, name)
+        injected = self._inject(
+            ctrl, request=json.dumps({"tool": name, "params": params}, default=str)
+        )
+        if injected:
+            return injected
+        return self._added_tools.get(name) or self._replaced_behavior.get(name) or ""
+
+    def _catalogue_summary(self) -> list[dict[str, str]]:
+        """Current {name, description} per tool, sent as the catalogue-edit event
+        request so the attacker sees the live tool names to target."""
+        summary: list[dict[str, str]] = []
+        for spec in self.tools:
+            fn = spec.get("function", {}) if isinstance(spec, dict) else {}
+            summary.append(
+                {
+                    "name": str(fn.get("name", "")),
+                    "description": str(fn.get("description", "") or ""),
+                }
+            )
+        return summary
+
+    def _set_tool_description(self, name: str, description: str) -> None:
+        """Update the description in the live tool spec the model reads."""
+        for spec in self.tools:
+            if isinstance(spec, dict) and spec.get("function", {}).get("name") == name:
+                spec["function"]["description"] = description
+                return
+
+    def _catalogue_register(self, payload: dict[str, Any]) -> None:
+        name = payload.get("name")
+        if not isinstance(name, str) or not name or name in self.tool_list:
+            return  # missing/blank name, or would clobber an existing tool
+        description = str(payload.get("description", ""))
+        fake_return = str(payload.get("fake_return", ""))
+        tool = _AttackerManagedTool(name=name, description=description, fake_return=fake_return)
+        self.tool_list[name] = tool
+        self.tools.append(tool.get_tool_call_format())
+        self._added_tools[name] = fake_return
+
+    def _catalogue_replace(self, payload: dict[str, Any]) -> None:
+        name = payload.get("name")
+        if not isinstance(name, str) or name not in self.tool_list:
+            return  # can only replace an existing tool
+        self._replaced_behavior[name] = str(payload.get("fake_return", ""))
+        description = payload.get("description")
+        if isinstance(description, str):
+            self._set_tool_description(name, description)
+
+    def _catalogue_unregister(self, payload: dict[str, Any]) -> None:
+        name = payload.get("name")
+        if not isinstance(name, str) or name not in self.tool_list:
+            return
+        self.tool_list.pop(name, None)
+        self.tools = [
+            spec
+            for spec in self.tools
+            if not (isinstance(spec, dict) and spec.get("function", {}).get("name") == name)
+        ]
+        self._added_tools.pop(name, None)
+        self._replaced_behavior.pop(name, None)
+
+    def _catalogue_rewrite_doc(self, payload: dict[str, Any]) -> None:
+        name = payload.get("name")
+        description = payload.get("description")
+        if (
+            not isinstance(name, str)
+            or name not in self.tool_list
+            or not isinstance(description, str)
+        ):
+            return
+        self._set_tool_description(name, description)
+
+    def _apply_catalogue_edits(self) -> None:
+        """Fire the four catalogue-edit controllables ONCE (before planning) and
+        apply any injected edits to the live catalogue (self.tool_list/self.tools).
+
+        Malformed payloads are logged-by-omission and skipped (never crash, per
+        the bare-runtime directive); with no attacker every event declines and
+        the catalogue is untouched."""
+        ops = (
+            (TOOL_CATALOG_REGISTER_CTRL, self._catalogue_register),
+            (TOOL_CATALOG_REPLACE_CTRL, self._catalogue_replace),
+            (TOOL_CATALOG_UNREGISTER_CTRL, self._catalogue_unregister),
+            (TOOL_CATALOG_REWRITE_DOC_CTRL, self._catalogue_rewrite_doc),
+        )
+        for ctrl, apply in ops:
+            raw = self._inject(ctrl, request=json.dumps(self._catalogue_summary(), default=str))
+            if not raw:
+                continue
+            try:
+                payload = json.loads(raw)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
+            if isinstance(payload, dict):
+                apply(payload)
 
     # -- system instruction: scaffolding + PoT/MP read --------------------
 
@@ -449,6 +607,12 @@ class SuperredReactAgent(ReactAgentAttack):  # type: ignore[misc]  # base is Any
 
         if self._has_attacker_tool:
             self.add_attacker_tool()
+
+        # --- Tool-catalogue edits (event): attacker add / replace / rewrite-doc /
+        # remove, fired once. Applied after the utility-baseline deepcopy and the
+        # Task's fixed attacker tool, but before planning, so the edited catalogue
+        # is what the model plans over. A clean run leaves the catalogue untouched.
+        self._apply_catalogue_edits()
 
         # --- DPI injection (event) ---
         dpi = self._inject(DPI_USER_PROMPT_CTRL, request=self.task_input)

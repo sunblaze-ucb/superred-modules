@@ -8,8 +8,13 @@ from asb_target.controllables import CONTROLLABLES, opi_tool_observation_ctrl
 from asb_target.observables import STATIC_OBSERVABLE_SPECS
 from asb_target.security_tags import (
     MEMORY_TAG,
+    MODEL_IDENTITY_TAG,
     SYSTEM_PROMPT_TAG,
     SYSTEM_TAG,
+    TOOL_CATALOGUE_ADD_TAG,
+    TOOL_CATALOGUE_EDIT_TAG,
+    TOOL_CATALOGUE_REMOVE_TAG,
+    TOOL_CATALOGUE_TAG,
     TOOL_OBSERVATION_TAGS,
     TOOLS_TAG,
     USER_TAG,
@@ -25,12 +30,21 @@ def test_controllables_one_per_method_plus_opi_leaves() -> None:
         "dpi_user_prompt",
         "pot_system_demonstration",
         "mp_retrieved_workflow",
+        "tool_catalog_register",
+        "tool_catalog_replace",
+        "tool_catalog_unregister",
+        "tool_catalog_rewrite_doc",
         "opi_tool_observation",
     }
     assert len(by_name["dpi_user_prompt"]) == 1
     assert by_name["dpi_user_prompt"][0].security_domain is USER_TAG
     assert by_name["pot_system_demonstration"][0].security_domain is SYSTEM_PROMPT_TAG
     assert by_name["mp_retrieved_workflow"][0].security_domain is MEMORY_TAG
+    # tool-catalogue edit controllables, tagged at the add/edit/remove capability
+    assert by_name["tool_catalog_register"][0].security_domain is TOOL_CATALOGUE_ADD_TAG
+    assert by_name["tool_catalog_replace"][0].security_domain is TOOL_CATALOGUE_EDIT_TAG
+    assert by_name["tool_catalog_rewrite_doc"][0].security_domain is TOOL_CATALOGUE_EDIT_TAG
+    assert by_name["tool_catalog_unregister"][0].security_domain is TOOL_CATALOGUE_REMOVE_TAG
     # one OPI controllable per tool leaf (fully per-tool granular)
     assert len(by_name["opi_tool_observation"]) == len(TOOL_OBSERVATION_TAGS) == 20
     opi_domains = {c.security_domain for c in by_name["opi_tool_observation"]}
@@ -71,14 +85,17 @@ def test_removed_config_slots_absent() -> None:
         assert removed not in CONFIG_SPEC_NAMES
 
 
-def test_static_observables_trimmed() -> None:
+def test_static_observables() -> None:
     names = {o.name for o in STATIC_OBSERVABLE_SPECS}
-    assert names == {"system_prompt", "tool_catalog_listing"}
-    assert "model_identity" not in names
+    assert names == {"system_prompt", "model_identity", "tool_catalog_listing"}
     assert not any("attack_reference" in n for n in names)
     by = {o.name: o for o in STATIC_OBSERVABLE_SPECS}
     assert by["system_prompt"].security_domain is SYSTEM_PROMPT_TAG
-    assert by["tool_catalog_listing"].security_domain is TOOLS_TAG
+    assert by["model_identity"].security_domain is MODEL_IDENTITY_TAG
+    # The catalogue LISTING is tagged at the registry boundary (tool_catalogue),
+    # NOT the tools tree, so granting catalogue-read does not grant reading any
+    # tool's returned observations.
+    assert by["tool_catalog_listing"].security_domain is TOOL_CATALOGUE_TAG
 
 
 def test_tool_boundary_mapping_complete_and_mechanical() -> None:
@@ -96,3 +113,24 @@ def test_no_judgment_buckets() -> None:
         assert bucket not in leaf_names
     assert TOOLS_TAG.name == "tools"
     assert SYSTEM_TAG.name == "system"
+
+
+def test_shadow_call_ctrl_tagged_at_capability_not_tool_leaf() -> None:
+    # The requested semantics: an attacker-managed tool's per-call event is
+    # tagged at the add/edit CAPABILITY, so the editing scope grants control of
+    # the call even when the tool's own tools.* leaf is out of scope.
+    from superred.core.types.security_domain import scope_includes
+
+    from asb_target.controllables import tool_catalogue_call_ctrl
+
+    add_ctrl = tool_catalogue_call_ctrl(TOOL_CATALOGUE_ADD_TAG, "evil_exfil")
+    edit_ctrl = tool_catalogue_call_ctrl(TOOL_CATALOGUE_EDIT_TAG, "sys_monitor")
+    assert add_ctrl.security_domain is TOOL_CATALOGUE_ADD_TAG
+    assert edit_ctrl.security_domain is TOOL_CATALOGUE_EDIT_TAG
+    assert add_ctrl.name == "tool_call:evil_exfil"
+
+    edit_scope = frozenset({TOOL_CATALOGUE_EDIT_TAG})
+    # edit-scope grants the per-call shadow event ...
+    assert scope_includes(edit_scope, edit_ctrl.security_domain)
+    # ... even though the tool's own tools.* leaf is NOT in that scope
+    assert not scope_includes(edit_scope, TOOL_OBSERVATION_TAGS["sys_monitor"])

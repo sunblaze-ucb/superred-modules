@@ -78,7 +78,7 @@ def test_reset_ephemeral_state_preserves_durable_memory() -> None:
     assert len(t._memory) == 1  # durable memory preserved
 
 
-def test_get_observables_trimmed() -> None:
+def test_get_observables() -> None:
     t = _target()
     t.set_config("agent_name", "system_admin_agent")
     t.set_config(
@@ -87,9 +87,10 @@ def test_get_observables_trimmed() -> None:
     )
     obs = t.get_observables()
     names = {o.observable.name for o in obs}
-    assert names == {"system_prompt", "tool_catalog_listing"}
-    assert "model_identity" not in names
+    assert names == {"system_prompt", "model_identity", "tool_catalog_listing"}
     assert not any("attack_reference" in n for n in names)
+    model = next(o.content for o in obs if o.observable.name == "model_identity")
+    assert model == t._model
     catalog = next(o.content for o in obs if o.observable.name == "tool_catalog_listing")
     catalog_names = {entry["name"] for entry in catalog}
     assert "Evil" in catalog_names  # attacker tool listed once registered
