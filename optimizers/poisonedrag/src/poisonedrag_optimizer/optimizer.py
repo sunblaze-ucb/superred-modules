@@ -858,9 +858,10 @@ class PoisonedRAGOptimizer(Optimizer):
             response = await self.llm.complete(
                 messages, temperature=0.0, max_tokens=160
             )
-        except BudgetExhaustedError:
-            return
         except Exception:
+            # Surface classification is an optional enhancement: if the LLM call
+            # fails for any reason (including budget exhaustion), fall back to the
+            # static surface detection already computed rather than aborting.
             return
         parsed = self._parse_json_object(self._response_content(response))
         if parsed is None:
