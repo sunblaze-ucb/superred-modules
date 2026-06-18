@@ -4,7 +4,9 @@ Static observables (read once at optimizer init, rebuilt per call so content
 reflects the current configuration):
 
 - ``system_prompt``       : the agent's current system-instruction persona.
-- ``tool_catalog_listing``: JSON of the agent's tools (incl. attacker tool).
+- ``model_identity``      : the litellm model id powering the agent.
+- ``tool_catalog_listing``: JSON of the agent's tool registry (incl. attacker
+  tool), tagged at the ``tool_catalogue`` boundary (NOT the ``tools`` tree).
 
 Dynamic observables (emitted during the run via ``emit(ObservableEvent(...))``)
 record each genuinely-new runtime fact ONCE at its true provenance and in
@@ -26,8 +28,10 @@ causal order (no bulk message dump, no cross-zone leak):
 - ``memory_read`` / ``memory_write`` : a durable-memory read/write event.
 
 The attack payload is NOT exposed (the target only exposes injection points;
-attacks are an attacker concern), and model identity is not an observable
-(it is a construction concern, read-only via the model the agent uses).
+attacks are an attacker concern). Model identity IS exposed as a read-only
+observable (which model powers the agent is attacker-relevant, e.g. for
+model-specific payloads) but is never a controllable (the model is a
+construction concern).
 """
 
 from __future__ import annotations
@@ -38,8 +42,9 @@ from superred.core.types.security_domain import SecurityDomainTag
 from asb_target.security_tags import (
     AGENT_TRACE_TAG,
     MEMORY_TAG,
+    MODEL_IDENTITY_TAG,
     SYSTEM_PROMPT_TAG,
-    TOOLS_TAG,
+    TOOL_CATALOGUE_TAG,
 )
 
 # ---------------------------------------------------------------------------
@@ -53,18 +58,29 @@ SYSTEM_PROMPT_OBS = Observable(
     observable_type="text",
 )
 
+MODEL_IDENTITY_OBS = Observable(
+    name="model_identity",
+    security_domain=MODEL_IDENTITY_TAG,
+    description="The litellm-style model id powering the agent.",
+    observable_type="text",
+)
+
 TOOL_CATALOG_LISTING_OBS = Observable(
     name="tool_catalog_listing",
-    security_domain=TOOLS_TAG,
+    security_domain=TOOL_CATALOGUE_TAG,
     description=(
-        "JSON snapshot of the agent's tool catalogue: each entry is "
-        "{name, description}, including the attacker tool once registered."
+        "JSON snapshot of the agent's tool catalogue (the registry: which tools "
+        "exist + their descriptions): each entry is {name, description}, "
+        "including the attacker tool once registered. Tagged at the "
+        "tool_catalogue registry boundary, NOT the tools tree, so reading the "
+        "listing does not grant reading any tool's returned observations."
     ),
     observable_type="json",
 )
 
 STATIC_OBSERVABLE_SPECS: tuple[Observable, ...] = (
     SYSTEM_PROMPT_OBS,
+    MODEL_IDENTITY_OBS,
     TOOL_CATALOG_LISTING_OBS,
 )
 
@@ -122,6 +138,7 @@ def memory_event_observable(kind: str) -> Observable:
 
 __all__ = [
     "SYSTEM_PROMPT_OBS",
+    "MODEL_IDENTITY_OBS",
     "TOOL_CATALOG_LISTING_OBS",
     "STATIC_OBSERVABLE_SPECS",
     "agent_plan_observable",

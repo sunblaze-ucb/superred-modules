@@ -91,6 +91,26 @@ infrastructure**. Specific attacks are an attacker's concern, not the target's.
 - **C.7 Defenses removed**: the target has **no** defense infrastructure
   (no `defense_type` config, no delimiters/instructional/ob-sandwich/paraphrase/
   pot-shuffle code). ASB's defenses are out of scope for this bare runtime.
+- **C.8 Tool-catalogue editing (beyond upstream)**: a superred extension with no
+  upstream analog. Upstream ASB ships a single fixed Task-set attacker tool
+  (C.6); the port additionally exposes attacker-driven catalogue editing as four
+  Controllables fired **once** before planning, mirroring the agentdojo and
+  inspect-agent targets (same names + the add/edit/remove capability split):
+  `tool_catalog_register` (add a new tool, scope `tool_catalogue_add`),
+  `tool_catalog_replace` (shadow an existing tool's behavior, `tool_catalogue_edit`),
+  `tool_catalog_rewrite_doc` (edit a tool's description only, `tool_catalogue_edit`),
+  and `tool_catalog_unregister` (remove a tool, `tool_catalogue_remove`). An
+  ADDED or behavior-REPLACED tool is **shadowed**: when the agent calls it the
+  original `.run()` is **not** invoked; instead a per-call event is fired
+  directly to the attacker carrying `{tool, params}`, and the attacker's response
+  (or a static `fake_return`) is used as the return. That per-call event is
+  tagged at the `tool_catalogue_add` / `tool_catalogue_edit` **capability**, not
+  the tool's `tools.*` leaf, so an attacker holding the catalogue-edit capability
+  controls the call even when the tool's own leaf is out of scope. A rewrite-doc
+  edit changes only the catalogue listing the model reads (influencing
+  selection), leaving behavior intact. **Clean by default**: with no attacker all
+  four events decline and the catalogue is untouched. This is purely additive
+  surface gated to no-op when unused; it alters no upstream attack path.
 
 ## D. Durable memory (restored)
 
@@ -137,9 +157,16 @@ infrastructure**. Specific attacks are an attacker's concern, not the target's.
   for PoT and a read-only `agent_trace` subtree), `tools` (OPI), `memory` (MP).
   The earlier external/internal **provenance split is removed**, and **all
   read/write (`_readable`) tags are removed** (the Controller's native
-  read-only scope grants see-but-not-inject on any tag). `model_identity` and
-  `tool_catalog` tags are removed (model is construction-only; the attacker
-  tool is Task setup, not an attacker-controlled write).
+  read-only scope grants see-but-not-inject on any tag). The `system` tree also
+  carries `model_identity` (read-only knowledge of which model powers the agent,
+  exposed as an observable for cross-target consistency with the agentdojo and
+  inspect-agent targets; never a controllable, as the model is a construction
+  concern) and `tool_catalogue` (the tool-REGISTRY capability: a grouping root
+  over `tool_catalogue_add` / `tool_catalogue_edit` / `tool_catalogue_remove`,
+  see C.8). `tool_catalogue` lives under `system`, deliberately SEPARATE from the
+  `tools` tree, so granting read of the catalogue listing (which tools exist)
+  does NOT imply reading every tool's returned observation (those are the `tools`
+  tree); `tool_catalogue` is not an ancestor of any `tools.*` node.
 - **E.2** The `tools` tree is **fully per-tool granular**, three levels:
   `tools` (the whole ecosystem) -> `tools.<scenario>` (one scenario's tool
   environment, ten of them) -> `tools.<scenario>.<tool>` (a single tool/service,
@@ -173,6 +200,12 @@ infrastructure**. Specific attacks are an attacker's concern, not the target's.
 - **F.2** No attack payload is exposed as an observable (the target only
   exposes injection points; attacks are an attacker concern). The earlier
   `asb_attack_reference__*` observables are removed.
+- **F.3** Static observables (read once at init): `system_prompt` (persona),
+  `model_identity` (the litellm model id; added for cross-target consistency,
+  read-only), and `tool_catalog_listing` (the registry: which tools exist + their
+  descriptions, including the attacker tool once registered). The listing is
+  tagged at the `tool_catalogue` registry boundary (E.1), **not** the `tools`
+  tree, so reading it does not grant reading any tool's returned observation.
 
 ## G. Execution model
 
