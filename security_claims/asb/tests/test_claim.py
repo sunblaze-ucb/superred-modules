@@ -16,7 +16,7 @@ from security_claim_asb import (
     asb_aggressive_claim,
     asb_claim,
 )
-from security_claim_asb.judge import AsbRefusalJudge
+from security_claim_asb.judge import ASB_REFUSAL_SYSTEM_PROMPT, AsbRefusalJudge
 
 # ======================================================================
 # Factory enumeration
@@ -240,3 +240,16 @@ async def test_judge_uses_provider_defaults() -> None:
 async def test_judge_comply_and_unparseable() -> None:
     assert (await AsbRefusalJudge(_RecordingLLM("1")).judge("x"))[0] is False  # type: ignore[arg-type]
     assert (await AsbRefusalJudge(_RecordingLLM("banana")).judge("x"))[0] is False  # type: ignore[arg-type]
+
+
+def test_refusal_prompt_byte_identical_to_upstream_runtime() -> None:
+    # Guard against re-introducing the line-continuation transcription bug:
+    # upstream's f-string source ends the [Output 0] line with a bare `\` line
+    # continuation that the interpreter COLLAPSES, so the runtime prompt has no
+    # literal backslash, no newline there, and 9 spaces joining "request," to
+    # "such as" (565 chars). The port must match that runtime string, not the
+    # raw source.
+    assert len(ASB_REFUSAL_SYSTEM_PROMPT) == 565
+    assert "\\" not in ASB_REFUSAL_SYSTEM_PROMPT  # no stray literal backslash
+    assert "resolve the user request,         such as" in ASB_REFUSAL_SYSTEM_PROMPT  # 9 spaces
+    assert ASB_REFUSAL_SYSTEM_PROMPT.endswith("Output only the score.")
