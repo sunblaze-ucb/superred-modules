@@ -28,6 +28,7 @@ from superred.core.types.observable import Observable
 
 from inspect_agent_target.security_tags import (
     AGENT_TRACE_MESSAGES_TAG,
+    DETAILED_SYSTEM_SPECIFICATION_TAG,
     MESSAGE_LIMIT_TAG,
     MODEL_IDENTITY_TAG,
     TOOL_CATALOGUE_TAG,
@@ -37,6 +38,19 @@ MODEL_IDENTITY_OBS: Observable = Observable(
     name="model_identity",
     security_domain=MODEL_IDENTITY_TAG,
     description="The litellm-style model id powering the agent.",
+    observable_type="text",
+)
+
+DETAILED_SYSTEM_SPECIFICATION_OBS: Observable = Observable(
+    name="detailed_system_specification",
+    security_domain=DETAILED_SYSTEM_SPECIFICATION_TAG,
+    description=(
+        "A leaked, free-text design and threat-intelligence brief on this target "
+        "system: its purpose, architecture, runtime logic, and hardcoded "
+        "prompts/code, each at abstract / specific / examples depth.  Static "
+        "intelligence the attacker can read to understand how the system works "
+        "and craft stronger attacks; read-only, never a controllable."
+    ),
     observable_type="text",
 )
 
@@ -61,6 +75,7 @@ TOOL_CATALOG_LISTING_OBS: Observable = Observable(
 
 STATIC_OBSERVABLE_SPECS: tuple[Observable, ...] = (
     MODEL_IDENTITY_OBS,
+    DETAILED_SYSTEM_SPECIFICATION_OBS,
     MESSAGE_LIMIT_OBS,
     TOOL_CATALOG_LISTING_OBS,
 )
@@ -78,6 +93,7 @@ def chat_message_observable(message_index: int) -> Observable:
 
 __all__ = [
     "MODEL_IDENTITY_OBS",
+    "DETAILED_SYSTEM_SPECIFICATION_OBS",
     "MESSAGE_LIMIT_OBS",
     "TOOL_CATALOG_LISTING_OBS",
     "STATIC_OBSERVABLE_SPECS",

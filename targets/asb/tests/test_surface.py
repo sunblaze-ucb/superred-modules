@@ -7,6 +7,7 @@ from asb_target.config_specs import CONFIG_SPEC_NAMES, CONFIG_SPECS
 from asb_target.controllables import CONTROLLABLES, opi_tool_observation_ctrl
 from asb_target.observables import STATIC_OBSERVABLE_SPECS
 from asb_target.security_tags import (
+    DETAILED_SYSTEM_SPECIFICATION_TAG,
     MEMORY_TAG,
     MODEL_IDENTITY_TAG,
     SYSTEM_PROMPT_TAG,
@@ -87,11 +88,21 @@ def test_removed_config_slots_absent() -> None:
 
 def test_static_observables() -> None:
     names = {o.name for o in STATIC_OBSERVABLE_SPECS}
-    assert names == {"system_prompt", "model_identity", "tool_catalog_listing"}
+    assert names == {
+        "system_prompt",
+        "model_identity",
+        "detailed_system_specification",
+        "tool_catalog_listing",
+    }
     assert not any("attack_reference" in n for n in names)
     by = {o.name: o for o in STATIC_OBSERVABLE_SPECS}
     assert by["system_prompt"].security_domain is SYSTEM_PROMPT_TAG
     assert by["model_identity"].security_domain is MODEL_IDENTITY_TAG
+    # The leaked system-spec brief is a read-only system child, its own tag.
+    assert (
+        by["detailed_system_specification"].security_domain
+        is DETAILED_SYSTEM_SPECIFICATION_TAG
+    )
     # The catalogue LISTING is tagged at the registry boundary (tool_catalogue),
     # NOT the tools tree, so granting catalogue-read does not grant reading any
     # tool's returned observations.

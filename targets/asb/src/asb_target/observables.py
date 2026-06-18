@@ -41,6 +41,7 @@ from superred.core.types.security_domain import SecurityDomainTag
 
 from asb_target.security_tags import (
     AGENT_TRACE_TAG,
+    DETAILED_SYSTEM_SPECIFICATION_TAG,
     MEMORY_TAG,
     MODEL_IDENTITY_TAG,
     SYSTEM_PROMPT_TAG,
@@ -65,6 +66,19 @@ MODEL_IDENTITY_OBS = Observable(
     observable_type="text",
 )
 
+DETAILED_SYSTEM_SPECIFICATION_OBS = Observable(
+    name="detailed_system_specification",
+    security_domain=DETAILED_SYSTEM_SPECIFICATION_TAG,
+    description=(
+        "A leaked, free-text design and threat-intelligence brief on this target "
+        "system: its purpose, architecture, runtime logic, and hardcoded "
+        "prompts/code, each at abstract / specific / examples depth. Static "
+        "intelligence the attacker can read to understand how the system works "
+        "and craft stronger attacks; read-only, never a controllable."
+    ),
+    observable_type="text",
+)
+
 TOOL_CATALOG_LISTING_OBS = Observable(
     name="tool_catalog_listing",
     security_domain=TOOL_CATALOGUE_TAG,
@@ -81,6 +95,7 @@ TOOL_CATALOG_LISTING_OBS = Observable(
 STATIC_OBSERVABLE_SPECS: tuple[Observable, ...] = (
     SYSTEM_PROMPT_OBS,
     MODEL_IDENTITY_OBS,
+    DETAILED_SYSTEM_SPECIFICATION_OBS,
     TOOL_CATALOG_LISTING_OBS,
 )
 
@@ -139,6 +154,7 @@ def memory_event_observable(kind: str) -> Observable:
 __all__ = [
     "SYSTEM_PROMPT_OBS",
     "MODEL_IDENTITY_OBS",
+    "DETAILED_SYSTEM_SPECIFICATION_OBS",
     "TOOL_CATALOG_LISTING_OBS",
     "STATIC_OBSERVABLE_SPECS",
     "agent_plan_observable",

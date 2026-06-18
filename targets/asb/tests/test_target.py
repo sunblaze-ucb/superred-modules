@@ -87,10 +87,19 @@ def test_get_observables() -> None:
     )
     obs = t.get_observables()
     names = {o.observable.name for o in obs}
-    assert names == {"system_prompt", "model_identity", "tool_catalog_listing"}
+    assert names == {
+        "system_prompt",
+        "model_identity",
+        "detailed_system_specification",
+        "tool_catalog_listing",
+    }
     assert not any("attack_reference" in n for n in names)
     model = next(o.content for o in obs if o.observable.name == "model_identity")
     assert model == t._model
+    spec = next(
+        o.content for o in obs if o.observable.name == "detailed_system_specification"
+    )
+    assert isinstance(spec, str) and "## 1. Purpose" in spec
     catalog = next(o.content for o in obs if o.observable.name == "tool_catalog_listing")
     catalog_names = {entry["name"] for entry in catalog}
     assert "Evil" in catalog_names  # attacker tool listed once registered

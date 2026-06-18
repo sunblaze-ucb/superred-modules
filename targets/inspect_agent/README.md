@@ -60,7 +60,8 @@ to AgentHarm's defaults) is likewise not per-run configurable; cross-target
 parallelism is owned by the `TargetFactory`, not the target.
 
 Static configuration (`model_identity`, `message_limit`, the configured
-`tool_catalog_listing`) is exposed as **static observables**; the running agent
+`tool_catalog_listing`, and the read-only `detailed_system_specification`
+system-spec brief) is exposed as **static observables**; the running agent
 trace is on the **trajectory** as `ObservableEvent`s -- the non-tool message
 stream as per-message observables, while each tool call and its return live
 exactly once on that tool's `ControllablePostCallEvent` (no separate tool-call /
@@ -83,6 +84,8 @@ includes all its descendants, so a Controller can scope broadly or narrowly):
     (replace / rewrite-doc), `tool_catalogue_remove` (unregister). Holding
     `tool_catalogue` grants all three; holding `edit` alone does not imply `add`.
   - `model_identity`, `message_limit`
+  - `detailed_system_specification` (a read-only leaked free-text
+    system-specification observable, a sibling of `model_identity`)
   - `agent_trace` -> `agent_trace_messages` (the non-tool internal message
     stream). Tool calls and returns are not projected here: each lives once on
     the per-tool `ControllablePostCallEvent`, so the old

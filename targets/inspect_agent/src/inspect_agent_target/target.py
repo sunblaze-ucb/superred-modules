@@ -62,6 +62,7 @@ from inspect_agent_target.controllables import (
     tool_output_controllable,
 )
 from inspect_agent_target.observables import (
+    DETAILED_SYSTEM_SPECIFICATION_OBS,
     MESSAGE_LIMIT_OBS,
     MODEL_IDENTITY_OBS,
     TOOL_CATALOG_LISTING_OBS,
@@ -70,6 +71,7 @@ from inspect_agent_target.observables import (
 from inspect_agent_target.query_specs import QUERY_SPEC_NAMES, QUERY_SPECS
 from inspect_agent_target.rollout import ToolChoice, run_rollout, static_tools_provider
 from inspect_agent_target.security_tags import TOOLS_TAG, build_domain
+from inspect_agent_target.system_specification import DETAILED_SYSTEM_SPECIFICATION
 from inspect_agent_target.tool_catalog import ToolCatalog
 
 logger = logging.getLogger(__name__)
@@ -208,6 +210,10 @@ class InspectAgentTarget(Target):
             catalog_snapshot = []
         return [
             ObservableValue(observable=MODEL_IDENTITY_OBS, content=self._model_id),
+            ObservableValue(
+                observable=DETAILED_SYSTEM_SPECIFICATION_OBS,
+                content=DETAILED_SYSTEM_SPECIFICATION,
+            ),
             ObservableValue(observable=MESSAGE_LIMIT_OBS, content=str(self._message_limit)),
             ObservableValue(observable=TOOL_CATALOG_LISTING_OBS, content=catalog_snapshot),
         ]

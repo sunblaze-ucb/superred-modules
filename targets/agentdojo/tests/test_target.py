@@ -59,11 +59,17 @@ def test_observables_exposed_with_pre_run_content(target: AgentDojoTarget) -> No
     names = {o.observable.name for o in observables}
     assert names == {
         "model_identity",
+        "detailed_system_specification",
         "tool_catalog_listing",
     }
     by_name = {o.observable.name: o for o in observables}
     assert by_name["model_identity"].content == "openai/gpt-4o-2024-05-13"
     assert isinstance(by_name["tool_catalog_listing"].content, list)
+    # The leaked system-spec brief is non-empty free text covering the four items.
+    spec = by_name["detailed_system_specification"].content
+    assert isinstance(spec, str)
+    assert "## 1. Purpose" in spec
+    assert "## 4. Code and Hardcoded Prompts" in spec
 
 
 # ----- set_config dispatch -----

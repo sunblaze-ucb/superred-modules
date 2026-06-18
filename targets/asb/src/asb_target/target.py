@@ -42,6 +42,7 @@ from asb_target.controllables import CONTROLLABLES
 from asb_target.llm_proxy import reset_failures, take_failures
 from asb_target.memory_store import DEFAULT_EMBED_MODEL, EmbedFn, MemoryStore
 from asb_target.observables import (
+    DETAILED_SYSTEM_SPECIFICATION_OBS,
     MODEL_IDENTITY_OBS,
     SYSTEM_PROMPT_OBS,
     TOOL_CATALOG_LISTING_OBS,
@@ -54,6 +55,7 @@ from asb_target.runtime import (
     new_agent_process_factory,
 )
 from asb_target.security_tags import DOMAIN
+from asb_target.system_specification import DETAILED_SYSTEM_SPECIFICATION
 
 ensure_vendor_on_path()
 
@@ -185,6 +187,10 @@ class AsbTarget(Target):
         return [
             ObservableValue(observable=SYSTEM_PROMPT_OBS, content=persona),
             ObservableValue(observable=MODEL_IDENTITY_OBS, content=self._model),
+            ObservableValue(
+                observable=DETAILED_SYSTEM_SPECIFICATION_OBS,
+                content=DETAILED_SYSTEM_SPECIFICATION,
+            ),
             ObservableValue(observable=TOOL_CATALOG_LISTING_OBS, content=catalog),
         ]
 

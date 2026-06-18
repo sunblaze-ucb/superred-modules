@@ -15,7 +15,9 @@ from superred.core.types.security_domain import SecurityDomainTag
 
 from inspect_agent_target import (
     CONTROLLABLES,
+    DETAILED_SYSTEM_SPECIFICATION_TAG,
     SYSTEM_PROMPT_CTRL,
+    SYSTEM_TAG,
     TOOLS_TAG,
     USER_PROMPT_CTRL,
     InspectAgentTarget,
@@ -138,9 +140,20 @@ def test_observables_reflect_config() -> None:
     assert obs["model_identity"] == "openai/gpt-4o-mini"
     assert obs["message_limit"] == "7"  # static observable, not on the trajectory
     assert obs["tool_catalog_listing"] == []  # no tools configured here
+    # The leaked system-spec brief is a static free-text observable.
+    assert isinstance(obs["detailed_system_specification"], str)
+    assert "## 1. Purpose" in obs["detailed_system_specification"]
+    assert "## 4. Code and Hardcoded Prompts" in obs["detailed_system_specification"]
     # The system prompt is NOT a static observable; it is carried once,
     # on the system-prompt ControllablePreCallEvent at run start.
     assert "system_prompt" not in obs
+
+
+def test_detailed_system_specification_is_a_read_only_system_child() -> None:
+    # The leaked system-spec brief is a read-only leaf under the system root,
+    # a sibling of model_identity; holding {system} grants reading it.
+    assert DETAILED_SYSTEM_SPECIFICATION_TAG.parent is SYSTEM_TAG
+    assert SYSTEM_TAG.includes(DETAILED_SYSTEM_SPECIFICATION_TAG)
 
 
 # --- set_config -----------------------------------------------------------

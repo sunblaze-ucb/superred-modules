@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from agentdojo_target.observables import (
+    DETAILED_SYSTEM_SPECIFICATION_OBS,
     MODEL_IDENTITY_OBS,
     STATIC_OBSERVABLE_SPECS,
     TOOL_CATALOG_LISTING_OBS,
@@ -16,6 +17,7 @@ from agentdojo_target.security_tags import (
     AGENT_TRACE_MESSAGES_TAG,
     AGENT_TRACE_TAG,
     BANKING_BANK_ACCOUNT_TAG,
+    DETAILED_SYSTEM_SPECIFICATION_TAG,
     MODEL_IDENTITY_TAG,
     TOOL_CATALOGUE_ADD_TAG,
     TOOL_CATALOGUE_EDIT_TAG,
@@ -28,13 +30,17 @@ def test_static_specs_have_right_tags() -> None:
     # The catalogue listing carries the tool_catalogue tag itself; read-only
     # access is granted at the Controller by listing the tag under read_only.
     assert TOOL_CATALOG_LISTING_OBS.security_domain is TOOL_CATALOGUE_TAG
-    # The static specs are now exactly these two observables, each at its tag.
+    # The leaked system-spec brief is a read-only system child, its own tag.
+    assert DETAILED_SYSTEM_SPECIFICATION_OBS.security_domain is DETAILED_SYSTEM_SPECIFICATION_TAG
+    # The static specs are now exactly these three observables, each at its tag.
     assert set(STATIC_OBSERVABLE_SPECS) == {
         MODEL_IDENTITY_OBS,
+        DETAILED_SYSTEM_SPECIFICATION_OBS,
         TOOL_CATALOG_LISTING_OBS,
     }
     assert {(o.name, o.security_domain) for o in STATIC_OBSERVABLE_SPECS} == {
         ("model_identity", MODEL_IDENTITY_TAG),
+        ("detailed_system_specification", DETAILED_SYSTEM_SPECIFICATION_TAG),
         ("tool_catalog_listing", TOOL_CATALOGUE_TAG),
     }
     # No static observable carries the (now-removed) TOOLS_TAG.

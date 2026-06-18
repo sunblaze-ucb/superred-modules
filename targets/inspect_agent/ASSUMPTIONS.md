@@ -60,7 +60,8 @@ via the `model_identity` observable.
 ## E.1 Static observables vs the trajectory
 Static configuration is exposed as **static observables** (`get_observables`,
 handed to the optimizer at init): `model_identity`, `system_prompt`,
-`message_limit`, and `tool_catalog_listing` (the configured, pre-edit catalogue).
+`message_limit`, `detailed_system_specification` (a read-only leaked free-text
+system-spec brief), and `tool_catalog_listing` (the configured, pre-edit catalogue).
 Everything that **happens during the run** is on the **trajectory**: the non-tool
 internal message stream is per-message `ObservableEvent`s (the only one-way
 target-to-trajectory mechanism, each wrapping an `Observable`) -- tool-result
@@ -106,7 +107,8 @@ catalogue is seeded from the static `tool_names` config), plus a
   `read_only` (rather than `scope`) grants the listing without edit capability.
   Granting `tool_catalogue` subsumes all three children; granting `edit` alone
   does NOT imply `add`. The `tool_catalogue` root lives under the `system`
-  umbrella root, alongside `system_prompt`, `model_identity`, and `agent_trace`.
+  umbrella root, alongside `system_prompt`, `model_identity`,
+  `detailed_system_specification`, and `agent_trace`.
 - Initial tools remain a static Task config (`tool_names`); the catalogue is
   seeded from them each run and edited only by accepted injections.
 - **Faithfulness-safe**: a passthrough optimizer (the AgentHarm baseline) injects

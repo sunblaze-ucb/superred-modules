@@ -27,6 +27,7 @@ from agentdojo_target.controllables import (
 )
 from agentdojo_target.env import CompositeEnvironment, sync_initial_fields
 from agentdojo_target.observables import (
+    DETAILED_SYSTEM_SPECIFICATION_OBS,
     MODEL_IDENTITY_OBS,
     STATIC_OBSERVABLE_SPECS,
     TOOL_CATALOG_LISTING_OBS,
@@ -39,6 +40,7 @@ from agentdojo_target.security_tags import (
     BANKING_FILESYSTEM_TAG,
     BANKING_TAG,
     BANKING_USER_ACCOUNT_TAG,
+    DETAILED_SYSTEM_SPECIFICATION_TAG,
     DOMAIN,
     MODEL_IDENTITY_TAG,
     SLACK_SLACK_TAG,
@@ -86,6 +88,7 @@ __all__ = [
     "TOOL_CATALOGUE_EDIT_TAG",
     "TOOL_CATALOGUE_REMOVE_TAG",
     "MODEL_IDENTITY_TAG",
+    "DETAILED_SYSTEM_SPECIFICATION_TAG",
     "AGENT_TRACE_TAG",
     "AGENT_TRACE_MESSAGES_TAG",
     "USER_TAG",
@@ -122,6 +125,7 @@ __all__ = [
     # Observables
     "STATIC_OBSERVABLE_SPECS",
     "MODEL_IDENTITY_OBS",
+    "DETAILED_SYSTEM_SPECIFICATION_OBS",
     "TOOL_CATALOG_LISTING_OBS",
     # System prompt
     "default_system_prompt",

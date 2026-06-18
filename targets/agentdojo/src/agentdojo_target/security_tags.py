@@ -93,6 +93,18 @@ MODEL_IDENTITY_TAG: SecurityDomainTag = SecurityDomainTag(
 so that 'attacker knows the victim model' can be modeled independently
 of any write capability."""
 
+DETAILED_SYSTEM_SPECIFICATION_TAG: SecurityDomainTag = SecurityDomainTag(
+    "detailed_system_specification",
+    parent=SYSTEM_TAG,
+)
+"""Read access to a leaked, free-text specification of the target system: its
+purpose, architecture, runtime logic, and hardcoded prompts/code.  Pure
+intelligence about how the system works (an attacker who obtained internal
+documentation), carried by the ``detailed_system_specification`` static
+observable.  Read-only, never a write surface; a sibling of ``model_identity``
+so 'the attacker has a design leak of the system' can be granted independently
+of any injection capability."""
+
 AGENT_TRACE_TAG: SecurityDomainTag = SecurityDomainTag(
     "agent_trace",
     parent=SYSTEM_TAG,
@@ -238,6 +250,7 @@ DOMAIN: SecurityDomain = SecurityDomain(
         TOOL_CATALOGUE_EDIT_TAG,
         TOOL_CATALOGUE_REMOVE_TAG,
         MODEL_IDENTITY_TAG,
+        DETAILED_SYSTEM_SPECIFICATION_TAG,
         AGENT_TRACE_TAG,
         AGENT_TRACE_MESSAGES_TAG,
         # user tree
@@ -267,7 +280,7 @@ DOMAIN: SecurityDomain = SecurityDomain(
     ]
 )
 """The full security-domain forest exposed by :class:`AgentDojoTarget`.
-31 tags across three trees (system 9, user 1, tools 21)."""
+32 tags across three trees (system 10, user 1, tools 21)."""
 
 
 __all__ = [
@@ -279,6 +292,7 @@ __all__ = [
     "TOOL_CATALOGUE_EDIT_TAG",
     "TOOL_CATALOGUE_REMOVE_TAG",
     "MODEL_IDENTITY_TAG",
+    "DETAILED_SYSTEM_SPECIFICATION_TAG",
     "AGENT_TRACE_TAG",
     "AGENT_TRACE_MESSAGES_TAG",
     # user tree
