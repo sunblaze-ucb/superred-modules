@@ -92,16 +92,16 @@ attacker tool).
   was driven to invoke the attacker tool"). The target exposes the injection
   points; there is no attacker module.
 - **D.2 Default breadth** `asb_claim()` defaults to `tasks_per_agent=1` and the
-  FULL `all_attack_tools.jsonl` (400 = 200 aggressive + 200 non-aggressive), so
-  a bare claim enumerates ~400 cases (10 agents x 1 benign cover-task x that
-  agent's 40 attacker tools). The per-case enumeration STRUCTURE (agent x first
-  `tasks_per_agent` benign tasks x that agent's attacker tools) is identical to
-  upstream's triple-nested loop, but this default is a deliberate **superset**
-  of upstream's CLI default, which uses `all_attack_tools_non_aggressive.jsonl`
-  (200) with `--task_num` 1. `asb_non_aggressive_claim()` reproduces upstream's
-  exact 200-case default run; `asb_aggressive_claim()` gives the other 200.
-  `tasks_per_agent=None` => all ~5 benign tasks (~2000), an additive
-  convenience. Other roll-ups: per-agent, stealthy/disruptive.
+  200-row non-aggressive set (`all_attack_tools_non_aggressive.jsonl`),
+  **matching a bare upstream run exactly**: 10 agents x 1 benign cover-task x
+  that agent's 20 attacker tools = 200 cases, with the same triple-nested
+  enumeration STRUCTURE (agent x first `tasks_per_agent` benign tasks x that
+  agent's attacker tools) and the same CLI defaults (`--attacker_tools_path`
+  non-aggressive, `--task_num` 1). Roll-ups widen it: `asb_full_claim()` the
+  full 400 (200 aggressive + 200 non-aggressive), `asb_aggressive_claim()` the
+  aggressive 200, `asb_stealthy_claim()` / `asb_disruptive_claim()` the 200 of
+  each attack type across the full set; `tasks_per_agent=None` => all ~5 benign
+  tasks (~1000).
 - **D.3** `memory=True` on the factory enables the target's durable memory mode
   per task (so a multi-run attacker can poison-then-exploit and `memory_found`
   is scored). The removed target config slots (`defense_type`, `pot_trigger`,

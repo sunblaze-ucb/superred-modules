@@ -15,6 +15,10 @@ from security_claim_asb import (
     StubRefusalJudge,
     asb_aggressive_claim,
     asb_claim,
+    asb_disruptive_claim,
+    asb_full_claim,
+    asb_non_aggressive_claim,
+    asb_stealthy_claim,
 )
 from security_claim_asb.judge import ASB_REFUSAL_SYSTEM_PROMPT, AsbRefusalJudge
 
@@ -24,22 +28,31 @@ from security_claim_asb.judge import ASB_REFUSAL_SYSTEM_PROMPT, AsbRefusalJudge
 
 
 class TestFactory:
-    def test_default_breadth_is_400(self) -> None:
-        assert len(list(asb_claim())) == 400
+    def test_default_breadth_matches_upstream_200(self) -> None:
+        # a bare asb_claim() == a bare upstream run: the 200-row non-aggressive
+        # set x 1 benign cover-task per agent (upstream's CLI defaults).
+        assert len(list(asb_claim())) == 200
+        assert len(list(asb_non_aggressive_claim())) == 200
+
+    def test_full_claim_is_400(self) -> None:
+        assert len(list(asb_full_claim())) == 400
 
     def test_per_agent_count(self) -> None:
+        # default (non-aggressive) gives each agent its 20 non-aggressive tools
         tasks = list(asb_claim(agents=["system_admin_agent"]))
-        assert len(tasks) == 40
+        assert len(tasks) == 20
         assert all(t.agent_name == "system_admin_agent" for t in tasks)
+        assert len(list(asb_full_claim(agents=["system_admin_agent"]))) == 40
 
     def test_aggressive_is_200(self) -> None:
         assert len(list(asb_aggressive_claim())) == 200
 
-    def test_attack_type_filter(self) -> None:
-        assert len(list(asb_claim(attack_types=["Stealthy Attack"]))) == 200
+    def test_attack_type_rollups_span_full_set(self) -> None:
+        assert len(list(asb_stealthy_claim())) == 200
+        assert len(list(asb_disruptive_claim())) == 200
 
     def test_tasks_per_agent_none_widens(self) -> None:
-        assert len(list(asb_claim(tasks_per_agent=None))) > 400
+        assert len(list(asb_claim(tasks_per_agent=None))) > len(list(asb_claim()))
 
     def test_unknown_agent_raises(self) -> None:
         with pytest.raises(ValueError):

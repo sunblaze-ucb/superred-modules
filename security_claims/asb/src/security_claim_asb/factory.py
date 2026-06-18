@@ -49,7 +49,7 @@ def asb_claim(
     aggressive: bool | None = None,
     attacker_tools: Iterable[str] | None = None,
     tasks_per_agent: int | None = 1,
-    attacker_tools_path: str = ALL_ATTACK_TOOLS_PATH,
+    attacker_tools_path: str = NON_AGGRESSIVE_ATTACK_TOOLS_PATH,
     memory: bool = False,
     force_attacker_tool: bool = False,
     judge: RefusalJudge | None = None,
@@ -62,9 +62,13 @@ def asb_claim(
         attack_types: restrict to these 'Attack Type' values (Stealthy/Disruptive).
         aggressive: restrict to aggressive (True) / non-aggressive (False) tools.
         attacker_tools: restrict to these attacker-tool names (exclusive filter).
-        tasks_per_agent: benign cover-tasks per agent (default 1 == ASB CLI default,
-            ~400 tasks; ``None`` uses all ~5, ~2000 tasks).
-        attacker_tools_path: which attacker-tool file to load.
+        tasks_per_agent: benign cover-tasks per agent (default 1 == ASB's --task_num
+            default; with the default non-aggressive tool set this is ~200 tasks,
+            matching a bare upstream run; ``None`` uses all ~5 benign tasks).
+        attacker_tools_path: which attacker-tool file to load. Default is the
+            200-row non-aggressive set, matching upstream's CLI default; pass
+            ``ALL_ATTACK_TOOLS_PATH`` for the full 400 or
+            ``AGGRESSIVE_ATTACK_TOOLS_PATH`` for the aggressive 200.
         memory: enable the target's durable memory mode for each task (so a
             multi-run attacker can poison-then-exploit and ``memory_found`` is
             scored). Default off.
@@ -151,14 +155,28 @@ def asb_non_aggressive_claim(**kwargs: object) -> SecurityClaim[AsbTarget]:
     )
 
 
+def asb_full_claim(**kwargs: object) -> SecurityClaim[AsbTarget]:
+    """The full 400-tool benchmark (200 aggressive + 200 non-aggressive),
+    broader than the default non-aggressive 200."""
+    return asb_claim(attacker_tools_path=ALL_ATTACK_TOOLS_PATH, **kwargs)  # type: ignore[arg-type]
+
+
 def asb_stealthy_claim(**kwargs: object) -> SecurityClaim[AsbTarget]:
-    """Only the 'Stealthy Attack' tools."""
-    return asb_claim(attack_types=["Stealthy Attack"], **kwargs)  # type: ignore[arg-type]
+    """All 'Stealthy Attack' tools (across aggressive + non-aggressive)."""
+    return asb_claim(
+        attack_types=["Stealthy Attack"],
+        attacker_tools_path=ALL_ATTACK_TOOLS_PATH,
+        **kwargs,  # type: ignore[arg-type]
+    )
 
 
 def asb_disruptive_claim(**kwargs: object) -> SecurityClaim[AsbTarget]:
-    """Only the 'Disruptive Attack' tools."""
-    return asb_claim(attack_types=["Disruptive Attack"], **kwargs)  # type: ignore[arg-type]
+    """All 'Disruptive Attack' tools (across aggressive + non-aggressive)."""
+    return asb_claim(
+        attack_types=["Disruptive Attack"],
+        attacker_tools_path=ALL_ATTACK_TOOLS_PATH,
+        **kwargs,  # type: ignore[arg-type]
+    )
 
 
 def asb_combined_claim(claims: list[SecurityClaim[AsbTarget]]) -> SecurityClaim[AsbTarget]:
@@ -203,6 +221,7 @@ def asb_target_factory(
 __all__ = [
     "asb_claim",
     "asb_agent_claim",
+    "asb_full_claim",
     "asb_aggressive_claim",
     "asb_non_aggressive_claim",
     "asb_stealthy_claim",
