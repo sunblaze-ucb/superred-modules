@@ -14,8 +14,9 @@
 
 - SuperRed owns target execution, retrieval, scope filtering, trajectory, and task evaluation.
 - Writable corpus/context surfaces are preferred, then writable `system_prompt`, then writable user prompt, then runtime context PostCall surfaces.
-- Static surface matching is tried first; for ambiguous RAG-like controllables, the optimizer can ask its LLM to classify corpus/context/user-prompt surfaces.
-- For JSON corpus writes, the optimizer preserves an existing list/dict shape when possible and only falls back to its metadata wrapper when the target gives no usable schema.
+- Static surface matching is tried first; then the optimizer can ask its LLM to classify any remaining in-scope controllables as corpus/context/user-prompt surfaces. The corpus/context label only affects routing, not the on-wire format.
+- A doc-carrying (corpus or context) surface is poisoned once per run whether it is exercised as a `PreCall` or a `PostCall`, since a controllable may use either event.
+- The on-wire format follows the controllable's value type, not its corpus/context label: a JSON surface receives the merged JSON payload (preserving an existing list/dict shape, falling back to the metadata wrapper only when the target gives no usable schema); any other surface receives plain poison-context text.
 - If only `user_message` is writable, the optimizer uses the official RAG wrapper in the user prompt. This is a capability fallback, not true database poisoning.
 - If only `system_prompt` is writable, the optimizer can place the official RAG wrapper and poison contexts there. This is also a SuperRed capability extension.
 - Framework `RunEndEvent.evaluation` is authoritative when visible; otherwise the optimizer reads response observables from trajectory first, then scoped PostCall answers.

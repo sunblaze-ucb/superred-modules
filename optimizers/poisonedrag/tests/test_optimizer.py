@@ -248,6 +248,106 @@ async def test_llm_selects_nonstandard_corpus_surface() -> None:
 
 
 @pytest.mark.asyncio
+async def test_llm_context_surface_is_injected_on_precall() -> None:
+    # A controllable the LLM labels a "context" surface must still be poisoned
+    # when it is exercised as a PreCall (controllables may use either event), and
+    # a JSON surface gets the JSON payload regardless of the corpus/context label.
+    llm = _ScriptedLLM([json.dumps({"context_surfaces": ["tenant_memory_slot"]})])
+    opt = PoisonedRAGOptimizer(
+        target_answer="Lyon",
+        poison_texts=["Lyon poison"] * 5,
+        max_attempts=1,
+    )
+    surface = Controllable(
+        "tenant_memory_slot",
+        RAG_TAG,
+        description="Storage the retrieval layer reads before answering.",
+        value_type="json",
+    )
+    await opt.initialize(
+        Goal(description="What is the capital of France?"),
+        [surface],
+        [],
+        llm,
+    )
+    assert "tenant_memory_slot" in opt._llm_context_surface_names
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    response = await dispatch(
+        opt,
+        ControllablePreCallEvent(
+            controllable=surface, request=json.dumps({"documents": []})
+        ),
+    )
+
+    assert isinstance(response, ControllableInjection)
+    payload = json.loads(response.value)
+    assert len(payload["documents"]) == 5
+
+
+@pytest.mark.asyncio
+async def test_corpus_surface_is_injected_on_postcall() -> None:
+    # The mirror of the above: a corpus surface exercised as a PostCall is also
+    # poisoned, not just on PreCall.
+    opt = PoisonedRAGOptimizer(
+        target_answer="Lyon",
+        poison_texts=["Lyon poison"] * 5,
+        max_attempts=1,
+    )
+    corpus = ctrl("knowledge_base_insert")
+    await opt.initialize(
+        Goal(description="What is the capital of France?"),
+        [corpus],
+        [],
+        LLMClient._make_noop(),
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    response = await dispatch(
+        opt,
+        ControllablePostCallEvent(
+            controllable=corpus, request="kb-write", answer="existing knowledge"
+        ),
+    )
+
+    assert isinstance(response, ControllableInjection)
+    assert "Lyon poison" in response.value
+
+
+@pytest.mark.asyncio
+async def test_llm_can_select_surface_without_static_rag_hints() -> None:
+    llm = _ScriptedLLM(json.dumps({"corpus_surfaces": ["slot_alpha"]}))
+    opt = PoisonedRAGOptimizer(
+        target_answer="Lyon",
+        poison_texts=["Lyon poison"] * 5,
+        max_attempts=1,
+    )
+    opaque_surface = Controllable(
+        "slot_alpha",
+        RAG_TAG,
+        description="Writable target field.",
+        value_type="json",
+    )
+    await opt.initialize(
+        Goal(description="What is the capital of France?"),
+        [opaque_surface],
+        [],
+        llm,
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    response = await dispatch(
+        opt,
+        ControllablePreCallEvent(controllable=opaque_surface, request="[]"),
+    )
+
+    assert isinstance(response, ControllableInjection)
+    payload = json.loads(response.value)
+    assert payload["documents"][0] == "What is the capital of France?.Lyon poison"
+    assert llm.calls
+
+
+@pytest.mark.asyncio
 async def test_malformed_generation_response_does_not_abort_task() -> None:
     llm = _ScriptedLLM("not-json")
     opt = PoisonedRAGOptimizer(correct_answer="Paris", max_attempts=1)
@@ -858,14 +958,7 @@ async def test_dynamic_context_fallback_gives_up_after_no_delivery() -> None:
 
 @pytest.mark.asyncio
 async def test_dynamic_context_fallback_does_not_generate_before_delivery() -> None:
-    llm = _ScriptedLLM(
-        json.dumps(
-            {
-                "incorrect_answer": "Lyon",
-                **{f"corpus{i}": f"Lyon generated {i}" for i in range(1, 6)},
-            }
-        )
-    )
+    llm = _ScriptedLLM(json.dumps({}))
     opt = PoisonedRAGOptimizer(correct_answer="Paris", max_attempts=3)
     await opt.initialize(
         Goal(description="What is the capital of France?"),
@@ -880,18 +973,26 @@ async def test_dynamic_context_fallback_does_not_generate_before_delivery() -> N
     assert isinstance(end, RunEndResponse)
     assert end.done is True
     assert opt.attempt_index == 0
-    assert llm.calls == []
+    generation_calls = [
+        call
+        for call in llm.calls
+        if "incorrect answer" in call["messages"][-1]["content"]
+    ]
+    assert generation_calls == []
 
 
 @pytest.mark.asyncio
 async def test_dynamic_context_fallback_generates_on_delivery() -> None:
     llm = _ScriptedLLM(
-        json.dumps(
-            {
-                "incorrect_answer": "Lyon",
-                **{f"corpus{i}": f"Lyon generated {i}" for i in range(1, 6)},
-            }
-        )
+        [
+            json.dumps({}),
+            json.dumps(
+                {
+                    "incorrect_answer": "Lyon",
+                    **{f"corpus{i}": f"Lyon generated {i}" for i in range(1, 6)},
+                }
+            ),
+        ]
     )
     opt = PoisonedRAGOptimizer(correct_answer="Paris", max_attempts=1)
     await opt.initialize(
@@ -913,7 +1014,12 @@ async def test_dynamic_context_fallback_generates_on_delivery() -> None:
 
     assert isinstance(post_resp, ControllableInjection)
     assert "What is the capital of France?.Lyon generated 1" in post_resp.value
-    assert len(llm.calls) == 1
+    generation_calls = [
+        call
+        for call in llm.calls
+        if "incorrect answer" in call["messages"][-1]["content"]
+    ]
+    assert len(generation_calls) == 1
 
 
 @pytest.mark.asyncio

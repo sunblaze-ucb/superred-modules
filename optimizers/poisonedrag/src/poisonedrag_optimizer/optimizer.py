@@ -251,8 +251,12 @@ class PoisonedRAGOptimizer(Optimizer):
             for ctrl in controllables
         )
         await self._select_surfaces_with_llm(controllables)
+        # A corpus OR context surface directly carries the poison documents, so
+        # both count as a "doc-carrying" surface here (used to decide the
+        # system/user-prompt wrap fallbacks and the runtime-context path).
         self._has_corpus_surface = any(
-            self._is_corpus_surface(ctrl) and self._surface_allowed(ctrl)
+            (self._is_corpus_surface(ctrl) or self._is_context_surface(ctrl))
+            and self._surface_allowed(ctrl)
             for ctrl in controllables
         )
         self._has_user_surface = any(
@@ -334,7 +338,9 @@ class PoisonedRAGOptimizer(Optimizer):
             return ControllableNoInjection(event=event, controllable=event.controllable)
         if name == _SYSTEM_PROMPT_NAME:
             return self._maybe_inject_system_prompt(event)
-        if self._is_corpus_surface(controllable):
+        if self._is_corpus_surface(controllable) or self._is_context_surface(
+            controllable
+        ):
             return self._maybe_inject_corpus(event)
         if self._is_user_prompt(controllable):
             return self._maybe_inject_user_prompt(event)
@@ -345,10 +351,13 @@ class PoisonedRAGOptimizer(Optimizer):
     ) -> ControllableInjection | ControllableNoInjection:
         if (
             not self._is_done()
-            and not self._injected_this_run
+            and not self._corpus_injected
             and self._surface_allowed(event.controllable)
             and event.controllable.name.lower() not in _RESPONSE_CONTROLLABLE_NAMES
-            and self._is_context_surface(event.controllable)
+            and (
+                self._is_corpus_surface(event.controllable)
+                or self._is_context_surface(event.controllable)
+            )
         ):
             batch = self._current_batch
             if batch is None:
@@ -360,6 +369,9 @@ class PoisonedRAGOptimizer(Optimizer):
                         event=event, controllable=event.controllable
                     )
                 self._current_batch = batch
+            # Share the corpus gate so a doc-carrying surface is poisoned once
+            # per run whether it fires as a PreCall or a PostCall.
+            self._corpus_injected = True
             self._injected_this_run = True
             value = self._format_context_value(event.answer, self._adv_documents(batch))
             self._record_retrieval_metrics_from_content(value)
@@ -528,14 +540,15 @@ class PoisonedRAGOptimizer(Optimizer):
             return ControllableNoInjection(event=event, controllable=event.controllable)
         self._corpus_injected = True
         self._injected_this_run = True
-        if event.controllable.value_type == "text" or self._is_context_surface(
-            event.controllable
-        ):
+        # Format follows the controllable's value type, not its corpus/context
+        # label: a JSON surface gets the merged JSON payload (even when the LLM
+        # labelled it "context"), anything else gets plain poison-context text.
+        if event.controllable.value_type == "json":
+            value = self._format_corpus_json_value(event.request, self._current_batch)
+        else:
             value = self._format_context_value(
                 event.request, self._adv_documents(self._current_batch)
             )
-        else:
-            value = self._format_corpus_json_value(event.request, self._current_batch)
         return ControllableInjection(
             event=event, controllable=event.controllable, value=value
         )
@@ -812,7 +825,6 @@ class PoisonedRAGOptimizer(Optimizer):
             and not self._is_static_corpus_surface(ctrl)
             and not self._is_static_context_surface(ctrl)
             and not self._is_static_user_prompt(ctrl)
-            and self._could_be_rag_surface_candidate(ctrl)
         ]
         if not candidates:
             return
@@ -847,7 +859,7 @@ class PoisonedRAGOptimizer(Optimizer):
                 messages, temperature=0.0, max_tokens=160
             )
         except BudgetExhaustedError:
-            raise
+            return
         except Exception:
             return
         parsed = self._parse_json_object(self._response_content(response))
@@ -862,32 +874,6 @@ class PoisonedRAGOptimizer(Optimizer):
         )
         self._llm_user_surface_names = self._read_name_set(
             parsed, "user_prompt_surfaces", allowed
-        )
-
-    @staticmethod
-    def _could_be_rag_surface_candidate(controllable: Controllable) -> bool:
-        text = " ".join(
-            (controllable.name, controllable.description, controllable.value_type)
-        ).lower()
-        return any(
-            hint in text
-            for hint in (
-                "retriev",
-                "rag",
-                "knowledge",
-                "document",
-                "corpus",
-                "context",
-                "vector",
-                "index",
-                "database",
-                "storage",
-                "memory",
-                "query",
-                "question",
-                "prompt",
-                "message",
-            )
         )
 
     @staticmethod
