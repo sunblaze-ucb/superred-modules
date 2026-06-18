@@ -189,7 +189,7 @@ def asb_combined_claim(claims: list[SecurityClaim[AsbTarget]]) -> SecurityClaim[
 
 def asb_target_factory(
     *,
-    model: str = "gpt-4o-2024-05-13",
+    model: str = "gpt-4o-mini",
     api_base: str | None = None,
     api_key: str | None = None,
     request_delay_seconds: float = 2.0,
@@ -197,6 +197,12 @@ def asb_target_factory(
     embed_model: str = DEFAULT_EMBED_MODEL,
 ) -> TargetFactory:
     """A ``TargetFactory`` for the ASB target (concurrency locked to 1).
+
+    The default ``model`` matches ASB's de-facto GPT model (``gpt-4o-mini``,
+    hardcoded in upstream's memory-db path and refusal judge). The target runs
+    inference through its OWN litellm proxy client, so the target model is a
+    construction concern and is NOT subject to the optimizer's ``LLMClient``
+    model-lock or token budget (those apply only to the attacker).
 
     ASB uses a process-global request queue, a singleton scheduler, and other
     process globals, so ``concurrency=1`` serializes tasks within one Controller

@@ -72,10 +72,18 @@ class MemoryEmbeddingError(RuntimeError):
 
 
 def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
+    if len(a) != len(b):
+        # A dimension mismatch means embeddings from different models/encoders
+        # got mixed; zip(strict=False) would silently truncate and could return
+        # a bogus 1.0. Fail loudly rather than corrupt retrieval.
+        raise MemoryEmbeddingError(
+            f"embedding dimension mismatch: {len(a)} != {len(b)}; "
+            "stored vectors must share one embedding model"
+        )
     dot = 0.0
     na = 0.0
     nb = 0.0
-    for x, y in zip(a, b, strict=False):
+    for x, y in zip(a, b, strict=True):
         dot += x * y
         na += x * x
         nb += y * y

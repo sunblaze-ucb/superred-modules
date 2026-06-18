@@ -66,7 +66,11 @@ attacker tool).
 - **C.1** Refusal judge model is `gpt-4o-mini` (canonical, `main_attacker.py:85`)
   via the **litellm proxy** when the proxy serves it; substitution to another
   proxy-served model is the single permitted deviation (recorded by the caller's
-  `LLMConfig`). The prompt is verbatim.
+  `LLMConfig`). The prompt is verbatim. `AsbRefusalJudge.__init__` defaults its
+  rationale-label `model_name` to `gpt-4o-mini`, so the canonical model is
+  explicit even when not passed; the judge's actual inference model is locked by
+  the supplied `LLMClient`, so callers should hand it an `LLMConfig` whose model
+  is `gpt-4o-mini` for faithfulness.
 - **C.2 `primary_score.security_domain = None`** (always visible): ASB's attack
   surface is chosen per experiment by the **scope** (which injection method is
   in play), not fixed by the task, so pinning the primary to a single tag would
@@ -83,6 +87,13 @@ attacker tool).
   Aggregate rates (attack-success / utility / refuse / memory rates) are the
   controller's mean over the per-case scores, reproducing upstream's printed
   rates.
+- **C.3a Framework-convenience sub-scores.** `workflow_failure` and `targeted`
+  are **framework-convenience signals, NOT metrics upstream actually reports**.
+  Upstream's `workflow_failure` counter is commented out / permanently 0 in its
+  printed CSV (the port revives it as a derived signal), and `targeted` (attack
+  AND utility) has **no upstream analogue** at all (it is a pure function of two
+  faithful signals). They are exposed for analysis convenience and do not change
+  the faithful attack-success / utility / refused predicates.
 
 ## D. Granularity & scope
 

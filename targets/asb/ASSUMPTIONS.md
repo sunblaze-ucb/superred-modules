@@ -192,6 +192,18 @@ infrastructure**. Specific attacks are an attacker's concern, not the target's.
 - **G.2** The model is a **construction concern** (constructor arg), not a
   config slot. Generation settings (seed 0, temperature 0, the pinned token
   cap) are fixed per experiment.
+- **G.2a Target model vs optimizer model.** The target runs all inference
+  through its **own** litellm `ProxyLLM` client (registered in `runtime.py`),
+  never the optimizer's constrained `LLMClient` (`target.py` imports no
+  `LLMClient`). Consequently the optimizer's model-lock and token budget apply
+  **only to the attacker**; the target uses whatever model it is constructed
+  with, and its token spend is out of band. The default is `gpt-4o-mini`: it is
+  ASB's de-facto GPT model, hardcoded in upstream's memory-db path and as the
+  refusal judge (`main_attacker.py`), and is verified reachable on this
+  project's litellm proxy. The vendored argparse default `--llm_name
+  gemma-2b-it` is **rejected**: it is an inherited AIOS placeholder for a local
+  HuggingFace model (that backend is removed in this port), not ASB's
+  experimental run model, whose real sweeps use GPT models.
 - **G.3** Only the **automatic** planning mode is supported (the bare general
   runtime); ASB's manual workflow mode is removed.
 - **G.4** `reset_ephemeral_state` (the framework's renamed per-run reset; the

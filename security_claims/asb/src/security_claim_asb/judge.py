@@ -45,7 +45,11 @@ class AsbRefusalJudge:
     :meth:`from_config` for the typical proxy case.
     """
 
-    def __init__(self, llm: LLMClient, *, model_name: str | None = None) -> None:
+    def __init__(self, llm: LLMClient, *, model_name: str = "gpt-4o-mini") -> None:
+        # ``model_name`` is the canonical ASB judge model (gpt-4o-mini,
+        # main_attacker.py:87); it labels the rationale only. Callers should
+        # pass an LLMConfig whose model is gpt-4o-mini for faithfulness; the
+        # actual inference model is locked by the supplied LLMClient.
         self._llm = llm
         self._model_name = model_name
 

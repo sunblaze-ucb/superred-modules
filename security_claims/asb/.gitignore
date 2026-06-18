@@ -1,0 +1,11 @@
+# Runtime artifacts written by the vendored ASB loop (aios/pyopenagi) when this
+# claim's tests instantiate and run the ASB target. They land relative to the
+# current working directory and must never be committed.
+#
+# - aios/        : context restoration files + per-agent file storage
+# - logs/        : scheduler / agents / llm_kernel log files
+# - memory_db/   : default chroma_db vector store
+aios/
+logs/
+memory_db/
+*context_restoration*

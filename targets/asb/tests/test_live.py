@@ -17,7 +17,7 @@ import pytest
 
 pytestmark = pytest.mark.live
 
-_MODEL = "gpt-4o-2024-05-13"
+_MODEL = "gpt-4o-mini"
 
 
 def _creds() -> tuple[str, str]:

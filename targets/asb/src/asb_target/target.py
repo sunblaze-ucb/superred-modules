@@ -56,7 +56,10 @@ from asb_target.security_tags import DOMAIN
 
 ensure_vendor_on_path()
 
-_DEFAULT_MODEL = "gpt-4o-2024-05-13"
+# ASB's de-facto GPT model: hardcoded in the memory-db path and as the refusal
+# judge (main_attacker.py). The argparse literal "gemma-2b-it" is an inherited
+# AIOS local-HF placeholder (backend removed in this port), not ASB's run model.
+_DEFAULT_MODEL = "gpt-4o-mini"
 _DEFAULT_MAX_OUTPUT_TOKENS = 1024  # upstream GPTLLM-faithful (not the argparse 256)
 _PKG_DIR = os.path.dirname(os.path.abspath(__file__))
 _NORMAL_TOOLS_PATH = os.path.join(_PKG_DIR, "data", "all_normal_tools.jsonl")
