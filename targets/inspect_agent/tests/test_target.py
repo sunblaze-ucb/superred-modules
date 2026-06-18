@@ -11,7 +11,7 @@ from superred.core.types.events import (
     ControllableInjection,
     ControllableNoInjection,
 )
-from superred.core.types.security_domain import SecurityDomainTag
+from superred.core.types.security_domain import SecurityDomainTag, scope_includes
 
 from inspect_agent_target import (
     CONTROLLABLES,
@@ -154,6 +154,28 @@ def test_detailed_system_specification_is_a_read_only_system_child() -> None:
     # a sibling of model_identity; holding {system} grants reading it.
     assert DETAILED_SYSTEM_SPECIFICATION_TAG.parent is SYSTEM_TAG
     assert SYSTEM_TAG.includes(DETAILED_SYSTEM_SPECIFICATION_TAG)
+
+
+def test_detailed_spec_delivered_under_system_scope_and_gated() -> None:
+    """Replicates the Controller's static-observable delivery filter
+    (``scope_includes(scope | read_only, tag)``) over the real
+    ``get_observables()``: the leaked brief reaches a ``system``-scoped attacker
+    and is withheld from one scoped elsewhere (here ``tools``)."""
+    t = _make_target()
+
+    def delivered(scope: frozenset, read_only: frozenset = frozenset()) -> set[str]:
+        visibility = scope | read_only
+        return {
+            o.observable.name
+            for o in t.get_observables()
+            if scope_includes(visibility, o.observable.security_domain)
+        }
+
+    name = "detailed_system_specification"
+    assert name in delivered(frozenset({SYSTEM_TAG}))
+    assert name in delivered(frozenset({DETAILED_SYSTEM_SPECIFICATION_TAG}))
+    assert name in delivered(frozenset({TOOLS_TAG}), read_only=frozenset({SYSTEM_TAG}))
+    assert name not in delivered(frozenset({TOOLS_TAG}))
 
 
 # --- set_config -----------------------------------------------------------

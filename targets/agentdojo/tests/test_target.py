@@ -10,11 +10,17 @@ from __future__ import annotations
 import json
 
 import pytest
+from superred.core.types.security_domain import scope_includes
 
 from agentdojo_target.config_specs import CONFIG_SPECS
 from agentdojo_target.controllables import CONTROLLABLES
 from agentdojo_target.query_specs import QUERY_SPECS
-from agentdojo_target.security_tags import DOMAIN
+from agentdojo_target.security_tags import (
+    DETAILED_SYSTEM_SPECIFICATION_TAG,
+    DOMAIN,
+    SYSTEM_TAG,
+    USER_TAG,
+)
 from agentdojo_target.target import AgentDojoTarget
 
 
@@ -70,6 +76,34 @@ def test_observables_exposed_with_pre_run_content(target: AgentDojoTarget) -> No
     assert isinstance(spec, str)
     assert "## 1. Purpose" in spec
     assert "## 4. Code and Hardcoded Prompts" in spec
+
+
+def test_detailed_spec_delivered_under_system_scope_and_gated(
+    target: AgentDojoTarget,
+) -> None:
+    """End-to-end of the Controller's static-observable delivery: a static
+    observable reaches the optimizer iff its tag is in the visibility scope
+    (``scope | read_only``).  This replicates the controller's exact filter
+    (``scope_includes(visibility, o.observable.security_domain)``) over the real
+    ``get_observables()``, so the leaked brief reaches a ``system``-scoped
+    attacker and is withheld from one scoped elsewhere."""
+
+    def delivered(scope: frozenset, read_only: frozenset = frozenset()) -> set[str]:
+        visibility = scope | read_only
+        return {
+            o.observable.name
+            for o in target.get_observables()
+            if scope_includes(visibility, o.observable.security_domain)
+        }
+
+    name = "detailed_system_specification"
+    # Delivered when system (or the tag itself) is in the read & write scope.
+    assert name in delivered(frozenset({SYSTEM_TAG}))
+    assert name in delivered(frozenset({DETAILED_SYSTEM_SPECIFICATION_TAG}))
+    # Delivered as read-only too (visibility = scope | read_only).
+    assert name in delivered(frozenset({USER_TAG}), read_only=frozenset({SYSTEM_TAG}))
+    # Withheld from an attacker whose scope does not include system.
+    assert name not in delivered(frozenset({USER_TAG}))
 
 
 # ----- set_config dispatch -----

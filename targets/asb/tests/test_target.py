@@ -6,8 +6,15 @@ import asyncio
 import json
 
 import pytest
+from superred.core.types.security_domain import scope_includes
 
-from asb_target import DOMAIN, AsbTarget
+from asb_target import (
+    DETAILED_SYSTEM_SPECIFICATION_TAG,
+    DOMAIN,
+    SYSTEM_TAG,
+    USER_TAG,
+    AsbTarget,
+)
 from asb_target.controllables import CONTROLLABLES
 
 
@@ -103,3 +110,26 @@ def test_get_observables() -> None:
     catalog = next(o.content for o in obs if o.observable.name == "tool_catalog_listing")
     catalog_names = {entry["name"] for entry in catalog}
     assert "Evil" in catalog_names  # attacker tool listed once registered
+
+
+def test_detailed_spec_delivered_under_system_scope_and_gated() -> None:
+    """Replicates the Controller's static-observable delivery filter
+    (``scope_includes(scope | read_only, tag)``) over the real
+    ``get_observables()``: the leaked brief reaches a ``system``-scoped attacker
+    and is withheld from one scoped elsewhere."""
+    t = _target()
+    t.set_config("agent_name", "system_admin_agent")
+
+    def delivered(scope: frozenset, read_only: frozenset = frozenset()) -> set[str]:
+        visibility = scope | read_only
+        return {
+            o.observable.name
+            for o in t.get_observables()
+            if scope_includes(visibility, o.observable.security_domain)
+        }
+
+    name = "detailed_system_specification"
+    assert name in delivered(frozenset({SYSTEM_TAG}))
+    assert name in delivered(frozenset({DETAILED_SYSTEM_SPECIFICATION_TAG}))
+    assert name in delivered(frozenset({USER_TAG}), read_only=frozenset({SYSTEM_TAG}))
+    assert name not in delivered(frozenset({USER_TAG}))
