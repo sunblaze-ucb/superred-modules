@@ -101,8 +101,6 @@ _HTML_CONTENT_HINTS: tuple[str, ...] = (
 )
 _AGENT_OBSERVABLE_HINTS: tuple[str, ...] = (
     "agent_trace_message",
-    "agent_trace_tool_response",
-    "agent_trace_tool_call",
     "last_response",
     "output",
     "assistant",
