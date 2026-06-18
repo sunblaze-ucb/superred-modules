@@ -1,34 +1,31 @@
 """WrappedFunctionsRuntime: per-call event firing for on-demand injection.
 
 Subclasses :class:`agentdojo.functions_runtime.FunctionsRuntime` and
-overrides :meth:`run_function` to insert three side effects around the
+overrides :meth:`run_function` to insert two side effects around the
 underlying call:
 
-1. Trace recording + live call emission.  Every invocation (whether
-   canonical, registered, or replaced; whether successful or not) is
-   appended to ``self._trace`` as a :class:`FunctionCall` carrying the
-   suite-prefixed name and the verbatim agent kwargs, and emitted
-   immediately as an ``agent_trace_tool_call_NNNN`` observable so
-   trace-scoped optimizers see calls as they happen, not only at run
-   end.
+1. Trace recording.  Every invocation (whether canonical, registered, or
+   replaced; whether successful or not) is appended to ``self._trace`` as a
+   :class:`FunctionCall` carrying the suite-prefixed name and the verbatim
+   agent kwargs.  The trace backs the ``function_call_trace`` and
+   ``write_calls_made`` queries; the call is NOT emitted as a separate
+   agent-trace observable (it is surfaced once, on the per-call event below).
 
-2. Per-call event firing.  For canonical *reads* the wrapper computes
-   the legitimate value via the superclass, then fires a
-   :class:`ControllablePostCallEvent` whose ``answer`` is the
-   serialized legitimate value.  A
+2. Per-call event firing (the single trajectory emission for a tool).  For
+   canonical *reads* the wrapper computes the legitimate value via the
+   superclass, then fires a :class:`ControllablePostCallEvent` whose
+   ``request`` carries the call (``{"function": ..., "args": ...}``) and
+   whose ``answer`` is the serialized legitimate value; a
    :class:`ControllableInjection` response substitutes the agent-visible
    return.  For attacker-managed entries (registered / replaced) the
-   underlying body is *not* invoked; instead the wrapper fires the
-   per-call event carrying the catalog's stored ``fake_return`` and
-   uses the optimizer's substitution if any.
-
-3. Observable emission.  Every runtime call emits one
-   ``agent_trace_tool_response_NNNN`` observable carrying the value the
-   agent actually saw (post-injection).  The pre-injection legitimate
-   value is carried exactly once, on the per-read
-   ``ControllablePostCallEvent`` — there is no observable mirror; a
-   Controller that lists the quadrant tag under ``read_only`` reads it
-   from the trajectory without being able to inject.
+   underlying body is *not* invoked; instead the wrapper fires the per-call
+   event carrying the catalog's stored ``fake_return`` and uses the
+   optimizer's substitution if any.  The tool call and its return therefore
+   appear on the trajectory exactly once, on this event (read via the tool's
+   store leaf under ``read_only``) — never additionally as an agent-trace
+   observable.  A successful canonical *write* (which has no per-call
+   controllable) instead emits one store-tagged ``write_call_NNNN``
+   observation, the write side's single emission.
 
 Sync-to-async bridge: :class:`AgentPipeline.query` is synchronous and is
 invoked via :func:`asyncio.to_thread` from the controller's event-loop
@@ -65,14 +62,12 @@ from superred.core.types.events import (
 
 from agentdojo_target.controllables import READ_CTRLS, WRITE_STORE_MAP
 from agentdojo_target.observables import (
-    agent_tool_call_observable,
-    agent_tool_response_observable,
     tool_menu_rebuild_observable,
     write_observation_observable,
 )
 from agentdojo_target.security_tags import (
-    TOOL_CATALOGUE_ADDABLE_TAG,
-    TOOL_CATALOGUE_TAG,
+    TOOL_CATALOGUE_ADD_TAG,
+    TOOL_CATALOGUE_EDIT_TAG,
 )
 from agentdojo_target.tool_catalog import CatalogEntry, ToolCatalog
 
@@ -124,12 +119,10 @@ def _attacker_call_ctrl(entry: CatalogEntry) -> Controllable:
 
     The ``security_domain`` follows the entry's kind:
 
-    - ``registered`` -> :data:`TOOL_CATALOGUE_ADDABLE_TAG` (weakest write).
-    - ``replaced``   -> :data:`TOOL_CATALOGUE_TAG` (broader write).
+    - ``registered`` -> :data:`TOOL_CATALOGUE_ADD_TAG` (add capability).
+    - ``replaced``   -> :data:`TOOL_CATALOGUE_EDIT_TAG` (edit capability).
     """
-    tag = (
-        TOOL_CATALOGUE_ADDABLE_TAG if entry.kind == "registered" else TOOL_CATALOGUE_TAG
-    )
+    tag = TOOL_CATALOGUE_ADD_TAG if entry.kind == "registered" else TOOL_CATALOGUE_EDIT_TAG
     return Controllable(
         name=f"tool_call:{entry.name}",
         security_domain=tag,
@@ -185,7 +178,6 @@ class WrappedFunctionsRuntime(FunctionsRuntime):
         self._emit = emit
         self._loop = loop
         self._trace: list[FunctionCall] = []
-        self._tool_response_counter: int = 0
         self._write_observation_counter: int = 0
         self._menu_rebuild_counter: int = 0
 
@@ -254,19 +246,13 @@ class WrappedFunctionsRuntime(FunctionsRuntime):
         raise_on_error: bool = False,
     ) -> tuple[FunctionReturnType, str | None]:
         # Always record the attempted call up-front; trace survives errors.
+        # This feeds the ``function_call_trace`` / ``write_calls_made`` queries.
+        # The call itself is surfaced on the trajectory exactly once: on the
+        # per-tool ControllablePostCallEvent (canonical reads and
+        # attacker-managed tools) or the store-tagged write observation
+        # (writes) — never as a separate agent-trace observable.
         call = FunctionCall(function=function, args=dict(kwargs))
         self._trace.append(call)
-        # Live call observable: one per runtime call (reads, writes,
-        # attacker-managed, and unknown tools alike), emitted at
-        # invocation so trace-scoped optimizers can react mid-run.  The
-        # index follows trace order and correlates with
-        # ``agent_trace_tool_response_NNNN``.
-        self._emit(
-            ObservableEvent(
-                observable=agent_tool_call_observable(len(self._trace) - 1),
-                content=function_call_to_jsonable(call),
-            )
-        )
 
         entry = self._catalog.get(function)
         if entry is None:
@@ -276,9 +262,7 @@ class WrappedFunctionsRuntime(FunctionsRuntime):
             return super().run_function(env, function, kwargs, raise_on_error)
 
         if entry.kind == "canonical":
-            return self._run_canonical(
-                env, entry, function, kwargs, raise_on_error, call
-            )
+            return self._run_canonical(env, entry, function, kwargs, raise_on_error, call)
         # Attacker-managed: short-circuit to a synthetic event.
         return self._run_attacker(entry, function, kwargs)
 
@@ -297,19 +281,20 @@ class WrappedFunctionsRuntime(FunctionsRuntime):
     ) -> tuple[FunctionReturnType, str | None]:
         result, error = super().run_function(env, function, kwargs, raise_on_error)
         # Track the final value the agent will see (after any injection
-        # substitution) so we can emit the per-call observable.
+        # substitution).
         agent_seen_value: FunctionReturnType = result
 
         read_ctrl = READ_CTRLS.get(function)
         if read_ctrl is not None and error is None:
-            # The legitimate value is carried once, on the post-call
-            # event; a Controller that lists the quadrant tag under
-            # ``read_only`` observes it from the trajectory without
-            # being able to inject.
             legit_answer = _serialize_for_event(result)
             event = ControllablePostCallEvent(
                 controllable=read_ctrl,
-                request=function,
+                # The call (function + arguments) and the legitimate return
+                # value are carried together here, once: this is the single
+                # trajectory emission for the read.  A Controller that lists the
+                # store tag under ``read_only`` observes it without being able
+                # to inject.
+                request=json.dumps({"function": function, "args": dict(kwargs)}),
                 answer=legit_answer,
             )
             response = self._await_event(event)
@@ -318,14 +303,12 @@ class WrappedFunctionsRuntime(FunctionsRuntime):
                 # Inject the raw string; agent-side formatter renders it
                 # straight into the prompt.
                 agent_seen_value = response.value
-            self._emit_agent_tool_response(function, agent_seen_value, error)
             return agent_seen_value, error
 
-        # Write-side canonical calls and errored reads: the call itself
-        # was already emitted live as agent_trace_tool_call_NNNN at
-        # invocation (SecurityClaim predicates use the write_calls_made
-        # query for mutation detection).
-        self._emit_agent_tool_response(function, agent_seen_value, error)
+        # Write-side canonical calls and errored reads have no per-call
+        # controllable.  The call is recorded in the trace (used by the
+        # write_calls_made / function_call_trace queries); a successful write
+        # is additionally surfaced once, below, as a store-tagged observation.
         # For a successful write, also emit a one-way observation tagged at
         # the store the write mutates, so a service-scoped attacker sees the
         # action it provoked under the same boundary it reads from (reading
@@ -366,50 +349,7 @@ class WrappedFunctionsRuntime(FunctionsRuntime):
             agent_seen_value: FunctionReturnType = response.value
         else:
             agent_seen_value = entry.fake_return
-        self._emit_agent_tool_response(function, agent_seen_value, None)
         return agent_seen_value, None
-
-    # ------------------------------------------------------------------
-    # Observable emission helper
-    # ------------------------------------------------------------------
-
-    def _emit_agent_tool_response(
-        self,
-        function: str,
-        value: FunctionReturnType,
-        error: str | None,
-    ) -> None:
-        """Emit one ``agent_trace_tool_response_NNNN`` observable per
-        runtime call, carrying the value the agent will see (after any
-        substitution).
-
-        The record also carries ``function`` (the suite-prefixed tool name
-        that produced the value) so a single response record is
-        self-identifying: a consumer can tell which tool produced an output
-        without cross-referencing the ``agent_trace_tool_call_NNNN``
-        observable by index.  The index correlation is preserved as well;
-        ``function`` is additive.
-
-        Index is monotonically increasing across the run; consumers can
-        correlate ``agent_trace_tool_call_NNNN`` (emitted live per call by
-        :meth:`run_function`) with ``agent_trace_tool_response_NNNN`` by
-        matching the index.
-
-        Brief Section 5.c: "every return value (with the post-injection
-        value the agent saw)".
-        """
-        idx = self._tool_response_counter
-        self._tool_response_counter += 1
-        self._emit(
-            ObservableEvent(
-                observable=agent_tool_response_observable(idx),
-                content={
-                    "function": function,
-                    "value": _serialize_for_event(value),
-                    "error": error,
-                },
-            )
-        )
 
 
 __all__ = ["WrappedFunctionsRuntime", "function_call_to_jsonable"]

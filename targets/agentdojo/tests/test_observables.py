@@ -6,8 +6,6 @@ from agentdojo_target.observables import (
     MODEL_IDENTITY_OBS,
     STATIC_OBSERVABLE_SPECS,
     TOOL_CATALOG_LISTING_OBS,
-    agent_tool_call_observable,
-    agent_tool_response_observable,
     catalog_edit_outcome_observable,
     chat_message_observable,
     discarded_action_observable,
@@ -17,11 +15,10 @@ from agentdojo_target.observables import (
 from agentdojo_target.security_tags import (
     AGENT_TRACE_MESSAGES_TAG,
     AGENT_TRACE_TAG,
-    AGENT_TRACE_TOOL_CALLS_TAG,
-    AGENT_TRACE_TOOL_RESPONSES_TAG,
     BANKING_BANK_ACCOUNT_TAG,
     MODEL_IDENTITY_TAG,
-    TOOL_CATALOGUE_ADDABLE_TAG,
+    TOOL_CATALOGUE_ADD_TAG,
+    TOOL_CATALOGUE_EDIT_TAG,
     TOOL_CATALOGUE_TAG,
 )
 
@@ -55,16 +52,6 @@ def test_chat_message_observable_uses_messages_tag() -> None:
     assert "0000" in obs.name
 
 
-def test_agent_tool_call_observable_uses_tool_calls_tag() -> None:
-    obs = agent_tool_call_observable(5)
-    assert obs.security_domain is AGENT_TRACE_TOOL_CALLS_TAG
-
-
-def test_agent_tool_response_observable_uses_tool_responses_tag() -> None:
-    obs = agent_tool_response_observable(2)
-    assert obs.security_domain is AGENT_TRACE_TOOL_RESPONSES_TAG
-
-
 def test_write_observation_observable_uses_store_tag() -> None:
     obs = write_observation_observable(0, BANKING_BANK_ACCOUNT_TAG)
     assert obs.name == "write_call_0000"
@@ -77,17 +64,19 @@ def test_tool_menu_rebuild_observable_uses_trace_tag() -> None:
     assert obs.security_domain is AGENT_TRACE_TAG
 
 
-def test_discarded_action_observable_uses_tool_calls_tag() -> None:
+def test_discarded_action_observable_uses_messages_tag() -> None:
+    """A discarded malformed action belongs to the non-tool agent-trace
+    message stream (it never becomes a real tool interaction)."""
     obs = discarded_action_observable(1)
     assert obs.name == "discarded_action_0001"
-    assert obs.security_domain is AGENT_TRACE_TOOL_CALLS_TAG
+    assert obs.security_domain is AGENT_TRACE_MESSAGES_TAG
 
 
 def test_catalog_edit_outcome_observable_uses_passed_tag() -> None:
-    register = catalog_edit_outcome_observable("register", TOOL_CATALOGUE_ADDABLE_TAG)
+    register = catalog_edit_outcome_observable("register", TOOL_CATALOGUE_ADD_TAG)
     assert register.name == "catalog_edit_register_outcome"
-    assert register.security_domain is TOOL_CATALOGUE_ADDABLE_TAG
+    assert register.security_domain is TOOL_CATALOGUE_ADD_TAG
 
-    replace = catalog_edit_outcome_observable("replace", TOOL_CATALOGUE_TAG)
+    replace = catalog_edit_outcome_observable("replace", TOOL_CATALOGUE_EDIT_TAG)
     assert replace.name == "catalog_edit_replace_outcome"
-    assert replace.security_domain is TOOL_CATALOGUE_TAG
+    assert replace.security_domain is TOOL_CATALOGUE_EDIT_TAG

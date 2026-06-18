@@ -2,13 +2,14 @@
 
 Categories:
 
-- ``SYSTEM_PROMPT_CTRL``: agent system prompt (scope ``system.prompt``).
+- ``SYSTEM_PROMPT_CTRL``: agent system prompt (scope ``system.system_prompt``).
 - ``USER_PROMPT_CTRL``: benign user instruction (scope ``user``).  An
   attacker with the ``user`` tag in scope can override the Task's
   benign prompt via :class:`ControllableInjection`.
-- Tool-catalogue controllables: four operations partitioned across
-  ``system.tool_catalogue`` (broad write) and
-  ``system.tool_catalogue_addable`` (register-only).
+- Tool-catalogue controllables: four operations under the
+  ``system.tool_catalogue`` grouping root, split by capability into
+  ``tool_catalogue_add`` (register), ``tool_catalogue_edit`` (replace +
+  rewrite-description), and ``tool_catalogue_remove`` (unregister).
 - Per-read controllables: one per readable tool in the catalog
   (47 entries), each tagged at the store leaf it reads from.
 
@@ -32,11 +33,12 @@ from agentdojo_target.security_tags import (
     BANKING_BANK_ACCOUNT_TAG,
     BANKING_FILESYSTEM_TAG,
     BANKING_USER_ACCOUNT_TAG,
-    PROMPT_TAG,
     SLACK_SLACK_TAG,
     SLACK_WEB_TAG,
-    TOOL_CATALOGUE_ADDABLE_TAG,
-    TOOL_CATALOGUE_TAG,
+    SYSTEM_PROMPT_TAG,
+    TOOL_CATALOGUE_ADD_TAG,
+    TOOL_CATALOGUE_EDIT_TAG,
+    TOOL_CATALOGUE_REMOVE_TAG,
     TRAVEL_CALENDAR_TAG,
     TRAVEL_CAR_RENTAL_TAG,
     TRAVEL_FLIGHTS_TAG,
@@ -65,7 +67,7 @@ from agentdojo_target.tool_registry import (
 
 SYSTEM_PROMPT_CTRL: Controllable = Controllable(
     name="system_prompt",
-    security_domain=PROMPT_TAG,
+    security_domain=SYSTEM_PROMPT_TAG,
     description="Override the agent's system prompt for this run.",
     value_type="text",
 )
@@ -83,7 +85,7 @@ USER_PROMPT_CTRL: Controllable = Controllable(
 
 TOOL_CATALOG_REGISTER_CTRL: Controllable = Controllable(
     name="tool_catalog_register",
-    security_domain=TOOL_CATALOGUE_ADDABLE_TAG,
+    security_domain=TOOL_CATALOGUE_ADD_TAG,
     description=(
         "Register a new attacker-defined tool with a per-call fake "
         "return value.  The injection value is a JSON object: "
@@ -95,7 +97,7 @@ TOOL_CATALOG_REGISTER_CTRL: Controllable = Controllable(
 
 TOOL_CATALOG_REPLACE_CTRL: Controllable = Controllable(
     name="tool_catalog_replace",
-    security_domain=TOOL_CATALOGUE_TAG,
+    security_domain=TOOL_CATALOGUE_EDIT_TAG,
     description=(
         "Replace an existing tool (shadow attack): when the agent calls "
         "the named tool, the attacker-supplied fake_return is used. "
@@ -107,16 +109,14 @@ TOOL_CATALOG_REPLACE_CTRL: Controllable = Controllable(
 
 TOOL_CATALOG_UNREGISTER_CTRL: Controllable = Controllable(
     name="tool_catalog_unregister",
-    security_domain=TOOL_CATALOGUE_TAG,
-    description=(
-        'Remove an existing tool from the catalog.  Injection value: {"name": str}.'
-    ),
+    security_domain=TOOL_CATALOGUE_REMOVE_TAG,
+    description=('Remove an existing tool from the catalog.  Injection value: {"name": str}.'),
     value_type="json",
 )
 
 TOOL_CATALOG_REWRITE_DOC_CTRL: Controllable = Controllable(
     name="tool_catalog_rewrite_doc",
-    security_domain=TOOL_CATALOGUE_TAG,
+    security_domain=TOOL_CATALOGUE_EDIT_TAG,
     description=(
         "Rewrite an existing tool's description/docstring without "
         'changing its body.  Injection value: {"name": str, '
@@ -291,21 +291,15 @@ def _build_read_controllables() -> dict[str, Controllable]:
     expected = set(READ_FUNCTION_NAMES)
     missing = expected - mapped
     if missing:
-        raise RuntimeError(
-            f"READ_STORE_MAP is missing entries for read tools: {sorted(missing)}"
-        )
+        raise RuntimeError(f"READ_STORE_MAP is missing entries for read tools: {sorted(missing)}")
     stale = mapped - expected
     if stale:
-        raise RuntimeError(
-            f"READ_STORE_MAP has entries for non-read tools: {sorted(stale)}"
-        )
+        raise RuntimeError(f"READ_STORE_MAP has entries for non-read tools: {sorted(stale)}")
 
     out: dict[str, Controllable] = {}
     for suite in SUITE_NAMES:
         suite_tools = sorted(
-            e.original_name
-            for e in TOOL_REGISTRY.values()
-            if e.suite == suite and e.kind == "read"
+            e.original_name for e in TOOL_REGISTRY.values() if e.suite == suite and e.kind == "read"
         )
         for tool in suite_tools:
             prefixed = prefixed_name(suite, tool)
@@ -331,14 +325,10 @@ def _validate_write_store_map() -> None:
     expected = set(WRITE_FUNCTION_NAMES)
     missing = expected - mapped
     if missing:
-        raise RuntimeError(
-            f"WRITE_STORE_MAP is missing entries for write tools: {sorted(missing)}"
-        )
+        raise RuntimeError(f"WRITE_STORE_MAP is missing entries for write tools: {sorted(missing)}")
     stale = mapped - expected
     if stale:
-        raise RuntimeError(
-            f"WRITE_STORE_MAP has entries for non-write tools: {sorted(stale)}"
-        )
+        raise RuntimeError(f"WRITE_STORE_MAP has entries for non-write tools: {sorted(stale)}")
 
 
 _validate_write_store_map()

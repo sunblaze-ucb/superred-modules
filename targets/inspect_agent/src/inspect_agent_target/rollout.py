@@ -26,15 +26,16 @@ from inspect_ai.model import (
     Model,
     execute_tools,
 )
-from inspect_ai.tool import Tool
+from inspect_ai.tool import Tool, ToolCall
 
 # inspect's standard tool-choice strings.
 ToolChoice = Literal["auto", "any", "none"]
 
 ToolsProvider = Callable[[], Awaitable[Sequence[Tool]]]
-# Hook called with the tool-result messages of a turn; returns the messages the
-# agent will actually see next (possibly with attacker-injected output).
-ToolResultsHook = Callable[[list[ChatMessage]], Awaitable[Sequence[ChatMessage]]]
+# Hook called with the tool-result messages of a turn AND the originating tool
+# calls (function + arguments) from the assistant message; returns the messages
+# the agent will actually see next (possibly with attacker-injected output).
+ToolResultsHook = Callable[[list[ChatMessage], list[ToolCall]], Awaitable[Sequence[ChatMessage]]]
 
 
 def static_tools_provider(tools: Sequence[Tool]) -> ToolsProvider:
@@ -69,8 +70,9 @@ async def run_rollout(
         tool_choice: one of "auto", "any", "none".
         message_limit: cap on total messages (system + user + assistant + tool).
         on_tool_results: optional async hook called with each turn's tool-result
-            messages; returns the messages the agent actually sees next. This is
-            the seam for tool-output injection (attacker tampering with returns).
+            messages and the originating tool calls (function + arguments);
+            returns the messages the agent actually sees next. This is the seam
+            for tool-output injection (attacker tampering with returns).
 
     Returns:
         The full ``list[ChatMessage]`` produced by the rollout.
@@ -91,7 +93,9 @@ async def run_rollout(
         result = await execute_tools(messages, tools)
         tool_results = list(result.messages)
         if on_tool_results is not None:
-            tool_results = list(await on_tool_results(tool_results))
+            tool_results = list(
+                await on_tool_results(tool_results, list(output.message.tool_calls or []))
+            )
         messages.extend(tool_results)
         if len(messages) >= message_limit:
             break

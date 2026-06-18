@@ -59,8 +59,9 @@ from agentdojo_target.observables import (
 )
 from agentdojo_target.runtime_wrapper import WrappedFunctionsRuntime
 from agentdojo_target.security_tags import (
-    TOOL_CATALOGUE_ADDABLE_TAG,
-    TOOL_CATALOGUE_TAG,
+    TOOL_CATALOGUE_ADD_TAG,
+    TOOL_CATALOGUE_EDIT_TAG,
+    TOOL_CATALOGUE_REMOVE_TAG,
 )
 from agentdojo_target.tool_catalog import ToolCatalog
 
@@ -118,9 +119,7 @@ class _CatalogEditHook(BasePipelineElement):
         future = asyncio.run_coroutine_threadsafe(self._send_event(event), self._loop)
         return future.result(timeout=self._OPTIMIZER_RESPONSE_TIMEOUT_SECONDS)
 
-    def _emit_outcome(
-        self, operation: str, tag: Any, status: str, detail: str | None
-    ) -> None:
+    def _emit_outcome(self, operation: str, tag: Any, status: str, detail: str | None) -> None:
         """Emit a one-way observable recording one catalogue-edit outcome.
 
         Fire-and-forget; never alters the apply/reject decision."""
@@ -171,32 +170,30 @@ class _CatalogEditHook(BasePipelineElement):
                 TOOL_CATALOG_REGISTER_CTRL,
                 self._catalog.apply_register,
                 "register",
-                TOOL_CATALOGUE_ADDABLE_TAG,
+                TOOL_CATALOGUE_ADD_TAG,
             ),
             (
                 TOOL_CATALOG_REPLACE_CTRL,
                 self._catalog.apply_replace,
                 "replace",
-                TOOL_CATALOGUE_TAG,
+                TOOL_CATALOGUE_EDIT_TAG,
             ),
             (
                 TOOL_CATALOG_UNREGISTER_CTRL,
                 self._catalog.apply_unregister,
                 "unregister",
-                TOOL_CATALOGUE_TAG,
+                TOOL_CATALOGUE_REMOVE_TAG,
             ),
             (
                 TOOL_CATALOG_REWRITE_DOC_CTRL,
                 self._catalog.apply_rewrite_doc,
                 "rewrite_doc",
-                TOOL_CATALOGUE_TAG,
+                TOOL_CATALOGUE_EDIT_TAG,
             ),
         )
         applied_any = False
         for ctrl, apply_method, op_label, op_tag in ops:
-            event = ControllablePreCallEvent(
-                controllable=ctrl, request="catalog edit slot"
-            )
+            event = ControllablePreCallEvent(controllable=ctrl, request="catalog edit slot")
             response = self._await_event(event)
             if isinstance(response, ControllableInjection):
                 self._try_apply(apply_method, response.value, op_label, op_tag)
@@ -248,13 +245,25 @@ class _MessageStreamHook(BasePipelineElement):
         # the optimizer's view of the stream is append-only.
         while self._next_idx < len(messages):
             msg = messages[self._next_idx]
+            idx = self._next_idx
+            self._next_idx += 1
+            # Tool calls and tool-result content are emitted exactly once, on
+            # the per-tool ``ControllablePostCallEvent`` — never mirrored on the
+            # agent trace.  So skip tool-result messages, and strip the
+            # tool-call request from assistant messages: agent_trace_messages
+            # carries only the non-tool internal stream (system / assistant
+            # reasoning / user).
+            if msg.get("role") == "tool":
+                continue
+            payload = _message_to_jsonable(msg)
+            payload.pop("tool_calls", None)
+            payload.pop("tool_call", None)
             self._emit(
                 ObservableEvent(
-                    observable=chat_message_observable(self._next_idx),
-                    content=_message_to_jsonable(msg),
+                    observable=chat_message_observable(idx),
+                    content=payload,
                 )
             )
-            self._next_idx += 1
         return query, runtime, env, messages, extra_args
 
 
@@ -472,9 +481,7 @@ def _build_llm(
         ValueError: If the model id does not include a provider prefix.
     """
     if "/" not in model_id:
-        raise ValueError(
-            f"pipeline_model must be in 'provider/model' form, got {model_id!r}"
-        )
+        raise ValueError(f"pipeline_model must be in 'provider/model' form, got {model_id!r}")
     provider, _, model_name = model_id.partition("/")
     if provider == "openai":
         client = openai.OpenAI(
@@ -496,9 +503,7 @@ def _build_llm(
                     f"Anthropic 'thinking' suffix must be an integer, got {budget!r}"
                 ) from exc
             return (
-                AnthropicLLM(
-                    anthropic_client, base_model, thinking_budget_tokens=budget_tokens
-                ),
+                AnthropicLLM(anthropic_client, base_model, thinking_budget_tokens=budget_tokens),
                 anthropic_client.close,
             )
         return AnthropicLLM(anthropic_client, model_name), anthropic_client.close
@@ -575,9 +580,7 @@ def build_pipeline(
         provider client opened for this run; the caller must invoke it
         when the run finishes, including on the failure path.
     """
-    llm, close_llm = _build_llm(
-        pipeline_model, api_base=api_base, api_key=api_key, emit=emit
-    )
+    llm, close_llm = _build_llm(pipeline_model, api_base=api_base, api_key=api_key, emit=emit)
     msg_hook = _MessageStreamHook(emit=emit)
     hook = _CatalogEditHook(
         catalog=catalog,

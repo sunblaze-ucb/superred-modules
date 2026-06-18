@@ -15,11 +15,12 @@ from agentdojo_target.security_tags import (
     BANKING_BANK_ACCOUNT_TAG,
     BANKING_FILESYSTEM_TAG,
     BANKING_USER_ACCOUNT_TAG,
-    PROMPT_TAG,
     SLACK_SLACK_TAG,
     SLACK_WEB_TAG,
-    TOOL_CATALOGUE_ADDABLE_TAG,
-    TOOL_CATALOGUE_TAG,
+    SYSTEM_PROMPT_TAG,
+    TOOL_CATALOGUE_ADD_TAG,
+    TOOL_CATALOGUE_EDIT_TAG,
+    TOOL_CATALOGUE_REMOVE_TAG,
     TOOLS_TAG,
     TRAVEL_CALENDAR_TAG,
     TRAVEL_CAR_RENTAL_TAG,
@@ -58,7 +59,7 @@ STORE_LEAVES = {
 
 
 def test_system_prompt_ctrl_is_on_prompt_tag() -> None:
-    assert SYSTEM_PROMPT_CTRL.security_domain is PROMPT_TAG
+    assert SYSTEM_PROMPT_CTRL.security_domain is SYSTEM_PROMPT_TAG
 
 
 def test_user_prompt_ctrl_is_on_user_tag() -> None:
@@ -76,15 +77,16 @@ def test_four_tool_catalog_ctrls() -> None:
     ]
 
 
-def test_tool_catalog_register_is_weakest_capability() -> None:
-    """register is on the narrower 'addable' tag; replace/unregister/rewrite
-    are on the broader 'tool_catalogue' tag.  The broader tag implies the
-    weaker one (subsumption tested separately)."""
+def test_tool_catalog_ctrls_split_across_capabilities() -> None:
+    """The four catalogue operations are partitioned across the three
+    capability children of the grouping root: register -> add; replace and
+    rewrite-doc -> edit; unregister -> remove.  Each capability is subsumed
+    by the grouping root (subsumption tested separately)."""
     register, replace, unregister, rewrite = TOOL_CATALOG_CTRLS
-    assert register.security_domain is TOOL_CATALOGUE_ADDABLE_TAG
-    assert replace.security_domain is TOOL_CATALOGUE_TAG
-    assert unregister.security_domain is TOOL_CATALOGUE_TAG
-    assert rewrite.security_domain is TOOL_CATALOGUE_TAG
+    assert register.security_domain is TOOL_CATALOGUE_ADD_TAG
+    assert replace.security_domain is TOOL_CATALOGUE_EDIT_TAG
+    assert unregister.security_domain is TOOL_CATALOGUE_REMOVE_TAG
+    assert rewrite.security_domain is TOOL_CATALOGUE_EDIT_TAG
 
 
 def test_one_read_ctrl_per_read_tool() -> None:

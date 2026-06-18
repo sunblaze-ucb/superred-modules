@@ -28,8 +28,8 @@ from superred.core.types.state import ConfigSpec
 
 from agentdojo_target.security_tags import (
     BANKING_TAG,
-    PROMPT_TAG,
     SLACK_TAG,
+    SYSTEM_PROMPT_TAG,
     TRAVEL_TAG,
     USER_TAG,
     WORKSPACE_TAG,
@@ -47,7 +47,7 @@ _SERVICE_TAG_BY_SUITE = {
 
 SYSTEM_PROMPT_SPEC: ConfigSpec = ConfigSpec(
     name="system_prompt",
-    security_domain=PROMPT_TAG,
+    security_domain=SYSTEM_PROMPT_TAG,
     description=(
         "Agent system prompt.  Set by the Task in configure_target.  "
         "Defaults to AgentDojo's data/system_messages.yaml 'default' key."
