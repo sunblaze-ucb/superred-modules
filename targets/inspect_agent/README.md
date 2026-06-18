@@ -17,7 +17,11 @@ In the project's target taxonomy (chatbot < agent < assistant) this is an
    passed at construction;
 3. runs the tool-calling loop (`model.generate` + `execute_tools`, capped at
    `message_limit`) -- the body of inspect's `generate(tool_calls="loop")`;
-4. emits one observable per chat message and per tool call;
+4. emits one observable per chat message (the non-tool internal message
+   stream: tool-result messages are skipped and the `tool_calls` field is
+   stripped from assistant messages); each tool call and its return are emitted
+   once on that tool's `ControllablePostCallEvent`, not double-emitted as
+   observables;
 5. stores the full `list[ChatMessage]` (typed `messages` property) for a bound
    Task to grade, plus string `query()` readers.
 
@@ -57,8 +61,10 @@ parallelism is owned by the `TargetFactory`, not the target.
 
 Static configuration (`model_identity`, `message_limit`, the configured
 `tool_catalog_listing`) is exposed as **static observables**; the running agent
-trace (messages / tool calls / tool responses) is on the **trajectory** as
-`ObservableEvent`s. The system prompt is not mirrored as an observable: it is
+trace is on the **trajectory** as `ObservableEvent`s -- the non-tool message
+stream as per-message observables, while each tool call and its return live
+exactly once on that tool's `ControllablePostCallEvent` (no separate tool-call /
+tool-response observable mirror). The system prompt is not mirrored as an observable: it is
 carried exactly once, on the system-prompt controllable event at run start, so
 a Controller that lists `system_prompt` under `read_only` reads it from the
 trajectory without being able to override it.
@@ -71,20 +77,25 @@ includes all its descendants, so a Controller can scope broadly or narrowly):
 - `system` (the whole agent-side surface) over:
   - `system_prompt` (read-only access is granted by listing the tag in the
     Controller's `read_only` set, not by a separate tag)
-  - `tool_catalogue` (broad registry write; the listing observable carries
-    this tag) -> `tool_catalogue_addable` (register-only, the weakest write)
+  - `tool_catalogue` (a pure grouping root for the registry write capability;
+    the listing observable carries this tag) subsuming three capability
+    children: `tool_catalogue_add` (register a new tool), `tool_catalogue_edit`
+    (replace / rewrite-doc), `tool_catalogue_remove` (unregister). Holding
+    `tool_catalogue` grants all three; holding `edit` alone does not imply `add`.
   - `model_identity`, `message_limit`
-  - `agent_trace` -> `agent_trace_messages` (the full transcript) -> its two
-    projections `agent_trace_tool_calls` and `agent_trace_tool_responses` (the
-    transcript embeds both, so `agent_trace_messages` subsumes them; the two are
-    siblings since call-args and return-values are disjoint)
+  - `agent_trace` -> `agent_trace_messages` (the non-tool internal message
+    stream). Tool calls and returns are not projected here: each lives once on
+    the per-tool `ControllablePostCallEvent`, so the old
+    `agent_trace_tool_calls` / `agent_trace_tool_responses` tags are gone.
 - `user`: the user-prompt / jailbreak channel
 - `tools`: the per-tool write surface (what each tool returns to the agent;
   indirect-prompt-injection). This root carries **no children by itself**; a
   SecurityClaim parents a per-tool trust-boundary sub-forest under it (e.g.
   `web` / `social` / `financial`) and maps each tool to a leaf, via the
   `tool_scopes` constructor argument. With no map every tool falls back to the
-  bare `tools` root. The read side is `agent_trace_tool_responses`.
+  bare `tools` root. The return the agent saw is carried on that tool's
+  `ControllablePostCallEvent` (the post-injection value), not on a separate
+  observable.
 
 A SecurityClaim pins its Scores to whichever tag matches its threat model, and an
 experiment's Controller scope picks which tags an attacker may touch. The three
@@ -97,10 +108,12 @@ Controllables **once at run start** (after seeding the catalogue from the static
 Task config), so an attacker-scoped optimizer from a tool-poisoning claim can
 edit the tool registry before the agent runs:
 
-- `tool_catalog_register` (scope `tool_catalogue_addable`): add an
+- `tool_catalog_register` (scope `tool_catalogue_add`): add an
   attacker-defined tool with a canned return.
-- `tool_catalog_replace` / `tool_catalog_unregister` / `tool_catalog_rewrite_doc`
-  (scope `tool_catalogue`, broad): shadow / remove / re-describe an existing tool.
+- `tool_catalog_replace` / `tool_catalog_rewrite_doc` (scope
+  `tool_catalogue_edit`): shadow / re-describe an existing tool.
+- `tool_catalog_unregister` (scope `tool_catalogue_remove`): remove an existing
+  tool.
 
 The target **always** fires these; the Controller's scope filter decides whether
 a given optimizer may inject (out-of-scope -> auto no-injection). The configured
@@ -122,9 +135,10 @@ root if unmapped). After **each** tool call it fires that tool's
 indirect-prompt-injection surface (poisoning tool-returned data). Because the
 canned/real tool is always executed first and only its return is rewritten, a
 single post-call controllable per tool subsumes pre-call request tampering for
-side-effect-free tools. The agent-visible value (post-injection) is mirrored to
-the `agent_trace_tool_response_NNNN` observable. A passthrough optimizer leaves
-every return untouched.
+side-effect-free tools. The call (`json.dumps` with keys `function` and
+`arguments`) and the agent-visible return (post-injection) live on that one
+event; they are not also mirrored to a separate tool-call / tool-response
+observable. A passthrough optimizer leaves every return untouched.
 
 Scoping by tool means an experiment can grant an attacker control over, say, only
 web-sourced tool returns by putting a single trust-boundary tag in scope; tools

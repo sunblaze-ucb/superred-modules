@@ -35,8 +35,6 @@ from superred.core.types.security_domain import SecurityDomainTag
 from agentdojo_target.security_tags import (
     AGENT_TRACE_MESSAGES_TAG,
     AGENT_TRACE_TAG,
-    AGENT_TRACE_TOOL_CALLS_TAG,
-    AGENT_TRACE_TOOL_RESPONSES_TAG,
     MODEL_IDENTITY_TAG,
     TOOL_CATALOGUE_TAG,
 )
@@ -83,50 +81,12 @@ def chat_message_observable(message_index: int) -> Observable:
     return Observable(
         name=f"agent_trace_message_{message_index:04d}",
         security_domain=AGENT_TRACE_MESSAGES_TAG,
-        description=(
-            "One chat message from the agent pipeline's run "
-            f"(position {message_index})."
-        ),
+        description=(f"One chat message from the agent pipeline's run (position {message_index})."),
         observable_type="json",
     )
 
 
-def agent_tool_call_observable(call_index: int) -> Observable:
-    """Observable for a single FunctionCall the agent emits."""
-    return Observable(
-        name=f"agent_trace_tool_call_{call_index:04d}",
-        security_domain=AGENT_TRACE_TOOL_CALLS_TAG,
-        description=(
-            "One FunctionCall the agent attempted "
-            f"(position {call_index} in the trace)."
-        ),
-        observable_type="json",
-    )
-
-
-def agent_tool_response_observable(call_index: int) -> Observable:
-    """Observable for one tool return value (post-injection, as the agent saw it).
-
-    The content is ``{"function": <suite-prefixed tool name>, "value": ...,
-    "error": ...}``: the producing tool's name travels in the same record as
-    its output, so a single response is self-identifying without
-    cross-referencing the call observable by index.
-    """
-    return Observable(
-        name=f"agent_trace_tool_response_{call_index:04d}",
-        security_domain=AGENT_TRACE_TOOL_RESPONSES_TAG,
-        description=(
-            "The return value the agent observed for tool call "
-            f"{call_index} (after any on-demand injection was applied), with "
-            "the producing tool's suite-prefixed name under 'function'."
-        ),
-        observable_type="json",
-    )
-
-
-def write_observation_observable(
-    call_index: int, store_tag: SecurityDomainTag
-) -> Observable:
+def write_observation_observable(call_index: int, store_tag: SecurityDomainTag) -> Observable:
     """Observable for one mutating (write) tool call, tagged at the store
     it changed.
 
@@ -155,9 +115,7 @@ def tool_menu_rebuild_observable(rebuild_index: int) -> Observable:
     return Observable(
         name=f"tool_menu_rebuild_{rebuild_index:04d}",
         security_domain=AGENT_TRACE_TAG,
-        description=(
-            f"The agent's tool menu was rebuilt mid-run (rebuild {rebuild_index})."
-        ),
+        description=(f"The agent's tool menu was rebuilt mid-run (rebuild {rebuild_index})."),
         observable_type="json",
     )
 
@@ -168,13 +126,15 @@ def discarded_action_observable(discard_index: int) -> Observable:
 
     Emitted when the compatibility layer drops a pattern-violating
     tool-call name from an assistant response, so a reader sees the
-    action was attempted and dropped rather than silently vanishing."""
+    action was attempted and dropped rather than silently vanishing.
+    A discarded action never becomes a real tool interaction (no
+    controllable, no execution), so it belongs to the non-tool agent-trace
+    message stream."""
     return Observable(
         name=f"discarded_action_{discard_index:04d}",
-        security_domain=AGENT_TRACE_TOOL_CALLS_TAG,
+        security_domain=AGENT_TRACE_MESSAGES_TAG,
         description=(
-            "A malformed tool call the model requested was discarded "
-            f"(discard {discard_index})."
+            f"A malformed tool call the model requested was discarded (discard {discard_index})."
         ),
         observable_type="json",
     )
@@ -186,15 +146,15 @@ def catalog_edit_outcome_observable(
     """Observable for the outcome of one attacker tool-catalogue edit.
 
     Records whether a register / replace / unregister / rewrite-doc edit
-    was applied or rejected (and why), tagged at the catalogue boundary
-    that authorises the edit (register at the addable sub-boundary, the
-    others at the broader catalogue boundary)."""
+    was applied or rejected (and why), tagged at the catalogue capability
+    that authorises the edit (register at ``tool_catalogue_add``, replace
+    and rewrite-doc at ``tool_catalogue_edit``, unregister at
+    ``tool_catalogue_remove``)."""
     return Observable(
         name=f"catalog_edit_{operation}_outcome",
         security_domain=security_domain,
         description=(
-            f"Outcome of the attacker's '{operation}' tool-catalogue edit "
-            "(applied or rejected)."
+            f"Outcome of the attacker's '{operation}' tool-catalogue edit (applied or rejected)."
         ),
         observable_type="json",
     )
@@ -207,8 +167,6 @@ __all__ = [
     "STATIC_OBSERVABLE_SPECS",
     # dynamic builders
     "chat_message_observable",
-    "agent_tool_call_observable",
-    "agent_tool_response_observable",
     "write_observation_observable",
     "tool_menu_rebuild_observable",
     "discarded_action_observable",

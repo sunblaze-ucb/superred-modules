@@ -58,7 +58,7 @@ _NAME_SEPARATOR: str = "__"
 # making reservations, etc.).  Write tools never receive on-demand
 # injection: the agent's invocation is allowed to execute its
 # legitimate effect, and the call lands on the trajectory via the
-# live per-call ``agent_trace_tool_call`` observables (plus the
+# store-tagged ``write_call_NNNN`` observation (plus the
 # ``write_calls_made`` query for evaluators).
 #
 # These sets must enumerate *exactly* the upstream tools per suite;
@@ -406,9 +406,7 @@ def _build_registry() -> dict[str, RegistryEntry]:
                 function=new_fn,
             )
             if entry.prefixed_name in entries:
-                raise RegistryMismatchError(
-                    f"Duplicate prefixed name: {entry.prefixed_name!r}"
-                )
+                raise RegistryMismatchError(f"Duplicate prefixed name: {entry.prefixed_name!r}")
             entries[entry.prefixed_name] = entry
     return entries
 

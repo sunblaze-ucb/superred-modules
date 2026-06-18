@@ -396,8 +396,8 @@ def _catalog_outcomes(rec: _Rec) -> list[Any]:
 
 def test_hook_emits_applied_outcome_for_valid_register(loop) -> None:
     """A valid register injection emits one catalog_edit_register_outcome
-    observable with status 'applied', tagged at the addable sub-boundary."""
-    from agentdojo_target.security_tags import TOOL_CATALOGUE_ADDABLE_TAG
+    observable with status 'applied', tagged at the add capability."""
+    from agentdojo_target.security_tags import TOOL_CATALOGUE_ADD_TAG
 
     catalog = ToolCatalog.from_seed(ALL_FUNCTIONS)
     rec = _Rec()
@@ -439,7 +439,7 @@ def test_hook_emits_applied_outcome_for_valid_register(loop) -> None:
     assert len(outcomes) == 1
     outcome = outcomes[0]
     assert outcome.observable.name == "catalog_edit_register_outcome"
-    assert outcome.observable.security_domain == TOOL_CATALOGUE_ADDABLE_TAG
+    assert outcome.observable.security_domain == TOOL_CATALOGUE_ADD_TAG
     assert outcome.content["operation"] == "register"
     assert outcome.content["status"] == "applied"
     assert outcome.content["detail"] is None
@@ -448,7 +448,7 @@ def test_hook_emits_applied_outcome_for_valid_register(loop) -> None:
 def test_hook_emits_rejected_outcome_for_malformed_register(loop) -> None:
     """A malformed (non-JSON) register payload emits a register outcome with
     status 'rejected' and a non-empty detail."""
-    from agentdojo_target.security_tags import TOOL_CATALOGUE_ADDABLE_TAG
+    from agentdojo_target.security_tags import TOOL_CATALOGUE_ADD_TAG
 
     catalog = ToolCatalog.from_seed(ALL_FUNCTIONS)
     rec = _Rec()
@@ -482,7 +482,7 @@ def test_hook_emits_rejected_outcome_for_malformed_register(loop) -> None:
     assert len(outcomes) == 1
     outcome = outcomes[0]
     assert outcome.observable.name == "catalog_edit_register_outcome"
-    assert outcome.observable.security_domain == TOOL_CATALOGUE_ADDABLE_TAG
+    assert outcome.observable.security_domain == TOOL_CATALOGUE_ADD_TAG
     assert outcome.content["operation"] == "register"
     assert outcome.content["status"] == "rejected"
     assert outcome.content["detail"]  # non-empty reason
@@ -646,8 +646,10 @@ def test_message_stream_hook_no_reemission_when_called_with_same_list() -> None:
     assert len(emitted) == 1
 
 
-def test_message_stream_hook_serialises_tool_calls() -> None:
-    """A message carrying FunctionCall objects is rendered to plain dicts."""
+def test_message_stream_hook_strips_tool_calls_from_assistant() -> None:
+    """An assistant message's ``tool_calls`` is stripped: the call lives once
+    on the per-tool ControllablePostCallEvent, not on the agent-trace message
+    stream.  The non-tool reasoning content is still emitted."""
     from agentdojo.functions_runtime import FunctionCall
     from agentdojo_target.pipeline_bridge import _MessageStreamHook
     from superred.core.types.events import ObservableEvent
@@ -666,13 +668,31 @@ def test_message_stream_hook_serialises_tool_calls() -> None:
     assert len(emitted) == 1
     payload = emitted[0].content
     assert payload["role"] == "assistant"
-    assert payload["tool_calls"] == [
-        {
-            "function": "banking__get_balance",
-            "args": {},
-            "id": "call-1",
-        }
+    assert payload["content"] == "checking"
+    # The tool-call request is NOT mirrored on the agent trace.
+    assert "tool_calls" not in payload
+
+
+def test_message_stream_hook_skips_tool_result_messages() -> None:
+    """Tool-result messages (role == 'tool') are skipped entirely: the tool's
+    return lives once on the per-tool ControllablePostCallEvent.  The message
+    index still advances so non-tool messages keep their position."""
+    from agentdojo_target.pipeline_bridge import _MessageStreamHook
+    from superred.core.types.events import ObservableEvent
+
+    emitted: list[ObservableEvent] = []
+    hook = _MessageStreamHook(emit=lambda e: emitted.append(e))
+    messages = [
+        {"role": "user", "content": "hi"},
+        {"role": "tool", "content": "1234.0", "tool_call_id": "call-1"},
+        {"role": "assistant", "content": "done"},
     ]
+    hook.query("q", runtime=None, messages=messages)
+    # Only the user and assistant messages are emitted; the tool message is
+    # skipped.  The index still advances over the skipped message.
+    names = [e.observable.name for e in emitted]
+    assert names == ["agent_trace_message_0000", "agent_trace_message_0002"]
+    assert [e.content["role"] for e in emitted] == ["user", "assistant"]
 
 
 def test_message_stream_hook_returns_inputs_unchanged() -> None:

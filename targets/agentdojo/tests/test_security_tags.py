@@ -12,20 +12,20 @@ from superred.core.types.security_domain import scope_includes
 from agentdojo_target.security_tags import (
     AGENT_TRACE_MESSAGES_TAG,
     AGENT_TRACE_TAG,
-    AGENT_TRACE_TOOL_CALLS_TAG,
-    AGENT_TRACE_TOOL_RESPONSES_TAG,
     BANKING_BANK_ACCOUNT_TAG,
     BANKING_FILESYSTEM_TAG,
     BANKING_TAG,
     BANKING_USER_ACCOUNT_TAG,
     DOMAIN,
     MODEL_IDENTITY_TAG,
-    PROMPT_TAG,
     SLACK_SLACK_TAG,
     SLACK_TAG,
     SLACK_WEB_TAG,
+    SYSTEM_PROMPT_TAG,
     SYSTEM_TAG,
-    TOOL_CATALOGUE_ADDABLE_TAG,
+    TOOL_CATALOGUE_ADD_TAG,
+    TOOL_CATALOGUE_EDIT_TAG,
+    TOOL_CATALOGUE_REMOVE_TAG,
     TOOL_CATALOGUE_TAG,
     TOOLS_TAG,
     TRAVEL_CALENDAR_TAG,
@@ -83,30 +83,43 @@ def test_domain_has_three_roots() -> None:
 def test_system_tag_includes_all_system_descendants() -> None:
     """Holding the system root grants every system-side capability."""
     for descendant in (
-        PROMPT_TAG,
+        SYSTEM_PROMPT_TAG,
         TOOL_CATALOGUE_TAG,
-        TOOL_CATALOGUE_ADDABLE_TAG,
+        TOOL_CATALOGUE_ADD_TAG,
+        TOOL_CATALOGUE_EDIT_TAG,
+        TOOL_CATALOGUE_REMOVE_TAG,
         MODEL_IDENTITY_TAG,
         AGENT_TRACE_TAG,
         AGENT_TRACE_MESSAGES_TAG,
-        AGENT_TRACE_TOOL_CALLS_TAG,
-        AGENT_TRACE_TOOL_RESPONSES_TAG,
     ):
         assert SYSTEM_TAG.includes(descendant), descendant.name
 
 
 def test_tool_catalogue_subsumption() -> None:
-    """The catalogue tag subsumes the register-only addable child."""
-    assert TOOL_CATALOGUE_TAG.includes(TOOL_CATALOGUE_ADDABLE_TAG)
-    # but addable does not imply replace/unregister capability
-    assert not TOOL_CATALOGUE_ADDABLE_TAG.includes(TOOL_CATALOGUE_TAG)
+    """The catalogue grouping root subsumes its three capability children;
+    none of the children subsumes the root or a sibling capability."""
+    for child in (
+        TOOL_CATALOGUE_ADD_TAG,
+        TOOL_CATALOGUE_EDIT_TAG,
+        TOOL_CATALOGUE_REMOVE_TAG,
+    ):
+        assert TOOL_CATALOGUE_TAG.includes(child), child.name
+        # a child capability does not imply the broad grouping root
+        assert not child.includes(TOOL_CATALOGUE_TAG), child.name
+    # the three capabilities are independent siblings: granting one (e.g.
+    # edit) does not imply another (e.g. add).
+    assert not TOOL_CATALOGUE_EDIT_TAG.includes(TOOL_CATALOGUE_ADD_TAG)
+    assert not TOOL_CATALOGUE_ADD_TAG.includes(TOOL_CATALOGUE_EDIT_TAG)
+    assert not TOOL_CATALOGUE_REMOVE_TAG.includes(TOOL_CATALOGUE_ADD_TAG)
 
 
 def test_agent_trace_subsumption() -> None:
-    """Aggregate agent_trace subsumes the three finer-grained children."""
+    """Aggregate agent_trace subsumes its sole messages child.
+
+    Tool calls and tool responses are no longer mirrored on the trace;
+    each tool's call and return live once on its ControllablePostCallEvent.
+    """
     assert AGENT_TRACE_TAG.includes(AGENT_TRACE_MESSAGES_TAG)
-    assert AGENT_TRACE_TAG.includes(AGENT_TRACE_TOOL_CALLS_TAG)
-    assert AGENT_TRACE_TAG.includes(AGENT_TRACE_TOOL_RESPONSES_TAG)
 
 
 def test_user_has_no_children() -> None:
@@ -114,7 +127,7 @@ def test_user_has_no_children() -> None:
     for tag in (
         SYSTEM_TAG,
         TOOLS_TAG,
-        PROMPT_TAG,
+        SYSTEM_PROMPT_TAG,
         MODEL_IDENTITY_TAG,
         AGENT_TRACE_TAG,
         BANKING_BANK_ACCOUNT_TAG,
@@ -197,7 +210,7 @@ def test_independent_trees_do_not_cross() -> None:
 def test_scope_includes_uses_tags() -> None:
     """Sanity check that scope_includes() agrees with tag.includes() across roots."""
     scope = frozenset({SYSTEM_TAG})
-    assert scope_includes(scope, PROMPT_TAG)
+    assert scope_includes(scope, SYSTEM_PROMPT_TAG)
     assert scope_includes(scope, AGENT_TRACE_MESSAGES_TAG)
     assert not scope_includes(scope, USER_TAG)
     assert not scope_includes(scope, BANKING_BANK_ACCOUNT_TAG)

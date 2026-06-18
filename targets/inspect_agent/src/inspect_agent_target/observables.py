@@ -16,9 +16,10 @@ Controller that lists ``system_prompt`` under ``read_only`` reads it from
 the trajectory without being able to override it.
 
 Dynamic observables (emitted via ``emit(ObservableEvent(...))`` during ``run``):
-- one ``agent_trace_message_NNNN`` per chat message in the rollout.
-- one ``agent_trace_tool_call_NNNN`` per tool call the agent emits.
-- one ``agent_trace_tool_response_NNNN`` per tool return the agent observes.
+- one ``agent_trace_message_NNNN`` per NON-TOOL chat message in the rollout
+  (system / assistant reasoning / user).  Tool-call requests and tool-result
+  messages are excluded: a tool's call (function + arguments) and its return are
+  emitted exactly once, on that tool's ``ControllablePostCallEvent``.
 """
 
 from __future__ import annotations
@@ -27,8 +28,6 @@ from superred.core.types.observable import Observable
 
 from inspect_agent_target.security_tags import (
     AGENT_TRACE_MESSAGES_TAG,
-    AGENT_TRACE_TOOL_CALLS_TAG,
-    AGENT_TRACE_TOOL_RESPONSES_TAG,
     MESSAGE_LIMIT_TAG,
     MODEL_IDENTITY_TAG,
     TOOL_CATALOGUE_TAG,
@@ -77,36 +76,10 @@ def chat_message_observable(message_index: int) -> Observable:
     )
 
 
-def agent_tool_call_observable(call_index: int) -> Observable:
-    """Observable for a single tool call the agent emits."""
-    return Observable(
-        name=f"agent_trace_tool_call_{call_index:04d}",
-        security_domain=AGENT_TRACE_TOOL_CALLS_TAG,
-        description=f"One tool call the agent attempted (position {call_index}).",
-        observable_type="json",
-    )
-
-
-def agent_tool_response_observable(response_index: int) -> Observable:
-    """Observable for a single tool return value the agent observed.
-
-    Carries the output *after* any tool-output injection has been applied, so an
-    optimizer scoped to read tool responses sees exactly what the agent saw.
-    """
-    return Observable(
-        name=f"agent_trace_tool_response_{response_index:04d}",
-        security_domain=AGENT_TRACE_TOOL_RESPONSES_TAG,
-        description=f"One tool return value the agent observed (position {response_index}).",
-        observable_type="json",
-    )
-
-
 __all__ = [
     "MODEL_IDENTITY_OBS",
     "MESSAGE_LIMIT_OBS",
     "TOOL_CATALOG_LISTING_OBS",
     "STATIC_OBSERVABLE_SPECS",
     "chat_message_observable",
-    "agent_tool_call_observable",
-    "agent_tool_response_observable",
 ]

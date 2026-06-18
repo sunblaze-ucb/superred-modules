@@ -30,7 +30,7 @@ import sys
 
 from agentdojo_target import (
     AgentDojoTarget,
-    PROMPT_TAG,
+    SYSTEM_PROMPT_TAG,
     TOOL_CATALOGUE_TAG,
     TOOLS_TAG,
     USER_TAG,
@@ -119,7 +119,7 @@ async def main() -> int:
         target_factory=TargetFactory(create=factory, concurrency=1),
         security_claim=claim,
         scope=frozenset({
-            USER_TAG, PROMPT_TAG, TOOL_CATALOGUE_TAG, TOOLS_TAG,
+            USER_TAG, SYSTEM_PROMPT_TAG, TOOL_CATALOGUE_TAG, TOOLS_TAG,
         }),
         max_runs_per_task=1,
     )

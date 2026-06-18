@@ -55,7 +55,7 @@ from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
 from superred.core.types.trajectory import Trajectory
 
-from agentdojo_target import AgentDojoTarget, USER_TAG, PROMPT_TAG, TOOLS_TAG
+from agentdojo_target import AgentDojoTarget, USER_TAG, SYSTEM_PROMPT_TAG, TOOLS_TAG
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +256,7 @@ async def test_four_targets_run_concurrently_without_cross_contamination() -> No
         optimizer_factory=_PassthroughOptimizer,
         target_factory=TargetFactory(create=factory, concurrency=4),
         security_claim=claim,
-        scope=frozenset({USER_TAG, PROMPT_TAG, TOOLS_TAG}),
+        scope=frozenset({USER_TAG, SYSTEM_PROMPT_TAG, TOOLS_TAG}),
         max_runs_per_task=1,
     )
     result = await controller.run()
@@ -301,7 +301,7 @@ async def test_eight_targets_concurrent_stress() -> None:
         optimizer_factory=_PassthroughOptimizer,
         target_factory=TargetFactory(create=factory, concurrency=8),
         security_claim=claim,
-        scope=frozenset({USER_TAG, PROMPT_TAG, TOOLS_TAG}),
+        scope=frozenset({USER_TAG, SYSTEM_PROMPT_TAG, TOOLS_TAG}),
         max_runs_per_task=1,
     )
     result = await controller.run()

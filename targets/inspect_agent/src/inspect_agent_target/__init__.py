@@ -24,22 +24,19 @@ from inspect_agent_target.controllables import (
     USER_PROMPT_CTRL,
     tool_output_controllable,
 )
-from inspect_agent_target.observables import (
-    TOOL_CATALOG_LISTING_OBS,
-    agent_tool_response_observable,
-)
+from inspect_agent_target.observables import TOOL_CATALOG_LISTING_OBS
 from inspect_agent_target.rollout import run_rollout, static_tools_provider
 from inspect_agent_target.security_tags import (
     AGENT_TRACE_MESSAGES_TAG,
     AGENT_TRACE_TAG,
-    AGENT_TRACE_TOOL_CALLS_TAG,
-    AGENT_TRACE_TOOL_RESPONSES_TAG,
     DOMAIN,
     MESSAGE_LIMIT_TAG,
     MODEL_IDENTITY_TAG,
     SYSTEM_PROMPT_TAG,
     SYSTEM_TAG,
-    TOOL_CATALOGUE_ADDABLE_TAG,
+    TOOL_CATALOGUE_ADD_TAG,
+    TOOL_CATALOGUE_EDIT_TAG,
+    TOOL_CATALOGUE_REMOVE_TAG,
     TOOL_CATALOGUE_TAG,
     TOOLS_TAG,
     USER_TAG,
@@ -66,12 +63,12 @@ __all__ = [
     "MODEL_IDENTITY_TAG",
     "MESSAGE_LIMIT_TAG",
     "TOOL_CATALOGUE_TAG",
-    "TOOL_CATALOGUE_ADDABLE_TAG",
+    "TOOL_CATALOGUE_ADD_TAG",
+    "TOOL_CATALOGUE_EDIT_TAG",
+    "TOOL_CATALOGUE_REMOVE_TAG",
     "TOOLS_TAG",
     "AGENT_TRACE_TAG",
     "AGENT_TRACE_MESSAGES_TAG",
-    "AGENT_TRACE_TOOL_CALLS_TAG",
-    "AGENT_TRACE_TOOL_RESPONSES_TAG",
     "SYSTEM_PROMPT_CTRL",
     "USER_PROMPT_CTRL",
     "TOOL_CATALOG_REGISTER_CTRL",
@@ -81,7 +78,6 @@ __all__ = [
     "TOOL_CATALOG_CTRLS",
     "tool_output_controllable",
     "TOOL_CATALOG_LISTING_OBS",
-    "agent_tool_response_observable",
     "CONTROLLABLES",
     "__version__",
 ]

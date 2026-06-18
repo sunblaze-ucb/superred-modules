@@ -92,7 +92,7 @@ def _opaque_content_ctrl(name: str = "opaque_surface") -> Controllable:
     )
 
 
-def _response_observable(name: str = "agent_trace_tool_response_0000") -> Observable:
+def _response_observable(name: str = "agent_trace_message_0000") -> Observable:
     return Observable(name=name, security_domain=TRACE_TAG)
 
 
@@ -214,7 +214,6 @@ class TestSurfaceClassification:
             )
             from agentdojo_target.observables import (  # type: ignore[import-not-found]
                 TOOL_CATALOG_LISTING_OBS,
-                agent_tool_response_observable,
             )
         finally:
             try:
@@ -246,9 +245,10 @@ class TestSurfaceClassification:
 
         traj = _FakeReadableTrajectory()
         traj.push(
-            ObservableEvent(
-                observable=agent_tool_response_observable(0),
-                content={"value": "agent saw this"},
+            ControllablePostCallEvent(
+                controllable=read_ctrl,
+                request="read",
+                answer={"value": "agent saw this"},
             )
         )
         await _dispatch_event(opt, RunStartEvent(trajectory=traj))
@@ -467,9 +467,10 @@ class TestRolloutContext:
 
         await _dispatch_event(opt, RunStartEvent(trajectory=traj))
         traj.push(
-            ObservableEvent(
-                observable=_response_observable(),
-                content={"value": "tool response visible to agent"},
+            ControllablePostCallEvent(
+                controllable=_read_ctrl(),
+                request="read",
+                answer={"value": "tool response visible to agent"},
             )
         )
         with patch.object(opt._reflector, "propose", new=propose):
@@ -481,7 +482,10 @@ class TestRolloutContext:
         rollout = propose.call_args.kwargs["rollouts"][0]
         assert rollout.response == '{"value": "tool response visible to agent"}'
         assert rollout.agent_observations is not None
-        assert "agent_trace_tool_response_0000" in rollout.agent_observations[0]
+        assert any(
+            "tool response visible to agent" in item
+            for item in rollout.agent_observations
+        )
 
     @pytest.mark.asyncio
     async def test_static_observables_still_surface(self) -> None:

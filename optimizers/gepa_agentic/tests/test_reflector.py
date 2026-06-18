@@ -34,7 +34,9 @@ class TestRolloutRecord:
                 }
             ],
             tool_return="legitimate webpage",
-            agent_observations=["agent_trace_tool_response_0000: value"],
+            agent_observations=[
+                "controllable_post:read__slack__get_webpage: value"
+            ],
             selection_reason="planned content surface",
         )
 
@@ -45,7 +47,7 @@ class TestRolloutRecord:
         assert sample["surface_selection_reason"] == "planned content surface"
         assert sample["tool_return"] == "legitimate webpage"
         assert sample["agent_observations"] == [
-            "agent_trace_tool_response_0000: value"
+            "controllable_post:read__slack__get_webpage: value"
         ]
         assert sample["assistant_response"] == "assistant reply"
         assert "0.5000" in sample["feedback"]

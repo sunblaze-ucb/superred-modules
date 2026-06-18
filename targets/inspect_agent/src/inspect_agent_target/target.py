@@ -22,7 +22,8 @@ Lifecycle:
      override either via ``ControllableInjection``);
    - resolve the tool names to inspect Tools;
    - run the tool-calling loop (:func:`run_rollout`);
-   - emit per-message and per-tool-call observables.
+   - emit the non-tool agent-trace message observables (each tool's call and
+     return are emitted once, on that tool's ControllablePostCallEvent).
 4. ``query``: post-run string readers; ``messages`` property: the typed trace.
 5. ``reset_ephemeral_state``: reset per-run state.  ``teardown``: no-op.
 """
@@ -35,7 +36,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, cast
 
 from inspect_ai.model import ChatMessage, ChatMessageTool, GenerateConfig, get_model
-from inspect_ai.tool import Tool
+from inspect_ai.tool import Tool, ToolCall
 from superred.core.interfaces.target import Target
 from superred.core.types.controllable import Controllable
 from superred.core.types.event import EventHandler, EventResponseHandler
@@ -64,8 +65,6 @@ from inspect_agent_target.observables import (
     MESSAGE_LIMIT_OBS,
     MODEL_IDENTITY_OBS,
     TOOL_CATALOG_LISTING_OBS,
-    agent_tool_call_observable,
-    agent_tool_response_observable,
     chat_message_observable,
 )
 from inspect_agent_target.query_specs import QUERY_SPEC_NAMES, QUERY_SPECS
@@ -262,30 +261,35 @@ class InspectAgentTarget(Target):
         # the trajectory: it is static configuration, exposed via the
         # TOOL_CATALOG_LISTING_OBS static observable (the configured, pre-edit
         # snapshot).  Attacker edits are visible on the trajectory as the
-        # catalogue controllable events above; the post-edit tool set is also
-        # reflected in the agent-trace tool-call/response observables.
+        # catalogue controllable events above; the post-edit tool set is then
+        # exercised through the per-tool ControllablePostCallEvents.
         await self._fire_catalog_controllables(send_event, catalog)
 
         # Per-tool output injection (the indirect-prompt-injection surface):
         # after each tool result, fire THAT tool's ControllablePostCallEvent
-        # carrying the legitimate output; an attacker scoped to the tool's trust
-        # boundary may replace it before the agent sees it. Always fired (scope
-        # filter gates injection). Each tool response is also emitted as an
-        # observable reflecting the value the agent actually saw (post injection).
-        response_index = 0
+        # carrying the call (function + arguments) and the legitimate output; an
+        # attacker scoped to the tool's trust boundary may replace the output
+        # before the agent sees it. Always fired (scope filter gates injection).
+        # The tool call + response live ONLY on this event -- they are not
+        # mirrored on the agent trace (emit-once).
 
-        async def on_tool_results(results: list[ChatMessage]) -> list[ChatMessage]:
-            nonlocal response_index
+        async def on_tool_results(
+            results: list[ChatMessage], tool_calls: list[ToolCall]
+        ) -> list[ChatMessage]:
+            calls_by_id = {tc.id: tc for tc in tool_calls}
             out: list[ChatMessage] = []
             for msg in results:
                 if not isinstance(msg, ChatMessageTool):
                     out.append(msg)
                     continue
                 fn = str(msg.function or "")
+                tool_call_id = msg.tool_call_id
+                originating = calls_by_id.get(tool_call_id) if tool_call_id is not None else None
+                arguments = dict(originating.arguments) if originating is not None else {}
                 resp = await send_event(
                     ControllablePostCallEvent(
                         controllable=self._tool_output_ctrl(fn),
-                        request=fn,
+                        request=json.dumps({"function": fn, "arguments": arguments}),
                         answer=msg.text or "",
                     )
                 )
@@ -296,13 +300,6 @@ class InspectAgentTarget(Target):
                         tool_call_id=msg.tool_call_id,
                         function=msg.function,
                     )
-                emit(
-                    ObservableEvent(
-                        observable=agent_tool_response_observable(response_index),
-                        content=_message_to_jsonable(final),
-                    )
-                )
-                response_index += 1
                 out.append(final)
             return out
 
@@ -318,16 +315,22 @@ class InspectAgentTarget(Target):
         )
         self._last_response = _last_assistant_text(self._messages)
 
-        # Phase 5: emit trace observables.
+        # Phase 5: emit the agent trace -- the NON-TOOL message stream only.
+        # Each tool's call (function + arguments) and return are emitted once,
+        # on that tool's ControllablePostCallEvent (above), so they are NOT
+        # mirrored here: skip tool-result messages and strip the tool-call
+        # request from assistant messages.
         for idx, msg in enumerate(self._messages):
+            if isinstance(msg, ChatMessageTool):
+                continue
+            payload = _message_to_jsonable(msg)
+            payload.pop("tool_calls", None)
             emit(
                 ObservableEvent(
                     observable=chat_message_observable(idx),
-                    content=_message_to_jsonable(msg),
+                    content=payload,
                 )
             )
-        for idx, call in enumerate(_function_call_trace(self._messages)):
-            emit(ObservableEvent(observable=agent_tool_call_observable(idx), content=call))
 
     # -- reset / teardown ------------------------------------------------------
 

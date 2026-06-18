@@ -11,7 +11,12 @@ inspect's own primitives: `Model.generate(messages, tools, tool_choice)` then
 `execute_tools(messages, tools)` (the current API; supersedes the deprecated
 `call_tools`). The resulting `list[ChatMessage]` is structurally identical to what
 an `inspect_ai.eval` run produces. This loop is the single hand-replicated
-control-flow point; a credentialed trace-parity test guards it.
+control-flow point; a credentialed trace-parity test guards it. The optional
+`on_tool_results` hook is called per turn with `(tool_results, tool_calls)` -- the
+turn's tool-result messages plus the assistant message's `tool_calls` (a list of
+inspect `ToolCall`) -- so the target can pair each result with the call (function
++ arguments) that produced it and fire one `ControllablePostCallEvent` per tool,
+the single place a call and its return are carried.
 
 ## B. Message limit
 `message_limit` caps the total number of messages (system + user + assistant +
@@ -56,11 +61,19 @@ via the `model_identity` observable.
 Static configuration is exposed as **static observables** (`get_observables`,
 handed to the optimizer at init): `model_identity`, `system_prompt`,
 `message_limit`, and `tool_catalog_listing` (the configured, pre-edit catalogue).
-Everything that **happens during the run** is on the **trajectory** as
-`ObservableEvent`s (the only one-way target-to-trajectory mechanism, each wrapping
-an `Observable`): the per-message / per-tool-call / per-tool-response agent trace.
-Attacker actions (prompt and catalogue injections) are on the trajectory too, as
-the controllable events. So the catalogue is intentionally NOT emitted on the
+Everything that **happens during the run** is on the **trajectory**: the non-tool
+internal message stream is per-message `ObservableEvent`s (the only one-way
+target-to-trajectory mechanism, each wrapping an `Observable`) -- tool-result
+messages are skipped and the `tool_calls` field is stripped from assistant
+messages. Each tool call (function + arguments) and its return are NOT
+double-emitted as observables; they live exactly once on that tool's
+`ControllablePostCallEvent` (a two-way controllable event recorded on the
+trajectory), the same boundary the attacker may inject into. This emit-once rule
+keeps a call/return on a single, properly scoped surface (the per-tool boundary)
+rather than re-exposing it under the broad `agent_trace` boundary, where a
+trace-scoped optimizer could otherwise read every tool's traffic out of the
+aggregate. Attacker actions (prompt and catalogue injections) are on the
+trajectory too, as the controllable events. So the catalogue is intentionally NOT emitted on the
 trajectory: its static snapshot is an observable, and its dynamic edits are the
 catalogue controllable events.
 
@@ -85,11 +98,14 @@ catalogue is seeded from the static `tool_names` config), plus a
   `security_domain_filter` middleware gates injection by scope, so an out-of-scope
   optimizer simply receives no-injection. The target's job is to expose the
   surface; the experiment designer's scope decides exposure to the optimizer.
-- Scopes mirror AgentDojo: register is `tool_catalogue_addable` (weakest write),
-  the other three and the static tool set are `tool_catalogue` (broad); the
-  listing observable carries `tool_catalogue` itself, so keeping that tag in
-  `read_only` (rather than `scope`) grants the listing without edit capability. Broad implies
-  the register-only child. The `tool_catalogue` tag lives under the `system`
+- Scopes mirror AgentDojo: the catalogue capability is split into three sibling
+  children of a pure grouping root `tool_catalogue`. `register` is
+  `tool_catalogue_add`, `replace` and `rewrite_doc` are `tool_catalogue_edit`,
+  and `unregister` is `tool_catalogue_remove`. The static tool set and the
+  listing observable carry `tool_catalogue` itself, so keeping that tag in
+  `read_only` (rather than `scope`) grants the listing without edit capability.
+  Granting `tool_catalogue` subsumes all three children; granting `edit` alone
+  does NOT imply `add`. The `tool_catalogue` root lives under the `system`
   umbrella root, alongside `system_prompt`, `model_identity`, and `agent_trace`.
 - Initial tools remain a static Task config (`tool_names`); the catalogue is
   seeded from them each run and edited only by accepted injections.
@@ -106,7 +122,8 @@ For each configured tool the target exposes one `tool:<name>` Controllable, fire
 as a `ControllablePostCallEvent` after **that** tool returns.  Design points:
 
 - **One controllable per tool, post-call only.** The event carries the tool's
-  legitimate return as `answer` and the tool name as `request`. A
+  legitimate return as `answer` and the call (`json.dumps` with keys `function`
+  and `arguments`) as `request`. A
   `ControllableInjection` replaces the content the agent sees; a no-injection (or
   out-of-scope filter) leaves it verbatim. Pre-call request tampering is
   deliberately *not* a separate controllable: the tools here are side-effect-free
@@ -128,8 +145,11 @@ as a `ControllablePostCallEvent` after **that** tool returns.  Design points:
   but register/unregister/rewrite-doc do not; the two surfaces are kept separate.
 - Fired **unconditionally**; the Controller's `security_domain_filter` gates
   injection by scope, exactly like the catalogue controllables.
-- The agent-visible value (after any injection) is mirrored to the
-  `agent_trace_tool_response_NNNN` observable (scope `agent_trace_tool_responses`),
-  so a read-scoped optimizer sees exactly what the agent saw.
+- The call and the agent-visible value (after any injection) are carried only on
+  this `ControllablePostCallEvent`; they are NOT also mirrored to a separate
+  tool-call / tool-response observable. The removed
+  `agent_trace_tool_calls` / `agent_trace_tool_responses` tags and their
+  observables no longer exist; a read-only-scoped optimizer sees exactly what the
+  agent saw by listing the tool's own boundary tag under `read_only`.
 - **Faithfulness-safe**: a passthrough optimizer injects nothing, so every tool
   return reaches the agent unchanged and AgentHarm baselines are unaffected.
