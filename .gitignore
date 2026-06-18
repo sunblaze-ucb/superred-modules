@@ -12,6 +12,13 @@ build/
 .coverage
 .pytest_cache/
 
+# ASB target runtime artifacts (vendored aios/pyopenagi write these relative to
+# the cwd a run is launched from; regenerated on every run, never versioned)
+aios/
+logs/
+memory_db/
+*context_restoration*
+
 # Local AI-agent steering pointers (machine-local, not versioned)
 CLAUDE.md
 AGENTS.md

@@ -1,0 +1,15 @@
+# Runtime artifacts written by the vendored ASB loop (aios/pyopenagi) relative
+# to the current working directory. These must never be committed.
+#
+# - aios/        : context restoration files + per-agent file storage
+#                  (aios/context/context_restoration, aios/storage)
+# - logs/        : scheduler / agents / llm_kernel log files
+# - memory_db/   : default chroma_db vector store
+#
+# NOTE: the package's real code lives under src/asb_target/ (including the
+# vendored src/asb_target/_asb_vendor/aios package). These top-level patterns
+# only match runtime output created in this directory, not src/.
+aios/
+logs/
+memory_db/
+*context_restoration*
