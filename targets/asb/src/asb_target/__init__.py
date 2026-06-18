@@ -16,9 +16,7 @@ from asb_target._vendor import ASB_UPSTREAM_SHA, ensure_vendor_on_path
 ensure_vendor_on_path()
 
 from asb_target.security_tags import (  # noqa: E402
-    AGENT_TRACE_MESSAGES_TAG,
     AGENT_TRACE_TAG,
-    AGENT_TRACE_TOOL_CALLS_TAG,
     DOMAIN,
     MEMORY_TAG,
     NORMAL_TOOL_NAMES,
@@ -40,8 +38,6 @@ __all__ = [
     "SYSTEM_TAG",
     "SYSTEM_PROMPT_TAG",
     "AGENT_TRACE_TAG",
-    "AGENT_TRACE_MESSAGES_TAG",
-    "AGENT_TRACE_TOOL_CALLS_TAG",
     "TOOLS_TAG",
     "SCENARIO_TOOL_TAGS",
     "TOOL_OBSERVATION_TAGS",

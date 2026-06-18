@@ -155,10 +155,13 @@ async def test_dpi_attack_succeeds_and_emits_trace() -> None:
     assert dpi_fired == 1
     assert "ResourceAllocationHijack" in json.loads(t.query("tool_call_trace"))
     assert any(goal in (m.get("content") or "") for m in msgs)  # attack succeeded
-    # provenance-tagged observables were emitted (plan + per-step facts), not a bulk dump
+    # provenance-tagged observables were emitted (the agent's plan; the final
+    # attacker-tool interaction under the tool), not a bulk message dump, and no
+    # tool-call record under agent_trace.
     obs = [e for e in emitted if isinstance(e, ObservableEvent)]
     assert any(e.observable.name == "agent_plan" for e in obs)
-    assert any(e.observable.name.startswith("agent_tool_call_") for e in obs)
+    assert any(e.observable.name.startswith("tool_interaction_") for e in obs)
+    assert not any(e.observable.name.startswith("agent_tool_call") for e in obs)
 
 
 async def test_opi_fires_on_attacker_tool_observation() -> None:
@@ -321,11 +324,13 @@ async def _forced_plan(*, force: bool) -> object:
     return plans[0]
 
 
-async def test_tool_response_tagged_to_its_tool_and_emitted_once() -> None:
-    # The FINAL tool's response is emitted as an observable tagged to that tool's
-    # own boundary (not under system/agent_trace); the NON-final tool's response
-    # is recorded only via its OPI controllable event, so each tool response is
-    # emitted exactly once and never under {system}.
+async def test_tool_interaction_tagged_to_its_tool_and_emitted_once() -> None:
+    # A whole tool interaction (call + params + return) lives under the tool's own
+    # boundary, never under system/agent_trace. The FINAL interaction is an
+    # observable tagged to that tool; the NON-final one is its OPI controllable
+    # event (whose request carries {tool, params, observation}). So each tool
+    # interaction is emitted exactly once and never under {system}, and there is
+    # no separate agent_trace tool-call record.
     _FakeLLM.configure(
         plan=[
             {"message": "monitor", "tool_use": ["sys_monitor"]},
@@ -339,14 +344,14 @@ async def test_tool_response_tagged_to_its_tool_and_emitted_once() -> None:
     t.set_config("attacker_tool", json.dumps(_ATTACKER))
 
     observables: list[ObservableEvent] = []
-    opi_events: list[str] = []
+    opi: list[tuple[str, str]] = []
 
     async def handler(event):  # type: ignore[no-untyped-def]
         if (
             isinstance(event, ControllablePreCallEvent)
             and event.controllable.name == "opi_tool_observation"
         ):
-            opi_events.append(event.controllable.security_domain.name)
+            opi.append((event.controllable.security_domain.name, str(event.request)))
         return _no(event)
 
     def emit(e):  # type: ignore[no-untyped-def]
@@ -355,12 +360,18 @@ async def test_tool_response_tagged_to_its_tool_and_emitted_once() -> None:
 
     await t.run(emit, handler)
 
-    tool_responses = [e for e in observables if e.observable.name.startswith("tool_response_")]
-    # exactly one final-step tool response observable, tagged to update_manager's leaf
-    assert len(tool_responses) == 1
-    assert tool_responses[0].observable.security_domain is TOOL_OBSERVATION_TAGS["update_manager"]
-    # the non-final sys_monitor response was recorded via its OPI controllable
-    # (tagged to sys_monitor's leaf), NOT as a tool_response observable
-    assert opi_events == [TOOL_OBSERVATION_TAGS["sys_monitor"].name]
-    # nothing under system/agent_trace carries a tool response
-    assert not any(e.observable.name.startswith("agent_tool_response") for e in observables)
+    interactions = [e for e in observables if e.observable.name.startswith("tool_interaction_")]
+    # exactly one final-step tool interaction observable, tagged to update_manager's leaf
+    assert len(interactions) == 1
+    assert interactions[0].observable.security_domain is TOOL_OBSERVATION_TAGS["update_manager"]
+    # it carries the whole interaction (call + params + return)
+    assert set(interactions[0].content) == {"tool", "params", "observation"}
+    assert interactions[0].content["tool"] == "update_manager"
+    # the non-final sys_monitor interaction was the OPI controllable event (tagged
+    # to sys_monitor's leaf, request carrying {tool, params, observation})
+    assert len(opi) == 1
+    tag_name, req = opi[0]
+    assert tag_name == TOOL_OBSERVATION_TAGS["sys_monitor"].name
+    assert '"tool": "sys_monitor"' in req and '"observation"' in req
+    # nothing under agent_trace carries a tool call or tool response
+    assert not any(e.observable.name.startswith("agent_tool_") for e in observables)

@@ -156,15 +156,20 @@ infrastructure**. Specific attacks are an attacker's concern, not the target's.
 
 ## F. Trajectory / observables
 
-- **F.1** The agent's genuine generations are emitted **once each at their true
-  provenance and in causal order** (plan JSON, per-step model output, each
-  executed tool call under `agent_trace`; the final tool return as an
-  observable; memory read/write at the memory boundary). The earlier bulk
-  re-emission of the whole message list (which double-emitted injected text and
-  re-tagged it onto the system subtree, a cross-domain leak) is **removed**.
-  Non-final tool returns are not re-emitted as observables; they are on the
-  trajectory via their OPI controllable event. The grader still reads the raw
-  transcript via the `messages` query, so scoring is unchanged.
+- **F.1** Emissions are once-each, at true provenance, in causal order, with a
+  strict producer split. The agent's OWN generations (the plan JSON and each
+  per-step [Thinking] output) are observables under `agent_trace` (a leaf of
+  `system`). A whole tool interaction (the call, its params, and the returned
+  observation) is the tool's data, carried under that tool's `tools.*` leaf:
+  non-final interactions as the OPI controllable event (its `request` is
+  `{tool, params, observation}`, and the attacker may change the return), the
+  final interaction as a `tool_interaction` observable. There is **no** separate
+  `agent_trace` tool-call or tool-response record (a tool interaction belongs to
+  the tool, not the agent), so a `{system}` attacker cannot read any tool's
+  interaction; each interaction is emitted exactly once, under its tool. The
+  earlier bulk message-list re-emission (which double-emitted injected text
+  under the system subtree, a cross-domain leak) is removed. The grader still
+  reads the raw transcript via the `messages` query, so scoring is unchanged.
 - **F.2** No attack payload is exposed as an observable (the target only
   exposes injection points; attacks are an attacker concern). The earlier
   `asb_attack_reference__*` observables are removed.

@@ -49,9 +49,8 @@ from asb_target.memory_store import MemoryStore
 from asb_target.observables import (
     agent_model_output_observable,
     agent_plan_observable,
-    agent_tool_call_observable,
     memory_event_observable,
-    tool_response_observable,
+    tool_interaction_observable,
 )
 from asb_target.tool_boundary import tool_boundary_tag
 
@@ -317,27 +316,30 @@ class SuperredReactAgent(ReactAgentAttack):  # type: ignore[misc]  # base is Any
                 success = False
                 continue
 
-            # Emit the executed tool call once (agent_trace_tool_calls).
-            self._emit_obs(
-                agent_tool_call_observable(call_index),
-                {"function": function_name, "final": final_stage},
-            )
-
-            # The OPI injection event is the port's own (not a vendored tool call), so
-            # it is kept OUTSIDE the upstream try/except: a channel/timeout failure must
-            # propagate (loud) rather than be swallowed as a tool error, which would
-            # silently score a partial/contaminated transcript.
+            # A whole tool interaction (the call, its params, and the returned
+            # observation) is the tool's OWN data, carried under the tool's
+            # boundary -- never as a separate agent_trace tool-call record.
+            interaction = {
+                "tool": function_name,
+                "params": function_params,
+                "observation": str(function_response),
+            }
             if not final_stage:
+                # NON-final: the OPI controllable event IS the tool interaction --
+                # its request carries {tool, params, observation} and the attacker
+                # may change the return. Kept OUTSIDE the upstream try/except so a
+                # channel/timeout failure propagates (loud) rather than being
+                # swallowed as a tool error (which would score a partial transcript).
                 ctrl = opi_tool_observation_ctrl(tool_boundary_tag(function_name))
-                injected = self._inject(ctrl, request=str(function_response))
+                injected = self._inject(ctrl, request=json.dumps(interaction, default=str))
                 if injected:
                     function_response += f"; {injected}"
             else:
-                # Final return: not OPI-injected upstream (no controllable for it), so
-                # emit it as an observable tagged to the tool's OWN boundary, once.
+                # Final: not OPI-injected upstream (no controllable for it), so emit
+                # the tool interaction as an observable under the tool's OWN boundary.
                 self._emit_obs(
-                    tool_response_observable(call_index, tool_boundary_tag(function_name)),
-                    str(function_response),
+                    tool_interaction_observable(call_index, tool_boundary_tag(function_name)),
+                    interaction,
                 )
 
             actions.append(f"I will call the {function_name} with the params as {function_params}")

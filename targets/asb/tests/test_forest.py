@@ -9,9 +9,7 @@ from superred.core.types.security_domain import SecurityDomain, SecurityDomainTa
 
 from asb_target import security_tags as st
 from asb_target.security_tags import (
-    AGENT_TRACE_MESSAGES_TAG,
     AGENT_TRACE_TAG,
-    AGENT_TRACE_TOOL_CALLS_TAG,
     DOMAIN,
     MEMORY_TAG,
     NORMAL_TOOL_NAMES,
@@ -31,8 +29,6 @@ def _all_tags() -> list:
         SYSTEM_TAG,
         SYSTEM_PROMPT_TAG,
         AGENT_TRACE_TAG,
-        AGENT_TRACE_MESSAGES_TAG,
-        AGENT_TRACE_TOOL_CALLS_TAG,
         TOOLS_TAG,
         MEMORY_TAG,
     ]
@@ -99,24 +95,19 @@ def test_subsumption_at_every_level() -> None:
 
 def test_system_subsumes_prompt_and_trace() -> None:
     system_scope = frozenset({SYSTEM_TAG})
-    for child in (
-        SYSTEM_PROMPT_TAG,
-        AGENT_TRACE_TAG,
-        AGENT_TRACE_MESSAGES_TAG,
-        AGENT_TRACE_TOOL_CALLS_TAG,
-    ):
+    for child in (SYSTEM_PROMPT_TAG, AGENT_TRACE_TAG):
         assert scope_includes(system_scope, child)
 
 
 def test_agent_trace_holds_only_agent_generations_not_tool_data() -> None:
-    # A tool's RESPONSE is the tool's data and must be reachable only with that
-    # tool's scope, never via {system}. agent_trace has no tool-responses tag;
-    # its children are the agent's own generations (messages + tool-call decisions).
+    # A whole tool interaction (call + return) is the tool's data and must be
+    # reachable only with that tool's scope, never via {system}. agent_trace is a
+    # leaf for the agent's OWN generations only: no tool-call or tool-response tag.
     names = {t.name for t in _all_tags()}
+    assert "agent_trace_tool_calls" not in names
     assert "agent_trace_tool_responses" not in names
-    agent_trace_children = {AGENT_TRACE_MESSAGES_TAG.name, AGENT_TRACE_TOOL_CALLS_TAG.name}
-    assert {t.name for t in _all_tags() if t.parent is AGENT_TRACE_TAG} == agent_trace_children
-    # a {system} attacker cannot read any tool's response surface
+    assert not [t for t in _all_tags() if t.parent is AGENT_TRACE_TAG]  # agent_trace is a leaf
+    # a {system} attacker cannot read any tool's interaction surface
     system_scope = frozenset({SYSTEM_TAG})
     for leaf in TOOL_OBSERVATION_TAGS.values():
         assert not scope_includes(system_scope, leaf)

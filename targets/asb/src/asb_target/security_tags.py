@@ -72,23 +72,12 @@ SYSTEM_PROMPT_TAG: SecurityDomainTag = SecurityDomainTag("system_prompt", parent
 and always present regardless of any injection here."""
 
 AGENT_TRACE_TAG: SecurityDomainTag = SecurityDomainTag("agent_trace", parent=SYSTEM_TAG)
-"""Read-only observability of the agent's OWN generations (plan, thinking, and
-tool-call decisions). A tool's RETURNED data is not here: it is the tool's own
-data, tagged under that tool's boundary in the ``tools`` tree."""
-
-AGENT_TRACE_MESSAGES_TAG: SecurityDomainTag = SecurityDomainTag(
-    "agent_trace_messages",
-    parent=AGENT_TRACE_TAG,
-)
-"""The agent's own model generations: the planning workflow JSON and each
-per-step model output ([Thinking] text)."""
-
-AGENT_TRACE_TOOL_CALLS_TAG: SecurityDomainTag = SecurityDomainTag(
-    "agent_trace_tool_calls",
-    parent=AGENT_TRACE_TAG,
-)
-"""The tool-call decisions the agent generated (which tool it chose). The
-tool's RESPONSE is the tool's data, tagged under its ``tools.*`` leaf."""
+"""Read-only observability of the agent's OWN model generations only: the
+planning workflow JSON and each per-step [Thinking] output. A tool interaction
+(the call, its parameters, and the returned observation) is the tool's own data
+and is carried under that tool's boundary in the ``tools`` tree -- the tool's
+event carries the call + return, and an attacker can change the return there.
+Neither the tool call nor the tool response is recorded here."""
 
 # ---------------------------------------------------------------------------
 # Tree 3: tools  (the tool ecosystem) -- OPI, three levels: tools > scenario > tool
@@ -155,10 +144,9 @@ DOMAIN: SecurityDomain = SecurityDomain(
         SYSTEM_TAG,
         SYSTEM_PROMPT_TAG,
         AGENT_TRACE_TAG,
-        AGENT_TRACE_MESSAGES_TAG,
-        AGENT_TRACE_TOOL_CALLS_TAG,
-        # tools tree (root -> scenario nodes -> tool leaves; a tool's response
-        # is the tool's own data, so it lives here, not under agent_trace)
+        # tools tree (root -> scenario nodes -> tool leaves; a tool's whole
+        # interaction (call + return) is the tool's own data, so it lives here,
+        # not under agent_trace)
         TOOLS_TAG,
         *SCENARIO_TOOL_TAGS.values(),
         *TOOL_OBSERVATION_TAGS.values(),
@@ -176,8 +164,6 @@ __all__ = [
     "SYSTEM_TAG",
     "SYSTEM_PROMPT_TAG",
     "AGENT_TRACE_TAG",
-    "AGENT_TRACE_MESSAGES_TAG",
-    "AGENT_TRACE_TOOL_CALLS_TAG",
     "TOOLS_TAG",
     "TOOLS_BY_SCENARIO",
     "NORMAL_TOOL_NAMES",
