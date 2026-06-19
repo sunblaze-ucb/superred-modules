@@ -796,13 +796,18 @@ class PoisonedRAGOptimizer(Optimizer):
 
     def _is_done(self) -> bool:
         if not self._can_inject:
-            # No writable injection surface was granted: nothing to attempt.
+            # No usable injection surface, or a generation/official-data failure:
+            # nothing left to attempt.
             return True
-        return self._succeeded or self._attempt_index >= self._max_attempts
-
-    @property
-    def _max_attempts(self) -> int:
-        return self._explicit_max_attempts or 1
+        if self._succeeded:
+            return True
+        # Without an explicit cap, keep attempting (regenerating poison on the
+        # LLM path) until success or the attack becomes undeliverable, and let
+        # the controller's run budget bound the loop. An explicit max_attempts is
+        # a hard cap; set max_attempts=1 for single-shot / paper-parity runs.
+        if self._explicit_max_attempts is not None:
+            return self._attempt_index >= self._explicit_max_attempts
+        return False
 
     def _surface_allowed(self, controllable: Controllable) -> bool:
         return (

@@ -1230,6 +1230,92 @@ async def test_multiple_attempts_regenerate_fresh_poison() -> None:
 
 
 @pytest.mark.asyncio
+async def test_unset_max_attempts_keeps_regenerating_until_controller_stops() -> None:
+    # With no explicit max_attempts the optimizer must not self-cap after one
+    # shot: it keeps attempting (regenerating fresh poison) and lets the
+    # controller's run budget bound the loop.
+    llm = _ScriptedLLM(
+        [
+            json.dumps(
+                {
+                    "incorrect_answer": "Lyon",
+                    **{f"corpus{i}": f"A{i}" for i in range(1, 6)},
+                }
+            ),
+            json.dumps(
+                {
+                    "incorrect_answer": "Lyon",
+                    **{f"corpus{i}": f"B{i}" for i in range(1, 6)},
+                }
+            ),
+        ]
+    )
+    opt = PoisonedRAGOptimizer(correct_answer="Paris")
+    await opt.initialize(
+        Goal(description="What is the capital of France?"),
+        [ctrl("knowledge_base_insert")],
+        [],
+        llm,
+    )
+
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+    first = await dispatch(
+        opt,
+        ControllablePreCallEvent(
+            controllable=ctrl("knowledge_base_insert"), request="[]"
+        ),
+    )
+    first_end = await dispatch(
+        opt, RunEndEvent(evaluation=None, security_domain=USER_TAG)
+    )
+    assert isinstance(first_end, RunEndResponse)
+    assert first_end.done is False  # not self-capped; budget still available
+
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+    second = await dispatch(
+        opt,
+        ControllablePreCallEvent(
+            controllable=ctrl("knowledge_base_insert"), request="[]"
+        ),
+    )
+
+    assert isinstance(first, ControllableInjection)
+    assert isinstance(second, ControllableInjection)
+    first_docs = json.loads(first.value)["documents"]
+    second_docs = json.loads(second.value)["documents"]
+    assert "A1" in first_docs[0] and "B1" in second_docs[0]
+
+
+@pytest.mark.asyncio
+async def test_explicit_max_attempts_one_stops_after_single_shot() -> None:
+    opt = PoisonedRAGOptimizer(
+        target_answer="Lyon",
+        poison_texts=["Lyon poison"] * 5,
+        max_attempts=1,
+    )
+    await opt.initialize(
+        Goal(description="What is the capital of France?"),
+        [ctrl("knowledge_base_insert")],
+        [],
+        LLMClient._make_noop(),
+    )
+
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+    await dispatch(
+        opt,
+        ControllablePreCallEvent(
+            controllable=ctrl("knowledge_base_insert"), request="[]"
+        ),
+    )
+    end = await dispatch(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
+
+    # An explicit cap of 1 preserves the single-shot / paper-parity behavior.
+    assert isinstance(end, RunEndResponse)
+    assert end.done is True
+    assert opt.attempt_index == 1
+
+
+@pytest.mark.asyncio
 async def test_malformed_official_results_do_not_abort_task(tmp_path: Path) -> None:
     official_path = tmp_path / "nq.json"
     official_path.write_text(
