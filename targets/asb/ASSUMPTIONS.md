@@ -161,7 +161,9 @@ infrastructure**. Specific attacks are an attacker's concern, not the target's.
   carries `model_identity` (read-only knowledge of which model powers the agent,
   exposed as an observable for cross-target consistency with the agentdojo and
   inspect-agent targets; never a controllable, as the model is a construction
-  concern) and `tool_catalogue` (the tool-REGISTRY capability: a grouping root
+  concern), `detailed_system_specification` (a read-only leaked free-text
+  system-specification observable, a sibling of `model_identity`), and
+  `tool_catalogue` (the tool-REGISTRY capability: a grouping root
   over `tool_catalogue_add` / `tool_catalogue_edit` / `tool_catalogue_remove`,
   see C.8). `tool_catalogue` lives under `system`, deliberately SEPARATE from the
   `tools` tree, so granting read of the catalogue listing (which tools exist)
@@ -202,7 +204,9 @@ infrastructure**. Specific attacks are an attacker's concern, not the target's.
   `asb_attack_reference__*` observables are removed.
 - **F.3** Static observables (read once at init): `system_prompt` (persona),
   `model_identity` (the litellm model id; added for cross-target consistency,
-  read-only), and `tool_catalog_listing` (the registry: which tools exist + their
+  read-only), `detailed_system_specification` (a read-only leaked free-text
+  system-spec brief: purpose, architecture, runtime logic, hardcoded
+  prompts/code), and `tool_catalog_listing` (the registry: which tools exist + their
   descriptions, including the attacker tool once registered). The listing is
   tagged at the `tool_catalogue` registry boundary (E.1), **not** the `tools`
   tree, so reading it does not grant reading any tool's returned observation.

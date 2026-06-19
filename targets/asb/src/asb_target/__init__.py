@@ -17,6 +17,7 @@ ensure_vendor_on_path()
 
 from asb_target.security_tags import (  # noqa: E402
     AGENT_TRACE_TAG,
+    DETAILED_SYSTEM_SPECIFICATION_TAG,
     DOMAIN,
     MEMORY_TAG,
     MODEL_IDENTITY_TAG,
@@ -44,6 +45,7 @@ __all__ = [
     "SYSTEM_PROMPT_TAG",
     "AGENT_TRACE_TAG",
     "MODEL_IDENTITY_TAG",
+    "DETAILED_SYSTEM_SPECIFICATION_TAG",
     "TOOL_CATALOGUE_TAG",
     "TOOL_CATALOGUE_ADD_TAG",
     "TOOL_CATALOGUE_EDIT_TAG",

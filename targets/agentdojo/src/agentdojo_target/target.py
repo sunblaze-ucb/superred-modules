@@ -75,6 +75,7 @@ from agentdojo_target.controllables import (
 )
 from agentdojo_target.env import CompositeEnvironment, sync_initial_fields
 from agentdojo_target.observables import (
+    DETAILED_SYSTEM_SPECIFICATION_OBS,
     MODEL_IDENTITY_OBS,
     TOOL_CATALOG_LISTING_OBS,
 )
@@ -87,6 +88,7 @@ from agentdojo_target.runtime_wrapper import (
 from agentdojo_target.security_tags import DOMAIN
 from agentdojo_target.seed_loader import load_composite_seed, merge_yaml_overlay
 from agentdojo_target.system_prompt import default_system_prompt
+from agentdojo_target.system_specification import DETAILED_SYSTEM_SPECIFICATION
 from agentdojo_target.tool_catalog import ToolCatalog
 from agentdojo_target.tool_registry import (
     ALL_FUNCTIONS,
@@ -240,6 +242,10 @@ class AgentDojoTarget(Target):
         return [
             ObservableValue(
                 observable=MODEL_IDENTITY_OBS, content=self._pipeline_model
+            ),
+            ObservableValue(
+                observable=DETAILED_SYSTEM_SPECIFICATION_OBS,
+                content=DETAILED_SYSTEM_SPECIFICATION,
             ),
             ObservableValue(
                 observable=TOOL_CATALOG_LISTING_OBS,

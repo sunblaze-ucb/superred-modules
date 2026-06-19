@@ -93,6 +93,17 @@ system_prompt/agent_trace so "the attacker knows the victim model" can be
 granted or denied independently of any write capability, matching the agentdojo
 and inspect-agent targets."""
 
+DETAILED_SYSTEM_SPECIFICATION_TAG: SecurityDomainTag = SecurityDomainTag(
+    "detailed_system_specification", parent=SYSTEM_TAG
+)
+"""Read access to a leaked, free-text specification of the target system: its
+purpose, architecture, runtime logic, and hardcoded prompts/code. Pure
+intelligence about how the system works (an attacker who obtained internal
+documentation), carried by the ``detailed_system_specification`` static
+observable. Read-only, never a write surface; a sibling of ``model_identity`` so
+"the attacker has a design leak of the system" can be granted independently of
+any injection capability."""
+
 # --- tool catalogue (the tool REGISTRY: which tools exist + their docs) -------
 # Distinct from the ``tools`` tree (what a tool RETURNS, the OPI surface): the
 # registry is a system-side capability, so it lives under ``system``. Reading
@@ -196,6 +207,7 @@ DOMAIN: SecurityDomain = SecurityDomain(
         SYSTEM_PROMPT_TAG,
         AGENT_TRACE_TAG,
         MODEL_IDENTITY_TAG,
+        DETAILED_SYSTEM_SPECIFICATION_TAG,
         TOOL_CATALOGUE_TAG,
         TOOL_CATALOGUE_ADD_TAG,
         TOOL_CATALOGUE_EDIT_TAG,
@@ -212,9 +224,9 @@ DOMAIN: SecurityDomain = SecurityDomain(
 )
 """The full trust-boundary forest exposed by :class:`AsbTarget`: four roots
 (user, system, tools, memory). The system tree carries system_prompt,
-agent_trace, model_identity, and the tool_catalogue registry capability
-(tool_catalogue -> add/edit/remove). The tools tree is per-tool granular (10
-scenario nodes + 20 tool leaves)."""
+agent_trace, model_identity, detailed_system_specification, and the
+tool_catalogue registry capability (tool_catalogue -> add/edit/remove). The
+tools tree is per-tool granular (10 scenario nodes + 20 tool leaves)."""
 
 
 __all__ = [
@@ -223,6 +235,7 @@ __all__ = [
     "SYSTEM_PROMPT_TAG",
     "AGENT_TRACE_TAG",
     "MODEL_IDENTITY_TAG",
+    "DETAILED_SYSTEM_SPECIFICATION_TAG",
     "TOOL_CATALOGUE_TAG",
     "TOOL_CATALOGUE_ADD_TAG",
     "TOOL_CATALOGUE_EDIT_TAG",

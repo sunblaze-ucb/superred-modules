@@ -16,6 +16,7 @@ from agentdojo_target.security_tags import (
     BANKING_FILESYSTEM_TAG,
     BANKING_TAG,
     BANKING_USER_ACCOUNT_TAG,
+    DETAILED_SYSTEM_SPECIFICATION_TAG,
     DOMAIN,
     MODEL_IDENTITY_TAG,
     SLACK_SLACK_TAG,
@@ -89,6 +90,7 @@ def test_system_tag_includes_all_system_descendants() -> None:
         TOOL_CATALOGUE_EDIT_TAG,
         TOOL_CATALOGUE_REMOVE_TAG,
         MODEL_IDENTITY_TAG,
+        DETAILED_SYSTEM_SPECIFICATION_TAG,
         AGENT_TRACE_TAG,
         AGENT_TRACE_MESSAGES_TAG,
     ):
@@ -217,26 +219,22 @@ def test_scope_includes_uses_tags() -> None:
 
 
 def test_assembled_domain_size() -> None:
-    """The assembled DOMAIN (31 declared tags: system 9, user 1, tools 21)
-    enumerates with the three expected roots."""
-    # We cannot inspect DOMAIN._tags directly (private), but distinct_combinations
-    # exercises the full tag set; the empty antichain is always present, and the
-    # antichain count grows monotonically with the tag count.  At minimum,
-    # every root must enumerate.
-    combos = DOMAIN.distinct_combinations()
-    root_names = {t.name for c in combos for t in c if t.parent is None}
-    assert root_names == {"system", "user", "tools"}
+    """The assembled DOMAIN has the three roots and 32 total tags."""
+    assert {t.name for t in DOMAIN.roots} == {"system", "user", "tools"}
+    # Count tags directly from the forest map.  Enumerating
+    # distinct_combinations() to count would be exponential in the tools subtree
+    # (tens of millions of antichains -> hundreds of seconds) and needless for a
+    # count; distinct_combinations correctness is covered by the small-subtree
+    # test in the asb target.
+    assert len(DOMAIN._tags) == 32
 
 
 def test_assembled_domain_tag_count() -> None:
-    """The DOMAIN forest holds exactly 31 distinct tags."""
-    all_tags = {t for c in DOMAIN.distinct_combinations() for t in c}
-    seen = set(all_tags)
-    # Walk up to ancestors so non-leaf tags (which never appear alone in an
-    # antichain alongside their descendants) are also counted.
-    for tag in all_tags:
-        node = tag.parent
-        while node is not None:
-            seen.add(node)
+    """The 32 tags split system 10, user 1, tools 21 across the three trees."""
+    by_root: dict[str, int] = {"system": 0, "user": 0, "tools": 0}
+    for tag in DOMAIN._tags.values():
+        node = tag
+        while node.parent is not None:
             node = node.parent
-    assert len(seen) == 31
+        by_root[node.name] += 1
+    assert by_root == {"system": 10, "user": 1, "tools": 21}

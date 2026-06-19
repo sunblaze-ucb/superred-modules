@@ -15,7 +15,7 @@ The model is a construction concern, fixed by the `AgentDojoTarget(pipeline_mode
 
 The security domain forest has three trees:
 
-- `system`: system_prompt, tool_catalogue (a pure grouping root subsuming three capability children: `tool_catalogue_add`, `tool_catalogue_edit`, `tool_catalogue_remove`), model_identity, agent_trace (with a single `agent_trace_messages` child)
+- `system`: system_prompt, tool_catalogue (a pure grouping root subsuming three capability children: `tool_catalogue_add`, `tool_catalogue_edit`, `tool_catalogue_remove`), model_identity, `detailed_system_specification` (a read-only leaked free-text system-specification observable, a sibling of `model_identity`), agent_trace (with a single `agent_trace_messages` child)
 - `user`: a single tag for the user prompt
 - `tools`: a per-service, per-store forest. `TOOLS_TAG` is a pure grouping root (nothing is emitted at it). Under it sit four service nodes (`BANKING_TAG`, `WORKSPACE_TAG`, `SLACK_TAG`, `TRAVEL_TAG`), and under each service sit store leaves matching the real data stores: banking has `banking_bank_account`, `banking_filesystem`, `banking_user_account`; workspace has `workspace_inbox`, `workspace_calendar`, `workspace_cloud_drive`; slack has `slack_slack`, `slack_web`; travel has `travel_hotels`, `travel_restaurants`, `travel_car_rental`, `travel_flights`, `travel_user`, `travel_calendar`, `travel_reservation`, `travel_inbox`. Granting a service grants its stores; granting `TOOLS_TAG` grants everything. Each read tool is tagged at the store leaf it reads from, and each write tool's observation is tagged at the store leaf it mutates, so reading from and acting on the same store share one label.
 

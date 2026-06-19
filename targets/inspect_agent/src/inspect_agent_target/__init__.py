@@ -29,6 +29,7 @@ from inspect_agent_target.rollout import run_rollout, static_tools_provider
 from inspect_agent_target.security_tags import (
     AGENT_TRACE_MESSAGES_TAG,
     AGENT_TRACE_TAG,
+    DETAILED_SYSTEM_SPECIFICATION_TAG,
     DOMAIN,
     MESSAGE_LIMIT_TAG,
     MODEL_IDENTITY_TAG,
@@ -61,6 +62,7 @@ __all__ = [
     "SYSTEM_TAG",
     "SYSTEM_PROMPT_TAG",
     "MODEL_IDENTITY_TAG",
+    "DETAILED_SYSTEM_SPECIFICATION_TAG",
     "MESSAGE_LIMIT_TAG",
     "TOOL_CATALOGUE_TAG",
     "TOOL_CATALOGUE_ADD_TAG",
