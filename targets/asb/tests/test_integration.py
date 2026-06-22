@@ -11,6 +11,7 @@ import pytest
 from superred.core.types.events import (
     ControllableInjection,
     ControllableNoInjection,
+    ControllablePostCallEvent,
     ControllablePreCallEvent,
     ObservableEvent,
 )
@@ -183,16 +184,17 @@ async def test_opi_fires_on_attacker_tool_observation() -> None:
 
     async def handler(event):  # type: ignore[no-untyped-def]
         if (
-            isinstance(event, ControllablePreCallEvent)
+            isinstance(event, ControllablePostCallEvent)
             and event.controllable.name == "opi_tool_observation"
         ):
-            opi_events.append(str(event.request))
+            # OPI is a post-call event: the observation rides on ``answer``.
+            opi_events.append(str(event.answer))
         return _no(event)
 
     await t.run(lambda e: None, handler)
     # the attacker tool ran on a NON-final step, so OPI fired with its observation
     assert opi_events, "OPI must fire on the (non-final) attacker-tool observation"
-    assert any(_ATTACKER["Attack goal"] in req for req in opi_events)
+    assert any(_ATTACKER["Attack goal"] in ans for ans in opi_events)
 
 
 async def test_pot_keeps_scaffolding_and_appends_trigger() -> None:
@@ -348,10 +350,16 @@ async def test_tool_interaction_tagged_to_its_tool_and_emitted_once() -> None:
 
     async def handler(event):  # type: ignore[no-untyped-def]
         if (
-            isinstance(event, ControllablePreCallEvent)
+            isinstance(event, ControllablePostCallEvent)
             and event.controllable.name == "opi_tool_observation"
         ):
-            opi.append((event.controllable.security_domain.name, str(event.request)))
+            opi.append(
+                (
+                    event.controllable.security_domain.name,
+                    str(event.request),
+                    str(event.answer),
+                )
+            )
         return _no(event)
 
     def emit(e):  # type: ignore[no-untyped-def]
@@ -368,11 +376,13 @@ async def test_tool_interaction_tagged_to_its_tool_and_emitted_once() -> None:
     assert set(interactions[0].content) == {"tool", "params", "observation"}
     assert interactions[0].content["tool"] == "update_manager"
     # the non-final sys_monitor interaction was the OPI controllable event (tagged
-    # to sys_monitor's leaf, request carrying {tool, params, observation})
+    # to sys_monitor's leaf): a post-call event whose request carries {tool, params}
+    # and whose answer carries the returned observation
     assert len(opi) == 1
-    tag_name, req = opi[0]
+    tag_name, req, ans = opi[0]
     assert tag_name == TOOL_OBSERVATION_TAGS["sys_monitor"].name
-    assert '"tool": "sys_monitor"' in req and '"observation"' in req
+    assert '"tool": "sys_monitor"' in req
+    assert ans  # the returned observation rides on the post-call answer
     # nothing under agent_trace carries a tool call or tool response
     assert not any(e.observable.name.startswith("agent_tool_") for e in observables)
 
@@ -455,6 +465,12 @@ async def test_catalogue_replace_shadows_behavior_and_skips_opi() -> None:
     opi_tools: list[str] = []
 
     async def handler(event):  # type: ignore[no-untyped-def]
+        if (
+            isinstance(event, ControllablePostCallEvent)
+            and event.controllable.name == "opi_tool_observation"
+        ):
+            opi_tools.append(json.loads(event.request).get("tool", ""))
+            return _no(event)
         if isinstance(event, ControllablePreCallEvent):
             name = event.controllable.name
             if name == "tool_catalog_replace":
@@ -468,8 +484,6 @@ async def test_catalogue_replace_shadows_behavior_and_skips_opi() -> None:
             if name == "tool_call:sys_monitor":
                 shadow_tags.append(event.controllable.security_domain.name)
                 return _no(event)  # decline -> the static fake_return is used
-            if name == "opi_tool_observation":
-                opi_tools.append(json.loads(event.request).get("tool", ""))
         return _no(event)
 
     await t.run(lambda e: None, handler)
@@ -503,6 +517,12 @@ async def test_catalogue_rewrite_doc_changes_listing_not_behavior() -> None:
 
     async def handler(event):  # type: ignore[no-untyped-def]
         nonlocal shadow_fired
+        if (
+            isinstance(event, ControllablePostCallEvent)
+            and event.controllable.name == "opi_tool_observation"
+        ):
+            opi_tools.append(json.loads(event.request).get("tool", ""))
+            return _no(event)
         if isinstance(event, ControllablePreCallEvent):
             name = event.controllable.name
             if name == "tool_catalog_rewrite_doc":
@@ -515,8 +535,6 @@ async def test_catalogue_rewrite_doc_changes_listing_not_behavior() -> None:
                 )
             if name.startswith("tool_call:"):
                 shadow_fired += 1
-            if name == "opi_tool_observation":
-                opi_tools.append(json.loads(event.request).get("tool", ""))
         return _no(event)
 
     await t.run(lambda e: None, handler)

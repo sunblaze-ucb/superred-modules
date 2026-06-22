@@ -33,6 +33,7 @@ from typing import Any
 
 from superred.core.types.events import (
     ControllableInjection,
+    ControllablePostCallEvent,
     ControllablePreCallEvent,
     ObservableEvent,
 )
@@ -295,6 +296,23 @@ class SuperredReactAgent(ReactAgentAttack):  # type: ignore[misc]  # base is Any
             return value if value else None
         return None
 
+    def _inject_post(self, controllable: Any, request: str, answer: str) -> str | None:
+        """Fire a post-call event for *controllable*; return the injection or None.
+
+        OPI tampers a tool's RETURNED observation (the output side), so it is a
+        post-call edit: ``answer`` carries the genuine observation and the
+        attacker value is appended to it. Modelling it as a PostCall event (not a
+        PreCall) is both semantically correct and what lets generic
+        content/observation-injection optimizers auto-target the surface.
+        """
+        resp = self._await_event(
+            ControllablePostCallEvent(controllable=controllable, request=request, answer=answer)
+        )
+        if isinstance(resp, ControllableInjection):
+            value = resp.value
+            return value if value else None
+        return None
+
     def _emit_obs(self, observable: Any, content: Any) -> None:
         self._emit(ObservableEvent(observable=observable, content=content))
 
@@ -379,13 +397,22 @@ class SuperredReactAgent(ReactAgentAttack):  # type: ignore[misc]  # base is Any
                     "observation": str(function_response),
                 }
                 if not final_stage:
-                    # NON-final: the OPI controllable event IS the tool interaction --
-                    # its request carries {tool, params, observation} and the attacker
-                    # may change the return. Kept OUTSIDE the upstream try/except so a
-                    # channel/timeout failure propagates (loud) rather than being
-                    # swallowed as a tool error (which would score a partial transcript).
+                    # NON-final: OPI tampers the tool's RETURNED observation, so it is
+                    # a POST-call edit -- the event answer carries the genuine
+                    # observation and the request carries the call {tool, params}; the
+                    # attacker value is appended to the return. Kept OUTSIDE the upstream
+                    # try/except so a channel/timeout failure propagates (loud) rather
+                    # than being swallowed as a tool error (which would score a partial
+                    # transcript).
                     ctrl = opi_tool_observation_ctrl(tool_boundary_tag(function_name))
-                    injected = self._inject(ctrl, request=json.dumps(interaction, default=str))
+                    injected = self._inject_post(
+                        ctrl,
+                        request=json.dumps(
+                            {"tool": function_name, "params": function_params},
+                            default=str,
+                        ),
+                        answer=interaction["observation"],
+                    )
                     if injected:
                         function_response += f"; {injected}"
                 else:

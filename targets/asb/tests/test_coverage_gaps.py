@@ -25,6 +25,7 @@ import pytest
 from superred.core.types.events import (
     ControllableInjection,
     ControllableNoInjection,
+    ControllablePostCallEvent,
     ControllablePreCallEvent,
     ObservableEvent,
 )
@@ -249,7 +250,7 @@ async def test_opi_injection_lands_in_tool_observation() -> None:
     async def handler(event):  # type: ignore[no-untyped-def]
         nonlocal fired
         if (
-            isinstance(event, ControllablePreCallEvent)
+            isinstance(event, ControllablePostCallEvent)
             and event.controllable.name == "opi_tool_observation"
         ):
             fired += 1
