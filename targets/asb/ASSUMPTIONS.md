@@ -58,17 +58,24 @@ infrastructure**. Specific attacks are an attacker's concern, not the target's.
 ## C. Injection model (the core adaptation)
 
 - **C.1** ASB selects an attack method via argparse flags and self-injects
-  fixed strings. The port instead fires a superred `ControllablePreCallEvent`
-  at each of the four injection sites and applies the attacker's injection (or
-  nothing). **Clean by default**: with no attacker every site declines and the
-  run is benign.
+  fixed strings. The port instead fires a superred controllable event at each
+  of the four injection sites and applies the attacker's injection (or nothing):
+  a `ControllablePreCallEvent` for the three input-side sites (DPI/PoT/MP) and a
+  `ControllablePostCallEvent` for OPI (output-side; see C.3). **Clean by
+  default**: with no attacker every site declines and the run is benign.
 - **C.2 DPI**: the injection is appended to the benign `task_input`
   (`task_input += " " + value`, matching ASB's `+=`).
 - **C.3 OPI**: fired on **every** non-final tool return **including the
   attacker tool's own observation**: the `function_name != self.tool_name`
   guard the earlier port added is **removed**, restoring upstream's
   provenance/name-blind behaviour (`react_agent_attack.py:188-189`). Each OPI
-  event is tagged to the firing tool's scenario sub-boundary (E).
+  event is tagged to the firing tool's scenario sub-boundary (E). OPI is
+  delivered as a `ControllablePostCallEvent` (its `answer` carries the genuine
+  observation, its `request` the call `{tool, params}`) because it tampers a
+  tool's RETURNED observation -- the output side. This is both semantically
+  correct and what lets generic content/observation-injection optimizers (e.g.
+  AgentVigil) auto-target the surface via the post-call answer, with no
+  per-experiment configuration.
 - **C.4 PoT**: the plan-format **scaffolding** (`instruction_base`) is the
   target's own and is **always present**, including on the PoT path (upstream
   `pot_bkd_instruction = "".join(instruction_base + examples)`); the attacker's

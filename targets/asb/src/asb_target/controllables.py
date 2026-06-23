@@ -79,19 +79,20 @@ MP_RETRIEVED_WORKFLOW_CTRL = Controllable(
 def opi_tool_observation_ctrl(tag: SecurityDomainTag) -> Controllable:
     """An OPI Controllable for a tool whose interaction is tagged *tag*.
 
-    Built per firing tool (or per tool leaf for advertisement). The event's
-    ``request`` carries the whole tool interaction ({tool, params, observation});
-    the injected value is appended to that tool's returned observation
-    (ASB: function_response += '; ' + value), on non-final steps.
+    Built per firing tool (or per tool leaf for advertisement). OPI tampers the
+    tool's RETURNED observation, so it is delivered as a POST-call event: the
+    ``answer`` carries the genuine observation, the ``request`` carries the call
+    ({tool, params}), and the injected value is appended to that tool's returned
+    observation (ASB: function_response += '; ' + value), on non-final steps.
     """
     return Controllable(
         name="opi_tool_observation",
         security_domain=tag,
         description=(
-            "Observation Prompt Injection. The event request carries the tool "
-            "interaction {tool, params, observation}; the injected text is "
-            "appended to that tool's returned observation on non-final steps "
-            "(ASB: function_response += '; ' + value)."
+            "Observation Prompt Injection. A post-call event: its answer carries "
+            "the tool's returned observation and its request carries the call "
+            "{tool, params}. The injected text is appended to that tool's returned "
+            "observation on non-final steps (ASB: function_response += '; ' + value)."
         ),
         value_type="text",
     )
