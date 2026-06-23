@@ -130,6 +130,18 @@ def _task(*, memory: bool = False, **row_kwargs: str) -> AsbAttackTask:
     )
 
 
+def test_goal_carries_instruction_and_tool_not_attack_goal() -> None:
+    # Goal.description is the attacker instruction + the tool to call (what ASB
+    # injects), NOT the Attack goal string. Putting the Attack goal (the
+    # success-match string) into the goal would let a content-injection optimizer
+    # self-fulfil the substring success check by injecting its own objective.
+    task = _task(goal="ZZ_SUCCESS_MARKER")
+    desc = task.goal.description
+    assert "do x" in desc  # the Attacker Instruction
+    assert "Hijack" in desc  # the attacker tool to call
+    assert "ZZ_SUCCESS_MARKER" not in desc  # the Attack goal is excluded
+
+
 async def test_attack_success_when_goal_in_trace() -> None:
     task = _task(goal="GOAL STRING")
     target = _FakeTarget(

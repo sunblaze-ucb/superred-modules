@@ -63,7 +63,22 @@ class AsbAttackTask(Task[AsbTarget]):
         self._judge = judge
         self._memory_mode = memory
         self._force_attacker_tool = force_attacker_tool
-        self._goal = Goal(description=self._attack_goal)
+        # The optimizer reads Goal.description as the objective to act on (and a
+        # content-injection optimizer injects it). Use the attacker INSTRUCTION +
+        # the tool to call -- what ASB itself injects (react_agent_attack.py:52) --
+        # NOT the Attack goal string. The Attack goal is the success-match string
+        # (evaluate(): goal substring in any message), so putting it in the goal
+        # would let the optimizer self-fulfil success by injecting its own
+        # objective. The instruction is a distinct string, so injecting it keeps
+        # the substring check a faithful tool-invocation proxy, as upstream.
+        instruction = self._attack_instruction.strip()
+        if instruction:
+            goal_description = (
+                f'{instruction} Do this by calling the "{self._attacker_tool_name}" tool.'
+            )
+        else:
+            goal_description = f'Call the "{self._attacker_tool_name}" tool.'
+        self._goal = Goal(description=goal_description)
 
     # -- Read-only properties ------------------------------------------------
 
