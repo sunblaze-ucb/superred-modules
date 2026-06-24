@@ -27,6 +27,13 @@ class _GoldenTarget:
     def __init__(self, messages: list[dict[str, Any]], memory_found: str = "") -> None:
         self._messages = messages
         self._mf = memory_found
+        # tool_call_trace mirrors the agent's "[Action]: <tool>" lines (what the
+        # real target records during the run), keeping the golden traces the source.
+        self._calls: list[str] = []
+        for m in messages:
+            content = str(m.get("content", ""))
+            if "[Action]: " in content:
+                self._calls.append(content.split("[Action]: ", 1)[1].split(";", 1)[0].strip())
 
     def set_config(self, name: str, value: str) -> None:  # pragma: no cover - unused here
         pass
@@ -37,6 +44,7 @@ class _GoldenTarget:
             "normal_tool_expected_strings": json.dumps(_EXPECTED),
             "attacker_goal": _GOAL,
             "attacker_tool": "CredentialHarvest",
+            "tool_call_trace": json.dumps(self._calls),
             "workflow_failure": "0",
             "memory_found": self._mf,
         }.get(name, "")

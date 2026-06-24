@@ -29,6 +29,7 @@ testpaths = ["tests"]
 markers = [
     "faithfulness: offline faithfulness checks (no network)",
     "faithfulness_upstream: live ASB-replay vs vendored-ASB verdict comparison (credentials, cost)",
+    "live: live LLM-judge checks (credentials, small cost)",
 ]
 
 [tool.coverage.report]
