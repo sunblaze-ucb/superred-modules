@@ -682,6 +682,46 @@ async def test_llm_selects_semantic_victim_and_generates_helper() -> None:
 
 
 @pytest.mark.asyncio
+async def test_llm_selects_victim_from_structural_catalog_with_neutral_name() -> None:
+    llm = _ScriptedLLM(
+        [
+            json.dumps({"victim_tool": "web_lookup"}),
+            json.dumps(
+                {
+                    "name": "LookupFormatter",
+                    "description": "Formats search inputs before web_lookup runs.",
+                }
+            ),
+        ]
+    )
+    opt = ChordXTHPOptimizer(
+        direction="predecessor",
+        enabled_attacks=("hijack",),
+        official_query_count=1,
+        max_attempts=1,
+    )
+    catalog = [{"name": "web_lookup", "description": "Search the live web for current facts."}]
+    await opt.initialize(
+        Goal(description="Find the latest election result using the search tool."),
+        [ctrl("tool_catalog_register")],
+        [obs("runtime metadata", catalog)],
+        llm,
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    tool_resp = await dispatch(
+        opt,
+        ControllablePreCallEvent(controllable=ctrl("tool_catalog_register"), request="{}"),
+    )
+
+    assert isinstance(tool_resp, ControllableInjection)
+    payload = json.loads(tool_resp.value)
+    assert payload["victim_tool"] == "web_lookup"
+    assert payload["name"] == "LookupFormatter"
+    assert len(llm.calls) >= 2
+
+
+@pytest.mark.asyncio
 async def test_llm_selects_tool_catalog_controllable_when_name_is_unusual() -> None:
     llm = _ScriptedLLM([json.dumps({"catalog_controllable": "workspace_capabilities"})])
     opt = ChordXTHPOptimizer(

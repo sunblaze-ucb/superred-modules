@@ -107,7 +107,7 @@ async def test_live_llm_selects_surfaces_generates_helper_and_judges_harvest() -
     await optimizer.initialize(
         Goal(description="Find current election news using the web search capability."),
         [capability_surface],
-        [obs("available function manifest", catalog)],
+        [obs("runtime metadata", catalog)],
         llm,
     )
 

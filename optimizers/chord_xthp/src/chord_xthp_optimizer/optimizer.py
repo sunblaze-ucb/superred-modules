@@ -1148,35 +1148,76 @@ class ChordXTHPOptimizer(Optimizer):
     def _extract_tool_catalog(self, observables: list[ObservableValue]) -> list[_TargetTool]:
         for value in observables:
             name = value.observable.name.lower()
-            if not any(hint in name for hint in _TOOL_CATALOG_OBSERVABLE_HINTS):
-                continue
             content = value.content
             if isinstance(content, str):
                 try:
                     content = json.loads(content)
                 except json.JSONDecodeError:
                     continue
-            tools = self._tools_from_content(content)
+            tools = self._tools_from_content(
+                content,
+                allow_name_description_mapping=any(
+                    hint in name for hint in _TOOL_CATALOG_OBSERVABLE_HINTS
+                ),
+            )
             if tools:
                 return tools
         return []
 
-    def _tools_from_content(self, content: Any) -> list[_TargetTool]:
+    def _tools_from_content(
+        self,
+        content: Any,
+        *,
+        allow_name_description_mapping: bool = True,
+    ) -> list[_TargetTool]:
         if isinstance(content, list):
             tools: list[_TargetTool] = []
             for item in content:
-                if isinstance(item, Mapping):
-                    name = item.get("name")
-                    description = item.get("description", "")
-                    if isinstance(name, str):
-                        tools.append(_TargetTool(name=name, description=str(description)))
+                tool = self._tool_from_mapping(item)
+                if tool is not None:
+                    tools.append(tool)
             return tools
         if isinstance(content, Mapping):
-            return [
-                _TargetTool(name=str(name), description=str(description))
-                for name, description in content.items()
-            ]
+            for key in (
+                "tools",
+                "tool_catalog",
+                "functions",
+                "function_manifest",
+                "capabilities",
+                "skills",
+                "skill_catalog",
+            ):
+                nested = content.get(key)
+                if isinstance(nested, list):
+                    tools = [
+                        tool
+                        for item in nested
+                        if (tool := self._tool_from_mapping(item)) is not None
+                    ]
+                    if tools:
+                        return tools
+            if allow_name_description_mapping:
+                return [
+                    _TargetTool(name=str(name), description=str(description))
+                    for name, description in content.items()
+                ]
         return []
+
+    @staticmethod
+    def _tool_from_mapping(content: Any) -> _TargetTool | None:
+        if not isinstance(content, Mapping):
+            return None
+        name = content.get("name") or content.get("tool_name") or content.get("function")
+        if not isinstance(name, str) or not name.strip():
+            return None
+        description = (
+            content.get("description")
+            or content.get("doc")
+            or content.get("docstring")
+            or content.get("summary")
+            or ""
+        )
+        return _TargetTool(name=name.strip(), description=str(description))
 
     def _format_static_context(self, observables: list[ObservableValue]) -> str | None:
         lines: list[str] = []
