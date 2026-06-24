@@ -18,6 +18,7 @@ from superred.core.interfaces.target import Target
 from superred.core.interfaces.task import Task
 from superred.core.types.controllable import Controllable
 from superred.core.types.evaluation import EvaluationResult, Score
+from superred.core.types.event import EventHandler, EventResponseHandler
 from superred.core.types.events import (
     ControllableInjection,
     ControllablePostCallEvent,
@@ -74,7 +75,7 @@ class TinyWebAgentTarget(Target):
             ),
         ]
 
-    async def run(self, emit, send_event) -> None:  # type: ignore[no-untyped-def]
+    async def run(self, emit: EventHandler, send_event: EventResponseHandler) -> None:
         response = await send_event(
             ControllablePostCallEvent(
                 controllable=Controllable(
@@ -100,6 +101,9 @@ class TinyWebAgentTarget(Target):
         )
 
     async def cleanup(self) -> None:
+        await self.reset_ephemeral_state()
+
+    async def reset_ephemeral_state(self) -> None:
         self.last_action = ""
         self.injected_html = ""
 
@@ -122,7 +126,7 @@ class EIASmokeTask(Task[TinyWebAgentTarget]):
         return EvaluationResult(
             success=success,
             primary_score=Score(
-                value=1.0 if success else 0.0, security_domain=MODEL_TAG
+                value=1.0 if success else 0.0,
             ),
             rationale=target.query("last_action"),
         )

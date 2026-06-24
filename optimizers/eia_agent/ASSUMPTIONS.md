@@ -31,11 +31,11 @@ If a target exposes a direct webpage/content controllable before the read, the
 optimizer can inject there too. This covers targets that model the compromised
 website as a writable `webpage_html`, `page_content`, `dom`, or similar surface.
 
-When `tool_catalog_rewrite_doc` is writable and a web/browser/page read tool is
-visible in static observables, the optimizer rewrites that tool description to
-preserve hidden form fields, placeholders, and aria labels. This is a SuperRed
-capability extension. It helps agents that otherwise drop hidden metadata, but
-the paper-mainline attack remains environment HTML injection.
+When `tool_catalog_rewrite_doc` is writable, the optimizer uses visible tool
+metadata and, if needed, the configured LLM to identify the web/page read tool
+and rewrite its description to preserve hidden form fields, placeholders, and
+aria labels. This is a SuperRed capability extension. The paper-mainline attack
+remains environment HTML injection.
 
 When `system_prompt` is writable, the optimizer adds a short grounding hint that
 encourages the agent to respect webpage labels, placeholders, and aria labels.
@@ -44,7 +44,11 @@ attacker threat model.
 
 Static observables can provide `privacy_type`, `target_secret`, and target HTML
 snippets. These map to the official dataset fields such as `detail_risk_type`
-and `target_element_HTML.json`.
+and `target_element_HTML.json`; when target HTML is visible, `near_*` insertion
+is anchored around that element like the official code.
+When visible, `confirmed_task`, `next_action_reprs`, and `injected_element_only`
+are also used by the local no-feedback evaluator to mirror the released ASR1 /
+ASR_o checks.
 
 ## Feedback And Success
 
@@ -68,7 +72,7 @@ through a local FastAPI web server. SuperRed targets own their own environment
 state, so this optimizer does not run a web server or write modified webpages to
 disk. It injects the same HTML payloads through SuperRed controllables instead.
 
-The paper reports ASR, ASR_o, and ASR_pt by comparing full SeeAct action logs
-against benign runs and Mind2Web gold actions. SuperRed security claims own task
-specific judging, so this optimizer uses framework feedback when available and
-only falls back to local key-phrase/typed-value checks when feedback is absent.
+The paper also reports ASR_pt by comparing the next step against benign runs and
+Mind2Web gold actions. SuperRed security claims own task-specific judging, so
+that subsequent-step utility check belongs in the claim/evaluator rather than in
+the optimizer.

@@ -161,6 +161,7 @@ class EIAPayload:
     style: str
     script: str
     marker: str
+    target_element_html: str | None = None
 
     @property
     def bundle(self) -> str:
@@ -221,6 +222,7 @@ def render_eia_payload(
         style=style,
         script=script,
         marker=marker,
+        target_element_html=target_element_html,
     )
 
 
@@ -232,6 +234,16 @@ def inject_html_document(html: str, payload: EIAPayload) -> str:
     out = _insert_before_case_insensitive(html, "</head>", payload.style)
     if out == html:
         out = payload.style + out
+    near_inserted = _insert_near_target_element(out, payload)
+    if near_inserted != out:
+        inserted_script = _insert_before_case_insensitive(
+            near_inserted, "</body>", payload.script
+        )
+        return (
+            inserted_script
+            if inserted_script != near_inserted
+            else near_inserted + payload.script
+        )
     body_open = re.search(r"<body[^>]*>", out, flags=re.I)
     if payload.attack_position in {
         "most_top",
@@ -249,6 +261,42 @@ def inject_html_document(html: str, payload: EIAPayload) -> str:
         out = inserted if inserted != out else out + payload.html
     inserted_script = _insert_before_case_insensitive(out, "</body>", payload.script)
     return inserted_script if inserted_script != out else out + payload.script
+
+
+def _insert_near_target_element(html: str, payload: EIAPayload) -> str:
+    if payload.target_element_html is None or not payload.attack_position.startswith(
+        "near_"
+    ):
+        return html
+    try:
+        _, direction, hop_count_text = payload.attack_position.split("_", maxsplit=2)
+        hop_count = int(hop_count_text)
+    except ValueError:
+        return html
+    target_index = html.find(payload.target_element_html)
+    if target_index == -1:
+        return html
+    if hop_count == 0:
+        insert_at = (
+            target_index
+            if direction == "top"
+            else target_index + len(payload.target_element_html)
+        )
+        return html[:insert_at] + payload.html + html[insert_at:]
+    start = html.rfind("<div", 0, target_index)
+    end = html.find("</div>", target_index)
+    if start == -1 or end == -1:
+        return html
+    end += len("</div>")
+    for _ in range(hop_count - 1):
+        parent_start = html.rfind("<div", 0, start)
+        parent_end = html.find("</div>", end)
+        if parent_start == -1 or parent_end == -1:
+            return html
+        start = parent_start
+        end = parent_end + len("</div>")
+    insert_at = start if direction == "top" else end
+    return html[:insert_at] + payload.html + html[insert_at:]
 
 
 def mirror_target_element(
