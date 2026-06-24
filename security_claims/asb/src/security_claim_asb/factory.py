@@ -28,7 +28,12 @@ from security_claim_asb.categories import (
     load_agent_tasks,
     load_attack_tools,
 )
-from security_claim_asb.judge import AsbRefusalJudge, RefusalJudge
+from security_claim_asb.judge import (
+    AsbAdversarialJudge,
+    AsbRefusalJudge,
+    RefusalJudge,
+    SuccessJudge,
+)
 from security_claim_asb.task import AsbAttackTask
 
 
@@ -39,6 +44,16 @@ def _build_judge(
         return judge
     if judge_llm_config is not None:
         return AsbRefusalJudge.from_config(judge_llm_config)
+    return None
+
+
+def _build_success_judge(
+    success_judge: SuccessJudge | None, success_judge_llm_config: LLMConfig | None
+) -> SuccessJudge | None:
+    if success_judge is not None:
+        return success_judge
+    if success_judge_llm_config is not None:
+        return AsbAdversarialJudge.from_config(success_judge_llm_config)
     return None
 
 
@@ -54,6 +69,8 @@ def asb_claim(
     force_attacker_tool: bool = False,
     judge: RefusalJudge | None = None,
     judge_llm_config: LLMConfig | None = None,
+    success_judge: SuccessJudge | None = None,
+    success_judge_llm_config: LLMConfig | None = None,
 ) -> SecurityClaim[AsbTarget]:
     """Build an ASB claim.
 
@@ -77,10 +94,16 @@ def asb_claim(
             a DPI/OPI attack run. Set this for a context-injection (DPI/OPI)
             sweep; leave off for a clean baseline or a PoT/MP sweep. Default off.
         judge / judge_llm_config: out-of-band refusal judge (gpt-4o-mini).
+        success_judge / success_judge_llm_config: optional out-of-band adversarial
+            judge (gpt-4o-mini). When set, evaluate() adds an ``adversarial``
+            sub-score and a ``genuine_attack`` = (tool invoked) AND (adversarial)
+            sub-score. The primary ``attack_succeeded`` is always the deterministic
+            tool invocation, judge or not.
     """
     agent_tasks = load_agent_tasks()
     rows = load_attack_tools(attacker_tools_path)
     judge_obj = _build_judge(judge, judge_llm_config)
+    success_judge_obj = _build_success_judge(success_judge, success_judge_llm_config)
 
     agent_set = set(agents) if agents is not None else None
     type_set = set(attack_types) if attack_types is not None else None
@@ -123,6 +146,7 @@ def asb_claim(
                         benign_task_index=idx,
                         row=row,
                         judge=judge_obj,
+                        success_judge=success_judge_obj,
                         memory=memory,
                         force_attacker_tool=force_attacker_tool,
                     )
