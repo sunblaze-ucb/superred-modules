@@ -23,7 +23,6 @@ from superred.core.types.events import (
 )
 from superred.core.types.evaluation import EvaluationResult
 from superred.core.types.goal import Goal
-from superred.core.types.llm import BudgetExhaustedError
 from superred.core.types.observable import ObservableValue
 
 from eia_agent_optimizer.templates import (
@@ -74,6 +73,17 @@ _NEXT_ACTION_REPRS_HINTS = (
     "gold_next_action_repr",
 )
 _INJECTED_ELEMENT_ONLY_HINTS = ("injected_element_only", "asr_o")
+# Observable fields the optimizer consumes as attack/oracle inputs. They must
+# never be echoed back into an injected system prompt: leaking the target secret
+# or the gold next action into the agent's own context would hand it the answer
+# and invalidate the environment-injection test.
+_ORACLE_OBSERVABLE_HINTS = (
+    *_TARGET_SECRET_HINTS,
+    *_TARGET_ELEMENT_HINTS,
+    *_CONFIRMED_TASK_HINTS,
+    *_NEXT_ACTION_REPRS_HINTS,
+    *_INJECTED_ELEMENT_ONLY_HINTS,
+)
 _STATIC_CONTEXT_TRUNCATION = "...[truncated]"
 _TOOL_SCAN_DEPTH = 6
 _SYSTEM_PROMPT_EXTENSION = (
@@ -152,6 +162,7 @@ class EIAAgentOptimizer(Optimizer):
         self._web_tool_name: str | None = None
         self._can_write_system_prompt = False
         self._can_rewrite_tool_catalog = False
+        self._can_inject = False
 
         self._attempt_index = 0
         self._succeeded = False
@@ -223,8 +234,17 @@ class EIAAgentOptimizer(Optimizer):
             attack_subtype=self._attack_subtype,
             attack_position=self._attack_position,
             privacy_type=self._privacy_type,
-            task=goal.description,
             target_element_html=self._target_element_html,
+        )
+        # EIA can only land if some surface is writable: an environment/web
+        # surface to carry the HTML payload, the system prompt, or a tool-catalog
+        # rewrite. With none of these in scope the attack can never reach the
+        # agent, so give up immediately rather than spin empty runs (the local
+        # no-feedback evaluator would otherwise never finish).
+        self._can_inject = (
+            any(self._controllable_could_be_environment(ctrl) for ctrl in controllables)
+            or self._can_write_system_prompt
+            or self._can_rewrite_tool_catalog
         )
         self._attempt_index = 0
         self._succeeded = False
@@ -254,11 +274,19 @@ class EIAAgentOptimizer(Optimizer):
     ) -> ControllableInjection | ControllableNoInjection:
         if self._payload is None or self._is_done():
             return ControllableNoInjection(event=event, controllable=event.controllable)
-        if event.controllable.name == _SYSTEM_PROMPT_NAME:
+        name = event.controllable.name
+        if name == _SYSTEM_PROMPT_NAME:
             return self._maybe_inject_system_prompt(event)
-        if event.controllable.name == _TOOL_REWRITE_DOC:
+        if name == _TOOL_REWRITE_DOC:
             return self._maybe_inject_tool_catalog_rewrite(event)
-        if self._is_environment_surface(event.controllable.name, event.request):
+        # A tool-call controllable's PreCall request carries the call arguments
+        # (e.g. the URL for ``read__browser__get_webpage``), not the environment
+        # the agent will read. Injecting EIA HTML there would corrupt the call;
+        # the observation arrives on the PostCall answer. Only inject into the
+        # request of a direct content surface (a writable page/DOM document).
+        if not self._is_tool_call_surface(name) and self._is_environment_surface(
+            name, event.request
+        ):
             return self._maybe_inject_environment(event, event.request)
         return ControllableNoInjection(event=event, controllable=event.controllable)
 
@@ -394,6 +422,8 @@ class EIAAgentOptimizer(Optimizer):
             self._succeeded = True
 
     def _is_done(self) -> bool:
+        if not self._can_inject:
+            return True
         return self._succeeded or self._attempt_index >= self._max_attempts
 
     @property
@@ -412,6 +442,20 @@ class EIAAgentOptimizer(Optimizer):
             or "<body" in content_lower
             or "<input" in content_lower
         )
+
+    @staticmethod
+    def _is_tool_call_surface(name: str) -> bool:
+        normalized = name.lower()
+        return any(normalized.startswith(prefix) for prefix in _READ_PREFIXES)
+
+    @staticmethod
+    def _controllable_could_be_environment(controllable: Controllable) -> bool:
+        normalized = controllable.name.lower()
+        if any(normalized.startswith(prefix) for prefix in _READ_PREFIXES):
+            return True
+        if any(hint in normalized for hint in _HTML_SURFACE_HINTS):
+            return True
+        return controllable.value_type.lower() == "html"
 
     def _is_action_observable(self, name: str) -> bool:
         normalized = name.lower()
@@ -493,10 +537,13 @@ class EIAAgentOptimizer(Optimizer):
             },
             {"role": "user", "content": json.dumps(catalog, ensure_ascii=False)},
         ]
+        # Selecting the web-read tool is an optional capability extension; the
+        # environment-injection mainline needs no LLM. So if this call fails or
+        # the run budget is already exhausted (BudgetExhaustedError is an
+        # Exception), degrade to no catalog rewrite rather than aborting the
+        # whole attack.
         try:
             response = await self.llm.complete(messages, temperature=0.0, max_tokens=80)
-        except BudgetExhaustedError:
-            return None
         except Exception:
             return None
         parsed = self._parse_json_object(self._response_content(response))
@@ -626,6 +673,9 @@ class EIAAgentOptimizer(Optimizer):
         lines: list[str] = []
         used = 0
         for value in observables:
+            name = value.observable.name.lower()
+            if any(hint in name for hint in _ORACLE_OBSERVABLE_HINTS):
+                continue
             content = self._stringify(value.content).strip()
             if not content:
                 continue

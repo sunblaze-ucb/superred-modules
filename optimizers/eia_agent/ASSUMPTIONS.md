@@ -25,11 +25,15 @@ The official HTML form, style, and submit-script templates are preserved in
 The most paper-faithful SuperRed surface is agent-observed webpage/read content.
 For AgentDojo-style targets, that means `read__*` post-call controllables. When
 one of those read calls returns HTML or webpage-like content, the optimizer
-injects the rendered EIA payload into the returned environment text.
+injects the rendered EIA payload into the returned environment text. A tool-call
+controllable is only injected on its `PostCall` answer (the observation the agent
+reads); its `PreCall` request carries call arguments such as the URL, so the
+payload is never written there.
 
 If a target exposes a direct webpage/content controllable before the read, the
 optimizer can inject there too. This covers targets that model the compromised
-website as a writable `webpage_html`, `page_content`, `dom`, or similar surface.
+website as a writable `webpage_html`, `page_content`, `dom`, or similar surface,
+where the `PreCall` request is itself the page document.
 
 When `tool_catalog_rewrite_doc` is writable, the optimizer uses visible tool
 metadata and, if needed, the configured LLM to identify the web/page read tool
@@ -64,6 +68,27 @@ attacks, a near-exact copy of the user task.
 If no environment surface was actually injected and no feedback was visible, the
 optimizer does not spend an attempt. This avoids penalizing a payload that never
 reached the agent.
+
+If no injectable surface is in scope at all (no environment/web surface, no
+writable system prompt, and no usable tool-catalog rewrite), the attack can never
+land, so the optimizer finishes immediately instead of spinning empty runs.
+
+## Attempts And Budget
+
+The rendered EIA payload is deterministic: for a fixed attack type, subtype,
+position, privacy type, and target element it is byte-for-byte identical every
+run. Re-injecting the same payload therefore adds nothing against a deterministic
+target and only re-samples a stochastic one. The default is a single attempt
+(`max_attempts=1`); raise `max_attempts` only when the target is stochastic and
+re-sampling the same injection is worthwhile. Sweeping the attack `position` or
+`subtype` to find the most effective placement is an evaluation-harness concern
+(the official code does this offline) rather than per-run optimizer behavior, so
+those axes are configured once per optimizer instance.
+
+Oracle/eval observables (`target_secret`, `target_element_HTML`,
+`confirmed_task`, `next_action_reprs`, `injected_element_only`) are read by the
+local no-feedback evaluator but never echoed back into an injected system prompt,
+so the agent is never handed the answer it is supposed to leak on its own.
 
 ## Deliberate Limits
 

@@ -174,7 +174,6 @@ def render_eia_payload(
     attack_subtype: AttackSubtype = DEFAULT_ATTACK_SUBTYPE,
     attack_position: AttackPosition = DEFAULT_ATTACK_POSITION,
     privacy_type: str,
-    task: str,
     target_element_html: str | None = None,
 ) -> EIAPayload:
     """Render an official EIA payload for a SuperRed environment surface."""
