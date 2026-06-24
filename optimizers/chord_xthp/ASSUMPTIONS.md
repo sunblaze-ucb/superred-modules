@@ -16,6 +16,7 @@ This module implements Chord's Cross-Tool Harvesting and Polluting attack for Su
 - A writable tool/skill catalog surface is required: every Chord attack needs the helper tool registered/edited so the agent can call it, and only a catalog controllable can do that. The optimizer treats the catalog surface as the precondition for the attack.
 - A writable system prompt or user prompt is used only as a supplement alongside a catalog injection (delivering the task, describing the helper). On its own it cannot get an unregistered helper onto the trajectory, so it is not treated as a sufficient attack surface.
 - If the user prompt is not writable, official example queries are not scheduled because the target would never see them; the optimizer uses the actual task goal instead to avoid repeated identical attempts.
+- Visible tool/skill catalogs are treated as the source of truth for victim selection. Official victim names and goal-text hints are used only when they match the visible catalog, or when no catalog is visible.
 - The optimizer reads model/agent responses from the trajectory first. It supports PostCall-style tool events and structured `agent_trace_*` observables.
 - Tool/victim names from trajectories and controllables are matched exactly when possible, then with an LLM only when names are ambiguous. The fake helper tool uses exact matching because the attacker defines that name.
 

@@ -72,6 +72,18 @@ _TOOL_CATALOG_OBSERVABLE_HINTS = (
     "skill catalogue",
     "skills",
 )
+_TOOL_CATALOG_SCAN_DEPTH = 6
+_TOOL_DESCRIPTION_KEYS = frozenset({"description", "doc", "docstring", "summary"})
+_TOOL_SCHEMA_KEYS = frozenset(
+    {
+        *_TOOL_DESCRIPTION_KEYS,
+        "args_schema",
+        "input_schema",
+        "parameters",
+        "properties",
+        "schema",
+    }
+)
 _USER_PROMPT_NAMES = frozenset(
     {"user_prompt", "user_message", "user_query", "user_input", "query", "prompt", "instruction"}
 )
@@ -351,33 +363,12 @@ class ChordXTHPOptimizer(Optimizer):
         dynamic_candidates = [
             ctrl
             for ctrl in controllables
-            if ctrl.name != _SYSTEM_PROMPT_NAME
-            and not self._is_user_prompt(ctrl.name)
-            and self._could_be_catalog_surface(ctrl)
+            if ctrl.name != _SYSTEM_PROMPT_NAME and not self._is_user_prompt(ctrl.name)
         ]
         if not dynamic_candidates:
             return set()
         names = await self._select_catalog_controllables_with_llm(dynamic_candidates)
         return {name for name in names if any(ctrl.name == name for ctrl in dynamic_candidates)}
-
-    @staticmethod
-    def _could_be_catalog_surface(controllable: Controllable) -> bool:
-        if controllable.value_type == "json":
-            return True
-        text = f"{controllable.name} {controllable.description}".lower()
-        return any(
-            hint in text
-            for hint in (
-                "tool",
-                "skill",
-                "function",
-                "capability",
-                "capabilities",
-                "manifest",
-                "catalog",
-                "catalogue",
-            )
-        )
 
     async def _select_catalog_controllables_with_llm(
         self, controllables: Sequence[Controllable]
@@ -406,7 +397,7 @@ class ChordXTHPOptimizer(Optimizer):
         try:
             response = await self.llm.complete(messages, temperature=0.0, max_tokens=120)
         except BudgetExhaustedError:
-            raise
+            return set()
         except Exception:
             return set()
         parsed = self._parse_json_object(self._response_content(response))
@@ -436,14 +427,14 @@ class ChordXTHPOptimizer(Optimizer):
         from_catalog = [tool for tool in self._target_tools if tool.name in official_names]
         if from_catalog:
             return from_catalog
+        llm_selected = await self._select_victims_with_llm(official_names)
+        if llm_selected:
+            return llm_selected
         if self._goal is not None:
             goal_text = self._goal.description.lower()
             for name in sorted(official_names):
                 if name.lower() in goal_text:
                     return [_TargetTool(name)]
-        llm_selected = await self._select_victims_with_llm(official_names)
-        if llm_selected:
-            return llm_selected
         # No victim tool can be determined from the catalog, goal, or an explicit
         # name. Rather than attack an arbitrary tool the target may not even
         # expose (which would burn the whole run budget on a guaranteed miss),
@@ -1170,54 +1161,89 @@ class ChordXTHPOptimizer(Optimizer):
         *,
         allow_name_description_mapping: bool = True,
     ) -> list[_TargetTool]:
+        tools = self._tools_from_structured_content(content, depth=0)
+        if tools:
+            return tools
+        if allow_name_description_mapping and isinstance(content, Mapping):
+            return [
+                _TargetTool(name=str(name), description=str(description))
+                for name, description in content.items()
+            ]
+        return []
+
+    @classmethod
+    def _tools_from_structured_content(cls, content: Any, *, depth: int) -> list[_TargetTool]:
+        if depth > _TOOL_CATALOG_SCAN_DEPTH:
+            return []
         if isinstance(content, list):
             tools: list[_TargetTool] = []
             for item in content:
-                tool = self._tool_from_mapping(item)
+                tool = cls._tool_from_mapping(item)
                 if tool is not None:
                     tools.append(tool)
-            return tools
+            if tools:
+                return tools
+            for item in content:
+                nested_tools = cls._tools_from_structured_content(item, depth=depth + 1)
+                if nested_tools:
+                    return nested_tools
+            return []
         if isinstance(content, Mapping):
-            for key in (
-                "tools",
-                "tool_catalog",
-                "functions",
-                "function_manifest",
-                "capabilities",
-                "skills",
-                "skill_catalog",
-            ):
-                nested = content.get(key)
-                if isinstance(nested, list):
-                    tools = [
-                        tool
-                        for item in nested
-                        if (tool := self._tool_from_mapping(item)) is not None
-                    ]
-                    if tools:
-                        return tools
-            if allow_name_description_mapping:
-                return [
-                    _TargetTool(name=str(name), description=str(description))
-                    for name, description in content.items()
-                ]
+            direct_tool = cls._tool_from_mapping(content)
+            if direct_tool is not None:
+                return [direct_tool]
+            for nested in content.values():
+                nested_tools = cls._tools_from_structured_content(nested, depth=depth + 1)
+                if nested_tools:
+                    return nested_tools
         return []
 
-    @staticmethod
-    def _tool_from_mapping(content: Any) -> _TargetTool | None:
+    @classmethod
+    def _tool_from_mapping(cls, content: Any) -> _TargetTool | None:
         if not isinstance(content, Mapping):
             return None
-        name = content.get("name") or content.get("tool_name") or content.get("function")
+        function = content.get("function")
+        if isinstance(function, Mapping):
+            name = cls._first_string(function, ("name", "tool_name"))
+            if name is None:
+                return None
+            description = cls._first_string(function, _TOOL_DESCRIPTION_KEYS)
+            if description is None:
+                description = cls._first_string(content, _TOOL_DESCRIPTION_KEYS) or ""
+            return _TargetTool(name=name.strip(), description=description)
+
+        name = cls._first_string(content, ("name", "tool_name", "skill_name"))
+        if name is None and isinstance(function, str):
+            name = function
         if not isinstance(name, str) or not name.strip():
             return None
-        description = (
-            content.get("description")
-            or content.get("doc")
-            or content.get("docstring")
-            or content.get("summary")
-            or ""
-        )
-        return _TargetTool(name=name.strip(), description=str(description))
+        if not cls._mapping_has_tool_shape(content):
+            return None
+        description = cls._first_string(content, _TOOL_DESCRIPTION_KEYS) or ""
+        return _TargetTool(name=name.strip(), description=description)
+
+    @staticmethod
+    def _first_string(content: Mapping[str, Any], keys: Iterable[str]) -> str | None:
+        for key in keys:
+            value = content.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+
+    @staticmethod
+    def _mapping_has_tool_shape(content: Mapping[str, Any]) -> bool:
+        if "tool_name" in content or "skill_name" in content:
+            return True
+        if isinstance(content.get("function"), str):
+            return bool(_TOOL_SCHEMA_KEYS.intersection(content))
+        if "name" in content:
+            item_type = content.get("type")
+            return bool(_TOOL_SCHEMA_KEYS.intersection(content)) or item_type in {
+                "function",
+                "tool",
+                "skill",
+            }
+        return False
 
     def _format_static_context(self, observables: list[ObservableValue]) -> str | None:
         lines: list[str] = []

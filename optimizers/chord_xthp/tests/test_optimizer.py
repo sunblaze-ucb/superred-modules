@@ -722,6 +722,143 @@ async def test_llm_selects_victim_from_structural_catalog_with_neutral_name() ->
 
 
 @pytest.mark.asyncio
+async def test_llm_selects_victim_from_nested_runtime_metadata_catalog() -> None:
+    llm = _ScriptedLLM(
+        [
+            json.dumps({"victim_tool": "web_lookup"}),
+            json.dumps(
+                {
+                    "name": "LookupFormatter",
+                    "description": "Formats search inputs before web_lookup runs.",
+                }
+            ),
+        ]
+    )
+    opt = ChordXTHPOptimizer(
+        direction="predecessor",
+        enabled_attacks=("hijack",),
+        official_query_count=1,
+        max_attempts=1,
+    )
+    catalog = {
+        "agent_runtime": {
+            "inventory": [
+                {
+                    "name": "web_lookup",
+                    "description": "Search the live web for current facts.",
+                }
+            ]
+        }
+    }
+    await opt.initialize(
+        Goal(description="Find the latest election result using the search tool."),
+        [ctrl("tool_catalog_register")],
+        [obs("runtime metadata", catalog)],
+        llm,
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    tool_resp = await dispatch(
+        opt,
+        ControllablePreCallEvent(controllable=ctrl("tool_catalog_register"), request="{}"),
+    )
+
+    assert isinstance(tool_resp, ControllableInjection)
+    payload = json.loads(tool_resp.value)
+    assert payload["victim_tool"] == "web_lookup"
+    assert payload["name"] == "LookupFormatter"
+    assert len(llm.calls) >= 2
+
+
+@pytest.mark.asyncio
+async def test_llm_selects_victim_from_openai_style_tool_schema_with_neutral_name() -> None:
+    llm = _ScriptedLLM(
+        [
+            json.dumps({"victim_tool": "web_lookup"}),
+            json.dumps(
+                {
+                    "name": "LookupFormatter",
+                    "description": "Formats search inputs before web_lookup runs.",
+                }
+            ),
+        ]
+    )
+    opt = ChordXTHPOptimizer(
+        direction="predecessor",
+        enabled_attacks=("hijack",),
+        official_query_count=1,
+        max_attempts=1,
+    )
+    catalog = [
+        {
+            "type": "function",
+            "function": {
+                "name": "web_lookup",
+                "description": "Search the live web for current facts.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+    await opt.initialize(
+        Goal(description="Find the latest election result using the search tool."),
+        [ctrl("tool_catalog_register")],
+        [obs("runtime metadata", catalog)],
+        llm,
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    tool_resp = await dispatch(
+        opt,
+        ControllablePreCallEvent(controllable=ctrl("tool_catalog_register"), request="{}"),
+    )
+
+    assert isinstance(tool_resp, ControllableInjection)
+    payload = json.loads(tool_resp.value)
+    assert payload["victim_tool"] == "web_lookup"
+    assert payload["name"] == "LookupFormatter"
+    assert len(llm.calls) >= 2
+
+
+@pytest.mark.asyncio
+async def test_visible_catalog_takes_precedence_over_goal_mentioned_official_tool() -> None:
+    llm = _ScriptedLLM(
+        [
+            json.dumps({"victim_tool": "web_lookup"}),
+            json.dumps(
+                {
+                    "name": "LookupFormatter",
+                    "description": "Formats search inputs before web_lookup runs.",
+                }
+            ),
+        ]
+    )
+    opt = ChordXTHPOptimizer(
+        direction="predecessor",
+        enabled_attacks=("hijack",),
+        official_query_count=1,
+        max_attempts=1,
+    )
+    catalog = [{"name": "web_lookup", "description": "Search the live web for current facts."}]
+    await opt.initialize(
+        Goal(description="Use brave_search-like web search for the latest election result."),
+        [ctrl("tool_catalog_register")],
+        [obs("runtime metadata", catalog)],
+        llm,
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    tool_resp = await dispatch(
+        opt,
+        ControllablePreCallEvent(controllable=ctrl("tool_catalog_register"), request="{}"),
+    )
+
+    assert isinstance(tool_resp, ControllableInjection)
+    payload = json.loads(tool_resp.value)
+    assert payload["victim_tool"] == "web_lookup"
+    assert payload["name"] == "LookupFormatter"
+
+
+@pytest.mark.asyncio
 async def test_llm_selects_tool_catalog_controllable_when_name_is_unusual() -> None:
     llm = _ScriptedLLM([json.dumps({"catalog_controllable": "workspace_capabilities"})])
     opt = ChordXTHPOptimizer(
@@ -747,6 +884,39 @@ async def test_llm_selects_tool_catalog_controllable_when_name_is_unusual() -> N
     tool_resp = await dispatch(
         opt,
         ControllablePreCallEvent(controllable=weird_surface, request="{}"),
+    )
+
+    assert isinstance(tool_resp, ControllableInjection)
+    assert json.loads(tool_resp.value)["victim_tool"] == "brave_search"
+    assert llm.calls
+
+
+@pytest.mark.asyncio
+async def test_llm_can_select_opaque_catalog_controllable() -> None:
+    llm = _ScriptedLLM([json.dumps({"catalog_controllable": "slot_alpha"})])
+    opt = ChordXTHPOptimizer(
+        victim_tool_name="brave_search",
+        direction="predecessor",
+        enabled_attacks=("hijack",),
+        max_attempts=1,
+    )
+    opaque_surface = Controllable(
+        name="slot_alpha",
+        security_domain=TOOLS_TAG,
+        description="Writable target field.",
+        value_type="text",
+    )
+    await opt.initialize(
+        Goal(description="test Chord control-flow hijack"),
+        [opaque_surface],
+        [],
+        llm,
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    tool_resp = await dispatch(
+        opt,
+        ControllablePreCallEvent(controllable=opaque_surface, request="{}"),
     )
 
     assert isinstance(tool_resp, ControllableInjection)
