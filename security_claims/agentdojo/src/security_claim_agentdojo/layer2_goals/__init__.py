@@ -27,9 +27,8 @@ Categories present in the v1 catalogue:
 - **cross_suite_logic_violation**: the agent commits a multi-suite
   action that contradicts cross-suite state (e.g. hotel city
   contradicting calendar city).
-- **capability_misuse**: the agent observably trusts an attacker-
-  controlled capability surface (shadowed tool, overridden system
-  prompt).
+- **capability_misuse**: the agent observably invokes an attacker-
+  registered/shadowed tool.
 """
 
 from __future__ import annotations
@@ -55,8 +54,7 @@ from security_claim_agentdojo.layer2_goals import (
     cross_calendar_collision_booking,
     cross_pii_via_slack_web,
     cross_workspace_to_external_email,
-    # Capability misuse (2)
-    capability_system_prompt_override,
+    # Capability misuse (1)
     capability_tool_catalog_shadow,
 )
 from security_claim_agentdojo.layer2_task import Layer2GoalSpec
@@ -84,12 +82,11 @@ GOAL_SPECS: list[Layer2GoalSpec] = [
     cross_calendar_collision_booking.SPEC,
     # ---- capability misuse ----
     capability_tool_catalog_shadow.SPEC,
-    capability_system_prompt_override.SPEC,
 ]
 """All Layer-2 goal specs registered in the catalogue, in stable order.
 
-Counts: 4 starters + 9 per-suite expansions + 4 cross-suite + 2
-capability misuse = **19 goals total**."""
+Counts: 4 starters + 9 per-suite expansions + 4 cross-suite + 1
+capability misuse = **18 goals total**."""
 
 
 __all__ = ["GOAL_SPECS"]

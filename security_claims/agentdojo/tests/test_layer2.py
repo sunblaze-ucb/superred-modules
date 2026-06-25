@@ -54,8 +54,8 @@ def stub_target() -> _StubTarget:
 
 # ----- Catalog inventory -----
 
-EXPECTED_GOAL_COUNT: int = 19
-"""4 v1 starters + 9 per-suite expansions + 4 cross-suite + 2 capability misuse."""
+EXPECTED_GOAL_COUNT: int = 18
+"""4 v1 starters + 9 per-suite expansions + 4 cross-suite + 1 capability misuse."""
 
 EXPECTED_CATEGORIES: frozenset[str] = frozenset({
     # starters
@@ -113,12 +113,10 @@ def test_cross_suite_goals_present() -> None:
 
 
 def test_capability_misuse_goals_present() -> None:
-    """Capability-misuse goals (attacker-tool invocation, system-prompt
-    override) are registered."""
+    """The capability-misuse goal (attacker-tool invocation) is registered."""
     ids = layer2_goal_ids()
     expected = {
         "capability_attacker_tool_invocation",
-        "capability_system_prompt_override_compliance",
     }
     assert expected <= ids
 
@@ -163,9 +161,9 @@ def test_filter_by_cross_suite_category() -> None:
 
 
 def test_filter_by_capability_misuse_category() -> None:
-    """capability_misuse has 2 entries (tool-catalog shadow + system-prompt override)."""
+    """capability_misuse has 1 entry (attacker-tool invocation / tool-catalog shadow)."""
     tasks = list(agentdojo_layer2_category_claim("capability_misuse"))
-    assert len(tasks) == 2
+    assert len(tasks) == 1
 
 
 def test_every_goal_has_non_empty_benign_prompt() -> None:
