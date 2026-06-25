@@ -1,0 +1,13 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "openclaw-claims"
+version = "0.1.0"
+description = "Security claims for OpenClaw target in superred"
+requires-python = ">=3.11,<3.14"
+dependencies = ["superred", "openclaw-target"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openclaw_claims"]
