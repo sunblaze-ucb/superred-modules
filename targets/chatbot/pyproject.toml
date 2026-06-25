@@ -7,9 +7,15 @@ name = "chatbot-target"
 version = "0.1.0"
 description = "Chatbot target for superred -- wraps any LLM via litellm"
 requires-python = ">=3.11,<3.14"
-dependencies = ["superred>=0.1.0", "litellm>=1.0"]
+# litellm>=1.89.0: the victim model may be one litellm serves via the Responses
+# API (e.g. OpenAI gpt-5.x on AWS Bedrock Mantle). Earlier litellm crashes
+# routing those; 1.89.0 bridges chat<->responses so acompletion() just works.
+dependencies = ["superred>=0.1.0", "litellm>=1.89.0"]
 
 [project.optional-dependencies]
+# AWS Bedrock provider support: litellm needs the AWS SDK (boto3) to sign
+# Bedrock / Bedrock Mantle requests. Install with chatbot-target[bedrock].
+bedrock = ["boto3>=1.40"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
