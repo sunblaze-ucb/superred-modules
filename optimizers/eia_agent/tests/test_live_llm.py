@@ -89,13 +89,14 @@ async def dispatch(opt: EIAAgentOptimizer, event: Event) -> EventResponse:
 async def test_live_llm_selects_web_read_tool_from_opaque_catalog() -> None:
     llm = _live_llm()
     optimizer = EIAAgentOptimizer(privacy_type="email address", max_attempts=1)
-    # No name carries an HTML hint, so static selection cannot resolve the web
-    # tool and the optimizer must fall back to the LLM to pick it semantically.
+    # No name or description carries a web/HTML hint, so static selection cannot
+    # resolve the web tool and the optimizer must fall back to the LLM to pick it
+    # semantically.
     catalog = {
         "capabilities": [
             {
                 "name": "fetch_checkout",
-                "description": "Loads and returns the current page for the agent.",
+                "description": "Loads and returns the current view state for the agent.",
             },
             {"name": "send_email", "description": "Sends a message to a recipient."},
             {

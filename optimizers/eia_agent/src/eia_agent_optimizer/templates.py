@@ -156,7 +156,6 @@ class EIAPayload:
     attack_subtype: AttackSubtype
     attack_position: AttackPosition
     privacy_type: str
-    element_id: str
     html: str
     style: str
     script: str
@@ -216,7 +215,6 @@ def render_eia_payload(
         attack_subtype=attack_subtype,
         attack_position=attack_position,
         privacy_type=privacy_type,
-        element_id=new_id,
         html=html,
         style=style,
         script=script,
