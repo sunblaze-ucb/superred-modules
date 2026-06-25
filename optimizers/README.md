@@ -33,6 +33,7 @@ detail. This page is the plain-language tour.
 | CodeChameleon | single-turn | no (fixed encryption) | Disguises the request as a code puzzle to solve |
 | Crescendo | multi-turn | yes (write + self-score) | Eases in with a slowly escalating conversation |
 | DRA | single-turn | no (fixed template) | Hides the request letter-by-letter, asks model to rebuild it |
+| EIA | single-run agent environment injection | no (fixed HTML) | Hides malicious web elements so agents type private data into them |
 | FITD | multi-turn | yes (build ladder) | Small agreements first, then escalates step by step |
 | FlipAttack | single-turn | no (text reversal) | Reverses the text, tells the model how to un-flip it |
 | GEPA | single-turn, many rounds | yes (reflect + rewrite) | An AI reflects on feedback and rewrites the prompt |
@@ -93,6 +94,16 @@ model assembles the request itself rather than reading it plainly, refusal
 training is less likely to fire. Fixed template, no attacker LLM (lightweight
 refusal checks plus an optional judge fallback). Single-turn, default 20
 attempts. See `ASSUMPTIONS.md` for the citation.
+
+### EIA, Environmental Injection Attack (`eia-agent-optimizer`)
+
+Poisons the web environment that an agent observes: it injects hidden or subtly
+visible form fields into webpage/read content with labels like "this is the
+right place to input the email address", causing the agent to type private data
+into the attacker-controlled field while continuing the benign task. Fixed HTML
+templates, no attacker LLM. Agent-focused; default is the official
+action-grounding aria-label form injection. See `ASSUMPTIONS.md` for the
+citation.
 
 ### FITD, Foot-in-the-Door (`fitd-optimizer`)
 
