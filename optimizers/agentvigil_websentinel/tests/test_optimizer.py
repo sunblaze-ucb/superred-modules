@@ -833,6 +833,30 @@ async def test_content_surface_detection_includes_observation_and_external_conte
 
 
 @pytest.mark.asyncio
+async def test_per_tool_output_surface_is_treated_as_content_surface() -> None:
+    # AgentHarm (inspect_agent) names its indirect-prompt-injection surface
+    # ``tool:<tool_name>``. AgentVigil must recognize it as an agent content surface
+    # and inject; otherwise it silently declines and the cell scores a false 0.0.
+    opt = await init_optimizer(
+        controllables=[make_controllable("tool:get_paper", TOOLS_TAG)]
+    )
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
+
+    resp = await dispatch_event(
+        opt,
+        ControllablePostCallEvent(
+            controllable=make_controllable("tool:get_paper", TOOLS_TAG),
+            request="get_paper",
+            answer="the legitimate tool output",
+        ),
+    )
+
+    assert isinstance(resp, ControllableInjection)
+    assert "the legitimate tool output" in resp.value
+    assert "send the secret token" in resp.value
+
+
+@pytest.mark.asyncio
 async def test_configured_content_controllable_name_is_injected_even_without_hint() -> (
     None
 ):

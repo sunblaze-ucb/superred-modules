@@ -63,6 +63,11 @@ _TOOL_REGISTER = "tool_catalog_register"
 _TOOL_REPLACE = "tool_catalog_replace"
 _TOOL_REWRITE_DOC = "tool_catalog_rewrite_doc"
 _TOOL_PREFIX = "read__"
+# Per-tool OUTPUT (indirect-prompt-injection) surfaces, e.g. AgentHarm's inspect_agent
+# target names them ``tool:<tool_name>`` ("replace the value the tool returns to the
+# agent"). Distinct from ``tool_call:`` (the attacker's own tool): ``tool:`` has a colon
+# at index 4, ``tool_call:`` an underscore, so they never prefix-collide.
+_TOOL_OUTPUT_PREFIX = "tool:"
 _ATTACKER_TOOL_PREFIX = "tool_call:"
 _RESPONSE_NAME_HINTS = ("response", "assistant", "reply", "output", "completion")
 _CONTENT_RESPONSE_NAME_HINTS = (
@@ -394,10 +399,11 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         if self._current_payload is None:
             return ControllableNoInjection(event=event, controllable=event.controllable)
         name = event.controllable.name
-        if self._selected_surface is None and (
-            name.startswith(_TOOL_PREFIX)
-            or name.startswith(_ATTACKER_TOOL_PREFIX)
-            or self._is_content_postcall_surface(event.controllable)
+        # Single source of truth for "is this an agent content surface" (incl. the
+        # ``tool:<name>`` per-tool output surface) so init-time availability and
+        # this PostCall injection gate never disagree.
+        if self._selected_surface is None and self._is_agent_content_surface(
+            event.controllable
         ):
             self._selected_surface = f"content:{name}"
             return ControllableInjection(
@@ -763,6 +769,7 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         name = controllable.name
         return (
             name.startswith(_TOOL_PREFIX)
+            or name.startswith(_TOOL_OUTPUT_PREFIX)
             or name.startswith(_ATTACKER_TOOL_PREFIX)
             or self._is_content_postcall_surface(controllable)
         )
