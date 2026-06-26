@@ -21,7 +21,12 @@ Deviations specific to those hooks are below.
   client.receive_response()`, recording each message. Option values match
   upstream where they apply: `permission_mode="bypassPermissions"`,
   `max_turns`, `model`, `system_prompt`, `cwd` (workspace), and
-  `disallowed_tools` (the native deny list).
+  `disallowed_tools` (the native deny list). Live-verification note:
+  `bypassPermissions` maps to the CLI's `--dangerously-skip-permissions`, which
+  refuses to run as root unless `IS_SANDBOX=1`; since the container runs the agent
+  as root, the target passes `-e IS_SANDBOX=1` (and the Dockerfile sets it) -- the
+  agent IS sandboxed (a throwaway container), so this is correct, not a bypass of a
+  real safety boundary.
 - **A.2 Transcript schema is byte-compatible.** The transcript records
   (`trace_start` / `user_input` / `message` / `error` / `trace_end`) and the
   serialized message/block shapes (`assistant`/`user`/`system`/`result`;

@@ -393,14 +393,24 @@ def test_child_routes_judge_prints_off_stdout():
 # --------------------------------------------------------------------------- #
 
 _FAKE_RUN_JUDGE = """
+from pathlib import Path
+
+
 def run_judge(task_dir, response="", *, trajectory=None, check_task=True, check_attack=True):
+    # Regression guard for the str-vs-Path bug found in live verification: the
+    # real upstream run_judge does ``task_dir / "judge.py"`` (utils/judge_helpers),
+    # which raises TypeError on a str. We replicate BOTH the type assertion and
+    # the ``/`` operation, so this test fails loudly if _CHILD_SOURCE ever stops
+    # wrapping task_dir in Path().
+    assert isinstance(task_dir, Path), f"run_judge got {type(task_dir).__name__}, expected Path"
+    judge_file = task_dir / "judge.py"  # TypeError here if task_dir were a str
     # Prove judge stdout chatter does NOT corrupt the result channel.
     print("CHATTER to stdout from the judge")
     import sys
     print("CHATTER to real stderr", file=sys.stderr)
     return {
         "task_success": True,
-        "task_message": "ok:" + str(task_dir),
+        "task_message": "ok:" + str(judge_file),
         "task_metadata": {"x": 1},
         "attack_success": (response == "WIN"),
         "attack_message": "resp=" + str(response) + ";traj=" + str(trajectory),
@@ -447,17 +457,30 @@ def test_real_subprocess_roundtrip_with_fake_sdk(monkeypatch, tmp_path):
     assert out["error"] is None
     assert out["task_success"] is True
     assert out["attack_success"] is True  # because response == "WIN"
-    assert out["task_message"] == "ok:" + str(task_dir)
+    # The child wrapped task_dir in Path() so upstream's `task_dir / "judge.py"`
+    # works: the fake echoes the joined judge.py path back unbroken.
+    assert out["task_message"] == "ok:" + str(task_dir / "judge.py")
     assert "resp=WIN" in out["attack_message"]
     assert "traj={'k': 1}" in out["attack_message"]
 
 
 def test_real_subprocess_child_error_becomes_error_result(monkeypatch, tmp_path):
-    """If the child cannot import ``utils`` (no SDK), its own try/except emits an
-    error verdict on stdout and the parent maps it -- successes ``None``."""
-    monkeypatch.setenv("PYTHONPATH", str(tmp_path / "definitely-empty"))
+    """If the child cannot import ``utils.judge_helpers``, its own try/except emits
+    an error verdict on stdout and the parent maps it -- successes ``None``.
+
+    We SHADOW ``utils`` with a package that lacks ``judge_helpers`` (rather than
+    just emptying ``PYTHONPATH``) so the import fails DETERMINISTICALLY whether or
+    not the real decodingtrust-agent-sdk is installed in the test environment --
+    without this, an SDK-present venv would import the real ``run_judge`` and
+    exercise a different path."""
+    shadow = tmp_path / "shadow"
+    (shadow / "utils").mkdir(parents=True)
+    (shadow / "utils" / "__init__.py").write_text("", encoding="utf-8")  # no judge_helpers
+    existing = os.environ.get("PYTHONPATH", "")
+    monkeypatch.setenv(
+        "PYTHONPATH", str(shadow) + (os.pathsep + existing if existing else "")
+    )
     monkeypatch.setenv(jr.JUDGE_TIMEOUT_ENV, "60")
-    # Run from a dir with no `utils` package so the import genuinely fails.
     task_dir = tmp_path / "task2"
     task_dir.mkdir()
     out = jr.run_dtap_judge(

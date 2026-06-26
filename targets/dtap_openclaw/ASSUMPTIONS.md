@@ -49,6 +49,13 @@ run is a clean OpenClaw episode. Attacks are an optimizer's concern.
   orchestration** glued to the un-packaged `dt_arena` tree; the port reimplements
   only the parts it needs (config wiring + trajectory parse) against the scaffold
   contracts, so it depends on neither `dt_arena` nor a published OpenClaw package.
+- **A.5** The OpenClaw npm version is **pinned** to `2026.6.10` (image tag
+  `dtap-openclaw:openclaw-2026.6.10`; `driver.DEFAULT_IMAGE` + the Dockerfile
+  `ARG OPENCLAW_VERSION`). The `--thinking` level defaults to **`off`**: live
+  verification showed some models (e.g. Claude via the litellm provider) reject
+  `medium` (`Thinking level "medium" is not supported ... Use one of: off`). `off`
+  is the safe cross-model default; override via the constructor `thinking=` arg
+  (validated against `off`/`minimal`/`low`/`medium`/`high`).
 
 ## B. Native tools ENABLED (the headline deviation)
 
@@ -56,11 +63,13 @@ run is a clean OpenClaw episode. Attacks are an optimizer's concern.
   domain** (`utils/agent_helpers.py:get_default_disallowed_tools` ->
   `OS_FILESYSTEM_OPENCLAW_DISALLOWED_TOOLS = ["group:fs", "group:runtime",
   "group:web", "group:memory", ...]`), applied via `tools.deny`
-  (`agent.py:419-428`). This port **enables** native `exec`/`fs` by default
-  (`openclaw.json` `tools.exec`/`tools.fs` at `security=full`, `ask=off`), because
-  it runs in a throwaway container (A) and because a real DTAP threat model treats
-  the agent's own tools as a genuine attack surface. The disable is preserved as an
-  explicit **config policy**, not a hidden default.
+  (`agent.py:419-428`). This port **enables** native `exec`/`fs` by default via the
+  `tools` **profile** (`openclaw.json` `tools.profile = "full"`), because it runs in
+  a throwaway container (A) and because a real DTAP threat model treats the agent's
+  own tools as a genuine attack surface. The disable is preserved as an explicit
+  **config policy**, not a hidden default. (Live-verified against OpenClaw
+  `2026.6.10`: the granular per-tool `{security, ask}` shape is rejected as invalid
+  -- `tools.fs: Invalid input` -- so the profile form is the correct one.)
 - **B.2** `_native_tool_deny(policy)` maps the base's `native_tools_policy`
   ConfigSpec: `"enabled"` (default) -> `[]` (deny nothing); `"disabled"` ->
   the constructor's `disabled_native_tools` (default `("exec", "fs")`). Any other

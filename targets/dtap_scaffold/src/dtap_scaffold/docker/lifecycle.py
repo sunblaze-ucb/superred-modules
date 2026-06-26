@@ -335,13 +335,34 @@ class DockerEnvStack:
             )
             self._inj_urls[name] = url
 
+    def _project_name_overrides(self) -> dict[str, str]:
+        """Export ``<ENV>_PROJECT_NAME`` for every active env (upstream pool convention).
+
+        DTAP servers that ``docker exec`` into their env container (terminal,
+        research, os-filesystem, ...) resolve the container name from
+        ``f"{env.upper().replace('-', '_')}_PROJECT_NAME"`` (mirrors
+        ``utils.compose_utils.get_project_name``) -> ``{project}-{env}-env-1``.
+        Upstream's environment pool sets these in the parent process env BEFORE the
+        MCP manager starts each server; this stack plays the pool's role, so it
+        exports the same vars, each set to its env's per-instance compose project.
+        Without them the terminal/research servers raise
+        ``"<ENV>_PROJECT_NAME is not set"`` on start.
+        """
+        return {
+            f"{env.upper().replace('-', '_')}_PROJECT_NAME": project
+            for env, project in self._projects.items()
+        }
+
     def _launch(
         self, name: str, cfg: dict[str, Any], *, prefix: str, base_dir: Path
     ) -> str:
         """Lease a listen port, spawn the server process, return its ``/mcp`` URL."""
         port_key = env_registry.mcp_port_key(cfg, prefix)
         listen = self._leaser.lease(f"{prefix}.{name.lower()}")
-        extra = self._state.env_overrides() if self._state is not None else {}
+        extra = dict(self._state.env_overrides()) if self._state is not None else {}
+        extra.update(
+            self._project_name_overrides()
+        )  # <ENV>_PROJECT_NAME for exec-based servers
         env = _server_env(cfg, port_key, listen, self._container_ports, extra)
         cmd = _expand_command(cfg, env)
         cwd = base_dir / Path(cfg["path"]).parent

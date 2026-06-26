@@ -152,6 +152,22 @@ def test_injection_target_environment(reg: EnvRegistry) -> None:
 # --------------------------- config-dir resolution ------------------------
 
 
+def _simulate_no_installed_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force the installed-SDK (``importlib.resources``) branch to miss.
+
+    ``resolve_config_dir`` prefers the installed ``dt_arena`` package over the
+    ``DT_ROOT`` clone, so when decodingtrust-agent-sdk IS installed in the dev
+    venv these resolution-order tests would otherwise observe the wheel's config
+    dir. Patching ``importlib.resources.files`` to raise makes the DT_ROOT /
+    not-found branches deterministic whether or not the SDK is installed.
+    """
+
+    def _no_files(_name: str):
+        raise ModuleNotFoundError("simulated: dt_arena not installed")
+
+    monkeypatch.setattr(env_registry.importlib.resources, "files", _no_files)
+
+
 def test_resolve_config_dir_explicit() -> None:
     assert env_registry.resolve_config_dir(_CONFIG_DIR) == _CONFIG_DIR
 
@@ -159,13 +175,14 @@ def test_resolve_config_dir_explicit() -> None:
 def test_resolve_config_dir_via_dt_root(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DTAP_ROOT", raising=False)
     monkeypatch.setenv("DT_ROOT", str(_CLONE_ROOT))
+    _simulate_no_installed_sdk(monkeypatch)  # else the installed wheel's config wins
     assert env_registry.resolve_config_dir() == _CONFIG_DIR
 
 
 def test_resolve_config_dir_missing_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DTAP_ROOT", raising=False)
     monkeypatch.delenv("DT_ROOT", raising=False)
-    # decodingtrust-agent-sdk (dt_arena) is not installed in the test venv.
+    _simulate_no_installed_sdk(monkeypatch)  # neither env var nor installed SDK
     with pytest.raises(EnvRegistryError):
         env_registry.resolve_config_dir()
 
