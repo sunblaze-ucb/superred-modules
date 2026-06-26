@@ -30,4 +30,8 @@ COPY driver.py /opt/dtap/driver.py
 # passed as -e at `docker run`.
 WORKDIR /dtap
 ENV DTAP_TASK_FILE=/dtap/task.json
+# permission_mode="bypassPermissions" -> the CLI's --dangerously-skip-permissions,
+# which refuses to run as root unless it knows it is sandboxed. The container is
+# the isolation boundary (the host also passes -e IS_SANDBOX=1 belt-and-suspenders).
+ENV IS_SANDBOX=1
 ENTRYPOINT ["python", "/opt/dtap/driver.py"]

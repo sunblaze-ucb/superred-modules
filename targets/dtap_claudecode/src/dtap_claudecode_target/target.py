@@ -153,6 +153,10 @@ class ClaudeCodeDtapTarget(DtapAgentTarget):
     def _docker_command(self, spec: AgentLaunchSpec, instance_dir: str) -> list[str]:
         """Build the ``docker run`` argv: state mounts + Anthropic env + proxy reachability."""
         cmd = ["docker", "run", "--rm", "--add-host", "host.docker.internal:host-gateway"]
+        # The Claude Code CLI refuses --dangerously-skip-permissions (which
+        # permission_mode="bypassPermissions" maps to) when running as root unless
+        # told it is sandboxed; the container IS the isolation boundary.
+        cmd += ["-e", "IS_SANDBOX=1"]
         if spec.api_base:
             cmd += ["-e", f"ANTHROPIC_BASE_URL={spec.api_base}"]
         if spec.api_key:
