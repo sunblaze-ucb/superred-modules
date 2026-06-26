@@ -8,11 +8,11 @@
 #
 # Build + push (the tag pins the OpenClaw npm version; keep it in sync with
 # driver.DEFAULT_IMAGE):
-#   docker build -t decodingtrustagent/dtap-openclaw:openclaw-2026.4 .
+#   docker build -t dtap-openclaw:openclaw-2026.6.10 .
 FROM node:24-bookworm-slim
 
 # Pin the OpenClaw CLI version (keep in sync with driver.DEFAULT_IMAGE's tag).
-ARG OPENCLAW_VERSION=2026.4
+ARG OPENCLAW_VERSION=2026.6.10
 RUN npm install -g "openclaw@${OPENCLAW_VERSION}" \
     && npm cache clean --force
 

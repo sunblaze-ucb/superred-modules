@@ -79,13 +79,12 @@ def test_config_mcp_servers_one_entry_per_active_server() -> None:
 
 
 def test_config_native_tools_enabled_by_default() -> None:
-    # Upstream DTAP disabled native tools; this port ENABLES exec/fs at full.
+    # Upstream DTAP disabled native tools; this port ENABLES them. openclaw
+    # 2026.6.10 takes a tools PROFILE ("full" turns exec/fs/etc. on); the granular
+    # per-tool {security, ask} shape is rejected as invalid (live-verified).
     cfg = driver.build_openclaw_config(_spec())
-    assert cfg["tools"]["exec"] == {"security": "full", "ask": "off"}
-    assert cfg["tools"]["fs"] == {"security": "full", "ask": "off"}
+    assert cfg["tools"]["profile"] == "full"
     assert "deny" not in cfg["tools"]  # nothing denied when policy enabled
-    assert cfg["tools"]["web"]["search"]["enabled"] is False
-    assert cfg["browser"]["enabled"] is False
 
 
 def test_config_native_tool_deny_list_applied() -> None:

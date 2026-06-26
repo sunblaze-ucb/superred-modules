@@ -345,14 +345,18 @@ class DockerEnvStack:
         env = _server_env(cfg, port_key, listen, self._container_ports, extra)
         cmd = _expand_command(cfg, env)
         cwd = base_dir / Path(cfg["path"]).parent
-        log_path = str(self._logs_dir() / f"{prefix}_{state_mod.sanitize_name(name)}.log")
+        log_path = str(
+            self._logs_dir() / f"{prefix}_{state_mod.sanitize_name(name)}.log"
+        )
         self._server_logs[name] = log_path
         proc = _spawn_process(cmd, cwd=str(cwd), env=env, log_path=log_path)
         (self._inj_procs if prefix == "injection" else self._mcp_procs)[name] = proc
         return self._registry.server_url(name, listen, host=self._host)
 
     def _logs_dir(self) -> Path:
-        base = Path(self._state_root) if self._state_root else Path(tempfile.gettempdir())
+        base = (
+            Path(self._state_root) if self._state_root else Path(tempfile.gettempdir())
+        )
         directory = base / f"dtap_logs_{self._iid}"
         directory.mkdir(parents=True, exist_ok=True)
         return directory

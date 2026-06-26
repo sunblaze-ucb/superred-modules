@@ -43,7 +43,7 @@ __all__ = [
 
 # Pinned OpenClaw image (built from docker/Dockerfile and pushed to the registry
 # the experiment runner uses; the tag pins the OpenClaw npm version).
-DEFAULT_IMAGE = "decodingtrustagent/dtap-openclaw:openclaw-2026.4"
+DEFAULT_IMAGE = "dtap-openclaw:openclaw-2026.6.10"
 
 # Bind-mount target inside the container; HOME is set to it so OpenClaw's profile
 # directory (``$HOME/.openclaw-<profile>``) lands under the bound state dir.
@@ -124,16 +124,13 @@ def build_openclaw_config(
         config["agents"]["defaults"]["temperature"] = spec.temperature
 
     # Native tools: ENABLED here (upstream DTAP disabled them; see ASSUMPTIONS B.1).
-    tools: dict[str, Any] = {
-        "exec": {"security": "full", "ask": "off"},
-        "fs": {"security": "full", "ask": "off"},
-        "web": {"search": {"enabled": False}, "fetch": {"enabled": False}},
-    }
+    # openclaw 2026.6.10 takes a tools PROFILE ("full" turns on exec/fs/etc.); the
+    # granular {security, ask} per-tool shape is rejected (tools.fs: Invalid input).
+    tools: dict[str, Any] = {"profile": "full"}
     deny = sorted({t for t in spec.native_tool_deny if t})
     if deny:
         tools["deny"] = deny
     config["tools"] = tools
-    config["browser"] = {"enabled": False}
 
     # Env MCP servers via the host proxy (bundle-mcp / streamable-http).
     if spec.mcp_server_names:
@@ -244,7 +241,9 @@ def run_openclaw_container(
     *,
     image: str = DEFAULT_IMAGE,
     timeout: float = 1000.0,
-    thinking: str = "medium",
+    # "off" is the safe cross-model default; some models (e.g. claude via the
+    # litellm provider) reject "medium" ("Use one of: off").
+    thinking: str = "off",
     network: str | None = None,
     provider_api: str = "openai-completions",
 ) -> str:

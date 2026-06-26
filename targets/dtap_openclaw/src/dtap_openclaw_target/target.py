@@ -51,7 +51,9 @@ class OpenClawDtapTarget(DtapAgentTarget):
         temperature: float | None = None,
         image: str = driver.DEFAULT_IMAGE,
         provider_api: str = "openai-completions",
-        thinking: str = "medium",
+        # "off" is the safe cross-model default; some models (claude via the
+        # litellm provider) reject "medium" ("Use one of: off").
+        thinking: str = "off",
         docker_timeout: float = 1000.0,
         network: str | None = None,
         disabled_native_tools: tuple[str, ...] = _DISABLED_NATIVE_TOOLS,
