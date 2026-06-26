@@ -301,7 +301,10 @@ class TestResetEphemeralState:
         assert target._last_tool_calls == []
         assert target._last_events_json == "[]"
         assert target._planted_files == []
-        assert ("agents.files.delete", {"path": "secrets/api_keys.txt"}) in client.rpc_calls
+        assert (
+            "agents.files.set",
+            {"path": "secrets/api_keys.txt", "content": ""},
+        ) in client.rpc_calls
         assert client.reset_sessions == ["superred"]
 
     @pytest.mark.asyncio

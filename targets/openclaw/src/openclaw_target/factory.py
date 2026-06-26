@@ -2,7 +2,7 @@
 
 The controller builds one target instance per task via the returned
 :class:`~superred.core.controller.TargetFactory`, which gives each task
-an isolated OpenClaw container/session (when ``managed=True``). OpenClaw
+an isolated OpenClaw gateway/session (when ``managed=True``). OpenClaw
 drives a single Gateway connection per instance and does not support
 parallel runs, so ``concurrency`` defaults to 1.
 """
@@ -31,9 +31,9 @@ def openclaw_target_factory(
 ) -> TargetFactory:
     """A ``TargetFactory`` that constructs an :class:`OpenClawTarget` per task.
 
-    ``gateway_url`` may be omitted when ``managed=True`` (a container is
-    started lazily and supplies the URL). ``concurrency`` is 1 because a
-    single Gateway connection cannot multiplex parallel agent runs.
+    ``gateway_url`` may be omitted when ``managed=True`` (a local gateway
+    process is started lazily and supplies the URL). ``concurrency`` is 1
+    because a single Gateway connection cannot multiplex parallel runs.
     """
 
     def create() -> OpenClawTarget:

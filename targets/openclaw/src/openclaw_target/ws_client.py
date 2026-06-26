@@ -202,7 +202,16 @@ class OpenClawWSClient:
         timeout_s: float,
         on_event: Callable[[AgentEvent], Awaitable[None]] | None = None,
     ) -> AgentRunResult:
-        """Consume agent stream events until the run completes."""
+        """Consume agent stream events until the run completes.
+
+        NOTE: the exact ``agent`` event payload shape (the ``stream``
+        discriminator and ``assistant``/``tool``/``lifecycle`` field
+        names below) must be pinned against the gateway-protocol schema
+        for the OpenClaw version under test
+        (``packages/gateway-protocol/src/schema.ts``). Parsing is kept
+        defensive (missing fields tolerated) until that is verified
+        against a live gateway.
+        """
         assistant_parts: list[str] = []
         tool_calls: list[dict[str, Any]] = []
         events: list[AgentEvent] = []

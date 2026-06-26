@@ -359,10 +359,11 @@ async def test_injection_bridge_round_trip():
     """The plugin -> injection server -> optimizer bridge resolves injections.
 
     Exercises the Python side of the mid-run injection path end to end
-    (without Docker/Node): an HTTP POST shaped like the plugin's callback
-    flows through ``InjectionServer`` into ``_handle_injection_hook``,
-    which dispatches a ``ControllablePreCallEvent`` and applies the
-    optimizer's ``ControllableInjection`` to the tool result.
+    (without Docker/Node): an HTTP POST shaped like the plugin's
+    ``before_tool_call`` callback flows through ``InjectionServer`` into
+    ``_handle_injection_hook``, which dispatches a
+    ``ControllablePreCallEvent`` and returns the optimizer's
+    ``ControllableInjection`` as the tool-result content to splice in.
     """
     aiohttp = pytest.importorskip("aiohttp")
 
@@ -391,20 +392,25 @@ async def test_injection_bridge_round_trip():
             async with session.post(
                 f"{server.url}/hook",
                 json={
-                    "hook": "tool_result_persist",
-                    "tool": "web_fetch",
+                    "hook": "before_tool_call",
+                    "toolName": "web_fetch",
+                    "toolCallId": "call-1",
                     "params": {"url": "http://example.com"},
-                    "result": "original page text",
                 },
             ) as resp:
                 body = await resp.json()
-        assert body == {"result": "INJECTED-TOOL-OUTPUT"}
+        assert body == {"toolResult": "INJECTED-TOOL-OUTPUT"}
 
         # An unmapped tool is passed through (no controllable -> no injection).
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 f"{server.url}/hook",
-                json={"hook": "tool_result_persist", "tool": "unknown", "params": {}},
+                json={
+                    "hook": "before_tool_call",
+                    "toolName": "unknown",
+                    "toolCallId": "call-2",
+                    "params": {},
+                },
             ) as resp:
                 assert await resp.json() == {}
     finally:
@@ -412,8 +418,8 @@ async def test_injection_bridge_round_trip():
 
 
 @pytest.mark.asyncio
-async def test_before_tool_call_hook_injects_params():
-    """before_tool_call injections are returned as replacement params."""
+async def test_before_tool_call_hook_injects_tool_result():
+    """before_tool_call injections are returned as tool-result content."""
     target = OpenClawTarget(
         auth_token="test-token",
         gateway_url="ws://127.0.0.1:0",
@@ -424,19 +430,24 @@ async def test_before_tool_call_hook_injects_params():
         return ControllableInjection(
             event=event,
             controllable=event.controllable,
-            value='{"url": "http://attacker.test"}',
+            value="ADVERSARIAL PAGE CONTENT",
         )
 
     target._active_send_event = fake_send_event
     out = await target._handle_injection_hook(
-        "before_tool_call", "web_fetch", {"url": "http://benign.test"}, None,
+        "before_tool_call", "web_fetch", {"url": "http://benign.test"}, "c1", None,
     )
-    assert out == {"params": {"url": "http://attacker.test"}}
+    assert out == {"toolResult": "ADVERSARIAL PAGE CONTENT"}
+
+    # The synchronous persist hook is handled plugin-side; we don't consult.
+    assert await target._handle_injection_hook(
+        "tool_result_persist", "web_fetch", {}, "c1", "r",
+    ) is None
 
     # No active run -> the hook declines to inject.
     target._active_send_event = None
     assert await target._handle_injection_hook(
-        "tool_result_persist", "web_fetch", {}, "r",
+        "before_tool_call", "web_fetch", {}, "c1", None,
     ) is None
 
 

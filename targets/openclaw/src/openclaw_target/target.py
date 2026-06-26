@@ -9,10 +9,17 @@ All native agent activity (assistant deltas, tool calls, lifecycle
 transitions, model requests/responses when the LLM proxy is on) is
 emitted live into the framework :class:`~superred.core.types.trajectory.Trajectory`
 as :class:`~superred.core.types.events.ObservableEvent` s; no parallel
-trace representation is maintained. Tool-output injections are
-reactive: each ``before_tool_call`` / ``tool_result_persist`` hook
-emits a :class:`~superred.core.types.events.ControllablePreCallEvent`
-and blocks the agent until the optimizer responds.
+trace representation is maintained.
+
+Tool-output injection follows the OpenClaw plugin hook contract
+(https://docs.openclaw.ai/plugins/hooks): the optimizer is consulted in
+the *async* ``before_tool_call`` hook (which emits a
+:class:`~superred.core.types.events.ControllablePreCallEvent` and blocks
+the agent until the optimizer responds), and the resulting content is
+spliced into the persisted tool result by the *synchronous*
+``tool_result_persist`` hook on the plugin side. ``tool_result_persist``
+does no network I/O, so all optimizer-in-the-loop work happens in
+``before_tool_call``.
 """
 
 from __future__ import annotations
@@ -179,19 +186,19 @@ class OpenClawTarget(Target):
             Requires ``provider_base_url`` and ``provider_api_key``.
         provider_base_url: Upstream LLM provider URL.
         provider_api_key: API key for the upstream LLM provider.
-        managed: If ``True``, auto-start/stop an OpenClaw Docker
-            container. A fresh container is started lazily on first
-            connect and torn down in :meth:`teardown`; because the
+        managed: If ``True``, auto-start/stop a local OpenClaw Gateway
+            process (Node daemon). A fresh gateway is started lazily on
+            first connect and torn down in :meth:`teardown`; because the
             controller builds one target instance per task via the
             :class:`~superred.core.controller.TargetFactory`, each task
-            gets an isolated container.
+            gets an isolated gateway.
         managed_kwargs: Extra kwargs forwarded to
             :class:`openclaw_target.runtime.OpenClawRuntime`.
 
     Between runs of a single task the controller calls
-    :meth:`reset_ephemeral_state`, which clears per-run state, deletes
+    :meth:`reset_ephemeral_state`, which clears per-run state, clears
     files planted this task, and resets the Gateway session while
-    keeping the same container/connection.
+    keeping the same gateway process/connection.
     """
 
     def __init__(
@@ -249,8 +256,8 @@ class OpenClawTarget(Target):
         if self._client is not None:
             return self._client
 
-        # Start the host-side injection server before the container so the
-        # managed runtime can mount the plugin pointed at its callback URL.
+        # Start the injection server before the gateway so the managed
+        # runtime can install the plugin pointed at its callback URL.
         if self._enable_tool_injection and self._injection_server is None:
             await self._start_injection_server()
 
@@ -261,8 +268,10 @@ class OpenClawTarget(Target):
             if self._injection_server is not None:
                 managed_kwargs.setdefault("plugin_dir", str(_plugin_dir()))
                 managed_kwargs.setdefault(
-                    "callback_url", self._container_callback_url(),
+                    "callback_url", self._callback_url(),
                 )
+            if self._tool_policy:
+                managed_kwargs.setdefault("tool_policy", self._tool_policy)
             self._runtime = OpenClawRuntime(**managed_kwargs)
             await self._runtime.start()
             self._gateway_url = self._runtime.gateway_url
@@ -286,14 +295,15 @@ class OpenClawTarget(Target):
 
         return client
 
-    def _container_callback_url(self) -> str:
-        """Host URL the in-container plugin posts hook callbacks to.
+    def _callback_url(self) -> str:
+        """Loopback URL the gateway-side plugin posts hook callbacks to.
 
-        Containers reach the host via ``host.docker.internal``; the
-        injection server binds the host loopback on its configured port.
+        The gateway runs as a local Node process (see
+        :class:`openclaw_target.runtime.OpenClawRuntime`), so it reaches
+        the injection server directly on the host loopback.
         """
         port = self._injection_server._port if self._injection_server else 18899
-        return f"http://host.docker.internal:{port}"
+        return f"http://127.0.0.1:{port}"
 
     async def _start_injection_server(self) -> None:
         """Start the local HTTP injection server for plugin callbacks."""
@@ -317,20 +327,30 @@ class OpenClawTarget(Target):
         hook_type: str,
         tool_name: str,
         params: dict[str, Any],
+        tool_call_id: str,
         result: Any,
     ) -> dict[str, Any] | None:
-        """Bridge a blocking plugin hook to a live ControllablePreCallEvent.
+        """Bridge the async ``before_tool_call`` hook to a live event.
 
         The plugin's HTTP POST blocks until this coroutine returns, so
-        we can synchronously consult the optimizer by dispatching a
+        we consult the optimizer by dispatching a
         :class:`ControllablePreCallEvent` on the active trajectory and
         awaiting the :class:`ControllableInjection` response.
+
+        Only ``before_tool_call`` is consulted: it is the sole async hook
+        in the OpenClaw contract. The returned ``toolResult`` is stashed
+        plugin-side (keyed by ``toolCallId``) and spliced into the
+        persisted tool result by the synchronous ``tool_result_persist``
+        hook, which cannot do network I/O.
         """
+        if hook_type != "before_tool_call":
+            return None
+
         send_event = self._active_send_event
         if send_event is None:
             return None
 
-        controllable = self._controllable_for_hook(hook_type, tool_name)
+        controllable = self._controllable_for_tool(tool_name)
         if controllable is None:
             return None
 
@@ -338,8 +358,8 @@ class OpenClawTarget(Target):
             {
                 "hook": hook_type,
                 "tool": tool_name,
+                "toolCallId": tool_call_id,
                 "params": params,
-                "result": result,
             },
             default=str,
         )
@@ -363,18 +383,12 @@ class OpenClawTarget(Target):
         if not response.value:
             return None
 
-        if hook_type == "before_tool_call":
-            try:
-                return {"params": json.loads(response.value)}
-            except json.JSONDecodeError:
-                return {"params": {"injected": response.value}}
-        return {"result": response.value}
+        # The injected value becomes the tool's returned content (the
+        # adversarial document/page the model will read), applied at
+        # persist time by the plugin.
+        return {"toolResult": response.value}
 
-    def _controllable_for_hook(
-        self, hook_type: str, tool_name: str,
-    ) -> Controllable | None:
-        if hook_type not in ("before_tool_call", "tool_result_persist"):
-            return None
+    def _controllable_for_tool(self, tool_name: str) -> Controllable | None:
         if tool_name in ("web_fetch", "web_search"):
             return WEB_CONTENT_CTRL
         if tool_name == "read":
@@ -433,10 +447,12 @@ class OpenClawTarget(Target):
                 name="tool_policy",
                 security_domain=TOOL_CATALOG_TAG,
                 description=(
-                    "Name of the Gateway tool profile to enforce for the "
-                    "run (e.g. 'messaging' to restrict the agent to "
-                    "messaging tools). Applied via the 'tools.set_profile' "
-                    "RPC before the agent run."
+                    "Name of the agent tool profile to enforce (e.g. "
+                    "'messaging' to restrict the agent to messaging tools). "
+                    "Tool restriction in OpenClaw is gateway/agent "
+                    "configuration, not a runtime RPC: the managed runtime "
+                    "applies it when starting the gateway; for an external "
+                    "gateway the profile must be pre-configured there."
                 ),
             ),
         ]
@@ -546,8 +562,8 @@ class OpenClawTarget(Target):
     ) -> None:
         client = await self._ensure_connected()
 
-        if self._tool_policy:
-            await self._apply_tool_policy(client)
+        # Tool restriction (tool_policy) is gateway/agent configuration,
+        # applied by the managed runtime at startup — not a per-run RPC.
 
         if self._system_prompt_append:
             await self._apply_system_prompt(client)
@@ -656,11 +672,11 @@ class OpenClawTarget(Target):
         """Clear per-run state between runs of the same task.
 
         Resets the last-run response/tool-call/event buffers and any
-        recorded proxy calls, deletes files planted during this task,
-        and resets the Gateway session. The container and WebSocket
-        connection are kept: durable, per-task state. Fresh durable
-        state (a new container) comes from the controller building a
-        new target instance per task via the ``TargetFactory``.
+        recorded proxy calls, clears files planted during this task, and
+        resets the Gateway session. The gateway process and WebSocket
+        connection are kept: durable, per-task state. Fresh durable state
+        (a new gateway) comes from the controller building a new target
+        instance per task via the ``TargetFactory``.
         """
         self._last_response = ""
         self._last_tool_calls = []
@@ -670,11 +686,15 @@ class OpenClawTarget(Target):
             self._llm_proxy.system_prompt_injection = None
 
         if self._client:
+            # The protocol exposes agents.files.set (no files.delete); clear
+            # a planted file by overwriting it with empty content.
             for filename in self._planted_files:
                 try:
-                    await self._client.rpc("agents.files.delete", {"path": filename})
+                    await self._client.rpc(
+                        "agents.files.set", {"path": filename, "content": ""},
+                    )
                 except Exception:
-                    logger.debug("Could not delete planted file %s", filename, exc_info=True)
+                    logger.debug("Could not clear planted file %s", filename, exc_info=True)
             self._planted_files.clear()
 
             try:
@@ -683,7 +703,7 @@ class OpenClawTarget(Target):
                 logger.debug("Session reset failed (may be expected)", exc_info=True)
 
     async def teardown(self) -> None:
-        """Close the Gateway connection, injection server, proxy, and container."""
+        """Close the connection, injection server, proxy, and gateway process."""
         if self._llm_proxy:
             await self._llm_proxy.stop()
             self._llm_proxy = None
@@ -700,23 +720,6 @@ class OpenClawTarget(Target):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-
-    async def _apply_tool_policy(self, client: OpenClawWSClient) -> None:
-        """Restrict the agent to a named Gateway tool profile.
-
-        The exact RPC for tool-profile enforcement is gateway-version
-        specific; this issues the documented ``tools.set_profile`` call
-        best-effort so the configured policy is not silently dropped.
-        """
-        try:
-            await client.rpc("tools.set_profile", {"profile": self._tool_policy})
-        except Exception:
-            logger.warning(
-                "Could not apply tool policy %r via RPC; the gateway may "
-                "not support tools.set_profile.",
-                self._tool_policy,
-                exc_info=True,
-            )
 
     async def _apply_system_prompt(self, client: OpenClawWSClient) -> None:
         """Append text to the agent's system prompt via workspace AGENTS.md."""

@@ -19,14 +19,14 @@ from aiohttp import web
 logger = logging.getLogger(__name__)
 
 InjectionHandler = Callable[
-    [str, str, dict[str, Any], Any],
+    [str, str, dict[str, Any], str, Any],
     Union[dict[str, Any], None, Awaitable[Union[dict[str, Any], None]]],
 ]
-"""(hook_type, tool_name, params, result) -> injection_payload or None.
+"""(hook_type, tool_name, params, tool_call_id, result) -> payload or None.
 
 Handler may be sync or async. Async handlers are awaited, so the
-plugin's blocking POST receives the response only after the
-optimizer-in-the-loop decision has been made.
+plugin's blocking ``before_tool_call`` POST receives the response only
+after the optimizer-in-the-loop decision has been made.
 """
 
 
@@ -86,12 +86,16 @@ class InjectionServer:
             )
 
         hook_type = body.get("hook", "")
-        tool_name = body.get("tool", "")
+        # The real plugin sends `toolName`; accept `tool` as a fallback.
+        tool_name = body.get("toolName") or body.get("tool", "")
         params = body.get("params", {})
+        tool_call_id = body.get("toolCallId", "") or ""
         result = body.get("result")
 
         try:
-            injection = self._handler(hook_type, tool_name, params, result)
+            injection = self._handler(
+                hook_type, tool_name, params, tool_call_id, result,
+            )
             if inspect.isawaitable(injection):
                 injection = await injection
         except Exception:
