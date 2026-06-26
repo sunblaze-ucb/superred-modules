@@ -303,7 +303,7 @@ class TestResetEphemeralState:
         assert target._planted_files == []
         assert (
             "agents.files.set",
-            {"path": "secrets/api_keys.txt", "content": ""},
+            {"agentId": "default", "name": "secrets/api_keys.txt", "content": ""},
         ) in client.rpc_calls
         assert client.reset_sessions == ["superred"]
 

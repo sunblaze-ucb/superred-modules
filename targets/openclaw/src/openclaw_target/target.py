@@ -200,6 +200,7 @@ class OpenClawTarget(Target):
         auth_token: str = "",
         gateway_url: str = DEFAULT_GATEWAY_URL,
         session_key: str = "superred",
+        agent_id: str = "default",
         agent_timeout_s: float = DEFAULT_AGENT_TIMEOUT_S,
         enable_tool_injection: bool = False,
         enable_llm_proxy: bool = False,
@@ -211,6 +212,7 @@ class OpenClawTarget(Target):
         self._gateway_url = gateway_url
         self._auth_token = auth_token
         self._session_key = session_key
+        self._agent_id = agent_id
         self._agent_timeout_s = agent_timeout_s
         self._enable_tool_injection = enable_tool_injection
         self._enable_llm_proxy = enable_llm_proxy
@@ -681,7 +683,8 @@ class OpenClawTarget(Target):
             for filename in self._planted_files:
                 try:
                     await self._client.rpc(
-                        "agents.files.set", {"path": filename, "content": ""},
+                        "agents.files.set",
+                        {"agentId": self._agent_id, "name": filename, "content": ""},
                     )
                 except Exception:
                     logger.debug("Could not clear planted file %s", filename, exc_info=True)
@@ -712,10 +715,16 @@ class OpenClawTarget(Target):
     # ------------------------------------------------------------------
 
     async def _apply_system_prompt(self, client: OpenClawWSClient) -> None:
-        """Append text to the agent's system prompt via workspace AGENTS.md."""
+        """Append text to the agent's system prompt via the AGENTS.md bootstrap file.
+
+        ``agents.files.set`` params are ``{agentId, name, content}`` (schema
+        is ``additionalProperties:false``). AGENTS.md is a recognized
+        bootstrap workspace file.
+        """
         try:
             await client.rpc("agents.files.set", {
-                "path": "AGENTS.md",
+                "agentId": self._agent_id,
+                "name": "AGENTS.md",
                 "content": self._system_prompt_append,
             })
         except Exception:
@@ -726,11 +735,18 @@ class OpenClawTarget(Target):
             )
 
     async def _write_workspace_files(self, client: OpenClawWSClient) -> None:
-        """Write workspace files before a run (for data injection scenarios)."""
+        """Write workspace files before a run (for data injection scenarios).
+
+        Uses ``agents.files.set`` ({agentId, name, content}). Note: this RPC
+        manages the agent's bootstrap workspace files; planting arbitrary
+        nested paths may require a shared workspace dir on a real gateway
+        (see runtime ``workspace_dir``).
+        """
         for filename, content in self._workspace_files.items():
             try:
                 await client.rpc("agents.files.set", {
-                    "path": filename,
+                    "agentId": self._agent_id,
+                    "name": filename,
                     "content": content,
                 })
                 self._planted_files.append(filename)

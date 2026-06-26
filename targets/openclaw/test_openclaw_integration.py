@@ -158,9 +158,9 @@ class MockGateway:
 
                 elif method == "agents.files.set":
                     file_params = msg.get("params", {})
-                    path = file_params.get("path", "")
+                    name = file_params.get("name", "")
                     content = file_params.get("content", "")
-                    if path == "AGENTS.md":
+                    if name == "AGENTS.md":
                         self._secret_in_prompt = content
                     await ws.send(json.dumps({
                         "type": "res",
