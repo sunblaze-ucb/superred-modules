@@ -26,6 +26,7 @@ import asyncio
 import os
 import socket
 import subprocess
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Any
@@ -37,7 +38,7 @@ from dtap_scaffold.docker import state as state_mod
 from dtap_scaffold.types import EnvHandle
 
 SETUP_TIMEOUT = 600
-_READY_TIMEOUT = 600.0
+_READY_TIMEOUT = 150.0
 
 
 # --------------------------- module-level seams ---------------------------
@@ -48,14 +49,23 @@ def _spawn_process(
     *,
     cwd: str | None = None,
     env: dict[str, str] | None = None,
+    log_path: str | None = None,
 ) -> "subprocess.Popen[bytes]":
-    """Start a long-lived MCP server process (the process-spawn seam)."""
+    """Start a long-lived MCP server process (the process-spawn seam).
+
+    When *log_path* is given, the server's stdout+stderr are written there (so a
+    crash-on-start, e.g. a missing dependency, is diagnosable instead of vanishing
+    into DEVNULL and turning into a readiness timeout).
+    """
+    out: Any = subprocess.DEVNULL
+    if log_path:
+        out = open(log_path, "wb")  # noqa: SIM115 - handle closed when the process exits
     return subprocess.Popen(  # noqa: S603 (cmd built from vendored config)
         cmd,
         cwd=cwd,
         env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=out,
+        stderr=subprocess.STDOUT if log_path else subprocess.DEVNULL,
         start_new_session=True,
     )
 
@@ -177,6 +187,7 @@ class DockerEnvStack:
         self._inj_procs: dict[str, Any] = {}  # injection server name -> process
         self._server_urls: dict[str, str] = {}
         self._inj_urls: dict[str, str] = {}
+        self._server_logs: dict[str, str] = {}  # server name -> stdout/stderr log path
         self._handle: EnvHandle | None = None
         self._up_done = False
 
@@ -206,7 +217,10 @@ class DockerEnvStack:
         await self._run_setup()
         await self._start_mcp_servers()
         await self._start_injection_servers()
-        await _wait_for_ready({**self._server_urls, **self._inj_urls})
+        try:
+            await _wait_for_ready({**self._server_urls, **self._inj_urls})
+        except RuntimeError as exc:
+            raise RuntimeError(f"{exc}\n{self._server_log_tails()}") from exc
 
         self._handle = EnvHandle(
             server_urls=dict(self._server_urls),
@@ -331,9 +345,29 @@ class DockerEnvStack:
         env = _server_env(cfg, port_key, listen, self._container_ports, extra)
         cmd = _expand_command(cfg, env)
         cwd = base_dir / Path(cfg["path"]).parent
-        proc = _spawn_process(cmd, cwd=str(cwd), env=env)
+        log_path = str(self._logs_dir() / f"{prefix}_{state_mod.sanitize_name(name)}.log")
+        self._server_logs[name] = log_path
+        proc = _spawn_process(cmd, cwd=str(cwd), env=env, log_path=log_path)
         (self._inj_procs if prefix == "injection" else self._mcp_procs)[name] = proc
         return self._registry.server_url(name, listen, host=self._host)
+
+    def _logs_dir(self) -> Path:
+        base = Path(self._state_root) if self._state_root else Path(tempfile.gettempdir())
+        directory = base / f"dtap_logs_{self._iid}"
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory
+
+    def _server_log_tails(self, lines: int = 25) -> str:
+        """Last lines of each spawned server's log (for actionable readiness errors)."""
+        out: list[str] = []
+        for name, path in self._server_logs.items():
+            try:
+                with open(path, encoding="utf-8", errors="replace") as fh:
+                    tail = "".join(fh.readlines()[-lines:]).strip()
+            except OSError:
+                tail = "(no log)"
+            out.append(f"--- {name} ({path}) ---\n{tail}")
+        return "\n".join(out) if out else "(no server logs captured)"
 
 
 __all__ = ["DockerEnvStack"]

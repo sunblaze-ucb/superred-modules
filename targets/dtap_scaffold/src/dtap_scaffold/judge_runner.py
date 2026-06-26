@@ -102,9 +102,11 @@ def _main():
     payload = json.loads(sys.stdin.read())
     # Send any judge/import-time print() to stderr; stdout = result JSON only.
     sys.stdout = sys.stderr
+    from pathlib import Path
+
     from utils.judge_helpers import run_judge  # installed decodingtrust-agent-sdk
     result = run_judge(
-        payload["task_dir"],
+        Path(payload["task_dir"]),  # upstream run_judge does task_dir / "judge.py"
         response=payload.get("final_response", ""),
         trajectory=payload.get("trajectory_json"),
     )

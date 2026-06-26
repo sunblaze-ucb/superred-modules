@@ -16,7 +16,12 @@ dependencies = ["superred", "pyyaml", "aiohttp", "requests"]
 #     Docker Hub (decodingtrustagent/*); no local image builds for the text domains.
 [project.optional-dependencies]
 dataset = ["huggingface_hub>=0.20"]
-sdk = ["decodingtrust-agent-sdk==0.2.12"]
+# The SDK harness + the env MCP servers (run as host processes). ujson is an
+# UNDECLARED runtime import of several upstream MCP servers (e.g. travel's
+# mcp_server.py does `import ujson`); the SDK wheel and its extras (which are
+# only agent backends) do not pull it, so it is added here. uv is the launch
+# command for some servers and must be on PATH.
+sdk = ["decodingtrust-agent-sdk==0.2.12", "ujson", "uv>=0.5"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pytest-cov>=6.0"]
 
 [tool.hatch.build.targets.wheel]
