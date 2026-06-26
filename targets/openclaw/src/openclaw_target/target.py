@@ -5,8 +5,8 @@ messages via the ``agent`` RPC, and exposes the agent's tool-calling,
 message-response, and configuration surfaces as controllables and
 observables for the superred red-teaming framework.
 
-All native agent activity (assistant deltas, tool calls, lifecycle
-transitions, model requests/responses when the LLM proxy is on) is
+All native agent activity (assistant ``chat`` deltas, tool calls,
+model requests/responses when the LLM proxy is on) is
 emitted live into the framework :class:`~superred.core.types.trajectory.Trajectory`
 as :class:`~superred.core.types.events.ObservableEvent` s; no parallel
 trace representation is maintained.
@@ -142,12 +142,6 @@ TOOL_CALL_OBS = Observable(
     name="tool_call",
     security_domain=TOOL_CATALOG_TAG,
     description="A single tool invocation made by the agent.",
-)
-
-LIFECYCLE_OBS = Observable(
-    name="lifecycle",
-    security_domain=SYSTEM_TAG,
-    description="Agent run lifecycle transition (start, end, error).",
 )
 
 MODEL_REQUEST_OBS = Observable(
@@ -447,12 +441,13 @@ class OpenClawTarget(Target):
                 name="tool_policy",
                 security_domain=TOOL_CATALOG_TAG,
                 description=(
-                    "Name of the agent tool profile to enforce (e.g. "
-                    "'messaging' to restrict the agent to messaging tools). "
-                    "Tool restriction in OpenClaw is gateway/agent "
-                    "configuration, not a runtime RPC: the managed runtime "
-                    "applies it when starting the gateway; for an external "
-                    "gateway the profile must be pre-configured there."
+                    "Name of the tool profile to enforce (e.g. 'messaging' "
+                    "to restrict the agent to messaging tools). Tool "
+                    "restriction in OpenClaw is config (tools.profile / "
+                    "tools.allow / agents.<id>.tools.allow), not a runtime "
+                    "RPC: the managed runtime applies it via 'openclaw "
+                    "config set tools.profile' before gateway start; for an "
+                    "external gateway it must be pre-configured there."
                 ),
             ),
         ]
@@ -608,8 +603,8 @@ class OpenClawTarget(Target):
         self._active_send_event = send_event
 
         async def on_agent_event(evt: AgentEvent) -> None:
-            if evt.stream == "assistant":
-                text = evt.payload.get("text", "")
+            if evt.stream == "chat":
+                text = evt.payload.get("deltaText") or ""
                 if text:
                     emit(ObservableEvent(
                         observable=ASSISTANT_STREAM_OBS,
@@ -618,11 +613,6 @@ class OpenClawTarget(Target):
             elif evt.stream == "tool":
                 emit(ObservableEvent(
                     observable=TOOL_CALL_OBS,
-                    content=json.dumps(evt.payload),
-                ))
-            elif evt.stream == "lifecycle":
-                emit(ObservableEvent(
-                    observable=LIFECYCLE_OBS,
                     content=json.dumps(evt.payload),
                 ))
 

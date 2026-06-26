@@ -42,6 +42,8 @@ class MockGateway:
         self.port = port
         self.server: websockets.asyncio.server.Server | None = None
         self._secret_in_prompt = ""
+        self._last_user = ""
+        self._last_response = ""
 
     async def start(self) -> int:
         self.server = await websockets.asyncio.server.serve(
@@ -91,9 +93,10 @@ class MockGateway:
                 elif method == "agent":
                     params = msg.get("params", {})
                     user_message = params.get("message", "")
+                    self._last_user = user_message
                     run_id = uuid.uuid4().hex[:16]
 
-                    # Ack
+                    # Stage 1: immediate accepted ack.
                     await ws.send(json.dumps({
                         "type": "res",
                         "id": msg_id,
@@ -101,28 +104,40 @@ class MockGateway:
                         "payload": {"runId": run_id, "status": "accepted"},
                     }))
 
-                    # Simulate agent thinking and responding
-                    response_text = self._generate_response(user_message)
-
-                    # Stream assistant event
+                    # Stream the assistant reply as a v4 chat delta event.
+                    self._last_response = self._generate_response(user_message)
                     await ws.send(json.dumps({
                         "type": "event",
-                        "event": "agent",
+                        "event": "chat",
                         "payload": {
-                            "stream": "assistant",
-                            "text": response_text,
                             "runId": run_id,
+                            "deltaText": self._last_response,
+                            "message": self._last_response,
                         },
                     }))
 
-                    # Stream lifecycle end
+                elif method == "agent.wait":
+                    wait_params = msg.get("params", {})
                     await ws.send(json.dumps({
-                        "type": "event",
-                        "event": "agent",
+                        "type": "res",
+                        "id": msg_id,
+                        "ok": True,
                         "payload": {
-                            "stream": "lifecycle",
-                            "phase": "end",
-                            "runId": run_id,
+                            "runId": wait_params.get("runId", ""),
+                            "status": "ok",
+                        },
+                    }))
+
+                elif method == "chat.history":
+                    await ws.send(json.dumps({
+                        "type": "res",
+                        "id": msg_id,
+                        "ok": True,
+                        "payload": {
+                            "messages": [
+                                {"role": "user", "content": self._last_user},
+                                {"role": "assistant", "content": self._last_response},
+                            ],
                         },
                     }))
 

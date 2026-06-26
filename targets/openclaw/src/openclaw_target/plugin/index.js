@@ -12,21 +12,21 @@
  *     require approval. We consult the superred injection server here
  *     (the only async point), and stash the decision keyed by
  *     `toolCallId`.
- *   - `tool_result_persist` is SYNCHRONOUS: it transforms the
- *     `AgentMessage` before it is written to the transcript and must
- *     return synchronously. We cannot do network I/O here, so we apply
- *     the previously-stashed decision and rewrite `message.content`.
- *
- * NOTE: the SDK import path (`@openclaw/sdk`) and the exact event field
- * names should be pinned to the OpenClaw version under test; this file
- * is loaded by the gateway, not by superred's Python test suite.
+ *   - `tool_result_persist` is SYNCHRONOUS (it is in OpenClaw's
+ *     `SyncHookName` set; async returns are ignored with a warning).
+ *     It runs on the transcript-append hot path and returns
+ *     `{ message }` (PluginHookToolResultPersistResult) to replace the
+ *     persisted `AgentMessage`. We cannot do network I/O here, so we
+ *     apply the previously-stashed decision and rewrite `message.content`.
+ *     (Verified against openclaw/openclaw src/plugins/hooks.ts +
+ *     hook-types.ts.)
  *
  * Configuration (env):
  *   SUPERRED_CALLBACK_URL - URL of the Python injection server
  *                           (default: http://127.0.0.1:18899)
  */
 
-import { definePluginEntry } from "@openclaw/sdk";
+import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 
 const CALLBACK_URL =
   process.env.SUPERRED_CALLBACK_URL || "http://127.0.0.1:18899";

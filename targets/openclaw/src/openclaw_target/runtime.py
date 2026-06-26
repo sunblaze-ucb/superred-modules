@@ -45,8 +45,11 @@ class OpenClawRuntime:
             extension; installed via ``OPENCLAW_EXTENSIONS_DIR``.
         callback_url: URL of the host injection server, exported to the
             plugin as ``SUPERRED_CALLBACK_URL``.
-        tool_policy: Optional agent tool-profile name, exported as
-            ``OPENCLAW_TOOL_PROFILE`` at startup.
+        tool_policy: Optional tool-profile name. Tool restriction in
+            OpenClaw is config (``tools.profile`` / ``tools.allow`` /
+            ``agents.<id>.tools.allow``), not a runtime RPC; when set, the
+            runtime applies it with ``openclaw config set tools.profile``
+            before starting the gateway.
         allow_unconfigured: Pass ``--allow-unconfigured`` so a fresh
             gateway starts without an interactive setup step.
         extra_env: Additional environment variables.
@@ -54,11 +57,10 @@ class OpenClawRuntime:
             connections.
 
     Note:
-        The exact extension-install path and the tool-profile config key
-        are gateway-version specific; the env handles below are
-        best-effort and should be pinned to the OpenClaw version under
-        test. This manager is not exercised by the mock-gateway test
-        suite (which connects to a unmanaged in-process server).
+        The extension-install directory env (``OPENCLAW_EXTENSIONS_DIR``)
+        is gateway-version specific and best-effort. This manager is not
+        exercised by the mock-gateway test suite (which connects to an
+        unmanaged in-process server).
     """
 
     openclaw_bin: str = "openclaw"
@@ -95,8 +97,6 @@ class OpenClawRuntime:
             env["OPENCLAW_EXTENSIONS_DIR"] = self.plugin_dir
         if self.callback_url:
             env["SUPERRED_CALLBACK_URL"] = self.callback_url
-        if self.tool_policy:
-            env["OPENCLAW_TOOL_PROFILE"] = self.tool_policy
         env.update(self.extra_env)
         return env
 
@@ -117,6 +117,10 @@ class OpenClawRuntime:
             return
 
         self._auth_token = secrets.token_hex(24)
+
+        if self.tool_policy:
+            await self._apply_tool_profile()
+
         cmd = self._build_cmd()
 
         logger.info("Starting OpenClaw gateway: %s", " ".join(cmd))
@@ -128,6 +132,31 @@ class OpenClawRuntime:
         )
 
         await self._wait_ready()
+
+    async def _apply_tool_profile(self) -> None:
+        """Restrict the agent's tools by writing the gateway tool profile.
+
+        Tool restriction is gateway config, not a runtime RPC. ``openclaw
+        config set tools.profile <name>`` is the documented mechanism; this
+        runs it best-effort before the gateway starts so the configured
+        policy is not silently dropped.
+        """
+        cmd = [self.openclaw_bin, "config", "set", "tools.profile", self.tool_policy or ""]
+        logger.info("Applying tool profile: %s", " ".join(cmd))
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await proc.communicate()
+            if proc.returncode != 0:
+                logger.warning(
+                    "Could not set tools.profile=%r: %s",
+                    self.tool_policy, stderr.decode().strip(),
+                )
+        except FileNotFoundError:
+            logger.warning("openclaw CLI not found; tool profile not applied")
 
     async def stop(self) -> None:
         """Terminate the gateway process."""

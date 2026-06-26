@@ -81,9 +81,17 @@ class OpenClawWSClient:
         self._ws = await websockets.asyncio.client.connect(self._url)
         self._reader_task = asyncio.create_task(self._read_loop())
 
-        challenge_event = await self._wait_for_event("connect.challenge", timeout=10)
-        nonce = challenge_event.get("payload", {}).get("nonce", "")
+        # The gateway emits connect.challenge before accepting connect; wait
+        # for it even though the device-less path below does not sign it.
+        await self._wait_for_event("connect.challenge", timeout=15)
 
+        # Connect over the verified device-less trusted path: a same-process
+        # backend client (client.id "gateway-client", client.mode "backend")
+        # may omit `device` on a *direct loopback* connection authenticated
+        # with the shared gateway token. (gateway/protocol "Handshake" +
+        # "Device identity + pairing".) Remote/paired connections instead
+        # require v3 device-key nonce signing, which is intentionally not
+        # implemented here — this target is built for a managed local gateway.
         connect_id = self._next_id()
         connect_req: dict[str, Any] = {
             "type": "req",
@@ -91,12 +99,12 @@ class OpenClawWSClient:
             "method": "connect",
             "params": {
                 "minProtocol": 3,
-                "maxProtocol": 3,
+                "maxProtocol": 4,
                 "client": {
-                    "id": "superred",
+                    "id": "gateway-client",
                     "version": "0.1.0",
                     "platform": "linux",
-                    "mode": "operator",
+                    "mode": "backend",
                 },
                 "role": "operator",
                 "scopes": ["operator.read", "operator.write"],
@@ -106,10 +114,6 @@ class OpenClawWSClient:
                 "auth": {"token": self._auth_token},
                 "locale": "en-US",
                 "userAgent": "superred/0.1.0",
-                "device": {
-                    "id": self._device_id,
-                    "nonce": nonce,
-                },
             },
         }
 
@@ -147,25 +151,37 @@ class OpenClawWSClient:
         timeout_s: float = 120,
         on_event: Callable[[AgentEvent], Awaitable[None]] | None = None,
     ) -> AgentRunResult:
-        """Send a message to the agent and collect the full run result.
+        """Send a message to the agent and collect the run result.
+
+        Uses the verified two-stage agent flow: the ``agent`` RPC returns
+        an immediate ``status:"accepted"`` ack carrying a ``runId``; we then
+        block on ``agent.wait`` for the terminal result while forwarding
+        live ``chat`` (assistant text) and ``session.tool`` (tool call)
+        events. Final assistant text comes from accumulated ``chat`` deltas,
+        falling back to ``chat.history``.
+
+        Grounding (gateway/protocol): agent runs are two-stage (accepted ack
+        then terminal); ``agent.wait`` returns the terminal snapshot;
+        ``chat`` events carry ``deltaText`` with ``message`` as the
+        cumulative snapshot in protocol v4 (``replace`` marks a non-prefix
+        replacement); ``chat.history`` returns the session messages. The
+        per-event field set is documented; exact nested shapes ultimately
+        come from the generated protocol schema.
 
         Args:
             message: The user message to send.
             session_key: Session routing key.
             timeout_s: Maximum seconds to wait for the run to complete.
-            on_event: Optional async callback invoked for each
-                streamed :class:`AgentEvent` as it arrives. Lets
-                callers forward live events into the trajectory
-                instead of waiting for the aggregated result.
-
-        Returns:
-            The aggregated agent run result.
+            on_event: Optional async callback invoked for each live
+                :class:`AgentEvent` so callers can forward events into the
+                trajectory as they arrive.
         """
         req_id = self._next_id()
         idempotency_key = uuid.uuid4().hex
 
-        agent_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-        self._subscribe_event("agent", agent_queue)
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._subscribe_event("chat", queue)
+        self._subscribe_event("session.tool", queue)
 
         try:
             req: dict[str, Any] = {
@@ -181,108 +197,128 @@ class OpenClawWSClient:
 
             ack = await self._send_request(req, req_id)
             if not ack.get("ok"):
-                error = ack.get("error", "unknown")
                 return AgentRunResult(
-                    run_id="", status="error", assistant_text="", error=str(error),
+                    run_id="", status="error", assistant_text="",
+                    error=str(ack.get("error", "unknown")),
                 )
 
-            ack_payload = ack.get("payload", {})
-            run_id = ack_payload.get("runId", req_id)
-
-            return await self._collect_agent_events(
-                run_id, agent_queue, timeout_s, on_event,
+            run_id = ack.get("payload", {}).get("runId", req_id)
+            return await self._collect_run(
+                run_id, session_key, queue, timeout_s, on_event,
             )
         finally:
-            self._unsubscribe_event("agent", agent_queue)
+            self._unsubscribe_event("chat", queue)
+            self._unsubscribe_event("session.tool", queue)
 
-    async def _collect_agent_events(
+    @staticmethod
+    def _to_agent_event(raw: dict[str, Any]) -> AgentEvent:
+        family = raw.get("event", "")
+        payload = raw.get("payload", {})
+        if family == "session.tool":
+            stream = "tool"
+        elif family == "chat":
+            stream = "chat"
+        else:
+            stream = family
+        return AgentEvent(stream=stream, payload=payload, raw=raw)
+
+    async def _collect_run(
         self,
         run_id: str,
+        session_key: str,
         queue: asyncio.Queue[dict[str, Any]],
         timeout_s: float,
         on_event: Callable[[AgentEvent], Awaitable[None]] | None = None,
     ) -> AgentRunResult:
-        """Consume agent stream events until the run completes.
-
-        NOTE: the exact ``agent`` event payload shape (the ``stream``
-        discriminator and ``assistant``/``tool``/``lifecycle`` field
-        names below) must be pinned against the gateway-protocol schema
-        for the OpenClaw version under test
-        (``packages/gateway-protocol/src/schema.ts``). Parsing is kept
-        defensive (missing fields tolerated) until that is verified
-        against a live gateway.
-        """
+        """Forward live events while ``agent.wait`` resolves the run."""
         assistant_parts: list[str] = []
+        snapshot_text = ""
         tool_calls: list[dict[str, Any]] = []
         events: list[AgentEvent] = []
         status = "running"
         error: str | None = None
 
-        deadline = asyncio.get_event_loop().time() + timeout_s
+        wait_task: asyncio.Future[dict[str, Any]] = asyncio.ensure_future(
+            self.rpc("agent.wait", {"runId": run_id}),
+        )
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout_s
 
-        while True:
-            remaining = deadline - asyncio.get_event_loop().time()
+        def absorb(event: AgentEvent) -> None:
+            nonlocal snapshot_text
+            events.append(event)
+            if event.stream == "chat":
+                delta = event.payload.get("deltaText", "")
+                if delta:
+                    if event.payload.get("replace"):
+                        assistant_parts.clear()
+                    assistant_parts.append(delta)
+                snap = event.payload.get("message")
+                if isinstance(snap, str) and snap:
+                    snapshot_text = snap
+            elif event.stream == "tool":
+                tool_calls.append(event.payload)
+
+        while not wait_task.done():
+            remaining = deadline - loop.time()
             if remaining <= 0:
                 status = "timeout"
                 break
-
             try:
-                raw = await asyncio.wait_for(queue.get(), timeout=remaining)
+                raw = await asyncio.wait_for(queue.get(), timeout=min(remaining, 0.2))
             except asyncio.TimeoutError:
-                status = "timeout"
-                break
-
-            payload = raw.get("payload", {})
-            stream = payload.get("stream", "")
-            event = AgentEvent(stream=stream, payload=payload, raw=raw)
-            events.append(event)
-
+                continue
+            event = self._to_agent_event(raw)
             if on_event is not None:
                 try:
                     await on_event(event)
                 except Exception:
                     logger.exception("on_event callback raised; continuing")
+            absorb(event)
 
-            if stream == "assistant":
-                text = payload.get("text", "")
-                if text:
-                    assistant_parts.append(text)
-
-            elif stream == "tool":
-                tool_calls.append(payload)
-
-            elif stream == "lifecycle":
-                phase = payload.get("phase", "")
-                if phase == "end":
+        if status == "timeout":
+            wait_task.cancel()
+        else:
+            try:
+                terminal = await asyncio.wait_for(
+                    wait_task, timeout=max(0.0, deadline - loop.time()) or 5.0,
+                )
+                if isinstance(terminal, dict) and terminal.get("error"):
+                    status, error = "error", str(terminal["error"])
+                else:
                     status = "ok"
-                    break
-                elif phase == "error":
-                    status = "error"
-                    error = payload.get("error", "agent error")
-                    break
+            except asyncio.TimeoutError:
+                status = "timeout"
+                wait_task.cancel()
 
-        # The agent RPC may also send a final response after lifecycle:end.
-        # We drain remaining events briefly to capture it.
-        try:
-            while True:
-                raw = await asyncio.wait_for(queue.get(), timeout=0.5)
-                payload = raw.get("payload", {})
-                stream = payload.get("stream", "")
-                if stream == "assistant":
-                    text = payload.get("text", "")
-                    if text:
-                        assistant_parts.append(text)
-        except asyncio.TimeoutError:
-            pass
+        # Drain any events already delivered after the run resolved.
+        while not queue.empty():
+            absorb(self._to_agent_event(queue.get_nowait()))
+
+        assistant_text = "".join(assistant_parts) or snapshot_text
+        if not assistant_text and status == "ok":
+            assistant_text = await self._last_assistant_from_history(session_key)
 
         return AgentRunResult(
             run_id=run_id,
             status=status,
-            assistant_text="".join(assistant_parts),
+            assistant_text=assistant_text,
             tool_calls=tool_calls,
             events=events,
             error=error,
         )
+
+    async def _last_assistant_from_history(self, session_key: str) -> str:
+        try:
+            history = await self.get_session_history(session_key)
+        except Exception:
+            return ""
+        for msg in reversed(history):
+            if isinstance(msg, dict) and msg.get("role") == "assistant":
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    return content
+        return ""
 
     # ------------------------------------------------------------------
     # Generic RPC helpers
