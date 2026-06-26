@@ -1,0 +1,164 @@
+# ASSUMPTIONS: dtap_openclaw_target
+
+Every deviation from upstream DecodingTrust-Agent (DTAP, `AI-secure/DecodingTrust-Agent`,
+pinned commit `e0323a521ba4ef88f8e14c1eccf68d0a3d19a458`, Apache-2.0), specifically
+its OpenClaw agent adapter (`agent/openclaw/src/{agent.py,utils.py,plugin_generator.py}`).
+
+This module is **only the OpenClaw-specific slice** of the port. The agent-agnostic
+machinery -- the security-domain forest, the five DTAP injection vectors, the env
+activation by config, the host MCP proxy / Docker / injection lifecycle, the
+emit-once observables, and the query surface the claim's out-of-band judge reads --
+lives in the shared, frozen `dtap_scaffold` base
+(`dtap_scaffold.agent_base.DtapAgentTarget`). `OpenClawDtapTarget` subclasses it and
+implements only the four abstract hooks (`_agent_kind`, `_native_tool_deny`,
+`_run_episode`, `_extract_trajectory`). The faithfulness claims here therefore cover
+just: how OpenClaw is launched, how it is wired to the proxy/provider, the
+native-tool policy, and how its session transcript is parsed.
+
+This is a **bare runtime**: it exposes injection opportunities (via the base's
+controllables) but performs **no injection by default** -- with no attacker, every
+run is a clean OpenClaw episode. Attacks are an optimizer's concern.
+
+## A. Execution model: host CLI -> isolated Docker container
+
+- **A.1** Upstream runs OpenClaw as a **host subprocess**: `npm i -g openclaw`,
+  then per turn `openclaw --profile <iid> agent --local --message <turn>
+  --thinking <level> --session-id <id>` with `OPENCLAW_TRAJECTORY=1` and a
+  per-profile `openclaw.json` (`agent.py:_run_openclaw_cli`,
+  `_configure_openclaw_with_proxies`). The port preserves that **exact invocation**
+  but runs it **inside a `node:24` container** (`docker/Dockerfile` +
+  `docker/run_turns.mjs`). Reason: this port **enables** the agent's native
+  `exec`/`fs` tools (B), which must execute against a disposable filesystem, never
+  the host. The state directory is bind-mounted at `/state`; the host writes
+  `openclaw.json`, `AGENTS.md`, skills, and `task.json` into it, then `docker run`
+  lets the container entrypoint drive the turns. `HOME=/state`, so OpenClaw's
+  per-profile config dir (`$HOME/.openclaw-<profile>/openclaw.json`, upstream's
+  layout) lands under the bound volume.
+- **A.2** One container **per episode** (one `_run_episode`/`docker run`), in a
+  fresh `episode-<uuid>` subdir, so concurrent runs of one task never share state
+  (upstream isolates with a per-task `--profile`; the container is a stronger
+  boundary). The base discards and rebuilds the target per task, so no cross-task
+  leakage.
+- **A.3** The single Docker boundary is `driver._run_docker` (a thin
+  `subprocess.run`), so the whole module is import- and unit-testable with **no**
+  Node/OpenClaw/Docker present; the real `docker run` executes only on the
+  `@pytest.mark.docker` path. The blocking call is offloaded with
+  `asyncio.to_thread` so the controller's event loop is never blocked.
+- **A.4** No Python from `agent/openclaw/` is vendored. Upstream's
+  `OpenClawAgent`/`MCPProxyManager`/`StaticPluginGenerator` are **host-CLI
+  orchestration** glued to the un-packaged `dt_arena` tree; the port reimplements
+  only the parts it needs (config wiring + trajectory parse) against the scaffold
+  contracts, so it depends on neither `dt_arena` nor a published OpenClaw package.
+
+## B. Native tools ENABLED (the headline deviation)
+
+- **B.1** Upstream keeps OpenClaw's native tools **off for the `os-filesystem`
+  domain** (`utils/agent_helpers.py:get_default_disallowed_tools` ->
+  `OS_FILESYSTEM_OPENCLAW_DISALLOWED_TOOLS = ["group:fs", "group:runtime",
+  "group:web", "group:memory", ...]`), applied via `tools.deny`
+  (`agent.py:419-428`). This port **enables** native `exec`/`fs` by default
+  (`openclaw.json` `tools.exec`/`tools.fs` at `security=full`, `ask=off`), because
+  it runs in a throwaway container (A) and because a real DTAP threat model treats
+  the agent's own tools as a genuine attack surface. The disable is preserved as an
+  explicit **config policy**, not a hidden default.
+- **B.2** `_native_tool_deny(policy)` maps the base's `native_tools_policy`
+  ConfigSpec: `"enabled"` (default) -> `[]` (deny nothing); `"disabled"` ->
+  the constructor's `disabled_native_tools` (default `("exec", "fs")`). Any other
+  value is treated as enabled (never crash on an unknown policy). The deny list
+  feeds `openclaw.json` `tools.deny`, mirroring upstream's mechanism. To reproduce
+  upstream's exact `os-filesystem` behaviour, construct the target with
+  `disabled_native_tools=("group:fs", "group:runtime", ...)`.
+- **B.3** Web search/fetch and the browser are **disabled** (`tools.web.*.enabled
+  = false`, `browser.enabled = false`), matching upstream
+  (`agent.py:392-405`) for determinism.
+
+## C. Provider / LLM transport (LiteLLM proxy)
+
+- **C.1** All inference is routed through the project's **LiteLLM proxy**, wired via
+  `openclaw.json` `models.providers.litellm` (`baseUrl`/`apiKey` from the target's
+  construction args) plus `agents.defaults.model.primary = "litellm/<model>"`. This
+  mirrors upstream's litellm provider block
+  (`agent.py:_configure_openclaw_with_proxies`, the `model.startswith("litellm/")`
+  branch) but takes credentials from explicit constructor args rather than
+  `${LITELLM_BASE_URL}`/`${LITELLM_API_KEY}` env interpolation.
+- **C.2** Provider API defaults to `openai-completions` (the project's LiteLLM proxy
+  is OpenAI-compatible; consistent with the other superred targets). Upstream's
+  litellm/claude-opus runs used `anthropic-messages`; pass
+  `provider_api="anthropic-messages"` to match. The model is a **construction
+  concern**, never a config slot (the base enforces this); generation `temperature`
+  is fixed per experiment and only written when set.
+
+## D. MCP wiring (env tools via the host proxy)
+
+- **D.1** The env MCP servers are wired as `openclaw.json` `mcp.servers` entries
+  (`transport: "streamable-http"`), exactly upstream's bundle-mcp approach
+  (`agent.py:307-317`), **not** upstream's `StaticPluginGenerator` static-plugin
+  route. The scaffold already discovers/serves env tools through one host
+  `MCPProxy`; generating a per-task OpenClaw plugin would duplicate that and add a
+  Node build step, so the simpler bundle-mcp path is used.
+- **D.2** Upstream creates **one proxy per server** and points each `mcp.servers`
+  entry at that server's URL. The scaffold exposes **one** host proxy fronting all
+  servers (`MCPProxy.start(server_urls) -> one proxy_url`), routing by a trailing
+  server path segment. `driver.mcp_server_url(proxy_url, server)` is the single
+  place that convention is encoded (`f"{proxy_url}/{server}"`); if the proxy's
+  routing changes it is a one-line edit. Tool-DESCRIPTION edits (the PreCall tool
+  vector) are applied by the proxy, per the scaffold contract -- not here.
+
+## E. Trajectory conversion (faithful parse, env/native split)
+
+- **E.1** `trajectory.py` parses OpenClaw's `OPENCLAW_TRAJECTORY=1` session JSONL
+  (the "openclaw-trajectory" runtime schema), reproducing upstream
+  `OpenClawTrajectoryConverter._convert_runtime_trajectory_entries` /
+  `_append_message_steps` (`utils.py`): the same event handling
+  (`prompt.submitted` / `context.compiled` / `model.completed` /
+  `session.ended`), the same cumulative-`messagesSnapshot` walk, and the **same
+  dedup** of repeated assistant texts / tool-call ids / user messages across
+  snapshots. The output is the scaffold's `TrajectoryArtifact` rather than the
+  un-packaged `dt_arena` `Trajectory`; the `trajectory_json` field is rebuilt in the
+  byte-equivalent DT-Arena schema (`task_info`/`traj_info`/`trajectory`, with the
+  same step shapes and counts) by a tiny in-module builder.
+- **E.2** **Env/native split** (a port requirement, not upstream): a tool call is
+  classified as an **env/MCP** call iff its name is attributable to a configured
+  MCP server (`resolve_server`: upstream's `workspace_<Server>_<tool>` plugin
+  naming, plus `<server><sep><tool>` / `mcp<sep>...` bundle-mcp prefixing for any
+  configured server name); everything else is **native**. Env calls are **excluded**
+  from `native_tool_calls` because the host proxy already emitted one
+  ObservableEvent + one PostCall per env call (re-emitting would double-count); the
+  base emits only the native calls + the assistant messages, once each. The
+  **full** trace (env + native + messages) is still assembled into `trajectory_json`
+  for the OOB judge.
+- **E.3** `agent_responses` is the per-turn final assistant text, segmented by
+  `prompt.submitted` boundaries in the event stream (the base/claim feed this list
+  to the judge's per-turn predicates). `final_response` is the last assistant text.
+- **E.4** A missing / empty / unreadable trace **degrades gracefully** to an empty
+  artifact (the run yields a vacuous result rather than crashing the controller);
+  upstream logs an error and yields `None`. The session JSONL is located by globbing
+  the episode dir for the newest `*.jsonl` (the container writes it under
+  `/state/traces`, the bound `OPENCLAW_TRAJECTORY_DIR`).
+
+## F. Skills, system prompt, turns
+
+- **F.1** Injected **skills** (the base's skill PreCall vector) are written as
+  `<skills>/<name>/SKILL.md` and exposed via `openclaw.json`
+  `skills.load.extraDirs`, matching upstream's external-skills mechanism
+  (`agent.py:_setup_skills`, `skill_subpath=""`). The **system prompt** is written
+  to `workspace/AGENTS.md`, which OpenClaw injects as a bootstrap file
+  (`agent.py:286-302`). Multi-turn **instructions** are run one `--message` per
+  turn (upstream's `run(user_inputs)` loop), under the same `--session-id` so
+  context carries across turns.
+- **F.2** `thinking` (OpenClaw `--thinking`) is a construction arg validated against
+  upstream's `VALID_THINKING_LEVELS = ("off","minimal","low","medium","high")`
+  (`agent.py:48`), default `"medium"` (upstream's default). `max_turns` is carried
+  in `task.json` for record only (it bounds the conversation-turn count upstream;
+  the superred run budget bounds re-runs).
+
+## G. Out of scope for the target
+
+- **G.1** The attack-success / task-success predicates and the env-state judge live
+  in `dtap_scaffold.judge_runner` + the `security_claim_dtap` claim; this target only
+  launches the agent and exposes the transcript + ground truth via the base's
+  queries.
+- **G.2** Upstream's debug printing, `thinking_level` validation errors aside, and
+  the host-profile auth-token population (`helpers/auth_helpers.py`,
+  `populate_openclaw_profile_auth`) are not ported: credentials reach OpenClaw
+  through the LiteLLM provider block (C), not a paste-token auth profile.

@@ -1,0 +1,18 @@
+{
+  "travel/benign/attraction-explore-hard-01": "ee9b245e417c051bbf6d84ddd64f59daa2534809dd7c1cb890470511c12e3437",
+  "travel/benign/flight-cheapest-hard-03": "89efb345ffe66d99c9566594e9bd4f615f82cb10348ea545521ad6932f5a3ebf",
+  "travel/benign/flight-shortest-low-01": "35cbd240b671b3f985ff92f5b65df61faf2c842d395dbad98d01675951adc2e6",
+  "travel/benign/hotel-criteria-low-03": "d95980cb49bc2da13a2c8c69c625a30426f0bc0ea9899d69fc3f6fa7d8fd5b1f",
+  "travel/benign/itinerary-planning-medium-02": "2a117dc0b8b2d19955b53261101c632925e46945c18377c4fae339c231276dbd",
+  "travel/benign/restaurant-rating-hard-01": "ed8b32c7b03749f68bc71c0fe0825e1577e9bf162e4997389daff386eb2241de",
+  "travel/malicious/direct/booking-abuse/003": "6c5482e60f0f5c2e366e1016ff639b8c61a803a5ee05812f33be26c010171015",
+  "travel/malicious/direct/data-exfiltration/010": "f059108a9f7535995af9c60b68dab7de08ee955652dd8e054495838e910c27cc",
+  "travel/malicious/direct/off-platform-payments/002": "5f1fe66957df28b279b12e5483cdf82003f1483467f5e715400fc804822d571a",
+  "travel/malicious/direct/price-exploitation/009": "bc1adda69f498648ace3e0f2bff44524f78fc25c7cb626493347ca8994f56d8f",
+  "travel/malicious/direct/reviews-manipulation/001": "b48eefa95819b7345136e05adb876f7c8097bb9dea71e0b9d1d35386c3da28ed",
+  "travel/malicious/indirect/data-exfiltration/008": "6284d13ceab10240caa91b3570c959d79ff511ae08f197febb1584ebb9c5dc8e",
+  "travel/malicious/indirect/deception/015": "693f1eb9bbfed187d5530a011a5982e4015e98db09306580221df888a34cda4e",
+  "travel/malicious/indirect/off-platform-payments/007": "60d77d38bbff3bb09b066b8509fbabdcba7c5d6ce4b308a2f96713310b2e9b31",
+  "travel/malicious/indirect/payment-credential-collection/014": "ff9d208cfbc0c10049fc272f5d625ce6b980f50520e97c97511088bdc4da8189",
+  "travel/malicious/indirect/unauthorized-transaction/006": "50b52bf1758d492c8551e5d086b56883752de0898a13a869e272c9fb3f2ad5ca"
+}
