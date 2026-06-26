@@ -14,7 +14,12 @@ import pytest
 from conftest import mock_response
 
 from muzzle_optimizer.grafter import Grafter
-from muzzle_optimizer.json_utils import extract_json_object, load_system_prompt
+from muzzle_optimizer.json_utils import (
+    extract_json_object,
+    load_system_prompt,
+    load_system_prompt_by_name,
+    vendored_prompt_path,
+)
 from muzzle_optimizer.pair.evaluator import PairEvaluator
 from muzzle_optimizer.prompter import Prompter
 from muzzle_optimizer.summarizer import Summarizer
@@ -123,3 +128,19 @@ def test_extract_json_object_edge_cases() -> None:
 
 def test_load_system_prompt_missing_file_falls_back() -> None:
     assert load_system_prompt("/no/such/file.yaml") == "Empty System Prompt"
+
+
+def test_prompt_braces_deescaped_at_load_but_file_byte_identical() -> None:
+    # The de-escape collapses doubled braces exactly like .format(): the invalid OPENING
+    # escape {{ (which the model echoes back, breaking the JSON parse) must be gone, while
+    # legitimately-nested closings (e.g. {"url":...}}) may remain as valid JSON. See
+    # ASSUMPTIONS.md deviation 9.
+    for name in ("summarizer", "prompter"):
+        loaded = load_system_prompt_by_name(name)
+        assert "{{" not in loaded, f"{name} still carries the {{{{ format-escape after load"
+    # Lone single-brace illustrative placeholders survive (only doubled braces collapse), so
+    # the prompter few-shot examples keep their {target_url}-style tokens.
+    assert "{target_url}" in load_system_prompt_by_name("prompter")
+    # The de-escape is load-time only: the vendored file on disk stays byte-identical to
+    # upstream (it still contains the {{ escapes), so the asset tests continue to hold.
+    assert "{{" in open(vendored_prompt_path("summarizer"), encoding="utf-8").read()

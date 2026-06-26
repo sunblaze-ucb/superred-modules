@@ -133,6 +133,23 @@ max_n_attack_attempts=10, judge_temperature=0.0`) are recorded as audit constant
    available upstream `pair.py`. Residual fidelity uncertainty vs the private fork is
    acknowledged and irreducible.
 
+9. **The `summarizer`/`prompter` prompt YAMLs are brace-de-escaped at load time**
+   (`{{` -> `{`, `}}` -> `}`), while the vendored files stay byte-identical to upstream.
+   *Why:* upstream authored those JSON-schema examples with `.format()`-style brace escapes
+   (`{{`/`}}`) but never calls `.format()` — it cannot, because the same prompts also contain
+   illustrative `{target_url}`-style placeholders that would raise `KeyError` — so it sends
+   the raw string and the model copies the `{{` back, yielding invalid JSON that the parser
+   drops. On a complex real-agent transcript (verified live against ASB and AgentDojo) the
+   Summarizer then exhausts all five retries and the playbook falls back to empty, silently
+   disabling MUZZLE's defining "trajectory-grounded payload generation". We apply only the
+   brace collapse `.format()` was authored for, which touches doubled braces and leaves single
+   `{placeholder}` tokens intact; the model then sees a valid single-brace schema and returns
+   a parseable playbook on the first try. *Recoverability:* high and faithful-to-intent — the
+   vendored bytes are unchanged (the asset tests still pass) and only the model-facing string
+   is de-escaped, exactly the transform the upstream prompt was written for. To recover strict
+   upstream behavior (raw `{{`, retry-on-echo), drop the `.replace` in
+   `json_utils.load_system_prompt_by_name`.
+
 ## Capability-aware behavior across scopes
 
 MUZZLE is an indirect-prompt-injection attack, so it prefers PostCall **content** vessels

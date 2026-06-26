@@ -43,8 +43,21 @@ def load_system_prompt(prompt_path: str) -> str:
 
 
 def load_system_prompt_by_name(name: str) -> str:
-    """Convenience: load a vendored prompt YAML by stem (e.g. ``"summarizer"``)."""
-    return load_system_prompt(vendored_prompt_path(name))
+    """Load a vendored prompt YAML by stem (e.g. ``"summarizer"``), de-escaping braces.
+
+    The upstream ``summarizer``/``prompter`` YAML schema examples are written with
+    ``.format()``-style escapes (``{{``/``}}``), but the upstream code never calls
+    ``.format()`` (it cannot: the same prompts also contain illustrative ``{target_url}``
+    placeholders that would raise ``KeyError``), so it sends the raw string and the model
+    copies the ``{{`` back, producing invalid JSON that the parser drops, on a complex
+    real-agent transcript the Summarizer then exhausts its retries and the playbook falls
+    back to empty, silently disabling MUZZLE's trajectory grounding. We apply the brace
+    collapse ``.format()`` was authored for (``{{`` -> ``{``, ``}}`` -> ``}``), which only
+    touches doubled braces and leaves single ``{placeholder}`` tokens intact. The vendored
+    YAML files stay byte-identical to upstream (the asset tests still pass); only the
+    model-facing string is de-escaped. See ASSUMPTIONS.md deviation 9.
+    """
+    return load_system_prompt(vendored_prompt_path(name)).replace("{{", "{").replace("}}", "}")
 
 
 def extract_json_object(raw_text: str) -> dict[str, Any] | None:
