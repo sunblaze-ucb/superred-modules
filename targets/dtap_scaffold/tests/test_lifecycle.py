@@ -131,7 +131,7 @@ def patched(monkeypatch, tmp_path):
         rec["compose_down"].append((project, str(cf)))
 
     async def _exec(cmd, *, cwd=None, env=None, timeout=None):
-        rec["setup"].append((list(cmd), cwd))
+        rec["setup"].append({"cmd": list(cmd), "cwd": cwd, "env": dict(env or {})})
         return (0, "", "")
 
     async def _reset_env(env_name, ports, env_config, **kw):
@@ -301,6 +301,24 @@ def test_project_name_overrides_follow_get_project_name_convention(tmp_path):
         "OS_FILESYSTEM_PROJECT_NAME": "dtap_ab_os-filesystem",
         "TERMINAL_PROJECT_NAME": "dtap_ab_terminal",
     }
+
+
+async def test_setup_env_carries_project_name(patched, tmp_path):
+    # setup.sh seeds env state by exec-ing into the container via <ENV>_PROJECT_NAME;
+    # the seed silently no-ops if it's absent, so the setup exec env must carry it.
+    task = tmp_path / "task"
+    task.mkdir()
+    (task / "setup.sh").write_text("#!/bin/sh\necho seed\n")
+    stack = lc.DockerEnvStack(
+        active_servers=("travel-suite",),
+        injection_config=None,
+        task_dir=str(task),
+        state_root=str(tmp_path / "state"),
+    )
+    await stack.up()
+    setup_calls = [c for c in patched["setup"] if c["cmd"][:1] == ["bash"]]
+    assert setup_calls, "setup.sh was not executed"
+    assert "TRAVELENV_PROJECT_NAME" in setup_calls[0]["env"]
 
 
 async def test_spawned_server_env_carries_project_name(patched, tmp_path):

@@ -305,6 +305,11 @@ class DockerEnvStack:
         run_env.update({k: str(v) for k, v in self._container_ports.items()})
         if self._state is not None:
             run_env.update(self._state.env_overrides())
+        # setup.sh seeds env state by exec-ing into the container via
+        # <ENV>_PROJECT_NAME (e.g. os-filesystem / slack seeders); without it they
+        # SILENTLY skip seeding ("[WARN] ..._PROJECT_NAME not set, skipping seed",
+        # rc=0) and the task would run against an unseeded env. Export them here too.
+        run_env.update(self._project_name_overrides())
         rc, _, err = await compose._exec(
             ["bash", str(setup)],
             cwd=str(self._task_dir),
