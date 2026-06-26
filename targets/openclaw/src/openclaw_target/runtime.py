@@ -35,7 +35,9 @@ class OpenClawRuntime:
 
     Args:
         openclaw_bin: Path/name of the OpenClaw CLI (default ``openclaw``).
-        host: Loopback address to bind (default ``127.0.0.1``).
+        host: Loopback address used to build the URL and probe readiness
+            (default ``127.0.0.1``). The gateway is always started with
+            ``--bind loopback``.
         host_port: Port to bind the Gateway to.
         provider_api_key: API key for the upstream LLM provider
             (passed as ``OPENCLAW_PROVIDER_KEY``).
@@ -101,9 +103,12 @@ class OpenClawRuntime:
         return env
 
     def _build_cmd(self) -> list[str]:
+        # Verified flags (cli/gateway): there is no `--host`; the listener
+        # interface is `--bind <loopback|lan|tailnet|...>` and the port is
+        # `--port`. We pin loopback for a managed local gateway.
         cmd = [
             self.openclaw_bin, "gateway",
-            "--host", self.host,
+            "--bind", "loopback",
             "--port", str(self.host_port),
         ]
         if self.allow_unconfigured:
@@ -176,7 +181,14 @@ class OpenClawRuntime:
             await proc.wait()
 
     async def _wait_ready(self) -> None:
-        """Poll the loopback port until the gateway accepts a TCP connection."""
+        """Poll the loopback port until the gateway accepts a TCP connection.
+
+        Minimal liveness check. The gateway also multiplexes HTTP
+        ``/healthz`` (liveness) and ``/readyz`` (stricter readiness: stays
+        red while startup sidecars/plugins settle) on the same port; a
+        later refinement could probe ``/readyz`` and retry ``connect``
+        ``UNAVAILABLE`` (``details.reason: "startup-sidecars"``) responses.
+        """
         elapsed = 0.0
         while elapsed < self.startup_timeout_s:
             if self._proc is not None and self._proc.returncode is not None:
