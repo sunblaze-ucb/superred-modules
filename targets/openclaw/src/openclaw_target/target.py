@@ -188,7 +188,10 @@ class OpenClawTarget(Target):
             sessions are durable state, so a fresh conversation would lose
             intended context and break poison-then-trigger attacks.
         enable_llm_proxy: Intercept model calls via a local LLM proxy.
-            Requires ``provider_base_url`` and ``provider_api_key``.
+            ``None`` (default) turns it on whenever ``provider_base_url`` is
+            set; pass ``False`` to force it off. When on (managed mode), the
+            gateway is pointed at the proxy so model requests/responses are
+            recorded and the system prompt can be injected.
         provider_base_url: Upstream LLM provider URL.
         provider_api_key: API key for the upstream LLM provider.
         managed: If ``True``, auto-start/stop a local OpenClaw Gateway
@@ -218,7 +221,7 @@ class OpenClawTarget(Target):
         model_id: str = "",
         agent_timeout_s: float = DEFAULT_AGENT_TIMEOUT_S,
         enable_tool_injection: bool = False,
-        enable_llm_proxy: bool = False,
+        enable_llm_proxy: bool | None = None,
         provider_base_url: str = "",
         provider_api_key: str = "",
         managed: bool = False,
@@ -233,7 +236,12 @@ class OpenClawTarget(Target):
         self._agent_timeout_s = agent_timeout_s
         self._reset_session_between_runs = reset_session_between_runs
         self._enable_tool_injection = enable_tool_injection
-        self._enable_llm_proxy = enable_llm_proxy
+        # The LLM proxy is on by default whenever a provider is configured
+        # (it's the only way to inject model responses, track usage, and
+        # enumerate models). It auto-disables when no provider is given.
+        self._enable_llm_proxy = (
+            enable_llm_proxy if enable_llm_proxy is not None else bool(provider_base_url)
+        )
         self._provider_base_url = provider_base_url
         self._provider_api_key = provider_api_key
         self._managed = managed
@@ -275,6 +283,12 @@ class OpenClawTarget(Target):
         if self._enable_tool_injection and self._injection_server is None:
             await self._start_injection_server()
 
+        # Start the LLM proxy before the gateway so the managed runtime can
+        # point the gateway's provider base URL at it (otherwise model calls
+        # bypass the proxy and we lose response injection / usage tracking).
+        if self._enable_llm_proxy and self._llm_proxy is None:
+            await self._start_llm_proxy()
+
         if self._managed and self._runtime is None:
             from openclaw_target.runtime import OpenClawRuntime
 
@@ -286,6 +300,17 @@ class OpenClawTarget(Target):
                 )
             if self._tool_policy:
                 managed_kwargs.setdefault("tool_policy", self._tool_policy)
+            if self._provider_api_key:
+                managed_kwargs.setdefault("provider_api_key", self._provider_api_key)
+            # Route the gateway's model calls through the proxy when active;
+            # otherwise straight at the configured provider.
+            provider_url = (
+                self._llm_proxy.proxy_base_url
+                if self._llm_proxy is not None
+                else (self._provider_base_url or None)
+            )
+            if provider_url:
+                managed_kwargs.setdefault("provider_base_url", provider_url)
             self._runtime = OpenClawRuntime(**managed_kwargs)
             await self._runtime.start()
             self._gateway_url = self._runtime.gateway_url
@@ -303,9 +328,6 @@ class OpenClawTarget(Target):
             self._cached_tool_catalog = json.dumps(catalog, indent=2)
         except Exception:
             self._cached_tool_catalog = "{}"
-
-        if self._enable_llm_proxy and self._llm_proxy is None:
-            await self._start_llm_proxy()
 
         return client
 

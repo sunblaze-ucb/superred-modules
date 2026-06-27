@@ -41,6 +41,11 @@ class OpenClawRuntime:
         host_port: Port to bind the Gateway to.
         provider_api_key: API key for the upstream LLM provider
             (passed as ``OPENCLAW_PROVIDER_KEY``).
+        provider_base_url: Provider base URL for model calls (passed as
+            ``OPENCLAW_PROVIDER_URL``). Set this to the superred LLM proxy's
+            URL to route the gateway's model calls through it. The env name
+            mirrors ``OPENCLAW_PROVIDER_KEY``; override via ``extra_env`` if a
+            given gateway build expects a different variable.
         workspace_dir: Agent workspace directory. If ``None`` the CLI
             default is used.
         plugin_dir: Directory containing the superred injection
@@ -69,6 +74,7 @@ class OpenClawRuntime:
     host: str = "127.0.0.1"
     host_port: int = _DEFAULT_PORT
     provider_api_key: str = ""
+    provider_base_url: str | None = None
     workspace_dir: str | None = None
     plugin_dir: str | None = None
     callback_url: str | None = None
@@ -93,6 +99,8 @@ class OpenClawRuntime:
         env["OPENCLAW_GATEWAY_TOKEN"] = self._auth_token or ""
         if self.provider_api_key:
             env["OPENCLAW_PROVIDER_KEY"] = self.provider_api_key
+        if self.provider_base_url:
+            env["OPENCLAW_PROVIDER_URL"] = self.provider_base_url
         if self.workspace_dir:
             env["OPENCLAW_WORKSPACE"] = self.workspace_dir
         if self.plugin_dir:
