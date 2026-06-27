@@ -22,11 +22,13 @@ def openclaw_target_factory(
     gateway_url: str | None = None,
     session_key: str = "superred",
     agent_id: str = "default",
+    model_id: str = "",
     enable_tool_injection: bool = False,
     enable_llm_proxy: bool = False,
     provider_base_url: str = "",
     provider_api_key: str = "",
     managed: bool = False,
+    reset_session_between_runs: bool = False,
     managed_kwargs: dict[str, Any] | None = None,
     concurrency: int = 1,
 ) -> TargetFactory:
@@ -42,11 +44,13 @@ def openclaw_target_factory(
             "auth_token": auth_token,
             "session_key": session_key,
             "agent_id": agent_id,
+            "model_id": model_id,
             "enable_tool_injection": enable_tool_injection,
             "enable_llm_proxy": enable_llm_proxy,
             "provider_base_url": provider_base_url,
             "provider_api_key": provider_api_key,
             "managed": managed,
+            "reset_session_between_runs": reset_session_between_runs,
             "managed_kwargs": managed_kwargs,
         }
         if gateway_url is not None:

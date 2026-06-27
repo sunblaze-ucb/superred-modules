@@ -418,7 +418,7 @@ async def test_injection_bridge_round_trip():
     (without Docker/Node): an HTTP POST shaped like the plugin's
     ``before_tool_call`` callback flows through ``InjectionServer`` into
     ``_handle_injection_hook``, which dispatches a
-    ``ControllablePreCallEvent`` and returns the optimizer's
+    ``ControllablePostCallEvent`` and returns the optimizer's
     ``ControllableInjection`` as the tool-result content to splice in.
     """
     aiohttp = pytest.importorskip("aiohttp")
@@ -548,18 +548,23 @@ class _FakeClient:
     def __init__(self) -> None:
         self.rpc_calls: list[tuple[str, dict | None]] = []
         self.reset_sessions: list[str] = []
+        self.closed = False
 
-    async def rpc(self, method: str, params: dict | None = None) -> dict:
+    async def rpc(self, method: str, params: dict | None = None, **_: object) -> dict:
         self.rpc_calls.append((method, params))
         return {}
 
     async def reset_session(self, session_key: str = "superred") -> None:
         self.reset_sessions.append(session_key)
 
+    async def close(self) -> None:
+        self.closed = True
+
 
 class TestResetEphemeralState:
     @pytest.mark.asyncio
-    async def test_reset_clears_run_state_and_planted_files(self):
+    async def test_reset_clears_only_ephemeral_state(self):
+        """Reset clears per-run buffers but preserves durable task state."""
         target = OpenClawTarget(auth_token="t", gateway_url="ws://127.0.0.1:0")
         target._last_response = "leftover"
         target._last_tool_calls = [{"name": "exec"}]
@@ -570,15 +575,47 @@ class TestResetEphemeralState:
 
         await target.reset_ephemeral_state()
 
+        # Ephemeral buffers cleared.
         assert target._last_response == ""
         assert target._last_tool_calls == []
         assert target._last_events_json == "[]"
-        assert target._planted_files == []
+        # Durable state preserved: planted files kept, no session wipe by default.
+        assert target._planted_files == ["secrets/api_keys.txt"]
+        assert client.reset_sessions == []
+        assert client.rpc_calls == []
+
+    @pytest.mark.asyncio
+    async def test_reset_session_opt_in_wipes_conversation(self):
+        target = OpenClawTarget(
+            auth_token="t",
+            gateway_url="ws://127.0.0.1:0",
+            reset_session_between_runs=True,
+        )
+        target._planted_files = ["secrets/api_keys.txt"]
+        client = _FakeClient()
+        target._client = client  # type: ignore[assignment]
+
+        await target.reset_ephemeral_state()
+
+        assert client.reset_sessions == ["superred"]
+        # Even with conversation isolation, durable planted files survive reset.
+        assert target._planted_files == ["secrets/api_keys.txt"]
+
+    @pytest.mark.asyncio
+    async def test_teardown_clears_planted_files(self):
+        target = OpenClawTarget(auth_token="t", gateway_url="ws://127.0.0.1:0")
+        target._planted_files = ["secrets/api_keys.txt"]
+        client = _FakeClient()
+        target._client = client  # type: ignore[assignment]
+
+        await target.teardown()
+
         assert (
             "agents.files.set",
             {"agentId": "default", "name": "secrets/api_keys.txt", "content": ""},
         ) in client.rpc_calls
-        assert client.reset_sessions == ["superred"]
+        assert target._planted_files == []
+        assert client.closed is True
 
     @pytest.mark.asyncio
     async def test_reset_is_safe_without_a_connection(self):

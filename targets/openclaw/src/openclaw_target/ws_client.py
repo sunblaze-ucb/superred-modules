@@ -107,7 +107,11 @@ class OpenClawWSClient:
                     "mode": "backend",
                 },
                 "role": "operator",
-                "scopes": ["operator.read", "operator.write"],
+                # operator.admin is required for agents.files.set (planting the
+                # AGENTS.md system prompt / workspace files) and sessions.reset;
+                # read/write alone reject those, which silently broke config and
+                # reset. Request the full operator scope set.
+                "scopes": ["operator.read", "operator.write", "operator.admin"],
                 "caps": [],
                 "commands": [],
                 "permissions": {},
@@ -148,7 +152,7 @@ class OpenClawWSClient:
         message: str,
         *,
         session_key: str = "superred",
-        timeout_s: float = 120,
+        timeout_s: float = 600,
         on_event: Callable[[AgentEvent], Awaitable[None]] | None = None,
     ) -> AgentRunResult:
         """Send a message to the agent and collect the run result.
@@ -238,8 +242,12 @@ class OpenClawWSClient:
         status = "running"
         error: str | None = None
 
+        # agent.wait blocks until the run reaches a terminal state, which can
+        # take far longer than a normal RPC. Disable the per-request timeout
+        # (timeout=None) and let _collect_run's own ``deadline`` govern it,
+        # otherwise the 30s RPC cap would abort every run longer than 30s.
         wait_task: asyncio.Future[dict[str, Any]] = asyncio.ensure_future(
-            self.rpc("agent.wait", {"runId": run_id}),
+            self.rpc("agent.wait", {"runId": run_id}, timeout=None),
         )
         loop = asyncio.get_event_loop()
         deadline = loop.time() + timeout_s
@@ -325,13 +333,20 @@ class OpenClawWSClient:
     # ------------------------------------------------------------------
 
     async def rpc(
-        self, method: str, params: dict[str, Any] | None = None,
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        timeout: float | None = 30,
     ) -> dict[str, Any]:
         """Send a generic RPC request and return the response payload.
 
         Args:
             method: The RPC method name (e.g. ``"health"``, ``"tools.catalog"``).
             params: Optional parameters dict.
+            timeout: Per-request timeout in seconds, or ``None`` to wait
+                indefinitely (used for long-running calls like ``agent.wait``
+                whose duration is governed by a higher-level deadline).
 
         Returns:
             The response payload dict, or an error dict.
@@ -344,7 +359,7 @@ class OpenClawWSClient:
         }
         if params is not None:
             req["params"] = params
-        result = await self._send_request(req, req_id)
+        result = await self._send_request(req, req_id, timeout=timeout)
         if result.get("ok"):
             return result.get("payload", {})
         return {"error": result.get("error", "unknown")}
@@ -376,9 +391,13 @@ class OpenClawWSClient:
         return uuid.uuid4().hex[:16]
 
     async def _send_request(
-        self, req: dict[str, Any], req_id: str,
+        self, req: dict[str, Any], req_id: str, timeout: float | None = 30,
     ) -> dict[str, Any]:
-        """Send a request frame and wait for the matching response."""
+        """Send a request frame and wait for the matching response.
+
+        ``timeout`` is the seconds to wait for the response, or ``None`` to
+        wait indefinitely (the caller is responsible for bounding it).
+        """
         if not self._ws:
             raise ConnectionError("Not connected")
 
@@ -387,10 +406,15 @@ class OpenClawWSClient:
 
         await self._ws.send(json.dumps(req))
         try:
-            return await asyncio.wait_for(future, timeout=30)
+            if timeout is None:
+                return await future
+            return await asyncio.wait_for(future, timeout=timeout)
         except asyncio.TimeoutError:
             self._pending.pop(req_id, None)
             return {"ok": False, "error": "request timeout"}
+        except asyncio.CancelledError:
+            self._pending.pop(req_id, None)
+            raise
 
     async def _wait_for_event(
         self, event_name: str, timeout: float = 10,

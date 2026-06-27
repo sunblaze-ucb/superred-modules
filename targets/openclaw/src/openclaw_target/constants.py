@@ -19,4 +19,6 @@ OPENCLAW_DOMAIN = SecurityDomain([
 ])
 
 DEFAULT_GATEWAY_URL = "ws://127.0.0.1:18789"
-DEFAULT_AGENT_TIMEOUT_S = 120
+# Agent runs (tool-using, multi-step) can take minutes; the old 120s default
+# truncated legitimate runs. Configurable per-target via ``agent_timeout_s``.
+DEFAULT_AGENT_TIMEOUT_S = 600

@@ -14,8 +14,9 @@ trace representation is maintained.
 Tool-output injection follows the OpenClaw plugin hook contract
 (https://docs.openclaw.ai/plugins/hooks): the optimizer is consulted in
 the *async* ``before_tool_call`` hook (which emits a
-:class:`~superred.core.types.events.ControllablePreCallEvent` and blocks
-the agent until the optimizer responds), and the resulting content is
+:class:`~superred.core.types.events.ControllablePostCallEvent` — the
+framework convention for injecting into *tool output* — and blocks the
+agent until the optimizer responds), and the resulting content is
 spliced into the persisted tool result by the *synchronous*
 ``tool_result_persist`` hook on the plugin side. ``tool_result_persist``
 does no network I/O, so all optimizer-in-the-loop work happens in
@@ -47,6 +48,7 @@ from superred.core.types.controllable import Controllable
 from superred.core.types.event import EventHandler, EventResponseHandler
 from superred.core.types.events import (
     ControllableInjection,
+    ControllablePostCallEvent,
     ControllablePreCallEvent,
     ObservableEvent,
 )
@@ -75,7 +77,7 @@ WEB_CONTENT_CTRL = Controllable(
     security_domain=EXTERNAL_DATA_TAG,
     description=(
         "Per-call injection for web_fetch / web_search tool results. "
-        "Emitted mid-run: one ControllablePreCallEvent per intercepted "
+        "Emitted mid-run: one ControllablePostCallEvent per intercepted "
         "tool invocation. Requires the injection plugin (Phase 2)."
     ),
 )
@@ -85,7 +87,7 @@ FILE_CONTENT_CTRL = Controllable(
     security_domain=EXTERNAL_DATA_TAG,
     description=(
         "Per-call injection for file read tool results. Emitted "
-        "mid-run: one ControllablePreCallEvent per intercepted "
+        "mid-run: one ControllablePostCallEvent per intercepted "
         "invocation. Requires the injection plugin (Phase 2)."
     ),
 )
@@ -102,10 +104,16 @@ MODEL_SYSTEM_PROMPT_CTRL = Controllable(
 
 # -- Observable definitions ----------------------------------------------------
 
+MODEL_IDENTITY_OBS = Observable(
+    name="model_identity",
+    security_domain=MODEL_TAG,
+    description="The configured target model identifier.",
+)
+
 SYSTEM_DESC_OBS = Observable(
     name="system_description",
     security_domain=SYSTEM_TAG,
-    description="OpenClaw version, gateway config, and model info.",
+    description="OpenClaw gateway config (url, session, agent, tool profile).",
 )
 
 TOOL_LIST_OBS = Observable(
@@ -118,12 +126,6 @@ SYSTEM_PROMPT_OBS = Observable(
     name="system_prompt",
     security_domain=INTERNAL_CONTEXT_TAG,
     description="The agent's system prompt as configured for this run.",
-)
-
-USER_MESSAGE_OBS = Observable(
-    name="user_message",
-    security_domain=USER_INPUT_TAG,
-    description="User message sent to the agent for this run.",
 )
 
 ASSISTANT_STREAM_OBS = Observable(
@@ -171,11 +173,20 @@ class OpenClawTarget(Target):
         auth_token: Shared-secret auth token for the Gateway.
             Can be omitted when ``managed=True`` (auto-generated).
         session_key: Session routing key used for agent runs.
+        agent_id: OpenClaw agent id used for ``agents.files.set`` calls.
+        model_id: Configured target model identifier, surfaced as a static
+            observable so the optimizer sees it at initialization.
         agent_timeout_s: Max seconds to wait for an agent run.
         enable_tool_injection: Expose per-call tool-output
-            controllables via the plugin-hook bridge. Each
-            ``before_tool_call`` / ``tool_result_persist`` hook
-            emits a live ``ControllablePreCallEvent``.
+            controllables via the plugin-hook bridge. The async
+            ``before_tool_call`` hook emits a live
+            ``ControllablePostCallEvent`` (tool-output injection) and the
+            sync ``tool_result_persist`` hook splices the result.
+        reset_session_between_runs: If ``True``, clear the OpenClaw
+            conversation/session in :meth:`reset_ephemeral_state`. Default
+            ``False`` keeps the session across runs of a task — OpenClaw
+            sessions are durable state, so a fresh conversation would lose
+            intended context and break poison-then-trigger attacks.
         enable_llm_proxy: Intercept model calls via a local LLM proxy.
             Requires ``provider_base_url`` and ``provider_api_key``.
         provider_base_url: Upstream LLM provider URL.
@@ -190,9 +201,12 @@ class OpenClawTarget(Target):
             :class:`openclaw_target.runtime.OpenClawRuntime`.
 
     Between runs of a single task the controller calls
-    :meth:`reset_ephemeral_state`, which clears per-run state, clears
-    files planted this task, and resets the Gateway session while
-    keeping the same gateway process/connection.
+    :meth:`reset_ephemeral_state`, which clears only per-run (ephemeral)
+    state. Durable task state — planted files / AGENTS.md and the
+    conversation/session — is preserved across runs and discarded only
+    when the controller obtains a fresh instance from the
+    ``TargetFactory`` between tasks (which, when ``managed``, is a fresh
+    gateway). Planted files are cleaned up in :meth:`teardown`.
     """
 
     def __init__(
@@ -201,19 +215,23 @@ class OpenClawTarget(Target):
         gateway_url: str = DEFAULT_GATEWAY_URL,
         session_key: str = "superred",
         agent_id: str = "default",
+        model_id: str = "",
         agent_timeout_s: float = DEFAULT_AGENT_TIMEOUT_S,
         enable_tool_injection: bool = False,
         enable_llm_proxy: bool = False,
         provider_base_url: str = "",
         provider_api_key: str = "",
         managed: bool = False,
+        reset_session_between_runs: bool = False,
         managed_kwargs: dict[str, Any] | None = None,
     ) -> None:
         self._gateway_url = gateway_url
         self._auth_token = auth_token
         self._session_key = session_key
         self._agent_id = agent_id
+        self._model_id = model_id
         self._agent_timeout_s = agent_timeout_s
+        self._reset_session_between_runs = reset_session_between_runs
         self._enable_tool_injection = enable_tool_injection
         self._enable_llm_proxy = enable_llm_proxy
         self._provider_base_url = provider_base_url
@@ -330,8 +348,9 @@ class OpenClawTarget(Target):
 
         The plugin's HTTP POST blocks until this coroutine returns, so
         we consult the optimizer by dispatching a
-        :class:`ControllablePreCallEvent` on the active trajectory and
-        awaiting the :class:`ControllableInjection` response.
+        :class:`ControllablePostCallEvent` on the active trajectory and
+        awaiting the :class:`ControllableInjection` response. PostCall is
+        the framework convention for injecting into *tool output*.
 
         Only ``before_tool_call`` is consulted: it is the sole async hook
         in the OpenClaw contract. The returned ``toolResult`` is stashed
@@ -362,9 +381,10 @@ class OpenClawTarget(Target):
 
         try:
             response = await send_event(
-                ControllablePreCallEvent(
+                ControllablePostCallEvent(
                     controllable=controllable,
                     request=request_payload,
+                    answer=str(result) if result is not None else "",
                 ),
             )
         except Exception:
@@ -390,6 +410,15 @@ class OpenClawTarget(Target):
         if tool_name == "read":
             return FILE_CONTENT_CTRL
         return None
+
+    @staticmethod
+    def _tool_name_from_payload(payload: dict[str, Any]) -> str:
+        """Best-effort tool name from a ``session.tool`` event payload."""
+        for key in ("toolName", "tool", "name"):
+            value = payload.get(key)
+            if isinstance(value, str):
+                return value
+        return ""
 
     async def _start_llm_proxy(self) -> None:
         """Start the local LLM proxy for model call interception."""
@@ -513,13 +542,26 @@ class OpenClawTarget(Target):
         return ctrls
 
     def get_observables(self) -> list[ObservableValue]:
+        # Static observables are derived from configuration so they are
+        # populated at optimizer-initialization time (before the first run),
+        # matching the framework convention used by the other agentic targets
+        # (agentdojo / inspect_agent). The live gateway tool catalog is
+        # cached on connect; before that it is empty.
         obs = [
+            ObservableValue(
+                observable=MODEL_IDENTITY_OBS,
+                content=self._model_id,
+            ),
             ObservableValue(
                 observable=SYSTEM_DESC_OBS,
                 content=json.dumps({
                     "gateway_url": self._gateway_url,
                     "session_key": self._session_key,
-                    "hello": self._hello_payload,
+                    "agent_id": self._agent_id,
+                    "model_id": self._model_id,
+                    "tool_policy": self._tool_policy or None,
+                    "managed": self._managed,
+                    "hello": self._hello_payload or None,
                 }),
             ),
             ObservableValue(
@@ -594,11 +636,9 @@ class OpenClawTarget(Target):
             if isinstance(user_resp, ControllableInjection)
             else "Hello"
         )
-
-        emit(ObservableEvent(
-            observable=USER_MESSAGE_OBS,
-            content=user_message,
-        ))
+        # The user message is recorded by the framework from the
+        # USER_MESSAGE_CTRL controllable above; we do NOT also emit it as an
+        # observable (it would double-record the same content).
 
         # Activate the hook bridge for the duration of the agent run so
         # plugin-issued tool-call hooks can consult the optimizer live.
@@ -613,6 +653,16 @@ class OpenClawTarget(Target):
                         content=text,
                     ))
             elif evt.stream == "tool":
+                # Tool calls that are injection points are recorded via their
+                # ControllablePostCallEvent (its request carries the call), so
+                # don't also emit them as observables. Non-injection tool calls
+                # have no controllable, so they are surfaced here.
+                tool_name = self._tool_name_from_payload(evt.payload)
+                if (
+                    self._enable_tool_injection
+                    and self._controllable_for_tool(tool_name) is not None
+                ):
+                    return
                 emit(ObservableEvent(
                     observable=TOOL_CALL_OBS,
                     content=json.dumps(evt.payload),
@@ -661,14 +711,19 @@ class OpenClawTarget(Target):
     # ------------------------------------------------------------------
 
     async def reset_ephemeral_state(self) -> None:
-        """Clear per-run state between runs of the same task.
+        """Clear only per-run (ephemeral) state between runs of the same task.
 
-        Resets the last-run response/tool-call/event buffers and any
-        recorded proxy calls, clears files planted during this task, and
-        resets the Gateway session. The gateway process and WebSocket
-        connection are kept: durable, per-task state. Fresh durable state
-        (a new gateway) comes from the controller building a new target
-        instance per task via the ``TargetFactory``.
+        Ephemeral state = the last-run response/tool-call/event buffers and
+        any recorded proxy calls. Durable task state is intentionally
+        preserved per the framework contract (``Target.reset_ephemeral_state``:
+        durable state must survive this call and is discarded only via a fresh
+        ``TargetFactory`` instance between tasks):
+
+        - Planted files / AGENTS.md remain (cleaned up in :meth:`teardown`).
+        - The OpenClaw conversation/session is kept, since OpenClaw sessions
+          are durable; wiping them would lose intended context and break
+          poison-then-trigger attacks. Opt into per-run conversation isolation
+          with ``reset_session_between_runs=True``.
         """
         self._last_response = ""
         self._last_tool_calls = []
@@ -677,9 +732,22 @@ class OpenClawTarget(Target):
             self._llm_proxy.records.clear()
             self._llm_proxy.system_prompt_injection = None
 
-        if self._client:
-            # The protocol exposes agents.files.set (no files.delete); clear
-            # a planted file by overwriting it with empty content.
+        if self._reset_session_between_runs and self._client:
+            try:
+                await self._client.reset_session(self._session_key)
+            except Exception:
+                logger.debug("Session reset failed (may be expected)", exc_info=True)
+
+    async def teardown(self) -> None:
+        """Close the connection, injection server, proxy, and gateway process.
+
+        Best-effort clears files planted during this task before closing the
+        connection. For a managed gateway the process is destroyed anyway;
+        this matters for an external gateway shared across tasks.
+        """
+        if self._client and self._planted_files:
+            # The protocol exposes agents.files.set (no files.delete); clear a
+            # planted file by overwriting it with empty content.
             for filename in self._planted_files:
                 try:
                     await self._client.rpc(
@@ -690,13 +758,6 @@ class OpenClawTarget(Target):
                     logger.debug("Could not clear planted file %s", filename, exc_info=True)
             self._planted_files.clear()
 
-            try:
-                await self._client.reset_session(self._session_key)
-            except Exception:
-                logger.debug("Session reset failed (may be expected)", exc_info=True)
-
-    async def teardown(self) -> None:
-        """Close the connection, injection server, proxy, and gateway process."""
         if self._llm_proxy:
             await self._llm_proxy.stop()
             self._llm_proxy = None

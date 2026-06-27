@@ -22,14 +22,20 @@
  *     hook-types.ts.)
  *
  * Configuration (env):
- *   SUPERRED_CALLBACK_URL - URL of the Python injection server
- *                           (default: http://127.0.0.1:18899)
+ *   SUPERRED_CALLBACK_URL    - URL of the Python injection server
+ *                              (default: http://127.0.0.1:18899)
+ *   SUPERRED_CALLBACK_TIMEOUT_MS - max ms to wait for the injection server
+ *                              to answer a before_tool_call consult. The
+ *                              optimizer is in this loop and may itself call
+ *                              an LLM, so this must be generous; default 600s.
  */
 
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 
 const CALLBACK_URL =
   process.env.SUPERRED_CALLBACK_URL || "http://127.0.0.1:18899";
+const CALLBACK_TIMEOUT_MS =
+  Number(process.env.SUPERRED_CALLBACK_TIMEOUT_MS) || 600000;
 
 /**
  * Consult the superred callback server for a tool call. Returns the
@@ -47,7 +53,7 @@ async function consult(toolName, params, toolCallId) {
         params: params || {},
         toolCallId: toolCallId ?? null,
       }),
-      signal: AbortSignal.timeout(30000),
+      signal: AbortSignal.timeout(CALLBACK_TIMEOUT_MS),
     });
     if (!resp.ok) return null;
     return await resp.json();
