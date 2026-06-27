@@ -80,6 +80,13 @@ their controllables and are **not** double-emitted as observables.
 Security domains (`constants.py`): `system` ⊃ {`user_input`, `external_data`,
 `internal_context`, `tool_catalog`, `model`}.
 
+**Adding capabilities.** Tool-output injection points are declared in the
+`TOOL_OUTPUT_CONTROLLABLES` registry (gateway tool name → `Controllable`).
+`get_controllables` and the plugin bridge both derive from it, so adding
+exec/shell, messaging, or memory output injection is a single entry (define a
+`Controllable` with the right security domain and map its gateway tool
+name(s)). New entries are gated on confirming the real gateway tool names.
+
 ## Usage
 
 Managed gateway (one isolated gateway per task), driving the prompt-list baseline:

@@ -102,6 +102,25 @@ MODEL_SYSTEM_PROMPT_CTRL = Controllable(
     ),
 )
 
+# -- Tool-output injection registry -------------------------------------------
+#
+# Maps an OpenClaw gateway tool name -> the Controllable whose injected value
+# replaces that tool's output (a ControllablePostCallEvent fires per call when
+# ``enable_tool_injection`` is on). This is the single extension point for
+# tool-output injection: ``get_controllables`` and the plugin bridge both
+# derive from it, so adding a new capability (e.g. exec/shell, messaging,
+# memory) is one entry here — define a Controllable with the right security
+# domain and map its gateway tool name(s). New capabilities are gated behind
+# confirming the actual gateway tool names to avoid fabricating them.
+#
+#   "exec":    SHELL_OUTPUT_CTRL,   # exec/shell output (when confirmed)
+#   "message": MESSAGE_CONTENT_CTRL # messaging payloads (when confirmed)
+TOOL_OUTPUT_CONTROLLABLES: dict[str, Controllable] = {
+    "web_fetch": WEB_CONTENT_CTRL,
+    "web_search": WEB_CONTENT_CTRL,
+    "read": FILE_CONTENT_CTRL,
+}
+
 # -- Observable definitions ----------------------------------------------------
 
 MODEL_IDENTITY_OBS = Observable(
@@ -427,11 +446,7 @@ class OpenClawTarget(Target):
         return {"toolResult": response.value}
 
     def _controllable_for_tool(self, tool_name: str) -> Controllable | None:
-        if tool_name in ("web_fetch", "web_search"):
-            return WEB_CONTENT_CTRL
-        if tool_name == "read":
-            return FILE_CONTENT_CTRL
-        return None
+        return TOOL_OUTPUT_CONTROLLABLES.get(tool_name)
 
     @staticmethod
     def _tool_name_from_payload(payload: dict[str, Any]) -> str:
@@ -558,7 +573,8 @@ class OpenClawTarget(Target):
     def get_controllables(self) -> list[Controllable]:
         ctrls = [USER_MESSAGE_CTRL]
         if self._enable_tool_injection:
-            ctrls.extend([WEB_CONTENT_CTRL, FILE_CONTENT_CTRL])
+            # Unique controllables from the tool-output registry, order-stable.
+            ctrls.extend(dict.fromkeys(TOOL_OUTPUT_CONTROLLABLES.values()))
         if self._enable_llm_proxy:
             ctrls.append(MODEL_SYSTEM_PROMPT_CTRL)
         return ctrls
