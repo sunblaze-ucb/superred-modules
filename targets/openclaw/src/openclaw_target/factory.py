@@ -2,9 +2,13 @@
 
 The controller builds one target instance per task via the returned
 :class:`~superred.core.controller.TargetFactory`, which gives each task
-an isolated OpenClaw gateway/session (when ``managed=True``). OpenClaw
-drives a single Gateway connection per instance and does not support
-parallel runs, so ``concurrency`` defaults to 1.
+an isolated OpenClaw gateway/session (when ``managed=True``).
+
+Each instance drives a single Gateway connection, so a *local* managed
+gateway shares host state and defaults to ``concurrency=1``. The
+``"docker"`` managed runtime isolates each instance in its own container
+with a dynamic host port and private state dir, making ``concurrency>1``
+safe.
 """
 
 from __future__ import annotations
@@ -28,15 +32,17 @@ def openclaw_target_factory(
     provider_base_url: str = "",
     provider_api_key: str = "",
     managed: bool = False,
+    managed_runtime: str = "local",
     reset_session_between_runs: bool = False,
     managed_kwargs: dict[str, Any] | None = None,
     concurrency: int = 1,
 ) -> TargetFactory:
     """A ``TargetFactory`` that constructs an :class:`OpenClawTarget` per task.
 
-    ``gateway_url`` may be omitted when ``managed=True`` (a local gateway
-    process is started lazily and supplies the URL). ``concurrency`` is 1
-    because a single Gateway connection cannot multiplex parallel runs.
+    ``gateway_url`` may be omitted when ``managed=True`` (a gateway is started
+    lazily and supplies the URL). With ``managed_runtime="docker"`` each task
+    gets an isolated container (dynamic port + private state), so ``concurrency``
+    may be raised; a local managed gateway shares host state, so keep it at 1.
     """
 
     def create() -> OpenClawTarget:
@@ -50,6 +56,7 @@ def openclaw_target_factory(
             "provider_base_url": provider_base_url,
             "provider_api_key": provider_api_key,
             "managed": managed,
+            "managed_runtime": managed_runtime,
             "reset_session_between_runs": reset_session_between_runs,
             "managed_kwargs": managed_kwargs,
         }

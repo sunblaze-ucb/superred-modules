@@ -1,0 +1,196 @@
+"""Unit tests for the grounded gateway config + runtime command builders.
+
+These cover the deterministic pieces (config JSON, state-dir materialization,
+local + Docker command/env construction, capability registry) without needing a
+real OpenClaw gateway or Docker daemon.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from openclaw_target.config import (
+    DEFAULT_PLUGIN_NAME,
+    build_gateway_config,
+    materialize_state_dir,
+)
+from openclaw_target.docker_runtime import OpenClawDockerRuntime
+from openclaw_target.runtime import OpenClawRuntime
+from openclaw_target.target import (
+    MESSAGE_CONTENT_CTRL,
+    SHELL_OUTPUT_CTRL,
+    TOOL_OUTPUT_CONTROLLABLES,
+    OpenClawTarget,
+)
+
+# -- config builder -----------------------------------------------------------
+
+
+def test_minimal_config_is_empty() -> None:
+    assert build_gateway_config() == {}
+
+
+def test_config_provider_routing_grounded() -> None:
+    cfg = build_gateway_config(
+        model_id="openai/gpt-5",
+        provider_base_url="http://host.docker.internal:9001",
+        provider_api_key="sk-test",
+        tool_policy="minimal",
+        workspace_dir="/home/node/.openclaw/workspace",
+        plugin_names=[DEFAULT_PLUGIN_NAME],
+    )
+
+    provider = cfg["models"]["providers"]["openai"]
+    # /v1 is appended (OpenClaw calls <baseUrl>/chat/completions).
+    assert provider["baseUrl"] == "http://host.docker.internal:9001/v1"
+    assert provider["api"] == "openai-completions"
+    assert provider["apiKey"] == "sk-test"
+    # allowPrivateNetwork is required to reach a loopback / host.docker.internal proxy.
+    assert provider["request"]["allowPrivateNetwork"] is True
+    assert provider["models"] == [{"id": "gpt-5"}]
+    assert cfg["models"]["mode"] == "replace"
+
+    assert cfg["agents"]["defaults"]["model"] == {"primary": "openai/gpt-5"}
+    assert cfg["agents"]["defaults"]["workspace"] == "/home/node/.openclaw/workspace"
+    assert cfg["agents"]["list"][0]["id"] == "main"
+    assert cfg["tools"] == {"profile": "minimal"}
+    assert cfg["plugins"] == {"enabled": True, "allow": [DEFAULT_PLUGIN_NAME]}
+
+
+def test_config_does_not_double_append_v1() -> None:
+    cfg = build_gateway_config(
+        model_id="openai/gpt-5",
+        provider_base_url="http://127.0.0.1:9001/v1",
+    )
+    assert cfg["models"]["providers"]["openai"]["baseUrl"] == "http://127.0.0.1:9001/v1"
+
+
+def test_config_unqualified_model_uses_synthetic_provider() -> None:
+    cfg = build_gateway_config(model_id="gpt-5", provider_base_url="http://x/v1")
+    assert "superred" in cfg["models"]["providers"]
+
+
+def test_materialize_state_dir(tmp_path: Path) -> None:
+    plugin_src = tmp_path / "plugin"
+    plugin_src.mkdir()
+    (plugin_src / "index.js").write_text("// plugin")
+
+    state = tmp_path / "state"
+    cfg = build_gateway_config(model_id="openai/gpt-5", provider_base_url="http://x")
+    materialize_state_dir(state, config=cfg, plugin_src=plugin_src, plugin_name="superred-injection")
+
+    written = json.loads((state / "openclaw.json").read_text())
+    assert written["models"]["mode"] == "replace"
+    assert (state / "workspace").is_dir()
+    assert (state / "extensions" / "superred-injection" / "index.js").read_text() == "// plugin"
+
+
+# -- local runtime ------------------------------------------------------------
+
+
+def test_local_runtime_cmd_binds_loopback() -> None:
+    rt = OpenClawRuntime(host_port=12345)
+    cmd = rt._build_cmd()
+    assert cmd == ["openclaw", "gateway", "--bind", "loopback", "--port", "12345", "--allow-unconfigured"]
+
+
+def test_local_runtime_env_uses_state_dir_not_fabricated_vars(tmp_path: Path) -> None:
+    rt = OpenClawRuntime(
+        state_dir=str(tmp_path),
+        model_id="openai/gpt-5",
+        provider_base_url="http://127.0.0.1:9001",
+        callback_url="http://127.0.0.1:8899",
+    )
+    rt._auth_token = "tok"
+    rt._prepare_state_dir()
+    env = rt._build_env()
+
+    assert env["OPENCLAW_STATE_DIR"] == str(tmp_path)
+    assert env["OPENCLAW_CONFIG_PATH"] == str(tmp_path / "openclaw.json")
+    assert env["OPENCLAW_GATEWAY_TOKEN"] == "tok"
+    assert env["SUPERRED_CALLBACK_URL"] == "http://127.0.0.1:8899"
+    # The previously-fabricated env vars must NOT be used; provider routing is
+    # config (openclaw.json), extensions live under <stateDir>/extensions.
+    assert "OPENCLAW_PROVIDER_URL" not in env
+    assert "OPENCLAW_EXTENSIONS_DIR" not in env
+    # Provider routing landed in config instead.
+    cfg = json.loads((tmp_path / "openclaw.json").read_text())
+    assert cfg["models"]["providers"]["openai"]["baseUrl"] == "http://127.0.0.1:9001/v1"
+
+
+# -- docker runtime -----------------------------------------------------------
+
+
+def test_docker_run_cmd_grounded(tmp_path: Path) -> None:
+    rt = OpenClawDockerRuntime(
+        image="openclaw:local",
+        host_port=20001,
+        callback_url="http://host.docker.internal:8899",
+        container_name="superred-openclaw-test",
+    )
+    rt._auth_token = "tok"
+    rt._state_path = tmp_path
+    cmd = rt._build_run_cmd()
+    joined = " ".join(cmd)
+
+    assert cmd[:3] == ["docker", "run", "-d"]
+    # Dynamic host port published to the in-container gateway port.
+    assert "-p" in cmd and "20001:18789" in cmd
+    # Container reaches host services via host.docker.internal.
+    assert "host.docker.internal:host-gateway" in cmd
+    # Non-loopback bind => token is mandatory; passed via env.
+    assert "OPENCLAW_GATEWAY_TOKEN=tok" in cmd
+    assert "SUPERRED_CALLBACK_URL=http://host.docker.internal:8899" in cmd
+    # State dir mounted into the pinned container path.
+    assert f"{tmp_path}:/home/node/.openclaw" in cmd
+    # Hardening from compose.
+    assert "no-new-privileges:true" in cmd
+    # Gateway launched bound to lan on the container port.
+    assert joined.endswith("openclaw gateway --bind lan --port 18789 --allow-unconfigured")
+    assert cmd[cmd.index("openclaw:local") + 1] == "openclaw"
+
+
+def test_docker_runtime_gateway_url_uses_host_port() -> None:
+    rt = OpenClawDockerRuntime(host_port=20002)
+    assert rt.gateway_url == "ws://127.0.0.1:20002"
+    assert rt.container_host == "host.docker.internal"
+
+
+# -- capability registry (Phase 5b) -------------------------------------------
+
+
+def test_registry_has_grounded_capabilities() -> None:
+    assert TOOL_OUTPUT_CONTROLLABLES["bash"] is SHELL_OUTPUT_CTRL
+    assert TOOL_OUTPUT_CONTROLLABLES["exec"] is SHELL_OUTPUT_CTRL
+    assert TOOL_OUTPUT_CONTROLLABLES["process"] is SHELL_OUTPUT_CTRL
+    assert TOOL_OUTPUT_CONTROLLABLES["message"] is MESSAGE_CONTENT_CTRL
+    # memory is a plugin slot, not a tool — must not be a fabricated tool entry.
+    assert "memory" not in TOOL_OUTPUT_CONTROLLABLES
+
+
+def test_get_controllables_includes_new_capabilities() -> None:
+    target = OpenClawTarget(enable_tool_injection=True)
+    names = {c.name for c in target.get_controllables()}
+    assert {"shell_output", "message_content", "web_content", "file_content"} <= names
+
+
+def test_get_controllables_dedupes() -> None:
+    target = OpenClawTarget(enable_tool_injection=True)
+    ctrls = target.get_controllables()
+    # bash/exec/process all map to the single SHELL_OUTPUT_CTRL.
+    assert sum(1 for c in ctrls if c.name == "shell_output") == 1
+
+
+def test_docker_mode_uses_host_alias() -> None:
+    target = OpenClawTarget(managed=True, managed_runtime="docker")
+    assert target._is_docker is True
+    assert target._container_host() == "host.docker.internal"
+    assert target._bind_host() == "0.0.0.0"
+
+
+def test_local_mode_uses_loopback() -> None:
+    target = OpenClawTarget(managed=True, managed_runtime="local")
+    assert target._is_docker is False
+    assert target._container_host() == "127.0.0.1"
+    assert target._bind_host() == "127.0.0.1"

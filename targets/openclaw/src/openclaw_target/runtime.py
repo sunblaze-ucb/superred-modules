@@ -1,32 +1,91 @@
-"""Local OpenClaw Gateway process lifecycle.
+"""OpenClaw Gateway process lifecycle (local Node daemon).
 
-OpenClaw runs primarily as a *local Node daemon* (the Gateway), reached
-over a loopback WebSocket — not as a hosted/containerised service.
-(OpenClaw uses Docker only as a tool-execution *sandbox*, not as the
-gateway transport.) This manager starts ``openclaw gateway`` as a child
-process on a loopback port, points the superred injection extension at
-the host callback server, and tears the process down on stop. No
-container image, no ``host.docker.internal``, no ``/healthz`` HTTP probe
-is involved.
+This manager starts ``openclaw gateway`` as a child process on a loopback
+port, configures it via a per-instance state dir (``OPENCLAW_STATE_DIR``)
+containing a grounded ``openclaw.json`` and the superred injection
+extension, and tears it down on stop.
 
-It deliberately does not run the gateway in a container; sandboxed
-tool execution (e.g. the Agent's Last Exam virtual-X Docker image) is a
-separate, additive concern handled by OpenClaw's own sandbox config.
+For full-isolation / parallel runs the gateway can instead run inside a
+container; see :class:`openclaw_target.docker_runtime.OpenClawDockerRuntime`.
+Both runtimes share the configuration and readiness helpers in this module.
+
+Configuration is via OpenClaw's real mechanisms (see :mod:`openclaw_target.config`):
+``openclaw.json`` for model/provider routing, ``tools.profile`` and
+``plugins.allow``; extensions are installed under ``<stateDir>/extensions``.
+The provider base URL (e.g. the superred LLM proxy) is written into
+``models.providers.*.baseUrl`` rather than passed as an (ungrounded) env var.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import secrets
+import shutil
+import socket
+import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
+
+from openclaw_target.config import (
+    DEFAULT_PLUGIN_NAME,
+    DEFAULT_PROVIDER_API,
+    build_gateway_config,
+    materialize_state_dir,
+)
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_PORT = 18789
 _READY_POLL_INTERVAL_S = 0.5
 _READY_TIMEOUT_S = 30.0
+
+# In-container paths (mounted/used by both local and Docker runtimes). The
+# Docker image pins these under /home/node; locally we point them at the
+# per-instance state dir.
+CONTAINER_STATE_DIR = "/home/node/.openclaw"
+CONTAINER_WORKSPACE_DIR = "/home/node/.openclaw/workspace"
+
+
+def free_port() -> int:
+    """Reserve a free ephemeral TCP port and return it.
+
+    Binds to port 0, reads the assigned port, then closes the socket. There is
+    a small TOCTOU window before the gateway binds it, acceptable for test/eval
+    orchestration and far safer than a fixed port under ``concurrency>1``.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
+async def http_get_ok(host: str, port: int, path: str = "/healthz") -> bool:
+    """Best-effort HTTP/1.0 GET returning ``True`` on a 2xx status.
+
+    Uses raw asyncio streams so the runtime does not depend on aiohttp (an
+    optional extra). The gateway serves ``/healthz`` (liveness) and ``/readyz``
+    (readiness) on the same port as the WebSocket.
+    """
+    try:
+        reader, writer = await asyncio.open_connection(host, port)
+    except (ConnectionRefusedError, OSError):
+        return False
+    try:
+        writer.write(
+            f"GET {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\n\r\n".encode(),
+        )
+        await writer.drain()
+        status_line = await reader.readline()
+        parts = status_line.decode("latin-1", "replace").split()
+        return len(parts) >= 2 and parts[1].startswith("2")
+    except OSError:
+        return False
+    finally:
+        writer.close()
+        with contextlib.suppress(Exception):
+            await writer.wait_closed()
 
 
 @dataclass
@@ -38,53 +97,59 @@ class OpenClawRuntime:
         host: Loopback address used to build the URL and probe readiness
             (default ``127.0.0.1``). The gateway is always started with
             ``--bind loopback``.
-        host_port: Port to bind the Gateway to.
+        host_port: Port to bind the Gateway to. ``0`` (default) picks a free
+            ephemeral port so concurrent instances do not collide.
+        model_id: Provider-qualified model id written into ``openclaw.json``.
+        provider_base_url: Provider base URL for model calls, written to
+            ``models.providers.*.baseUrl``. Set to the superred LLM proxy URL
+            to route the gateway's model calls through it.
         provider_api_key: API key for the upstream LLM provider
-            (passed as ``OPENCLAW_PROVIDER_KEY``).
-        provider_base_url: Provider base URL for model calls (passed as
-            ``OPENCLAW_PROVIDER_URL``). Set this to the superred LLM proxy's
-            URL to route the gateway's model calls through it. The env name
-            mirrors ``OPENCLAW_PROVIDER_KEY``; override via ``extra_env`` if a
-            given gateway build expects a different variable.
-        workspace_dir: Agent workspace directory. If ``None`` the CLI
-            default is used.
-        plugin_dir: Directory containing the superred injection
-            extension; installed via ``OPENCLAW_EXTENSIONS_DIR``.
+            (``models.providers.*.apiKey``).
+        provider_api: OpenClaw provider API adapter id (``MODEL_APIS``).
+        workspace_dir: Agent workspace dir (``agents.defaults.workspace``).
+            Defaults to ``<state_dir>/workspace``.
+        plugin_dir: Source directory of the superred injection extension,
+            copied into ``<state_dir>/extensions/<plugin_name>``.
+        plugin_name: Extension id (also added to ``plugins.allow``).
         callback_url: URL of the host injection server, exported to the
             plugin as ``SUPERRED_CALLBACK_URL``.
-        tool_policy: Optional tool-profile name. Tool restriction in
-            OpenClaw is config (``tools.profile`` / ``tools.allow`` /
-            ``agents.<id>.tools.allow``), not a runtime RPC; when set, the
-            runtime applies it with ``openclaw config set tools.profile``
-            before starting the gateway.
-        allow_unconfigured: Pass ``--allow-unconfigured`` so a fresh
-            gateway starts without an interactive setup step.
+        tool_policy: Optional ``tools.profile`` name written to config.
+        allow_unconfigured: Pass ``--allow-unconfigured`` so a fresh gateway
+            starts without an interactive setup step.
+        state_dir: Per-instance state dir (``OPENCLAW_STATE_DIR``). A private
+            temp dir is created (and removed on stop) when ``None``.
         extra_env: Additional environment variables.
-        startup_timeout_s: Max seconds to wait for the port to accept
-            connections.
+        startup_timeout_s: Max seconds to wait for ``/healthz``.
 
     Note:
-        The extension-install directory env (``OPENCLAW_EXTENSIONS_DIR``)
-        is gateway-version specific and best-effort. This manager is not
-        exercised by the mock-gateway test suite (which connects to an
-        unmanaged in-process server).
+        This manager is not exercised by the mock-gateway test suite (which
+        connects to an unmanaged in-process server); the config/command
+        builders are covered by unit tests.
     """
 
     openclaw_bin: str = "openclaw"
     host: str = "127.0.0.1"
-    host_port: int = _DEFAULT_PORT
-    provider_api_key: str = ""
+    host_port: int = 0
+    model_id: str = ""
     provider_base_url: str | None = None
+    provider_api_key: str = ""
+    provider_api: str = DEFAULT_PROVIDER_API
     workspace_dir: str | None = None
     plugin_dir: str | None = None
+    plugin_name: str = DEFAULT_PLUGIN_NAME
     callback_url: str | None = None
     tool_policy: str | None = None
     allow_unconfigured: bool = True
+    state_dir: str | None = None
     extra_env: dict[str, str] = field(default_factory=dict)
     startup_timeout_s: float = _READY_TIMEOUT_S
 
     _proc: asyncio.subprocess.Process | None = None
     _auth_token: str | None = None
+    _state_path: Path | None = None
+    _owns_state_dir: bool = False
+
+    container_host: str = "127.0.0.1"
 
     @property
     def gateway_url(self) -> str:
@@ -94,26 +159,52 @@ class OpenClawRuntime:
     def auth_token(self) -> str | None:
         return self._auth_token
 
+    def _prepare_state_dir(self) -> Path:
+        if self.state_dir is not None:
+            path = Path(self.state_dir)
+            path.mkdir(parents=True, exist_ok=True)
+        else:
+            path = Path(tempfile.mkdtemp(prefix="superred-openclaw-"))
+            self._owns_state_dir = True
+        self._state_path = path
+
+        config = build_gateway_config(
+            model_id=self.model_id,
+            provider_base_url=self.provider_base_url or "",
+            provider_api_key=self.provider_api_key,
+            provider_api=self.provider_api,
+            tool_policy=self.tool_policy or "",
+            workspace_dir=self.workspace_dir or str(path / "workspace"),
+            plugin_names=[self.plugin_name] if self.plugin_dir else None,
+        )
+        materialize_state_dir(
+            path,
+            config=config,
+            plugin_src=Path(self.plugin_dir) if self.plugin_dir else None,
+            plugin_name=self.plugin_name,
+        )
+        return path
+
     def _build_env(self) -> dict[str, str]:
         env = dict(os.environ)
         env["OPENCLAW_GATEWAY_TOKEN"] = self._auth_token or ""
-        if self.provider_api_key:
-            env["OPENCLAW_PROVIDER_KEY"] = self.provider_api_key
-        if self.provider_base_url:
-            env["OPENCLAW_PROVIDER_URL"] = self.provider_base_url
-        if self.workspace_dir:
-            env["OPENCLAW_WORKSPACE"] = self.workspace_dir
-        if self.plugin_dir:
-            env["OPENCLAW_EXTENSIONS_DIR"] = self.plugin_dir
+        if self._state_path is not None:
+            env["OPENCLAW_STATE_DIR"] = str(self._state_path)
+            env["OPENCLAW_CONFIG_DIR"] = str(self._state_path)
+            env["OPENCLAW_CONFIG_PATH"] = str(self._state_path / "openclaw.json")
+            env["OPENCLAW_WORKSPACE_DIR"] = self.workspace_dir or str(
+                self._state_path / "workspace",
+            )
         if self.callback_url:
             env["SUPERRED_CALLBACK_URL"] = self.callback_url
         env.update(self.extra_env)
         return env
 
     def _build_cmd(self) -> list[str]:
-        # Verified flags (cli/gateway): there is no `--host`; the listener
-        # interface is `--bind <loopback|lan|tailnet|...>` and the port is
-        # `--port`. We pin loopback for a managed local gateway.
+        # Verified flags (src/cli/gateway-cli/run-options.ts): the listener
+        # interface is `--bind <loopback|lan|tailnet|auto|custom>` and the port
+        # is `--port`. A managed local gateway pins loopback (no auth required;
+        # non-loopback binds are rejected without a token).
         cmd = [
             self.openclaw_bin, "gateway",
             "--bind", "loopback",
@@ -124,16 +215,16 @@ class OpenClawRuntime:
         return cmd
 
     async def start(self) -> None:
-        """Start the local gateway process and wait until it accepts connections."""
+        """Start the local gateway process and wait until ``/healthz`` is green."""
         if self._proc is not None:
             logger.warning("Runtime already started (pid %s)", self._proc.pid)
             return
 
+        if self.host_port == 0:
+            self.host_port = free_port()
         self._auth_token = secrets.token_hex(24)
 
-        if self.tool_policy:
-            await self._apply_tool_profile()
-
+        self._prepare_state_dir()
         cmd = self._build_cmd()
 
         logger.info("Starting OpenClaw gateway: %s", " ".join(cmd))
@@ -146,58 +237,38 @@ class OpenClawRuntime:
 
         await self._wait_ready()
 
-    async def _apply_tool_profile(self) -> None:
-        """Restrict the agent's tools by writing the gateway tool profile.
-
-        Tool restriction is gateway config, not a runtime RPC. ``openclaw
-        config set tools.profile <name>`` is the documented mechanism; this
-        runs it best-effort before the gateway starts so the configured
-        policy is not silently dropped.
-        """
-        cmd = [self.openclaw_bin, "config", "set", "tools.profile", self.tool_policy or ""]
-        logger.info("Applying tool profile: %s", " ".join(cmd))
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, stderr = await proc.communicate()
-            if proc.returncode != 0:
-                logger.warning(
-                    "Could not set tools.profile=%r: %s",
-                    self.tool_policy, stderr.decode().strip(),
-                )
-        except FileNotFoundError:
-            logger.warning("openclaw CLI not found; tool profile not applied")
-
     async def stop(self) -> None:
-        """Terminate the gateway process."""
+        """Terminate the gateway process and remove any owned state dir."""
         proc = self._proc
         self._proc = None
         self._auth_token = None
-        if proc is None or proc.returncode is not None:
-            return
-
-        logger.info("Stopping OpenClaw gateway (pid %s)", proc.pid)
-        proc.terminate()
         try:
-            await asyncio.wait_for(proc.wait(), timeout=10)
-        except asyncio.TimeoutError:
-            logger.warning("Gateway did not exit; killing (pid %s)", proc.pid)
-            proc.kill()
-            await proc.wait()
+            if proc is not None and proc.returncode is None:
+                logger.info("Stopping OpenClaw gateway (pid %s)", proc.pid)
+                proc.terminate()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=10)
+                except asyncio.TimeoutError:
+                    logger.warning("Gateway did not exit; killing (pid %s)", proc.pid)
+                    proc.kill()
+                    await proc.wait()
+        finally:
+            self._cleanup_state_dir()
+
+    def _cleanup_state_dir(self) -> None:
+        if self._owns_state_dir and self._state_path is not None:
+            shutil.rmtree(self._state_path, ignore_errors=True)
+        self._state_path = None
+        self._owns_state_dir = False
 
     async def _wait_ready(self) -> None:
-        """Poll the loopback port until the gateway accepts a TCP connection.
+        """Poll ``/healthz`` until the gateway reports healthy.
 
-        Minimal liveness check. The gateway also multiplexes HTTP
-        ``/healthz`` (liveness) and ``/readyz`` (stricter readiness: stays
-        red while startup sidecars/plugins settle) on the same port; a
-        later refinement could probe ``/readyz`` and retry ``connect``
-        ``UNAVAILABLE`` (``details.reason: "startup-sidecars"``) responses.
+        Falls back to a TCP connect probe if the HTTP probe never succeeds but
+        the port accepts connections (older gateways without ``/healthz``).
         """
         elapsed = 0.0
+        tcp_only_ok = False
         while elapsed < self.startup_timeout_s:
             if self._proc is not None and self._proc.returncode is not None:
                 stderr = b""
@@ -207,11 +278,16 @@ class OpenClawRuntime:
                     "OpenClaw gateway exited during startup "
                     f"(code {self._proc.returncode}): {stderr.decode().strip()}",
                 )
-            if await self._port_open():
-                logger.info("OpenClaw gateway ready after %.1fs", elapsed)
+            if await http_get_ok(self.host, self.host_port, "/healthz"):
+                logger.info("OpenClaw gateway healthy after %.1fs", elapsed)
                 return
+            tcp_only_ok = await self._port_open()
             await asyncio.sleep(_READY_POLL_INTERVAL_S)
             elapsed += _READY_POLL_INTERVAL_S
+
+        if tcp_only_ok:
+            logger.warning("Gateway port open but /healthz never 2xx; proceeding")
+            return
 
         await self.stop()
         raise TimeoutError(
@@ -222,10 +298,8 @@ class OpenClawRuntime:
         try:
             _, writer = await asyncio.open_connection(self.host, self.host_port)
             writer.close()
-            try:
+            with contextlib.suppress(Exception):
                 await writer.wait_closed()
-            except Exception:
-                pass
             return True
         except (ConnectionRefusedError, OSError):
             return False

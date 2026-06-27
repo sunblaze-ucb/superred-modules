@@ -317,9 +317,15 @@ async def test_openclaw_target_interface_compliance():
         enable_tool_injection=True,
     )
     ctrls2 = target2.get_controllables()
-    assert len(ctrls2) == 3
     ctrl_names = {c.name for c in ctrls2}
-    assert ctrl_names == {"user_message", "web_content", "file_content"}
+    # user_message + the tool-output registry capabilities (web/file/shell/message).
+    assert ctrl_names == {
+        "user_message",
+        "web_content",
+        "file_content",
+        "shell_output",
+        "message_content",
+    }
 
     # set_config / query round-trip (no connection needed)
     target.set_config("system_prompt_append", "my secret")

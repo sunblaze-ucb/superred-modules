@@ -35,12 +35,22 @@ Components (`src/openclaw_target/`):
 |------|----------------|
 | `target.py` | The `Target`: declares controllables/observables, runs one agent turn, maps plugin hooks to events, owns lifecycle. |
 | `ws_client.py` | Async client for the Gateway protocol: connect handshake, request/response dispatch, event streaming, the two-stage agent run. |
-| `runtime.py` | Optional **managed** mode: starts/stops a local `openclaw gateway` Node process on a loopback port. |
+| `runtime.py` | Optional **managed** mode: starts/stops a local `openclaw gateway` Node process on a loopback port. Shared port/readiness helpers. |
+| `docker_runtime.py` | Managed mode in a **container**: runs the whole gateway in a fresh Docker container per task (full isolation, dynamic port). |
+| `config.py` | Builds the grounded `openclaw.json` (model/provider routing, `tools.profile`, `plugins.allow`) and materializes the per-instance state dir + extension. |
 | `factory.py` | `openclaw_target_factory(...)` → a `TargetFactory` that builds one target (and, when managed, one gateway) per task. |
 | `plugin/index.js` | OpenClaw extension (`definePluginEntry`) that consults superred for tool-output injection. |
 | `injection_server.py` | Python HTTP endpoint the plugin POSTs to; bridges into the live optimizer. |
 | `proxy_llm.py` | Optional OpenAI-compatible proxy in front of the provider: records model calls and can inject the system prompt. |
 | `constants.py` | Security-domain tags and defaults. |
+
+The managed gateway is configured the way OpenClaw really expects: a per-instance
+state dir (`OPENCLAW_STATE_DIR`) holds an `openclaw.json` whose
+`models.providers.<name>` block points model calls at the LLM proxy
+(`baseUrl` + `/v1`, `api: "openai-completions"`, `request.allowPrivateNetwork`),
+plus `tools.profile` and `plugins.allow`; the injection extension is installed
+under `<stateDir>/extensions/<plugin>`. (Provider/extension routing is **config**,
+not env vars.)
 
 ## Run flow
 
@@ -67,8 +77,10 @@ Controllables (injection points):
 | Controllable | Domain tag | When | Notes |
 |--------------|-----------|------|-------|
 | `user_message` | `user_input` | PreCall, once per run | Always on. |
-| `web_content` | `external_data` | PostCall, per web_fetch/web_search call | Needs `enable_tool_injection`. |
-| `file_content` | `external_data` | PostCall, per file read | Needs `enable_tool_injection`. |
+| `web_content` | `external_data` | PostCall, per `web_fetch`/`web_search` call | Needs `enable_tool_injection`. |
+| `file_content` | `external_data` | PostCall, per `read` call | Needs `enable_tool_injection`. |
+| `shell_output` | `external_data` | PostCall, per `bash`/`exec`/`process` call | Needs `enable_tool_injection`. |
+| `message_content` | `external_data` | PostCall, per `message` call | Needs `enable_tool_injection`. |
 | `model_system_prompt` | `model` | PreCall, pre-run | Needs the LLM proxy. |
 
 Observables: `model_identity`, `system_description`, `tool_list`,
@@ -82,10 +94,13 @@ Security domains (`constants.py`): `system` ⊃ {`user_input`, `external_data`,
 
 **Adding capabilities.** Tool-output injection points are declared in the
 `TOOL_OUTPUT_CONTROLLABLES` registry (gateway tool name → `Controllable`).
-`get_controllables` and the plugin bridge both derive from it, so adding
-exec/shell, messaging, or memory output injection is a single entry (define a
-`Controllable` with the right security domain and map its gateway tool
-name(s)). New entries are gated on confirming the real gateway tool names.
+`get_controllables` and the plugin bridge both derive from it, so a new
+injection point is a single entry (define a `Controllable` with the right
+security domain and map its real gateway tool name(s)). Mapped tool names are
+the verified OpenClaw identifiers: `web_fetch`/`web_search`, `read`,
+`bash`/`exec`/`process`, `message`. Note: **memory** is an OpenClaw *plugin
+slot* (`plugins.slots.memory`), not a tool, so it is configured via config
+rather than registered as a tool-output controllable.
 
 ## Usage
 
@@ -110,17 +125,40 @@ controller = Controller(
 result = await controller.run()
 ```
 
+Containerised gateway (full isolation; safe to raise `concurrency`):
+
+```python
+target_factory=openclaw_target_factory(
+    managed=True,
+    managed_runtime="docker",     # whole gateway in a fresh container per task
+    model_id="openai/gpt-5",      # provider-qualified id for the config
+    enable_tool_injection=True,
+    provider_base_url="https://api.provider.com",
+    provider_api_key="...",
+    managed_kwargs={"image": "openclaw:local"},  # or a published tag
+    concurrency=4,                 # each task gets its own container + port
+)
+```
+
+In Docker mode the gateway runs `--bind lan` with a generated token, is reached
+on a dynamic published port, and reaches the host injection server + LLM proxy
+via `host.docker.internal` (the host servers bind `0.0.0.0`). The image must be
+available locally (`docker build -t openclaw:local .` in an OpenClaw checkout)
+or pulled.
+
 External gateway: omit `managed=True`, pass `gateway_url=` and `auth_token=`.
 
 Key knobs (constructor / factory):
 
+- `managed_runtime` — `"local"` (loopback Node subprocess) or `"docker"`.
 - `agent_timeout_s` (default 600s) — max wall-clock per agent run.
-- `enable_tool_injection` — expose the web/file tool-output controllables.
-- `provider_base_url` / `provider_api_key` — enable + configure the LLM proxy.
+- `enable_tool_injection` — expose the web/file/shell/message tool-output controllables.
+- `provider_base_url` / `provider_api_key` — enable + configure the LLM proxy
+  (written into `models.providers.*` in `openclaw.json`).
 - `reset_session_between_runs` (default `False`) — opt into per-run
   conversation isolation (see Lifecycle).
-- `tool_policy` (config slot) — restrict the agent's tools via the gateway tool
-  profile (applied at startup, not a runtime RPC).
+- `tool_policy` (config slot) — restrict the agent's tools via `tools.profile`
+  (config, applied at startup, not a runtime RPC).
 
 ## Lifecycle
 
@@ -151,19 +189,23 @@ pytest                      # from this directory
 
 Tests use an in-process `MockGateway` (no Node/Docker), exercising the full
 `Controller` pipeline, the injection bridge, ws session helpers, and the reset
-lifecycle. The managed `runtime.py` path is not covered by the mock suite.
+lifecycle. The managed `runtime.py` / `docker_runtime.py` *launch* paths need a
+real CLI / Docker daemon, so they are covered at the level of the deterministic
+config and command/env builders (`test_runtime_config.py`).
 
-## Known limitations / planned follow-ups
+## Known limitations / notes
 
-- **Isolation/parallelism**: the gateway currently runs as a local Node daemon.
-  Running the whole gateway inside a fresh Docker container per run (full
-  isolation + safe `concurrency>1`) is a planned follow-up; until then the
-  managed runtime uses a fixed port and shared workspace, so prefer
-  `concurrency=1`.
-- **LLM proxy** is wired only in managed mode (the managed gateway is pointed at
-  the proxy's base URL); an external gateway must be pointed at it manually.
-- **Capability coverage**: messaging, memory, skill/plugin, and exec/shell
-  controllables/observables are planned before experiments; the hook/registry
-  structure is designed to add them additively.
+- **Isolation/parallelism**: `managed_runtime="docker"` runs the whole gateway
+  in a fresh container per task with a dynamic host port and private state dir,
+  so `concurrency>1` is safe. The default `"local"` runtime now also uses a
+  dynamic port + private state dir, but shares host state/network, so keep
+  local managed runs at `concurrency=1`.
+- **Docker image**: the runtime does not build the image; it must be present
+  (`openclaw:local` by default, or a tag via `managed_kwargs={"image": ...}`).
+  On Linux, bind-mounted state must be writable by the container's `node`
+  (uid 1000) user.
+- **LLM proxy** is wired in managed mode (the gateway's provider `baseUrl` in
+  `openclaw.json` points at the proxy); an external gateway must be pointed at
+  it manually.
 - **Live tool catalog** populates on connect; static observables otherwise come
   from config so they are non-empty at `initialize()`.

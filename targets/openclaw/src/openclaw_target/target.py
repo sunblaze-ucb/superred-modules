@@ -92,6 +92,29 @@ FILE_CONTENT_CTRL = Controllable(
     ),
 )
 
+SHELL_OUTPUT_CTRL = Controllable(
+    name="shell_output",
+    security_domain=EXTERNAL_DATA_TAG,
+    description=(
+        "Per-call injection for exec/shell tool output (bash / exec / "
+        "process). Emitted mid-run: one ControllablePostCallEvent per "
+        "intercepted invocation. Command stdout is untrusted external data "
+        "(it may surface attacker-controlled file/process content), so it is a "
+        "tool-output injection point. Requires the injection plugin."
+    ),
+)
+
+MESSAGE_CONTENT_CTRL = Controllable(
+    name="message_content",
+    security_domain=EXTERNAL_DATA_TAG,
+    description=(
+        "Per-call injection for the messaging tool's returned content "
+        "(the `message` tool). Emitted mid-run: one ControllablePostCallEvent "
+        "per intercepted invocation. Inbound message bodies surfaced to the "
+        "agent are untrusted. Requires the injection plugin."
+    ),
+)
+
 MODEL_SYSTEM_PROMPT_CTRL = Controllable(
     name="model_system_prompt",
     security_domain=MODEL_TAG,
@@ -108,17 +131,27 @@ MODEL_SYSTEM_PROMPT_CTRL = Controllable(
 # replaces that tool's output (a ControllablePostCallEvent fires per call when
 # ``enable_tool_injection`` is on). This is the single extension point for
 # tool-output injection: ``get_controllables`` and the plugin bridge both
-# derive from it, so adding a new capability (e.g. exec/shell, messaging,
-# memory) is one entry here — define a Controllable with the right security
-# domain and map its gateway tool name(s). New capabilities are gated behind
-# confirming the actual gateway tool names to avoid fabricating them.
+# derive from it, so adding a new capability is one entry here — define a
+# Controllable with the right security domain and map its gateway tool name(s).
 #
-#   "exec":    SHELL_OUTPUT_CTRL,   # exec/shell output (when confirmed)
-#   "message": MESSAGE_CONTENT_CTRL # messaging payloads (when confirmed)
+# Tool names are the real OpenClaw tool identifiers (verified in
+# openclaw/openclaw src/agents/tools and src/agents/*-tools.*):
+#   web_fetch / web_search  -> web content
+#   read                    -> file content
+#   bash / exec / process   -> exec/shell output
+#   message                 -> messaging payloads
+#
+# Note: "memory" is not an OpenClaw tool — it is a plugin slot
+# (``plugins.slots.memory``), configured via config, so it is intentionally not
+# a tool-output injection point here.
 TOOL_OUTPUT_CONTROLLABLES: dict[str, Controllable] = {
     "web_fetch": WEB_CONTENT_CTRL,
     "web_search": WEB_CONTENT_CTRL,
     "read": FILE_CONTENT_CTRL,
+    "bash": SHELL_OUTPUT_CTRL,
+    "exec": SHELL_OUTPUT_CTRL,
+    "process": SHELL_OUTPUT_CTRL,
+    "message": MESSAGE_CONTENT_CTRL,
 }
 
 # -- Observable definitions ----------------------------------------------------
@@ -213,14 +246,21 @@ class OpenClawTarget(Target):
             recorded and the system prompt can be injected.
         provider_base_url: Upstream LLM provider URL.
         provider_api_key: API key for the upstream LLM provider.
-        managed: If ``True``, auto-start/stop a local OpenClaw Gateway
-            process (Node daemon). A fresh gateway is started lazily on
-            first connect and torn down in :meth:`teardown`; because the
-            controller builds one target instance per task via the
-            :class:`~superred.core.controller.TargetFactory`, each task
-            gets an isolated gateway.
-        managed_kwargs: Extra kwargs forwarded to
-            :class:`openclaw_target.runtime.OpenClawRuntime`.
+        managed: If ``True``, auto-start/stop an OpenClaw Gateway managed by
+            this target. A fresh gateway is started lazily on first connect and
+            torn down in :meth:`teardown`; because the controller builds one
+            target instance per task via the
+            :class:`~superred.core.controller.TargetFactory`, each task gets an
+            isolated gateway.
+        managed_runtime: Which managed backend to use when ``managed=True``:
+            ``"local"`` (default) runs ``openclaw gateway`` as a loopback Node
+            subprocess; ``"docker"`` runs the whole gateway in a fresh container
+            per task (full host isolation, dynamic ports for safe
+            ``concurrency>1``). Docker mode reaches host-side services (injection
+            server + LLM proxy) via ``host.docker.internal``.
+        managed_kwargs: Extra kwargs forwarded to the runtime
+            (:class:`openclaw_target.runtime.OpenClawRuntime` or
+            :class:`openclaw_target.docker_runtime.OpenClawDockerRuntime`).
 
     Between runs of a single task the controller calls
     :meth:`reset_ephemeral_state`, which clears only per-run (ephemeral)
@@ -244,6 +284,7 @@ class OpenClawTarget(Target):
         provider_base_url: str = "",
         provider_api_key: str = "",
         managed: bool = False,
+        managed_runtime: str = "local",
         reset_session_between_runs: bool = False,
         managed_kwargs: dict[str, Any] | None = None,
     ) -> None:
@@ -264,6 +305,7 @@ class OpenClawTarget(Target):
         self._provider_base_url = provider_base_url
         self._provider_api_key = provider_api_key
         self._managed = managed
+        self._managed_runtime = managed_runtime
         self._managed_kwargs = managed_kwargs or {}
 
         self._runtime: Any = None
@@ -293,6 +335,30 @@ class OpenClawTarget(Target):
     # Lazy connection
     # ------------------------------------------------------------------
 
+    @property
+    def _is_docker(self) -> bool:
+        """Whether the managed gateway runs in a container."""
+        return self._managed and self._managed_runtime == "docker"
+
+    def _container_host(self) -> str:
+        """Hostname the gateway uses to reach host-side services.
+
+        A local (loopback) gateway reaches the host injection server / LLM proxy
+        directly on ``127.0.0.1``; a containerised gateway reaches them via
+        ``host.docker.internal`` (mapped with ``--add-host`` in the Docker
+        runtime). For an external (unmanaged) gateway we assume loopback.
+        """
+        return "host.docker.internal" if self._is_docker else "127.0.0.1"
+
+    def _bind_host(self) -> str:
+        """Interface the host-side servers bind to.
+
+        Bind ``0.0.0.0`` for a containerised gateway so it can reach the host
+        via ``host.docker.internal``; otherwise ``127.0.0.1`` keeps callbacks
+        host-local.
+        """
+        return "0.0.0.0" if self._is_docker else "127.0.0.1"
+
     async def _ensure_connected(self) -> OpenClawWSClient:
         if self._client is not None:
             return self._client
@@ -309,28 +375,7 @@ class OpenClawTarget(Target):
             await self._start_llm_proxy()
 
         if self._managed and self._runtime is None:
-            from openclaw_target.runtime import OpenClawRuntime
-
-            managed_kwargs = dict(self._managed_kwargs)
-            if self._injection_server is not None:
-                managed_kwargs.setdefault("plugin_dir", str(_plugin_dir()))
-                managed_kwargs.setdefault(
-                    "callback_url", self._callback_url(),
-                )
-            if self._tool_policy:
-                managed_kwargs.setdefault("tool_policy", self._tool_policy)
-            if self._provider_api_key:
-                managed_kwargs.setdefault("provider_api_key", self._provider_api_key)
-            # Route the gateway's model calls through the proxy when active;
-            # otherwise straight at the configured provider.
-            provider_url = (
-                self._llm_proxy.proxy_base_url
-                if self._llm_proxy is not None
-                else (self._provider_base_url or None)
-            )
-            if provider_url:
-                managed_kwargs.setdefault("provider_base_url", provider_url)
-            self._runtime = OpenClawRuntime(**managed_kwargs)
+            self._runtime = self._build_runtime()
             await self._runtime.start()
             self._gateway_url = self._runtime.gateway_url
             self._auth_token = self._runtime.auth_token
@@ -350,15 +395,52 @@ class OpenClawTarget(Target):
 
         return client
 
-    def _callback_url(self) -> str:
-        """Loopback URL the gateway-side plugin posts hook callbacks to.
+    def _build_runtime(self) -> Any:
+        """Construct the managed runtime (local or Docker) with grounded config.
 
-        The gateway runs as a local Node process (see
-        :class:`openclaw_target.runtime.OpenClawRuntime`), so it reaches
-        the injection server directly on the host loopback.
+        Provider routing, tool policy, and the injection extension are passed as
+        config (written to ``openclaw.json`` / installed under
+        ``<stateDir>/extensions``) — not as env vars. The provider base URL and
+        callback URL are expressed via :meth:`_container_host` so a containerised
+        gateway can reach the host-side proxy / injection server.
         """
-        port = self._injection_server._port if self._injection_server else 18899
-        return f"http://127.0.0.1:{port}"
+        kwargs: dict[str, Any] = dict(self._managed_kwargs)
+        kwargs.setdefault("model_id", self._model_id)
+        if self._injection_server is not None:
+            kwargs.setdefault("plugin_dir", str(_plugin_dir()))
+            kwargs.setdefault("callback_url", self._callback_url())
+        if self._tool_policy:
+            kwargs.setdefault("tool_policy", self._tool_policy)
+        if self._provider_api_key:
+            kwargs.setdefault("provider_api_key", self._provider_api_key)
+        # Route the gateway's model calls through the proxy when active;
+        # otherwise straight at the configured provider.
+        provider_url = (
+            f"http://{self._container_host()}:{self._llm_proxy.actual_port}"
+            if self._llm_proxy is not None
+            else (self._provider_base_url or None)
+        )
+        if provider_url:
+            kwargs.setdefault("provider_base_url", provider_url)
+
+        if self._is_docker:
+            from openclaw_target.docker_runtime import OpenClawDockerRuntime
+
+            return OpenClawDockerRuntime(**kwargs)
+
+        from openclaw_target.runtime import OpenClawRuntime
+
+        return OpenClawRuntime(**kwargs)
+
+    def _callback_url(self) -> str:
+        """URL the gateway-side plugin posts hook callbacks to.
+
+        Built from :meth:`_container_host` so a containerised gateway reaches
+        the host injection server via ``host.docker.internal`` while a local
+        gateway uses loopback.
+        """
+        port = self._injection_server.actual_port if self._injection_server else 18899
+        return f"http://{self._container_host()}:{port}"
 
     async def _start_injection_server(self) -> None:
         """Start the local HTTP injection server for plugin callbacks."""
@@ -374,6 +456,8 @@ class OpenClawTarget(Target):
 
         self._injection_server = InjectionServer(
             handler=self._handle_injection_hook,
+            host=self._bind_host(),
+            port=0,
         )
         await self._injection_server.start()
 
@@ -477,6 +561,7 @@ class OpenClawTarget(Target):
         self._llm_proxy = LLMProxy(
             upstream_base_url=self._provider_base_url,
             upstream_api_key=self._provider_api_key,
+            host=self._bind_host(),
         )
         port = await self._llm_proxy.start()
         logger.info("LLM proxy started on port %d", port)
@@ -599,6 +684,7 @@ class OpenClawTarget(Target):
                     "model_id": self._model_id,
                     "tool_policy": self._tool_policy or None,
                     "managed": self._managed,
+                    "managed_runtime": self._managed_runtime if self._managed else None,
                     "hello": self._hello_payload or None,
                 }),
             ),

@@ -41,21 +41,31 @@ class InjectionServer:
         handler: Callback invoked for each hook.  Return ``None`` to
             pass through, or a dict with injection instructions (see
             ``plugin/index.js`` for the expected shape).
-        host: Bind address (default ``127.0.0.1``).
-        port: Bind port (default ``18899``).
+        host: Bind address. ``127.0.0.1`` for a local gateway; ``0.0.0.0``
+            when the gateway runs in Docker and reaches the host via
+            ``host.docker.internal`` (the callback URL must advertise that
+            alias, but the socket has to listen on a host-routable interface).
+        port: Bind port. ``0`` (default) picks a free ephemeral port so
+            multiple concurrent instances do not collide; read the chosen
+            port back from :attr:`actual_port` after :meth:`start`.
     """
 
     def __init__(
         self,
         handler: InjectionHandler,
         host: str = "127.0.0.1",
-        port: int = 18899,
+        port: int = 0,
     ) -> None:
         self._handler = handler
         self._host = host
         self._port = port
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
+
+    @property
+    def actual_port(self) -> int:
+        """The bound port (resolved after :meth:`start` when ``port=0``)."""
+        return self._port
 
     async def start(self) -> None:
         """Start the server in the background."""
@@ -66,6 +76,13 @@ class InjectionServer:
         await self._runner.setup()
         self._site = web.TCPSite(self._runner, self._host, self._port)
         await self._site.start()
+
+        # Resolve the actual port when 0 (ephemeral) was requested.
+        server = self._site._server  # type: ignore[attr-defined]
+        sockets = getattr(server, "sockets", None)
+        if sockets:
+            self._port = sockets[0].getsockname()[1]
+
         logger.info(
             "Injection server listening on http://%s:%d", self._host, self._port,
         )

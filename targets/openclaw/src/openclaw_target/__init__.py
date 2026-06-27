@@ -12,7 +12,10 @@ from openclaw_target.constants import (
 from openclaw_target.factory import openclaw_target_factory
 from openclaw_target.target import (
     FILE_CONTENT_CTRL,
+    MESSAGE_CONTENT_CTRL,
     MODEL_SYSTEM_PROMPT_CTRL,
+    SHELL_OUTPUT_CTRL,
+    TOOL_OUTPUT_CONTROLLABLES,
     OpenClawTarget,
     USER_MESSAGE_CTRL,
     WEB_CONTENT_CTRL,
@@ -31,5 +34,8 @@ __all__ = [
     "USER_MESSAGE_CTRL",
     "WEB_CONTENT_CTRL",
     "FILE_CONTENT_CTRL",
+    "SHELL_OUTPUT_CTRL",
+    "MESSAGE_CONTENT_CTRL",
     "MODEL_SYSTEM_PROMPT_CTRL",
+    "TOOL_OUTPUT_CONTROLLABLES",
 ]
