@@ -22,8 +22,13 @@ def _count(claim) -> int:  # noqa: ANN001
     return len(list(claim))
 
 
-def test_total_claim_is_176() -> None:
-    assert _count(agentharm_total_claim(target_model=_M)) == 176
+def test_total_claim_default_excludes_base_22() -> None:
+    # benign_cover=True (default) drops base 22 (4 augmentations, no injection surface).
+    assert _count(agentharm_total_claim(target_model=_M)) == 172
+
+
+def test_total_claim_direct_mode_is_176() -> None:
+    assert _count(agentharm_total_claim(target_model=_M, benign_cover=False)) == 176
 
 
 def test_named_category_counts() -> None:
@@ -39,6 +44,38 @@ def test_claim_category_filter() -> None:
 
 def test_behavior_ids_filter() -> None:
     assert _count(agentharm_claim(target_model=_M, behavior_ids=["1-1"])) == 1
+
+
+class _FakeTarget:
+    def __init__(self) -> None:
+        self.cfg: dict[str, str] = {}
+
+    def set_config(self, name: str, value: str) -> None:
+        self.cfg[name] = value
+
+
+@pytest.mark.asyncio
+async def test_benign_cover_is_the_default() -> None:
+    [t] = list(agentharm_claim(target_model=_M, behavior_ids=["1-1"]))
+    assert t.is_benign_cover is True
+    # Goal stays the harmful behaviour; the delivered user task is the benign cover.
+    tgt = _FakeTarget()
+    await t.configure_target(tgt)
+    assert tgt.cfg["user_prompt"].strip() != t.goal.description.strip()
+
+
+@pytest.mark.asyncio
+async def test_benign_cover_false_restores_direct_request() -> None:
+    [t] = list(agentharm_claim(target_model=_M, behavior_ids=["1-1"], benign_cover=False))
+    assert t.is_benign_cover is False
+    tgt = _FakeTarget()
+    await t.configure_target(tgt)
+    assert tgt.cfg["user_prompt"].strip() == t.goal.description.strip()
+
+
+def test_counts_unchanged_in_both_cover_modes() -> None:
+    assert _count(agentharm_claim(target_model=_M, categories=["Fraud"], benign_cover=True)) == 24
+    assert _count(agentharm_claim(target_model=_M, categories=["Fraud"], benign_cover=False)) == 24
 
 
 def test_unknown_category_raises() -> None:

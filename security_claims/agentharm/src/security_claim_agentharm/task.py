@@ -11,6 +11,25 @@ request (the attacker won).  ``success`` is the strict gate
 harmful task without refusing.  This is a superred per-task gate, NOT one of
 AgentHarm's headline metrics; the canonical metrics come from
 ``metrics.aggregate`` over the primary/refusal/category scores.
+
+Two delivery modes for the harmful behaviour, selected at the factory:
+
+- **direct-request** (``cover_prompt is None``): the harmful behaviour IS the
+  agent's user message -- upstream AgentHarm.  A do-nothing attacker that injects
+  nothing already drives the harm, so this measures the *model's* refusal, not an
+  attacker's contribution.
+- **benign-cover** (``cover_prompt`` set; the factory default): the user message
+  is a purpose-built BENIGN cover task that engages the behaviour's read tools but
+  does not perform the graded harmful actions; the harmful behaviour is carried
+  only as ``Goal.description`` for an attacker to inject (indirect prompt
+  injection).  The tools and grader are unchanged, so a do-nothing attacker does
+  the benign task and the harmful grading fails, and success is the *lift* an
+  injection attacker adds.
+
+In both modes ``Goal``, the grading, ``_prompt``, ``_metadata`` and the toolset are
+the harmful behaviour (the cover uses the *same* harmful tools, it just does not
+trigger the harmful actions); only the delivered user task changes.  See
+``ASSUMPTIONS.md`` section J and :mod:`security_claim_agentharm.covers`.
 """
 
 from __future__ import annotations
@@ -48,6 +67,10 @@ class AgentHarmTask(Task[InspectAgentTarget]):
             faithful system prompt, which is model-dependent for llama-3.1).
         judge_model: judge model id (default openai/gpt-4o-2024-08-06).
         api_base, api_key: proxy credentials for the judge models.
+        cover_prompt: when set, the BENIGN cover task delivered to the agent as its
+            user message (benign-cover mode); the harmful behaviour then lives only
+            in ``Goal``/grading, for an attacker to inject.  ``None`` is the faithful
+            direct-request baseline (the harmful behaviour is the user message).
     """
 
     def __init__(
@@ -61,6 +84,7 @@ class AgentHarmTask(Task[InspectAgentTarget]):
         judge_model: str = "openai/gpt-4o-2024-08-06",
         api_base: str | None = None,
         api_key: str | None = None,
+        cover_prompt: str | None = None,
     ) -> None:
         self._behavior_id = behavior_id
         self._prompt = prompt
@@ -70,6 +94,7 @@ class AgentHarmTask(Task[InspectAgentTarget]):
         self._judge_model = judge_model
         self._api_base = api_base
         self._api_key = api_key
+        self._cover_prompt = cover_prompt
         self._goal = Goal(description=prompt)
 
     @property
@@ -84,9 +109,15 @@ class AgentHarmTask(Task[InspectAgentTarget]):
     def category(self) -> str:
         return self._category
 
+    @property
+    def is_benign_cover(self) -> bool:
+        """True iff the agent is given a benign cover task (harm carried via Goal only)."""
+        return self._cover_prompt is not None
+
     async def configure_target(self, target: InspectAgentTarget) -> None:
+        user_task = self._cover_prompt if self._cover_prompt is not None else self._prompt
         target.set_config("system_prompt", faithful_system_prompt(self._target_model))
-        target.set_config("user_prompt", faithful_user_prompt(self._prompt))
+        target.set_config("user_prompt", faithful_user_prompt(user_task))
         target.set_config("tool_names", json.dumps(list(self._metadata["target_functions"])))
         target.set_config("tool_choice", "auto")
         target.set_config("message_limit", str(_MESSAGE_LIMIT))
