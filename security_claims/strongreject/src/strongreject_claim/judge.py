@@ -31,9 +31,11 @@ Differences from upstream ``dsbowen/strong_reject`` ``evaluate.py``:
    superred ``Controller`` can compare for ``best_score`` ordering.
 3. **No silent model fallback.** dsbowen's
    ``_generate_judge_response`` walks a ``("openai/gpt-4o-mini",
-   "openai/gpt-3.5-turbo")`` chain. We pin a single model. If a
-   different model is needed (e.g. lab proxy uses a different alias),
-   override :data:`MODEL` at the application boundary.
+   "openai/gpt-3.5-turbo")`` chain. We use a single model, defaulting to
+   :data:`MODEL`. If a different model is needed (e.g. an AWS Bedrock id),
+   set :attr:`JudgeConfig.model` or pass ``judge_model=`` to the claim
+   factories -- ``MODEL`` is only the default, not a hard pin (monkeypatching
+   the module global has no effect; the call site reads ``config.model``).
 """
 
 from __future__ import annotations
