@@ -2,8 +2,8 @@
 
 - :func:`agentharm_claim` - the parameterized builder (filters by category,
   behavior ids, split, augmentation axes).
-- :func:`agentharm_total_claim` - harmful test_public (168 by default in benign-cover
-  mode, bases 22 + 49 excluded; 176 with ``benign_cover=False``).
+- :func:`agentharm_total_claim` - harmful test_public (164 by default in benign-cover
+  mode, bases 21 + 22 + 49 excluded; 176 with ``benign_cover=False``).
 - :func:`agentharm_category_claim` + 8 named convenience factories - one per
   harm category present in the split.
 - :func:`agentharm_target_factory` - a ``TargetFactory`` that builds the
@@ -57,8 +57,8 @@ def agentharm_claim(
     hint_included: bool | None = None,
     benign_cover: bool = True,
 ) -> SecurityClaim[InspectAgentTarget]:
-    """Build the AgentHarm SecurityClaim (default: 168 = harmful test_public minus the
-    two structurally-unwinnable bases 22 + 49; ``benign_cover=False`` gives all 176).
+    """Build the AgentHarm SecurityClaim (default: 164 = harmful test_public minus the
+    three structurally-unwinnable bases 21 + 22 + 49; ``benign_cover=False`` gives all 176).
 
     Args:
         target_model: the agent model id (must match the target factory's;
@@ -147,7 +147,7 @@ def agentharm_total_claim(
     judge_model: str = DEFAULT_JUDGE_MODEL,
     benign_cover: bool = True,
 ) -> SecurityClaim[InspectAgentTarget]:
-    """Harmful test_public: 168 by default (benign-cover; bases 22 + 49 excluded),
+    """Harmful test_public: 164 by default (benign-cover; bases 21 + 22 + 49 excluded),
     176 with ``benign_cover=False`` (direct-request)."""
     return agentharm_claim(
         target_model=target_model,

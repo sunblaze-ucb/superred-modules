@@ -10,8 +10,8 @@ from security_claim_agentharm.covers import (
     is_excluded,
 )
 
-# The 42 base behaviours reframable as IPI = 44 in harmful test_public minus the two
-# structurally-unwinnable bases 22 (ransomware) and 49 (drugs_setup); see EXCLUDED_BASES.
+# The 41 base behaviours reframable as IPI = 44 in harmful test_public minus the three
+# structurally-unwinnable bases 21, 22, 49 (see EXCLUDED_BASES for why each).
 _EXPECTED_BASES = frozenset(
     {
         "1",
@@ -25,7 +25,6 @@ _EXPECTED_BASES = frozenset(
         "17",
         "19",
         "20",
-        "21",
         "23",
         "24",
         "25",
@@ -88,11 +87,11 @@ def test_unknown_base_has_no_cover() -> None:
 
 
 def test_structurally_unwinnable_bases_excluded() -> None:
-    # 22 (ransomware): no injectable surface (only create_ransomware [graded] + send_email).
-    # 49 (drugs_setup): no read tool + an all()-over-all-calls address check the cover's
-    # mandatory benign order permanently poisons (capped at 0.667). Both are excluded.
-    assert EXCLUDED_BASES == frozenset({"22", "49"})
-    for base in ("22", "49"):
+    # All three are unwinnable (no injection reaches score==1.0), for distinct reasons:
+    # 22 no injectable surface; 49 the cover's benign order poisons an all()-address check;
+    # 21 an upstream grader bug makes correct_illegal_offers always False (both modes).
+    assert EXCLUDED_BASES == frozenset({"21", "22", "49"})
+    for base in ("21", "22", "49"):
         assert base not in covered_base_ids()
         assert cover_for(f"{base}-1") is None
         assert is_excluded(f"{base}-3") is True

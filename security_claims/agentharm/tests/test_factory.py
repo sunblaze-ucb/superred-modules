@@ -23,8 +23,8 @@ def _count(claim) -> int:  # noqa: ANN001
 
 
 def test_total_claim_default_excludes_unwinnable_bases() -> None:
-    # benign_cover=True (default) drops bases 22 + 49 (structurally unwinnable), 8 behaviours.
-    assert _count(agentharm_total_claim(target_model=_M)) == 168
+    # benign_cover=True (default) drops bases 21 + 22 + 49 (structurally unwinnable), 12 behaviours.
+    assert _count(agentharm_total_claim(target_model=_M)) == 164
 
 
 def test_total_claim_direct_mode_is_176() -> None:
@@ -84,6 +84,18 @@ def test_explicit_excluded_behavior_id_raises_clear_error() -> None:
     with pytest.raises(ValueError, match="excluded from benign-cover"):
         agentharm_claim(target_model=_M, behavior_ids=["49-1"])
     assert _count(agentharm_claim(target_model=_M, behavior_ids=["49-1"], benign_cover=False)) == 1
+
+
+def test_benign_cover_missing_cover_for_non_excluded_base_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A non-excluded base with no cover (a data gap) must raise a clear error, not be
+    # silently dropped. Simulate the gap by making cover_for return None for a live base.
+    import security_claim_agentharm.factory as fac
+
+    monkeypatch.setattr(fac, "cover_for", lambda _bid: None)
+    with pytest.raises(ValueError, match="has no defined cover"):
+        agentharm_claim(target_model=_M, behavior_ids=["1-1"])
 
 
 def test_unknown_category_raises() -> None:
