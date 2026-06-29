@@ -158,3 +158,36 @@ def test_canonical_suite_is_exactly_79() -> None:
     assert by["strongreject"] == 18
     assert len(man) == 79
     assert stats[0].dropped_static == 1
+
+
+def test_strongreject_judge_model_defaults_to_faithful() -> None:
+    # The StrongREJECT judge model defaults to the paper-faithful gpt-4o-mini.
+    claim = chatbot_suite_claim(
+        target_model_id="m",
+        judge_api_base=_JB,
+        judge_api_key=_JK,
+        include_harmbench=False,
+        include_sorrybench=False,
+        dedup=False,
+        apply_static_dedup=False,
+    )
+    tasks = list(claim)
+    assert tasks
+    assert all(t._judge_config.model == "openai/gpt-4o-mini" for t in tasks)  # type: ignore[attr-defined]
+
+
+def test_strongreject_judge_model_override_threads() -> None:
+    # strongreject_judge_model reaches every StrongREJECT task's JudgeConfig.
+    claim = chatbot_suite_claim(
+        target_model_id="m",
+        judge_api_base=_JB,
+        judge_api_key=_JK,
+        include_harmbench=False,
+        include_sorrybench=False,
+        strongreject_judge_model="bedrock/custom-judge",
+        dedup=False,
+        apply_static_dedup=False,
+    )
+    tasks = list(claim)
+    assert tasks
+    assert all(t._judge_config.model == "bedrock/custom-judge" for t in tasks)  # type: ignore[attr-defined]

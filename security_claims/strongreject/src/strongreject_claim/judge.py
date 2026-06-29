@@ -31,9 +31,11 @@ Differences from upstream ``dsbowen/strong_reject`` ``evaluate.py``:
    superred ``Controller`` can compare for ``best_score`` ordering.
 3. **No silent model fallback.** dsbowen's
    ``_generate_judge_response`` walks a ``("openai/gpt-4o-mini",
-   "openai/gpt-3.5-turbo")`` chain. We pin a single model. If a
-   different model is needed (e.g. lab proxy uses a different alias),
-   override :data:`MODEL` at the application boundary.
+   "openai/gpt-3.5-turbo")`` chain. We use a single model, defaulting to
+   :data:`MODEL`. If a different model is needed (e.g. an AWS Bedrock id),
+   set :attr:`JudgeConfig.model` or pass ``judge_model=`` to the claim
+   factories -- ``MODEL`` is only the default, not a hard pin (monkeypatching
+   the module global has no effect; the call site reads ``config.model``).
 """
 
 from __future__ import annotations
@@ -111,11 +113,17 @@ class JudgeConfig:
         max_retries: Maximum number of attempts (each is one full LLM
             call) before returning a parse-failed result. Initial
             attempt counts as 1.
+        model: LiteLLM judge model identifier. Defaults to :data:`MODEL`
+            (the paper-faithful ``openai/gpt-4o-mini``); override it to run
+            the rubric judge on a different model (e.g. an AWS Bedrock id
+            when OpenAI is not reachable). Changing it is a deliberate
+            deviation from the StrongREJECT-published evaluator.
     """
 
     api_base: str
     api_key: str
     max_retries: int = 5
+    model: str = MODEL
 
 
 @dataclass(frozen=True)
@@ -196,7 +204,7 @@ async def score(
             await asyncio.sleep(delay)
         try:
             completion = await acompletion(
-                model=MODEL,
+                model=config.model,
                 messages=messages,
                 api_base=config.api_base,
                 api_key=config.api_key,
