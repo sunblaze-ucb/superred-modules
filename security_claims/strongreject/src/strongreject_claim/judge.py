@@ -111,11 +111,17 @@ class JudgeConfig:
         max_retries: Maximum number of attempts (each is one full LLM
             call) before returning a parse-failed result. Initial
             attempt counts as 1.
+        model: LiteLLM judge model identifier. Defaults to :data:`MODEL`
+            (the paper-faithful ``openai/gpt-4o-mini``); override it to run
+            the rubric judge on a different model (e.g. an AWS Bedrock id
+            when OpenAI is not reachable). Changing it is a deliberate
+            deviation from the StrongREJECT-published evaluator.
     """
 
     api_base: str
     api_key: str
     max_retries: int = 5
+    model: str = MODEL
 
 
 @dataclass(frozen=True)
@@ -196,7 +202,7 @@ async def score(
             await asyncio.sleep(delay)
         try:
             completion = await acompletion(
-                model=MODEL,
+                model=config.model,
                 messages=messages,
                 api_base=config.api_base,
                 api_key=config.api_key,

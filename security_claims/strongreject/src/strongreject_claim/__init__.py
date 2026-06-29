@@ -33,7 +33,7 @@ from chatbot_target import ChatbotTarget
 from superred.core.interfaces.security_claim import SecurityClaim
 from superred.core.interfaces.task import Task
 
-from strongreject_claim.judge import JudgeConfig
+from strongreject_claim.judge import MODEL, JudgeConfig
 from strongreject_claim.loader import (
     StrongREJECTRow,
     load_small_rows,
@@ -82,12 +82,14 @@ def _category_claim(
     judge_api_key: str,
     success_threshold: float,
     judge_max_retries: int,
+    judge_model: str = MODEL,
 ) -> SecurityClaim[ChatbotTarget]:
     """Build the SecurityClaim for one StrongREJECT category."""
     judge_config = JudgeConfig(
         api_base=judge_api_base,
         api_key=judge_api_key,
         max_retries=judge_max_retries,
+        model=judge_model,
     )
     rows = rows_for_category(category)
     tasks = _build_tasks(rows, judge_config, success_threshold)
@@ -105,6 +107,7 @@ def strongreject_disinformation_claim(
     judge_api_key: str,
     success_threshold: float = 1.0,
     judge_max_retries: int = 5,
+    judge_model: str = MODEL,
 ) -> SecurityClaim[ChatbotTarget]:
     """StrongREJECT *Disinformation and deception* category (50 prompts)."""
     return _category_claim(
@@ -113,6 +116,7 @@ def strongreject_disinformation_claim(
         judge_api_key=judge_api_key,
         success_threshold=success_threshold,
         judge_max_retries=judge_max_retries,
+        judge_model=judge_model,
     )
 
 
@@ -122,6 +126,7 @@ def strongreject_hate_claim(
     judge_api_key: str,
     success_threshold: float = 1.0,
     judge_max_retries: int = 5,
+    judge_model: str = MODEL,
 ) -> SecurityClaim[ChatbotTarget]:
     """StrongREJECT *Hate, harassment and discrimination* category (50 prompts)."""
     return _category_claim(
@@ -130,6 +135,7 @@ def strongreject_hate_claim(
         judge_api_key=judge_api_key,
         success_threshold=success_threshold,
         judge_max_retries=judge_max_retries,
+        judge_model=judge_model,
     )
 
 
@@ -139,6 +145,7 @@ def strongreject_illegal_goods_claim(
     judge_api_key: str,
     success_threshold: float = 1.0,
     judge_max_retries: int = 5,
+    judge_model: str = MODEL,
 ) -> SecurityClaim[ChatbotTarget]:
     """StrongREJECT *Illegal goods and services* category (50 prompts)."""
     return _category_claim(
@@ -147,6 +154,7 @@ def strongreject_illegal_goods_claim(
         judge_api_key=judge_api_key,
         success_threshold=success_threshold,
         judge_max_retries=judge_max_retries,
+        judge_model=judge_model,
     )
 
 
@@ -156,6 +164,7 @@ def strongreject_nonviolent_crimes_claim(
     judge_api_key: str,
     success_threshold: float = 1.0,
     judge_max_retries: int = 5,
+    judge_model: str = MODEL,
 ) -> SecurityClaim[ChatbotTarget]:
     """StrongREJECT *Non-violent crimes* category (59 prompts)."""
     return _category_claim(
@@ -164,6 +173,7 @@ def strongreject_nonviolent_crimes_claim(
         judge_api_key=judge_api_key,
         success_threshold=success_threshold,
         judge_max_retries=judge_max_retries,
+        judge_model=judge_model,
     )
 
 
@@ -173,6 +183,7 @@ def strongreject_sexual_content_claim(
     judge_api_key: str,
     success_threshold: float = 1.0,
     judge_max_retries: int = 5,
+    judge_model: str = MODEL,
 ) -> SecurityClaim[ChatbotTarget]:
     """StrongREJECT *Sexual content* category (50 prompts)."""
     return _category_claim(
@@ -181,6 +192,7 @@ def strongreject_sexual_content_claim(
         judge_api_key=judge_api_key,
         success_threshold=success_threshold,
         judge_max_retries=judge_max_retries,
+        judge_model=judge_model,
     )
 
 
@@ -190,6 +202,7 @@ def strongreject_violence_claim(
     judge_api_key: str,
     success_threshold: float = 1.0,
     judge_max_retries: int = 5,
+    judge_model: str = MODEL,
 ) -> SecurityClaim[ChatbotTarget]:
     """StrongREJECT *Violence* category (54 prompts)."""
     return _category_claim(
@@ -198,6 +211,7 @@ def strongreject_violence_claim(
         judge_api_key=judge_api_key,
         success_threshold=success_threshold,
         judge_max_retries=judge_max_retries,
+        judge_model=judge_model,
     )
 
 
@@ -212,6 +226,7 @@ def strongreject_full_claim(
     judge_api_key: str,
     success_threshold: float = 1.0,
     judge_max_retries: int = 5,
+    judge_model: str = MODEL,
 ) -> SecurityClaim[ChatbotTarget]:
     """The full 313-prompt StrongREJECT benchmark.
 
@@ -227,36 +242,42 @@ def strongreject_full_claim(
             judge_api_key=judge_api_key,
             success_threshold=success_threshold,
             judge_max_retries=judge_max_retries,
+            judge_model=judge_model,
         ),
         strongreject_hate_claim(
             judge_api_base=judge_api_base,
             judge_api_key=judge_api_key,
             success_threshold=success_threshold,
             judge_max_retries=judge_max_retries,
+            judge_model=judge_model,
         ),
         strongreject_illegal_goods_claim(
             judge_api_base=judge_api_base,
             judge_api_key=judge_api_key,
             success_threshold=success_threshold,
             judge_max_retries=judge_max_retries,
+            judge_model=judge_model,
         ),
         strongreject_nonviolent_crimes_claim(
             judge_api_base=judge_api_base,
             judge_api_key=judge_api_key,
             success_threshold=success_threshold,
             judge_max_retries=judge_max_retries,
+            judge_model=judge_model,
         ),
         strongreject_sexual_content_claim(
             judge_api_base=judge_api_base,
             judge_api_key=judge_api_key,
             success_threshold=success_threshold,
             judge_max_retries=judge_max_retries,
+            judge_model=judge_model,
         ),
         strongreject_violence_claim(
             judge_api_base=judge_api_base,
             judge_api_key=judge_api_key,
             success_threshold=success_threshold,
             judge_max_retries=judge_max_retries,
+            judge_model=judge_model,
         ),
     ]
     return SecurityClaim.from_claims(sub_claims)
@@ -268,6 +289,7 @@ def strongreject_small_claim(
     judge_api_key: str,
     success_threshold: float = 1.0,
     judge_max_retries: int = 5,
+    judge_model: str = MODEL,
 ) -> SecurityClaim[ChatbotTarget]:
     """The 60-prompt curated StrongREJECT-small subset.
 
@@ -284,6 +306,7 @@ def strongreject_small_claim(
         api_base=judge_api_base,
         api_key=judge_api_key,
         max_retries=judge_max_retries,
+        model=judge_model,
     )
     rows = load_small_rows()
     tasks = _build_tasks(rows, judge_config, success_threshold)
