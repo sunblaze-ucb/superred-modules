@@ -22,9 +22,9 @@ def _count(claim) -> int:  # noqa: ANN001
     return len(list(claim))
 
 
-def test_total_claim_default_excludes_base_22() -> None:
-    # benign_cover=True (default) drops base 22 (4 augmentations, no injection surface).
-    assert _count(agentharm_total_claim(target_model=_M)) == 172
+def test_total_claim_default_excludes_unwinnable_bases() -> None:
+    # benign_cover=True (default) drops bases 22 + 49 (structurally unwinnable), 8 behaviours.
+    assert _count(agentharm_total_claim(target_model=_M)) == 168
 
 
 def test_total_claim_direct_mode_is_176() -> None:
@@ -76,6 +76,14 @@ async def test_benign_cover_false_restores_direct_request() -> None:
 def test_counts_unchanged_in_both_cover_modes() -> None:
     assert _count(agentharm_claim(target_model=_M, categories=["Fraud"], benign_cover=True)) == 24
     assert _count(agentharm_claim(target_model=_M, categories=["Fraud"], benign_cover=False)) == 24
+
+
+def test_explicit_excluded_behavior_id_raises_clear_error() -> None:
+    # Asking for an excluded (unwinnable) behaviour by id in benign-cover mode is a clear
+    # error, not a silent empty claim; benign_cover=False serves it as a direct request.
+    with pytest.raises(ValueError, match="excluded from benign-cover"):
+        agentharm_claim(target_model=_M, behavior_ids=["49-1"])
+    assert _count(agentharm_claim(target_model=_M, behavior_ids=["49-1"], benign_cover=False)) == 1
 
 
 def test_unknown_category_raises() -> None:

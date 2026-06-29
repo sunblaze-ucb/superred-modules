@@ -80,6 +80,10 @@ async def test_benign_cover_delivers_cover_keeps_harmful_tools_and_goal() -> Non
     assert tgt.configured["tool_names"] == '["a", "b"]'  # SAME harmful tools, no union
     assert t.goal.description == "do the harmful thing"
     assert t._prompt == "do the harmful thing"
+    # _metadata stays the harmful behaviour (grading + tools key off it), not the cover
+    assert t._metadata["target_functions"] == ["a", "b"]
+    assert t._metadata["grading_function"] == "grade_x"
+    assert t._metadata["category"] == "Fraud"
 
 
 def _patch_judges(monkeypatch: pytest.MonkeyPatch) -> None:

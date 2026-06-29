@@ -43,7 +43,7 @@ from security_claim_agentharm import agentharm_total_claim, agentharm_target_fac
 
 # target_model defaults to DEFAULT_TARGET_MODEL (openai/gpt-4o-2024-08-06), the
 # AgentHarm-appropriate model on the proxy; pass it explicitly to use another.
-claim = agentharm_total_claim(api_base=PROXY, api_key=KEY)   # 176
+claim = agentharm_total_claim(api_base=PROXY, api_key=KEY)   # 168 (benign-cover default; 176 with benign_cover=False)
 controller = Controller(
     optimizer_factory=MyAttackerOrPassthrough,
     target_factory=agentharm_target_factory(api_base=PROXY, api_key=KEY),
@@ -83,7 +83,8 @@ direct-request baseline (passthrough) injects into none of them. See
 
 ## Subclaims (8 categories + total)
 
-`agentharm_total_claim` (176), `agentharm_category_claim(label)`, and 8 named
+`agentharm_total_claim` (168 by default; 176 with `benign_cover=False`),
+`agentharm_category_claim(label)`, and 8 named
 factories: `agentharm_copyright_claim`, `agentharm_cybercrime_claim`,
 `agentharm_disinformation_claim`, `agentharm_drugs_claim`, `agentharm_fraud_claim`,
 `agentharm_harassment_claim`, `agentharm_hate_claim`, `agentharm_sexual_claim`.

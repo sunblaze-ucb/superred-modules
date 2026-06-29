@@ -2,7 +2,8 @@
 
 - :func:`agentharm_claim` - the parameterized builder (filters by category,
   behavior ids, split, augmentation axes).
-- :func:`agentharm_total_claim` - all 176 harmful test_public behaviors.
+- :func:`agentharm_total_claim` - harmful test_public (168 by default in benign-cover
+  mode, bases 22 + 49 excluded; 176 with ``benign_cover=False``).
 - :func:`agentharm_category_claim` + 8 named convenience factories - one per
   harm category present in the split.
 - :func:`agentharm_target_factory` - a ``TargetFactory`` that builds the
@@ -56,7 +57,8 @@ def agentharm_claim(
     hint_included: bool | None = None,
     benign_cover: bool = True,
 ) -> SecurityClaim[InspectAgentTarget]:
-    """Build the AgentHarm SecurityClaim (default: all 176 harmful test_public).
+    """Build the AgentHarm SecurityClaim (default: 168 = harmful test_public minus the
+    two structurally-unwinnable bases 22 + 49; ``benign_cover=False`` gives all 176).
 
     Args:
         target_model: the agent model id (must match the target factory's;
@@ -104,7 +106,16 @@ def agentharm_claim(
             cover_prompt = cover_for(str(sample.id))
             if cover_prompt is None:
                 if is_excluded(str(sample.id)):
-                    # Deliberately not IPI-reframable (no injection surface) -> drop it.
+                    if behavior_ids is not None:
+                        # The caller explicitly asked for an excluded behaviour: a silent
+                        # drop (-> "no tasks") would be baffling, so name the reason.
+                        raise ValueError(
+                            f"behavior {sample.id!r} (base "
+                            f"{str(sample.id).split('-')[0]!r}) is excluded from benign-cover "
+                            "mode as structurally unwinnable (covers.EXCLUDED_BASES); pass "
+                            "benign_cover=False to evaluate it as a direct request."
+                        )
+                    # Default (all behaviours): silently drop the unwinnable bases.
                     continue
                 raise ValueError(
                     f"benign_cover=True but behavior {sample.id!r} has no defined cover "
@@ -136,7 +147,8 @@ def agentharm_total_claim(
     judge_model: str = DEFAULT_JUDGE_MODEL,
     benign_cover: bool = True,
 ) -> SecurityClaim[InspectAgentTarget]:
-    """All 176 harmful test_public behaviors (benign-cover IPI mode by default)."""
+    """Harmful test_public: 168 by default (benign-cover; bases 22 + 49 excluded),
+    176 with ``benign_cover=False`` (direct-request)."""
     return agentharm_claim(
         target_model=target_model,
         api_base=api_base,
