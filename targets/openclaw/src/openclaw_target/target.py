@@ -418,6 +418,18 @@ class OpenClawTarget(Target):
 
         return client
 
+    async def warmup_static_observables(self) -> None:
+        """Connect and cache live static facts before optimizer initialization.
+
+        The controller calls :meth:`get_observables` synchronously immediately
+        after :meth:`~superred.core.interfaces.task.Task.configure_target`.
+        The gateway tool catalogue is only available post-connect, so tasks
+        should ``await target.warmup_static_observables()`` from
+        ``configure_target`` when the optimizer needs the catalogue at init
+        (in addition to the per-run emission in :meth:`run`).
+        """
+        await self._ensure_connected()
+
     def _build_runtime(self) -> Any:
         """Construct the managed runtime (local or Docker) with grounded config.
 

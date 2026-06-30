@@ -180,3 +180,26 @@ def test_factory_enables_proxy_when_provider_set() -> None:
     )
     target = factory.create()
     assert target._enable_llm_proxy is True
+
+
+@pytest.mark.asyncio
+async def test_warmup_populates_tool_catalog_for_get_observables() -> None:
+    target = OpenClawTarget(auth_token="t", gateway_url="ws://127.0.0.1:0")
+    assert target.get_observables()[2].content == ""
+
+    fake_client = AsyncMock()
+
+    async def fake_ensure() -> AsyncMock:
+        target._cached_tool_catalog = json.dumps(
+            {"tools": [{"name": "exec"}]}, indent=2,
+        )
+        target._client = fake_client
+        return fake_client
+
+    with patch.object(target, "_ensure_connected", side_effect=fake_ensure):
+        await target.warmup_static_observables()
+
+    catalog_obs = next(
+        o for o in target.get_observables() if o.observable.name == "tool_list"
+    )
+    assert "exec" in catalog_obs.content

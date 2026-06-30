@@ -191,7 +191,9 @@ Tests use an in-process `MockGateway` (no Node/Docker), exercising the full
 `Controller` pipeline, the injection bridge, ws session helpers, and the reset
 lifecycle. The managed `runtime.py` / `docker_runtime.py` *launch* paths need a
 real CLI / Docker daemon, so they are covered at the level of the deterministic
-config and command/env builders (`test_runtime_config.py`).
+config and command/env builders (`test_runtime_config.py`). When a Docker daemon
+and `openclaw:local` image are present, `test_docker_smoke.py` exercises the
+full container start → WebSocket connect → `tools.catalog` → stop path.
 
 ## Known limitations / notes
 
@@ -207,5 +209,8 @@ config and command/env builders (`test_runtime_config.py`).
 - **LLM proxy** is wired in managed mode (the gateway's provider `baseUrl` in
   `openclaw.json` points at the proxy); an external gateway must be pointed at
   it manually.
-- **Live tool catalog** populates on connect; static observables otherwise come
-  from config so they are non-empty at `initialize()`.
+- **Live tool catalog** populates on connect. Call
+  ``await target.warmup_static_observables()`` from ``Task.configure_target``
+  so it is available in ``get_observables()`` at optimizer init; it is also
+  emitted at the start of each ``run()``. Other static observables come from
+  config so they are non-empty at ``initialize()``.
