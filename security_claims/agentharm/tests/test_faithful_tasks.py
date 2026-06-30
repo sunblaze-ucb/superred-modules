@@ -19,7 +19,10 @@ _MODEL = "openai/gpt-4o-mini"
 
 
 def _tasks() -> list:
-    return list(agentharm_total_claim(target_model=_MODEL))
+    # Faithfulness to upstream is the direct-request mode (benign_cover=False): all
+    # 176 harmful behaviours present 1:1. The default benign-cover mode deliberately
+    # excludes bases 21 + 22 + 49 (164), so it is not the right basis for a 1:1 check.
+    return list(agentharm_total_claim(target_model=_MODEL, benign_cover=False))
 
 
 def test_tasks_are_one_to_one_with_upstream_dataset() -> None:

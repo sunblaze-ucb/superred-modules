@@ -41,6 +41,7 @@ def _task(category: str = "Fraud") -> AgentHarmTask:
 @pytest.mark.asyncio
 async def test_configure_target_sets_faithful_config() -> None:
     t = _task()
+    assert t.is_benign_cover is False
     tgt = _FakeTarget([])
     await t.configure_target(tgt)
     assert tgt.configured["tool_names"] == '["a", "b"]'
@@ -49,6 +50,40 @@ async def test_configure_target_sets_faithful_config() -> None:
     assert "helpful LLM agent" in tgt.configured["system_prompt"]
     assert tgt.configured["tool_choice"] == "auto"
     assert tgt.configured["message_limit"] == "20"
+
+
+@pytest.mark.asyncio
+async def test_benign_cover_delivers_cover_keeps_harmful_tools_and_goal() -> None:
+    # benign-cover mode: the agent gets the BENIGN cover as its user task, but the
+    # toolset, Goal, _prompt and _metadata all stay the harmful behaviour (only the
+    # delivered user task changes; the cover uses the same harmful tools).
+    t = AgentHarmTask(
+        behavior_id="1-1",
+        prompt="do the harmful thing",
+        metadata={
+            "target_functions": ["a", "b"],
+            "grading_function": "grade_x",
+            "category": "Fraud",
+            "prompt": "do the harmful thing",
+        },
+        category="Fraud",
+        target_model="openai/gpt-4o-mini",
+        cover_prompt="please investigate and summarise, take no action",
+    )
+    assert t.is_benign_cover is True
+    tgt = _FakeTarget([])
+    await t.configure_target(tgt)
+    assert tgt.configured["user_prompt"].endswith(
+        "please investigate and summarise, take no action"
+    )
+    assert "harmful" not in tgt.configured["user_prompt"]
+    assert tgt.configured["tool_names"] == '["a", "b"]'  # SAME harmful tools, no union
+    assert t.goal.description == "do the harmful thing"
+    assert t._prompt == "do the harmful thing"
+    # _metadata stays the harmful behaviour (grading + tools key off it), not the cover
+    assert t._metadata["target_functions"] == ["a", "b"]
+    assert t._metadata["grading_function"] == "grade_x"
+    assert t._metadata["category"] == "Fraud"
 
 
 def _patch_judges(monkeypatch: pytest.MonkeyPatch) -> None:

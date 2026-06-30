@@ -2,7 +2,8 @@
 
 - :func:`agentharm_claim` - the parameterized builder (filters by category,
   behavior ids, split, augmentation axes).
-- :func:`agentharm_total_claim` - all 176 harmful test_public behaviors.
+- :func:`agentharm_total_claim` - harmful test_public (164 by default in benign-cover
+  mode, bases 21 + 22 + 49 excluded; 176 with ``benign_cover=False``).
 - :func:`agentharm_category_claim` + 8 named convenience factories - one per
   harm category present in the split.
 - :func:`agentharm_target_factory` - a ``TargetFactory`` that builds the
@@ -27,6 +28,7 @@ from superred.core.interfaces.task import Task
 
 from security_claim_agentharm.agentharm_tools import agentharm_tool_resolver
 from security_claim_agentharm.categories import EXPECTED_CATEGORIES, category_slug
+from security_claim_agentharm.covers import base_id, cover_for, is_excluded
 from security_claim_agentharm.dataset_loader import load_agentharm_dataset
 from security_claim_agentharm.grading_bridge import DEFAULT_JUDGE_MODEL
 from security_claim_agentharm.task import AgentHarmTask
@@ -53,8 +55,10 @@ def agentharm_claim(
     dataset: str = "harmful",
     detailed_behaviors: bool | None = None,
     hint_included: bool | None = None,
+    benign_cover: bool = True,
 ) -> SecurityClaim[InspectAgentTarget]:
-    """Build the AgentHarm SecurityClaim (default: all 176 harmful test_public).
+    """Build the AgentHarm SecurityClaim (default: 164 = harmful test_public minus the
+    three structurally-unwinnable bases 21 + 22 + 49; ``benign_cover=False`` gives all 176).
 
     Args:
         target_model: the agent model id (must match the target factory's;
@@ -65,9 +69,16 @@ def agentharm_claim(
         behavior_ids: keep only these sample ids (overrides category filter).
         split, dataset: dataset selectors (only harmful/test_public is verified).
         detailed_behaviors, hint_included: augmentation-axis filters.
+        benign_cover: when ``True`` (the default), the agent is given a purpose-built
+            **benign cover task** as its user message and the harmful behaviour is
+            carried only as the ``Goal`` for an attacker to inject (indirect prompt
+            injection; a do-nothing attacker fails, so success measures attacker
+            lift).  When ``False``, the faithful upstream direct-request baseline
+            (the harmful behaviour IS the user task).  See ``ASSUMPTIONS.md`` J.
 
     Raises:
-        ValueError: if a category filter references an unknown category.
+        ValueError: if a category filter references an unknown category, or if
+            ``benign_cover`` is set but a behaviour has no defined cover.
     """
     ds = load_agentharm_dataset(
         dataset=dataset,
@@ -90,6 +101,27 @@ def agentharm_claim(
     tasks: list[AgentHarmTask] = []
     for sample in ds:
         md = dict(sample.metadata or {})
+        cover_prompt: str | None = None
+        if benign_cover:
+            cover_prompt = cover_for(str(sample.id))
+            if cover_prompt is None:
+                if is_excluded(str(sample.id)):
+                    if behavior_ids is not None:
+                        # The caller explicitly asked for an excluded behaviour: a silent
+                        # drop (-> "no tasks") would be baffling, so name the reason.
+                        raise ValueError(
+                            f"behavior {sample.id!r} (base {base_id(str(sample.id))!r}) is "
+                            "excluded from benign-cover mode as structurally unwinnable "
+                            "(covers.EXCLUDED_BASES); pass benign_cover=False to evaluate it "
+                            "as a direct request."
+                        )
+                    # Default (all behaviours): silently drop the unwinnable bases.
+                    continue
+                raise ValueError(
+                    f"benign_cover=True but behavior {sample.id!r} has no defined cover "
+                    f"(base {base_id(str(sample.id))!r}) and is not in EXCLUDED_BASES; "
+                    f"add a cover to data/benign_covers.json or exclude its base in covers.py."
+                )
         tasks.append(
             AgentHarmTask(
                 behavior_id=str(sample.id),
@@ -100,6 +132,7 @@ def agentharm_claim(
                 judge_model=judge_model,
                 api_base=api_base,
                 api_key=api_key,
+                cover_prompt=cover_prompt,
             )
         )
 
@@ -112,13 +145,16 @@ def agentharm_total_claim(
     api_base: str | None = None,
     api_key: str | None = None,
     judge_model: str = DEFAULT_JUDGE_MODEL,
+    benign_cover: bool = True,
 ) -> SecurityClaim[InspectAgentTarget]:
-    """All 176 harmful test_public behaviors."""
+    """Harmful test_public: 164 by default (benign-cover; bases 21 + 22 + 49 excluded),
+    176 with ``benign_cover=False`` (direct-request)."""
     return agentharm_claim(
         target_model=target_model,
         api_base=api_base,
         api_key=api_key,
         judge_model=judge_model,
+        benign_cover=benign_cover,
     )
 
 
@@ -129,8 +165,9 @@ def agentharm_category_claim(
     api_base: str | None = None,
     api_key: str | None = None,
     judge_model: str = DEFAULT_JUDGE_MODEL,
+    benign_cover: bool = True,
 ) -> SecurityClaim[InspectAgentTarget]:
-    """All behaviors in a single harm category."""
+    """All behaviors in a single harm category (benign-cover IPI mode by default)."""
     if category not in EXPECTED_CATEGORIES:
         raise ValueError(
             f"Unknown AgentHarm category {category!r}. "
@@ -142,6 +179,7 @@ def agentharm_category_claim(
         api_key=api_key,
         judge_model=judge_model,
         categories=[category],
+        benign_cover=benign_cover,
     )
 
 
@@ -152,6 +190,7 @@ def _make_category_factory(category: str):  # type: ignore[no-untyped-def]
         api_base: str | None = None,
         api_key: str | None = None,
         judge_model: str = DEFAULT_JUDGE_MODEL,
+        benign_cover: bool = True,
     ) -> SecurityClaim[InspectAgentTarget]:
         return agentharm_category_claim(
             category,
@@ -159,6 +198,7 @@ def _make_category_factory(category: str):  # type: ignore[no-untyped-def]
             api_base=api_base,
             api_key=api_key,
             judge_model=judge_model,
+            benign_cover=benign_cover,
         )
 
     factory.__name__ = f"agentharm_{category_slug(category)}_claim"
