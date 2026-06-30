@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
 from pathlib import Path
 from typing import Any
 
@@ -96,9 +97,9 @@ SHELL_OUTPUT_CTRL = Controllable(
     name="shell_output",
     security_domain=EXTERNAL_DATA_TAG,
     description=(
-        "Per-call injection for exec/shell tool output (bash / exec / "
-        "process). Emitted mid-run: one ControllablePostCallEvent per "
-        "intercepted invocation. Command stdout is untrusted external data "
+        "Per-call injection for exec/shell tool output (the `exec` and "
+        "`process` agent tools). Emitted mid-run: one ControllablePostCallEvent "
+        "per intercepted invocation. Command stdout is untrusted external data "
         "(it may surface attacker-controlled file/process content), so it is a "
         "tool-output injection point. Requires the injection plugin."
     ),
@@ -125,6 +126,17 @@ MODEL_SYSTEM_PROMPT_CTRL = Controllable(
     ),
 )
 
+MODEL_RESPONSE_CTRL = Controllable(
+    name="model_response_injection",
+    security_domain=MODEL_TAG,
+    description=(
+        "Content injected into the LLM's response text via the model proxy "
+        "(simulates a manipulated/compromised model output the agent then acts "
+        "on). Resolved pre-run; applied to every model response during the run. "
+        "Requires enable_llm_proxy=True."
+    ),
+)
+
 # -- Tool-output injection registry -------------------------------------------
 #
 # Maps an OpenClaw gateway tool name -> the Controllable whose injected value
@@ -134,21 +146,22 @@ MODEL_SYSTEM_PROMPT_CTRL = Controllable(
 # derive from it, so adding a new capability is one entry here — define a
 # Controllable with the right security domain and map its gateway tool name(s).
 #
-# Tool names are the real OpenClaw tool identifiers (verified in
-# openclaw/openclaw src/agents/tools and src/agents/*-tools.*):
+# Tool names are the real OpenClaw *agent-facing* tool identifiers (verified in
+# openclaw/openclaw src/agents/agent-tools.ts and src/agents/*-tools.*):
 #   web_fetch / web_search  -> web content
 #   read                    -> file content
-#   bash / exec / process   -> exec/shell output
+#   exec / process          -> exec/shell output (both gated by includeShellTools)
 #   message                 -> messaging payloads
 #
-# Note: "memory" is not an OpenClaw tool — it is a plugin slot
-# (``plugins.slots.memory``), configured via config, so it is intentionally not
-# a tool-output injection point here.
+# Note: "bash" is intentionally NOT here. It is not an agent-catalogue tool: it
+# lives in the sessions-SDK / sub-agent surface (src/agents/sessions/tools/bash.ts)
+# and the ACP command set (src/acp/commands.ts), neither of which routes through
+# the agent tool-call hook the injection plugin attaches to. "memory" is likewise
+# excluded — it is a plugin slot (``plugins.slots.memory``), not a tool.
 TOOL_OUTPUT_CONTROLLABLES: dict[str, Controllable] = {
     "web_fetch": WEB_CONTENT_CTRL,
     "web_search": WEB_CONTENT_CTRL,
     "read": FILE_CONTENT_CTRL,
-    "bash": SHELL_OUTPUT_CTRL,
     "exec": SHELL_OUTPUT_CTRL,
     "process": SHELL_OUTPUT_CTRL,
     "message": MESSAGE_CONTENT_CTRL,
@@ -325,6 +338,11 @@ class OpenClawTarget(Target):
         self._cached_tool_catalog: str = ""
 
         self._injection_server: Any = None
+        # Shared secrets that authenticate the gateway (and its in-container
+        # plugin) to the host-side callback server / LLM proxy. Generated when
+        # those servers start; empty until then.
+        self._callback_token: str = ""
+        self._proxy_token: str = ""
 
         # Live run state — set at the top of run(), cleared at the end.
         # Used by the injection hook to dispatch ControllablePreCallEvents
@@ -351,11 +369,16 @@ class OpenClawTarget(Target):
         return "host.docker.internal" if self._is_docker else "127.0.0.1"
 
     def _bind_host(self) -> str:
-        """Interface the host-side servers bind to.
+        """Interface the host-side servers (injection server + LLM proxy) bind to.
 
-        Bind ``0.0.0.0`` for a containerised gateway so it can reach the host
-        via ``host.docker.internal``; otherwise ``127.0.0.1`` keeps callbacks
-        host-local.
+        A containerised gateway reaches the host via ``host.docker.internal``,
+        which on Docker Desktop resolves through a VM — so loopback is not
+        reachable and the servers must listen on a non-loopback interface
+        (``0.0.0.0``). To avoid that being an *unauthenticated* relay, both
+        servers require a per-instance bearer token (the plugin sends
+        ``SUPERRED_CALLBACK_TOKEN``; the gateway sends the proxy token as its
+        provider ``apiKey``), so an unauthenticated caller on another interface
+        is rejected with 401. A local gateway keeps everything on ``127.0.0.1``.
         """
         return "0.0.0.0" if self._is_docker else "127.0.0.1"
 
@@ -409,17 +432,27 @@ class OpenClawTarget(Target):
         if self._injection_server is not None:
             kwargs.setdefault("plugin_dir", str(_plugin_dir()))
             kwargs.setdefault("callback_url", self._callback_url())
+            # The in-container plugin authenticates to the callback server with
+            # this token (exported as SUPERRED_CALLBACK_TOKEN).
+            kwargs.setdefault("callback_token", self._callback_token)
         if self._tool_policy:
             kwargs.setdefault("tool_policy", self._tool_policy)
-        if self._provider_api_key:
-            kwargs.setdefault("provider_api_key", self._provider_api_key)
         # Route the gateway's model calls through the proxy when active;
         # otherwise straight at the configured provider.
-        provider_url = (
-            f"http://{self._container_host()}:{self._llm_proxy.actual_port}"
-            if self._llm_proxy is not None
-            else (self._provider_base_url or None)
-        )
+        if self._llm_proxy is not None:
+            provider_url = (
+                f"http://{self._container_host()}:{self._llm_proxy.actual_port}"
+            )
+            # The gateway authenticates to the proxy with the proxy token (sent
+            # as the OpenAI ``Authorization: Bearer`` header because it is the
+            # provider apiKey); the proxy forwards upstream with the real key.
+            # Never write the real provider key into the gateway config in this
+            # path.
+            kwargs.setdefault("provider_api_key", self._proxy_token)
+        else:
+            provider_url = self._provider_base_url or None
+            if self._provider_api_key:
+                kwargs.setdefault("provider_api_key", self._provider_api_key)
         if provider_url:
             kwargs.setdefault("provider_base_url", provider_url)
 
@@ -454,10 +487,12 @@ class OpenClawTarget(Target):
             self._enable_tool_injection = False
             return
 
+        self._callback_token = secrets.token_hex(24)
         self._injection_server = InjectionServer(
             handler=self._handle_injection_hook,
             host=self._bind_host(),
             port=0,
+            auth_token=self._callback_token,
         )
         await self._injection_server.start()
 
@@ -558,10 +593,12 @@ class OpenClawTarget(Target):
             self._enable_llm_proxy = False
             return
 
+        self._proxy_token = secrets.token_hex(24)
         self._llm_proxy = LLMProxy(
             upstream_base_url=self._provider_base_url,
             upstream_api_key=self._provider_api_key,
             host=self._bind_host(),
+            inbound_token=self._proxy_token,
         )
         port = await self._llm_proxy.start()
         logger.info("LLM proxy started on port %d", port)
@@ -662,6 +699,7 @@ class OpenClawTarget(Target):
             ctrls.extend(dict.fromkeys(TOOL_OUTPUT_CONTROLLABLES.values()))
         if self._enable_llm_proxy:
             ctrls.append(MODEL_SYSTEM_PROMPT_CTRL)
+            ctrls.append(MODEL_RESPONSE_CTRL)
         return ctrls
 
     def get_observables(self) -> list[ObservableValue]:
@@ -725,6 +763,17 @@ class OpenClawTarget(Target):
     ) -> None:
         client = await self._ensure_connected()
 
+        # Emit the live gateway tool catalogue as a run observable. It is only
+        # available after connecting (fetched in _ensure_connected), so
+        # get_observables() — read once at optimizer init, before any run —
+        # cannot carry it. The tool catalogue is the most attack-relevant
+        # static fact, so surface it here where the optimizer will see it.
+        if self._cached_tool_catalog and self._cached_tool_catalog != "{}":
+            emit(ObservableEvent(
+                observable=TOOL_LIST_OBS,
+                content=self._cached_tool_catalog,
+            ))
+
         # Tool restriction (tool_policy) is gateway/agent configuration,
         # applied by the managed runtime at startup — not a per-run RPC.
 
@@ -747,6 +796,20 @@ class OpenClawTarget(Target):
                 self._llm_proxy.system_prompt_injection = model_resp.value
             else:
                 self._llm_proxy.system_prompt_injection = None
+
+            # Model-response injection: rewrite the model's reply before the
+            # agent acts on it (a manipulated/compromised model output).
+            # Resolved pre-run; the proxy applies it to every response.
+            resp_inj = await send_event(
+                ControllablePreCallEvent(
+                    controllable=MODEL_RESPONSE_CTRL,
+                    request="Content to inject into the LLM response text:",
+                ),
+            )
+            if isinstance(resp_inj, ControllableInjection) and resp_inj.value:
+                self._llm_proxy.response_injection = resp_inj.value
+            else:
+                self._llm_proxy.response_injection = None
 
         # Phase 1 controllable: user_message
         user_resp = await send_event(
@@ -855,12 +918,20 @@ class OpenClawTarget(Target):
         if self._llm_proxy:
             self._llm_proxy.records.clear()
             self._llm_proxy.system_prompt_injection = None
+            self._llm_proxy.response_injection = None
 
         if self._reset_session_between_runs and self._client:
+            # Surface a failed reset: a swallowed error here means the
+            # conversation silently persists across runs, which corrupts
+            # per-run isolation (the whole point of opting in).
             try:
                 await self._client.reset_session(self._session_key)
             except Exception:
-                logger.debug("Session reset failed (may be expected)", exc_info=True)
+                logger.warning(
+                    "sessions.reset failed; conversation may persist across "
+                    "runs (per-run isolation not guaranteed)",
+                    exc_info=True,
+                )
 
     async def teardown(self) -> None:
         """Close the connection, injection server, proxy, and gateway process.

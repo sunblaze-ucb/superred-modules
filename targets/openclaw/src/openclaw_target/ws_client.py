@@ -369,8 +369,19 @@ class OpenClawWSClient:
     # ------------------------------------------------------------------
 
     async def reset_session(self, session_key: str = "superred") -> None:
-        """Reset (clear) a session on the Gateway."""
-        await self.rpc("sessions.reset", {"sessionKey": session_key})
+        """Reset (clear) a session on the Gateway.
+
+        The ``sessions.*`` namespace keys sessions by ``key`` (verified against
+        openclaw/openclaw ``src/acp/session-mapper.ts`` and
+        ``src/tui/gateway-chat.ts``), unlike ``agent`` / ``chat.history`` which
+        use ``sessionKey``; sending the wrong field makes the gateway's
+        ``validateSessionsResetParams`` reject the call. ``rpc`` returns an
+        ``{"error": ...}`` dict rather than raising, so inspect it and raise so
+        the caller does not silently treat a rejected reset as success.
+        """
+        result = await self.rpc("sessions.reset", {"key": session_key})
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(f"sessions.reset failed: {result['error']}")
 
     async def get_session_history(
         self, session_key: str = "superred",

@@ -211,6 +211,16 @@ class MockGateway:
                     }))
 
                 elif method == "sessions.reset":
+                    # Real gateway keys sessions by ``key``, not ``sessionKey``.
+                    reset_params = msg.get("params", {})
+                    if "key" not in reset_params:
+                        await ws.send(json.dumps({
+                            "type": "res",
+                            "id": msg_id,
+                            "ok": False,
+                            "error": "invalid params: missing key",
+                        }))
+                        continue
                     await ws.send(json.dumps({
                         "type": "res",
                         "id": msg_id,

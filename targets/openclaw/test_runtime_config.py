@@ -151,6 +151,31 @@ def test_docker_run_cmd_grounded(tmp_path: Path) -> None:
     assert cmd[cmd.index("openclaw:local") + 1] == "openclaw"
 
 
+def test_docker_run_cmd_includes_callback_token(tmp_path: Path) -> None:
+    rt = OpenClawDockerRuntime(
+        image="openclaw:local",
+        host_port=20001,
+        callback_url="http://host.docker.internal:8899",
+        callback_token="cb-tok",
+    )
+    rt._auth_token = "tok"
+    rt._state_path = tmp_path
+    cmd = rt._build_run_cmd()
+    assert "SUPERRED_CALLBACK_TOKEN=cb-tok" in cmd
+
+
+def test_local_runtime_env_includes_callback_token(tmp_path: Path) -> None:
+    rt = OpenClawRuntime(
+        state_dir=str(tmp_path),
+        callback_url="http://127.0.0.1:8899",
+        callback_token="cb-tok",
+    )
+    rt._auth_token = "tok"
+    rt._prepare_state_dir()
+    env = rt._build_env()
+    assert env["SUPERRED_CALLBACK_TOKEN"] == "cb-tok"
+
+
 def test_docker_runtime_gateway_url_uses_host_port() -> None:
     rt = OpenClawDockerRuntime(host_port=20002)
     assert rt.gateway_url == "ws://127.0.0.1:20002"
@@ -161,12 +186,14 @@ def test_docker_runtime_gateway_url_uses_host_port() -> None:
 
 
 def test_registry_has_grounded_capabilities() -> None:
-    assert TOOL_OUTPUT_CONTROLLABLES["bash"] is SHELL_OUTPUT_CTRL
     assert TOOL_OUTPUT_CONTROLLABLES["exec"] is SHELL_OUTPUT_CTRL
     assert TOOL_OUTPUT_CONTROLLABLES["process"] is SHELL_OUTPUT_CTRL
     assert TOOL_OUTPUT_CONTROLLABLES["message"] is MESSAGE_CONTENT_CTRL
     # memory is a plugin slot, not a tool — must not be a fabricated tool entry.
     assert "memory" not in TOOL_OUTPUT_CONTROLLABLES
+    # bash is not an agent-catalogue tool (it is a sessions-SDK / ACP surface),
+    # so it must not be wired as a tool-output injection point.
+    assert "bash" not in TOOL_OUTPUT_CONTROLLABLES
 
 
 def test_get_controllables_includes_new_capabilities() -> None:
@@ -178,7 +205,7 @@ def test_get_controllables_includes_new_capabilities() -> None:
 def test_get_controllables_dedupes() -> None:
     target = OpenClawTarget(enable_tool_injection=True)
     ctrls = target.get_controllables()
-    # bash/exec/process all map to the single SHELL_OUTPUT_CTRL.
+    # exec/process both map to the single SHELL_OUTPUT_CTRL.
     assert sum(1 for c in ctrls if c.name == "shell_output") == 1
 
 

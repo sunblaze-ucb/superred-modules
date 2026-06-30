@@ -28,7 +28,7 @@ def openclaw_target_factory(
     agent_id: str = "default",
     model_id: str = "",
     enable_tool_injection: bool = False,
-    enable_llm_proxy: bool = False,
+    enable_llm_proxy: bool | None = None,
     provider_base_url: str = "",
     provider_api_key: str = "",
     managed: bool = False,
@@ -43,6 +43,11 @@ def openclaw_target_factory(
     lazily and supplies the URL). With ``managed_runtime="docker"`` each task
     gets an isolated container (dynamic port + private state), so ``concurrency``
     may be raised; a local managed gateway shares host state, so keep it at 1.
+
+    ``enable_llm_proxy`` defaults to ``None``, which routes the gateway's model
+    calls through the superred LLM proxy whenever ``provider_base_url`` is set
+    (so inference, usage tracking, and model-prompt/response injection go
+    through superred). Pass ``True``/``False`` to force it on/off.
     """
 
     def create() -> OpenClawTarget:

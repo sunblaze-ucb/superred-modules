@@ -48,6 +48,11 @@ class InjectionServer:
         port: Bind port. ``0`` (default) picks a free ephemeral port so
             multiple concurrent instances do not collide; read the chosen
             port back from :attr:`actual_port` after :meth:`start`.
+        auth_token: If set, every callback must present
+            ``Authorization: Bearer <auth_token>`` or it is rejected with 401.
+            The bundled plugin sends this (from ``SUPERRED_CALLBACK_TOKEN``), so
+            the server is not an unauthenticated endpoint even when it must bind
+            a non-loopback interface for a containerised gateway to reach it.
     """
 
     def __init__(
@@ -55,10 +60,12 @@ class InjectionServer:
         handler: InjectionHandler,
         host: str = "127.0.0.1",
         port: int = 0,
+        auth_token: str | None = None,
     ) -> None:
         self._handler = handler
         self._host = host
         self._port = port
+        self._auth_token = auth_token
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
 
@@ -95,6 +102,9 @@ class InjectionServer:
             self._site = None
 
     async def _handle_hook(self, request: web.Request) -> web.Response:
+        if self._auth_token is not None:
+            if request.headers.get("Authorization", "") != f"Bearer {self._auth_token}":
+                return web.json_response({"error": "unauthorized"}, status=401)
         try:
             body = await request.json()
         except (json.JSONDecodeError, Exception):

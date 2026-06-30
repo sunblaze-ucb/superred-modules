@@ -24,6 +24,11 @@
  * Configuration (env):
  *   SUPERRED_CALLBACK_URL    - URL of the Python injection server
  *                              (default: http://127.0.0.1:18899)
+ *   SUPERRED_CALLBACK_TOKEN  - bearer token sent as `Authorization: Bearer
+ *                              <token>` on every callback. The injection
+ *                              server requires it when the gateway is not
+ *                              co-located on loopback (e.g. Docker), so the
+ *                              callback endpoint is not an open relay.
  *   SUPERRED_CALLBACK_TIMEOUT_MS - max ms to wait for the injection server
  *                              to answer a before_tool_call consult. The
  *                              optimizer is in this loop and may itself call
@@ -34,6 +39,7 @@ import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 
 const CALLBACK_URL =
   process.env.SUPERRED_CALLBACK_URL || "http://127.0.0.1:18899";
+const CALLBACK_TOKEN = process.env.SUPERRED_CALLBACK_TOKEN || "";
 const CALLBACK_TIMEOUT_MS =
   Number(process.env.SUPERRED_CALLBACK_TIMEOUT_MS) || 600000;
 
@@ -46,7 +52,12 @@ async function consult(toolName, params, toolCallId) {
   try {
     const resp = await fetch(`${CALLBACK_URL}/hook`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(CALLBACK_TOKEN
+          ? { Authorization: `Bearer ${CALLBACK_TOKEN}` }
+          : {}),
+      },
       body: JSON.stringify({
         hook: "before_tool_call",
         toolName,

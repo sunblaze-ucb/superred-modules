@@ -113,6 +113,8 @@ class OpenClawRuntime:
         plugin_name: Extension id (also added to ``plugins.allow``).
         callback_url: URL of the host injection server, exported to the
             plugin as ``SUPERRED_CALLBACK_URL``.
+        callback_token: Bearer token the plugin presents to the callback server,
+            exported as ``SUPERRED_CALLBACK_TOKEN``.
         tool_policy: Optional ``tools.profile`` name written to config.
         allow_unconfigured: Pass ``--allow-unconfigured`` so a fresh gateway
             starts without an interactive setup step.
@@ -138,6 +140,7 @@ class OpenClawRuntime:
     plugin_dir: str | None = None
     plugin_name: str = DEFAULT_PLUGIN_NAME
     callback_url: str | None = None
+    callback_token: str | None = None
     tool_policy: str | None = None
     allow_unconfigured: bool = True
     state_dir: str | None = None
@@ -197,6 +200,8 @@ class OpenClawRuntime:
             )
         if self.callback_url:
             env["SUPERRED_CALLBACK_URL"] = self.callback_url
+        if self.callback_token:
+            env["SUPERRED_CALLBACK_TOKEN"] = self.callback_token
         env.update(self.extra_env)
         return env
 
