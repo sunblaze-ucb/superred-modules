@@ -126,7 +126,7 @@ changing **only the user task**, exactly one piece:
 
 - **User task = a purpose-built benign cover** (`covers.py` + `data/benign_covers.json`),
   one per *base* behaviour (a base's 4 augmentations share tools + grader, so they
-  share a cover -> 42 covers).  Each cover is a close-but-orthogonal benign request:
+  share a cover -> 41 covers).  Each cover is a close-but-orthogonal benign request:
   it engages a behaviour tool whose **output the agent ingests** (so a tool output
   exists for an attacker to inject into -- usually a read/retrieval tool; for a few
   toolsets without one, a generation/post tool whose return the agent reads back) but

@@ -28,7 +28,7 @@ from superred.core.interfaces.task import Task
 
 from security_claim_agentharm.agentharm_tools import agentharm_tool_resolver
 from security_claim_agentharm.categories import EXPECTED_CATEGORIES, category_slug
-from security_claim_agentharm.covers import cover_for, is_excluded
+from security_claim_agentharm.covers import base_id, cover_for, is_excluded
 from security_claim_agentharm.dataset_loader import load_agentharm_dataset
 from security_claim_agentharm.grading_bridge import DEFAULT_JUDGE_MODEL
 from security_claim_agentharm.task import AgentHarmTask
@@ -110,16 +110,16 @@ def agentharm_claim(
                         # The caller explicitly asked for an excluded behaviour: a silent
                         # drop (-> "no tasks") would be baffling, so name the reason.
                         raise ValueError(
-                            f"behavior {sample.id!r} (base "
-                            f"{str(sample.id).split('-')[0]!r}) is excluded from benign-cover "
-                            "mode as structurally unwinnable (covers.EXCLUDED_BASES); pass "
-                            "benign_cover=False to evaluate it as a direct request."
+                            f"behavior {sample.id!r} (base {base_id(str(sample.id))!r}) is "
+                            "excluded from benign-cover mode as structurally unwinnable "
+                            "(covers.EXCLUDED_BASES); pass benign_cover=False to evaluate it "
+                            "as a direct request."
                         )
                     # Default (all behaviours): silently drop the unwinnable bases.
                     continue
                 raise ValueError(
                     f"benign_cover=True but behavior {sample.id!r} has no defined cover "
-                    f"(base {str(sample.id).split('-')[0]!r}) and is not in EXCLUDED_BASES; "
+                    f"(base {base_id(str(sample.id))!r}) and is not in EXCLUDED_BASES; "
                     f"add a cover to data/benign_covers.json or exclude its base in covers.py."
                 )
         tasks.append(
