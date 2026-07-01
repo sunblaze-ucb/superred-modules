@@ -2,10 +2,14 @@
 
 Runs the whole gateway inside a fresh container for full host isolation and
 safe parallelism. Grounded in the real OpenClaw ``Dockerfile`` /
-``docker-compose.yml``:
+``docker-compose.yml`` and the published release images documented at
+https://docs.openclaw.ai/install/docker:
 
-- Image ``openclaw:local`` by default (the repo's ``${OPENCLAW_IMAGE:-openclaw:local}``);
-  override with ``image=`` (e.g. a published tag).
+- Image ``ghcr.io/openclaw/openclaw:latest`` by default (official GHCR release;
+  Docker Hub mirror: ``openclaw/openclaw:latest``). Override with ``image=`` or
+  ``OPENCLAW_DOCKER_IMAGE``; ``openclaw:local`` remains valid for dev builds.
+- On ``start()``, the image is pulled automatically when missing locally
+  (``auto_pull_image=True``).
 - The gateway is launched as ``openclaw gateway --bind lan --port 18789``.
   ``lan`` (0.0.0.0) is required so the host can reach it through a published
   port; OpenClaw *rejects non-loopback binds without auth*, so a gateway token
@@ -26,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import secrets
 import shutil
 import tempfile
@@ -47,7 +52,9 @@ from openclaw_target.runtime import (
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_IMAGE = "openclaw:local"
+# Official release image (GHCR primary; Docker Hub mirror: openclaw/openclaw).
+DEFAULT_DOCKER_IMAGE = "ghcr.io/openclaw/openclaw:latest"
+_DEFAULT_IMAGE = os.environ.get("OPENCLAW_DOCKER_IMAGE", DEFAULT_DOCKER_IMAGE)
 _GATEWAY_CONTAINER_PORT = 18789
 _READY_POLL_INTERVAL_S = 0.5
 _READY_TIMEOUT_S = 120.0
@@ -62,8 +69,13 @@ class OpenClawDockerRuntime:
     the target can swap between local and containerised gateways.
 
     Args:
-        image: Gateway image (default ``openclaw:local``).
+        image: Gateway image (default ``ghcr.io/openclaw/openclaw:latest``, or
+            ``OPENCLAW_DOCKER_IMAGE`` when set). Official mirrors also include
+            ``openclaw/openclaw:<tag>`` on Docker Hub; ``openclaw:local`` for
+            dev builds from an OpenClaw checkout.
         docker_bin: Docker CLI (default ``docker``; e.g. ``podman``).
+        auto_pull_image: When ``True`` (default), ``start()`` runs
+            ``docker pull`` if the configured image is not present locally.
         host: Loopback host used to reach the published port (``127.0.0.1``).
         host_port: Published host port mapped to the container's 18789. ``0``
             (default) picks a free ephemeral port for concurrency.
@@ -91,6 +103,7 @@ class OpenClawDockerRuntime:
 
     image: str = _DEFAULT_IMAGE
     docker_bin: str = "docker"
+    auto_pull_image: bool = True
     host: str = "127.0.0.1"
     host_port: int = 0
     container_host: str = "host.docker.internal"
@@ -193,6 +206,20 @@ class OpenClawDockerRuntime:
         ]
         return cmd
 
+    async def _ensure_image(self) -> None:
+        """Ensure the gateway image exists locally, pulling when configured."""
+        code, _ = await self._docker(["image", "inspect", self.image], check=False)
+        if code == 0:
+            return
+        if not self.auto_pull_image:
+            raise RuntimeError(
+                f"Docker image {self.image!r} not found locally and "
+                f"auto_pull_image=False. Pull it with: "
+                f"{self.docker_bin} pull {self.image}",
+            )
+        logger.info("Pulling OpenClaw gateway image: %s", self.image)
+        await self._docker(["pull", self.image], check=True)
+
     async def start(self) -> None:
         if self._container_id is not None:
             logger.warning("Docker runtime already started (%s)", self._container_id)
@@ -202,6 +229,7 @@ class OpenClawDockerRuntime:
             self.host_port = free_port()
         self._auth_token = secrets.token_hex(24)
 
+        await self._ensure_image()
         self._prepare_state_dir()
         cmd = self._build_run_cmd()
 

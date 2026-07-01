@@ -135,16 +135,20 @@ target_factory=openclaw_target_factory(
     enable_tool_injection=True,
     provider_base_url="https://api.provider.com",
     provider_api_key="...",
-    managed_kwargs={"image": "openclaw:local"},  # or a published tag
     concurrency=4,                 # each task gets its own container + port
 )
 ```
 
+Docker mode uses the official OpenClaw release image by default
+(`ghcr.io/openclaw/openclaw:latest`; Docker Hub mirror: `openclaw/openclaw:latest`).
+The runtime auto-pulls on first start when Docker is installed — no manual
+`docker build` from an OpenClaw checkout is required. Pin a version with
+`managed_kwargs={"image": "ghcr.io/openclaw/openclaw:2026.6.11"}` or set
+`OPENCLAW_DOCKER_IMAGE`. Dev builds from source can still use `openclaw:local`.
+
 In Docker mode the gateway runs `--bind lan` with a generated token, is reached
 on a dynamic published port, and reaches the host injection server + LLM proxy
-via `host.docker.internal` (the host servers bind `0.0.0.0`). The image must be
-available locally (`docker build -t openclaw:local .` in an OpenClaw checkout)
-or pulled.
+via `host.docker.internal` (the host servers bind `0.0.0.0`).
 
 External gateway: omit `managed=True`, pass `gateway_url=` and `auth_token=`.
 
@@ -191,9 +195,10 @@ Tests use an in-process `MockGateway` (no Node/Docker), exercising the full
 `Controller` pipeline, the injection bridge, ws session helpers, and the reset
 lifecycle. The managed `runtime.py` / `docker_runtime.py` *launch* paths need a
 real CLI / Docker daemon, so they are covered at the level of the deterministic
-config and command/env builders (`test_runtime_config.py`). When a Docker daemon
-and `openclaw:local` image are present, `test_docker_smoke.py` exercises the
-full container start → WebSocket connect → `tools.catalog` → stop path.
+config and command/env builders (`test_runtime_config.py`). When Docker is
+available, `test_docker_smoke.py` exercises the full container start (with
+auto-pull of the official image) → WebSocket connect → `tools.catalog` → stop
+path.
 
 ## Known limitations / notes
 
@@ -202,10 +207,11 @@ full container start → WebSocket connect → `tools.catalog` → stop path.
   so `concurrency>1` is safe. The default `"local"` runtime now also uses a
   dynamic port + private state dir, but shares host state/network, so keep
   local managed runs at `concurrency=1`.
-- **Docker image**: the runtime does not build the image; it must be present
-  (`openclaw:local` by default, or a tag via `managed_kwargs={"image": ...}`).
-  On Linux, bind-mounted state must be writable by the container's `node`
-  (uid 1000) user.
+- **Docker image**: defaults to the official release
+  `ghcr.io/openclaw/openclaw:latest` (auto-pulled on first start). Override via
+  `managed_kwargs={"image": ...}` or `OPENCLAW_DOCKER_IMAGE`. Pin a version tag
+  for reproducibility. On Linux, bind-mounted state must be writable by the
+  container's `node` (uid 1000) user.
 - **LLM proxy** is wired in managed mode (the gateway's provider `baseUrl` in
   `openclaw.json` points at the proxy); an external gateway must be pointed at
   it manually.

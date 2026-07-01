@@ -1,12 +1,8 @@
 """Opt-in smoke test for the Docker managed runtime.
 
-Skipped unless a Docker daemon is reachable **and** the configured OpenClaw
-gateway image exists locally (default ``openclaw:local``). Override the image
-with ``OPENCLAW_DOCKER_IMAGE``.
-
-Build the image from an OpenClaw checkout::
-
-    docker build -t openclaw:local .
+Skipped unless a Docker daemon is reachable. The runtime auto-pulls the
+official OpenClaw gateway image on first start (default
+``ghcr.io/openclaw/openclaw:latest``). Override with ``OPENCLAW_DOCKER_IMAGE``.
 
 Run explicitly::
 
@@ -21,42 +17,30 @@ import subprocess
 
 import pytest
 
-from openclaw_target.docker_runtime import OpenClawDockerRuntime
+from openclaw_target.docker_runtime import DEFAULT_DOCKER_IMAGE, OpenClawDockerRuntime
 from openclaw_target.ws_client import OpenClawWSClient
 
-_DEFAULT_IMAGE = "openclaw:local"
 
-
-def _docker_smoke_ready() -> bool:
+def _docker_daemon_ready() -> bool:
     if not shutil.which("docker"):
         return False
-    if subprocess.run(
-        ["docker", "info"],
-        capture_output=True,
-        check=False,
-    ).returncode != 0:
-        return False
-    image = os.environ.get("OPENCLAW_DOCKER_IMAGE", _DEFAULT_IMAGE)
     return subprocess.run(
-        ["docker", "image", "inspect", image],
+        ["docker", "info"],
         capture_output=True,
         check=False,
     ).returncode == 0
 
 
 pytestmark = pytest.mark.skipif(
-    not _docker_smoke_ready(),
-    reason=(
-        "Docker daemon unavailable or OpenClaw image missing "
-        f"(set OPENCLAW_DOCKER_IMAGE; default {_DEFAULT_IMAGE})"
-    ),
+    not _docker_daemon_ready(),
+    reason="Docker daemon unavailable",
 )
 
 
 @pytest.mark.asyncio
 async def test_docker_runtime_lifecycle_and_gateway_rpc() -> None:
     """Start a real gateway container, connect, and fetch tools.catalog."""
-    image = os.environ.get("OPENCLAW_DOCKER_IMAGE", _DEFAULT_IMAGE)
+    image = os.environ.get("OPENCLAW_DOCKER_IMAGE", DEFAULT_DOCKER_IMAGE)
     rt = OpenClawDockerRuntime(
         image=image,
         model_id="openai/gpt-5",

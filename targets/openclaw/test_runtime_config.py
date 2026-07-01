@@ -10,12 +10,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from openclaw_target.config import (
     DEFAULT_PLUGIN_NAME,
     build_gateway_config,
     materialize_state_dir,
 )
-from openclaw_target.docker_runtime import OpenClawDockerRuntime
+from openclaw_target.docker_runtime import DEFAULT_DOCKER_IMAGE, OpenClawDockerRuntime
 from openclaw_target.runtime import OpenClawRuntime
 from openclaw_target.target import (
     MESSAGE_CONTENT_CTRL,
@@ -120,6 +122,62 @@ def test_local_runtime_env_uses_state_dir_not_fabricated_vars(tmp_path: Path) ->
 
 
 # -- docker runtime -----------------------------------------------------------
+
+
+def test_docker_default_image_is_official_release() -> None:
+    rt = OpenClawDockerRuntime()
+    assert rt.image == DEFAULT_DOCKER_IMAGE
+    assert rt.image.startswith("ghcr.io/openclaw/openclaw:")
+
+
+@pytest.mark.asyncio
+async def test_ensure_image_pulls_when_missing() -> None:
+    rt = OpenClawDockerRuntime(image="ghcr.io/openclaw/openclaw:latest", auto_pull_image=True)
+    calls: list[list[str]] = []
+
+    async def fake_docker(args: list[str], *, check: bool) -> tuple[int, str]:
+        calls.append(args)
+        if args[:2] == ["image", "inspect"]:
+            return 1, ""
+        if args[0] == "pull":
+            return 0, ""
+        raise AssertionError(f"unexpected docker call: {args}")
+
+    rt._docker = fake_docker  # type: ignore[method-assign]
+    await rt._ensure_image()
+    assert calls == [
+        ["image", "inspect", "ghcr.io/openclaw/openclaw:latest"],
+        ["pull", "ghcr.io/openclaw/openclaw:latest"],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ensure_image_skips_pull_when_present() -> None:
+    rt = OpenClawDockerRuntime(image="ghcr.io/openclaw/openclaw:latest")
+    calls: list[list[str]] = []
+
+    async def fake_docker(args: list[str], *, check: bool) -> tuple[int, str]:
+        calls.append(args)
+        return 0, ""
+
+    rt._docker = fake_docker  # type: ignore[method-assign]
+    await rt._ensure_image()
+    assert calls == [["image", "inspect", "ghcr.io/openclaw/openclaw:latest"]]
+
+
+@pytest.mark.asyncio
+async def test_ensure_image_raises_when_missing_and_auto_pull_disabled() -> None:
+    rt = OpenClawDockerRuntime(
+        image="ghcr.io/openclaw/openclaw:missing",
+        auto_pull_image=False,
+    )
+
+    async def fake_docker(args: list[str], *, check: bool) -> tuple[int, str]:
+        return 1, ""
+
+    rt._docker = fake_docker  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="auto_pull_image=False"):
+        await rt._ensure_image()
 
 
 def test_docker_run_cmd_grounded(tmp_path: Path) -> None:

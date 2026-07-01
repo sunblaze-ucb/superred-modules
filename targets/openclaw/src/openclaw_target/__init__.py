@@ -10,6 +10,7 @@ from openclaw_target.constants import (
     USER_INPUT_TAG,
 )
 from openclaw_target.factory import openclaw_target_factory
+from openclaw_target.docker_runtime import DEFAULT_DOCKER_IMAGE
 from openclaw_target.target import (
     FILE_CONTENT_CTRL,
     MESSAGE_CONTENT_CTRL,
@@ -25,6 +26,7 @@ from openclaw_target.target import (
 __all__ = [
     "OpenClawTarget",
     "openclaw_target_factory",
+    "DEFAULT_DOCKER_IMAGE",
     "SYSTEM_TAG",
     "USER_INPUT_TAG",
     "EXTERNAL_DATA_TAG",
