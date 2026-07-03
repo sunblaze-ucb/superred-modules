@@ -50,7 +50,7 @@ def test_config_provider_routing_grounded() -> None:
     assert provider["apiKey"] == "sk-test"
     # allowPrivateNetwork is required to reach a loopback / host.docker.internal proxy.
     assert provider["request"]["allowPrivateNetwork"] is True
-    assert provider["models"] == [{"id": "gpt-5"}]
+    assert provider["models"] == [{"id": "gpt-5", "name": "gpt-5"}]
     assert cfg["models"]["mode"] == "replace"
 
     assert cfg["agents"]["defaults"]["model"] == {"primary": "openai/gpt-5"}
@@ -71,6 +71,20 @@ def test_config_does_not_double_append_v1() -> None:
 def test_config_unqualified_model_uses_synthetic_provider() -> None:
     cfg = build_gateway_config(model_id="gpt-5", provider_base_url="http://x/v1")
     assert "superred" in cfg["models"]["providers"]
+    assert cfg["models"]["providers"]["superred"]["models"] == [
+        {"id": "gpt-5", "name": "gpt-5"},
+    ]
+
+
+def test_provider_model_entry_includes_required_name() -> None:
+    """OpenClaw rejects models[] rows with id-only (models.0.name required)."""
+    cfg = build_gateway_config(
+        model_id="openai/gpt-4o-mini",
+        provider_base_url="http://127.0.0.1:9001/v1",
+    )
+    assert cfg["models"]["providers"]["openai"]["models"] == [
+        {"id": "gpt-4o-mini", "name": "gpt-4o-mini"},
+    ]
 
 
 def test_materialize_state_dir(tmp_path: Path) -> None:

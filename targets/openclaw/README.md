@@ -191,14 +191,15 @@ for `agents.files.set` (planting the system prompt / workspace files) and
 pytest                      # from this directory
 ```
 
-Tests use an in-process `MockGateway` (no Node/Docker), exercising the full
-`Controller` pipeline, the injection bridge, ws session helpers, and the reset
-lifecycle. The managed `runtime.py` / `docker_runtime.py` *launch* paths need a
-real CLI / Docker daemon, so they are covered at the level of the deterministic
-config and command/env builders (`test_runtime_config.py`). When Docker is
-available, `test_docker_smoke.py` exercises the full container start (with
-auto-pull of the official image) → WebSocket connect → `tools.catalog` → stop
-path.
+Tests use an in-process `MockGateway` (no Node/Docker) in
+`test_openclaw_integration.py`, exercising the full `Controller` pipeline,
+the injection bridge, ws session helpers, and the reset lifecycle. **Live**
+tests in `test_openclaw_live.py` spawn the real `openclaw gateway` CLI (skipped
+when the CLI is missing) and drive RPCs plus a full managed `OpenClawTarget` run
+against a stub LLM upstream — no API keys required. Config/command builders are
+covered in `test_runtime_config.py`. When Docker is available,
+`test_docker_smoke.py` exercises container start (with auto-pull of the
+official image) → WebSocket connect → `tools.catalog` → stop.
 
 ## Known limitations / notes
 

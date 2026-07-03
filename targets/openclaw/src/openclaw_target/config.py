@@ -50,6 +50,18 @@ def _split_model_id(model_id: str) -> tuple[str, str]:
     return "superred", model_id
 
 
+def _provider_model_entry(model: str) -> dict[str, str]:
+    """Build a ``models.providers.*.models[]`` row per OpenClaw's schema.
+
+    ``ModelDefinitionSchema`` (``src/config/zod-schema.core.ts``) requires
+    both ``id`` and ``name`` (``z.string().min(1)``). Other fields
+    (``reasoning``, ``input``, ``cost``, etc.) are optional at config time.
+    Upstream fixtures use the model id as the display name when no separate
+    label is needed (e.g. ``{ id: "gpt-5", name: "gpt-5" }``).
+    """
+    return {"id": model, "name": model}
+
+
 def build_gateway_config(
     *,
     model_id: str = "",
@@ -100,7 +112,7 @@ def build_gateway_config(
         provider_entry: dict[str, Any] = {
             "baseUrl": base_url,
             "api": provider_api,
-            "models": [{"id": model}],
+            "models": [_provider_model_entry(model)],
         }
         if provider_api_key:
             provider_entry["apiKey"] = provider_api_key
