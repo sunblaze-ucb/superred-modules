@@ -91,6 +91,7 @@ def test_materialize_state_dir(tmp_path: Path) -> None:
     plugin_src = tmp_path / "plugin"
     plugin_src.mkdir()
     (plugin_src / "index.js").write_text("// plugin")
+    (plugin_src / "openclaw.plugin.json").write_text('{"id": "superred-injection"}')
 
     state = tmp_path / "state"
     cfg = build_gateway_config(model_id="openai/gpt-5", provider_base_url="http://x")
@@ -99,7 +100,9 @@ def test_materialize_state_dir(tmp_path: Path) -> None:
     written = json.loads((state / "openclaw.json").read_text())
     assert written["models"]["mode"] == "replace"
     assert (state / "workspace").is_dir()
-    assert (state / "extensions" / "superred-injection" / "index.js").read_text() == "// plugin"
+    ext = state / "extensions" / "superred-injection"
+    assert ext.joinpath("index.js").read_text() == "// plugin"
+    assert ext.joinpath("openclaw.plugin.json").read_text().startswith("{")
 
 
 # -- local runtime ------------------------------------------------------------

@@ -406,6 +406,16 @@ class OpenClawTarget(Target):
         client = OpenClawWSClient(
             gateway_url=self._gateway_url,
             auth_token=self._auth_token,
+            use_device_identity=(
+                self._runtime.use_device_identity
+                if self._runtime is not None
+                else False
+            ),
+            device_identity_path=(
+                self._runtime.device_identity_path
+                if self._runtime is not None
+                else None
+            ),
         )
         self._hello_payload = await client.connect()
         self._client = client

@@ -43,6 +43,7 @@ from openclaw_target.config import (
     build_gateway_config,
     materialize_state_dir,
 )
+from openclaw_target.device_identity import ensure_device_auth_for_state_dir
 from openclaw_target.runtime import (
     CONTAINER_STATE_DIR,
     CONTAINER_WORKSPACE_DIR,
@@ -126,6 +127,7 @@ class OpenClawDockerRuntime:
     _container_id: str | None = None
     _auth_token: str | None = None
     _state_path: Path | None = None
+    _device_identity_path: Path | None = None
     _owns_state_dir: bool = False
 
     @property
@@ -135,6 +137,14 @@ class OpenClawDockerRuntime:
     @property
     def auth_token(self) -> str | None:
         return self._auth_token
+
+    @property
+    def device_identity_path(self) -> str | None:
+        return str(self._device_identity_path) if self._device_identity_path else None
+
+    @property
+    def use_device_identity(self) -> bool:
+        return True
 
     @property
     def container_id(self) -> str | None:
@@ -166,6 +176,7 @@ class OpenClawDockerRuntime:
             plugin_src=Path(self.plugin_dir) if self.plugin_dir else None,
             plugin_name=self.plugin_name,
         )
+        self._device_identity_path = ensure_device_auth_for_state_dir(path)
         return path
 
     def _build_run_cmd(self) -> list[str]:
@@ -292,8 +303,9 @@ class OpenClawDockerRuntime:
                     f"OpenClaw gateway container exited during startup: {logs}",
                 )
             if await http_get_ok(self.host, self.host_port, "/healthz"):
-                logger.info("OpenClaw gateway container healthy after %.1fs", elapsed)
-                return
+                if await http_get_ok(self.host, self.host_port, "/readyz"):
+                    logger.info("OpenClaw gateway container ready after %.1fs", elapsed)
+                    return
             await asyncio.sleep(_READY_POLL_INTERVAL_S)
             elapsed += _READY_POLL_INTERVAL_S
         raise TimeoutError(

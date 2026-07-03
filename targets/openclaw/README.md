@@ -198,8 +198,9 @@ tests in `test_openclaw_live.py` spawn the real `openclaw gateway` CLI (skipped
 when the CLI is missing) and drive RPCs plus a full managed `OpenClawTarget` run
 against a stub LLM upstream — no API keys required. Config/command builders are
 covered in `test_runtime_config.py`. When Docker is available,
-`test_docker_smoke.py` exercises container start (with auto-pull of the
-official image) → WebSocket connect → `tools.catalog` → stop.
+`test_docker_smoke.py` exercises real containers: operator scopes over a
+published port (Ed25519 device identity + pre-seeded pairing), injection plugin
+boot (`openclaw.plugin.json`), RPCs, and a stub-LLM agent turn.
 
 ## Known limitations / notes
 

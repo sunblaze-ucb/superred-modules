@@ -35,6 +35,7 @@ from openclaw_target.config import (
     build_gateway_config,
     materialize_state_dir,
 )
+from openclaw_target.device_identity import ensure_device_auth_for_state_dir
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +151,7 @@ class OpenClawRuntime:
     _proc: asyncio.subprocess.Process | None = None
     _auth_token: str | None = None
     _state_path: Path | None = None
+    _device_identity_path: Path | None = None
     _owns_state_dir: bool = False
 
     container_host: str = "127.0.0.1"
@@ -161,6 +163,15 @@ class OpenClawRuntime:
     @property
     def auth_token(self) -> str | None:
         return self._auth_token
+
+    @property
+    def device_identity_path(self) -> str | None:
+        """Path to the Ed25519 device identity used for remote gateway connects."""
+        return str(self._device_identity_path) if self._device_identity_path else None
+
+    @property
+    def use_device_identity(self) -> bool:
+        return False
 
     def _prepare_state_dir(self) -> Path:
         if self.state_dir is not None:
@@ -186,6 +197,7 @@ class OpenClawRuntime:
             plugin_src=Path(self.plugin_dir) if self.plugin_dir else None,
             plugin_name=self.plugin_name,
         )
+        self._device_identity_path = ensure_device_auth_for_state_dir(path)
         return path
 
     def _build_env(self) -> dict[str, str]:
@@ -284,8 +296,10 @@ class OpenClawRuntime:
                     f"(code {self._proc.returncode}): {stderr.decode().strip()}",
                 )
             if await http_get_ok(self.host, self.host_port, "/healthz"):
-                logger.info("OpenClaw gateway healthy after %.1fs", elapsed)
-                return
+                if await http_get_ok(self.host, self.host_port, "/readyz"):
+                    logger.info("OpenClaw gateway ready after %.1fs", elapsed)
+                    return
+                logger.debug("Gateway /healthz ok but /readyz not yet ready")
             tcp_only_ok = await self._port_open()
             await asyncio.sleep(_READY_POLL_INTERVAL_S)
             elapsed += _READY_POLL_INTERVAL_S

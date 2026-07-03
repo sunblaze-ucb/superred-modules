@@ -1,0 +1,13 @@
+{
+  "id": "superred-injection",
+  "activation": {
+    "onStartup": true
+  },
+  "name": "Superred Injection",
+  "description": "Tool-output injection bridge for superred red-teaming (before_tool_call + tool_result_persist hooks).",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

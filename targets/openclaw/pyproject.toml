@@ -7,7 +7,7 @@ name = "openclaw-target"
 version = "0.1.0"
 description = "OpenClaw agent target module for superred"
 requires-python = ">=3.11,<3.14"
-dependencies = ["superred", "websockets"]
+dependencies = ["superred", "websockets", "cryptography"]
 
 [project.optional-dependencies]
 injection = ["aiohttp"]

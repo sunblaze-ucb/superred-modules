@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -48,6 +49,10 @@ class OpenClawWSClient:
         gateway_url: WebSocket URL (e.g. ``ws://127.0.0.1:18789``).
         auth_token: Shared-secret auth token for the Gateway.
         device_id: Stable device identifier for this client.
+        use_device_identity: Sign connect with Ed25519 device identity (required
+            for remote/Docker gateways).
+        device_identity_path: Path to ``identity/device.json`` in the gateway
+            state dir (paired device must be pre-seeded there).
     """
 
     def __init__(
@@ -55,10 +60,14 @@ class OpenClawWSClient:
         gateway_url: str,
         auth_token: str,
         device_id: str | None = None,
+        use_device_identity: bool = False,
+        device_identity_path: str | None = None,
     ) -> None:
         self._url = gateway_url
         self._auth_token = auth_token
         self._device_id = device_id or f"superred-{uuid.uuid4().hex[:12]}"
+        self._use_device_identity = use_device_identity
+        self._device_identity_path = device_identity_path
         self._ws: websockets.asyncio.client.ClientConnection | None = None
         self._pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._event_listeners: dict[str, list[asyncio.Queue[dict[str, Any]]]] = {}
@@ -81,23 +90,70 @@ class OpenClawWSClient:
         self._ws = await websockets.asyncio.client.connect(self._url)
         self._reader_task = asyncio.create_task(self._read_loop())
 
-        # The gateway emits connect.challenge before accepting connect; wait
-        # for it even though the device-less path below does not sign it.
-        await self._wait_for_event("connect.challenge", timeout=15)
+        challenge = await self._wait_for_event("connect.challenge", timeout=15)
+        challenge_nonce = challenge.get("payload", {}).get("nonce", "")
 
-        # Connect over the verified device-less trusted path: a same-process
-        # backend client (client.id "gateway-client", client.mode "backend")
-        # may omit `device` on a *direct loopback* connection authenticated
-        # with the shared gateway token. (gateway/protocol "Handshake" +
-        # "Device identity + pairing".) Remote/paired connections instead
-        # require v3 device-key nonce signing, which is intentionally not
-        # implemented here — this target is built for a managed local gateway.
+        scopes = ["operator.read", "operator.write", "operator.admin"]
         connect_id = self._next_id()
-        connect_req: dict[str, Any] = {
-            "type": "req",
-            "id": connect_id,
-            "method": "connect",
-            "params": {
+
+        if self._use_device_identity:
+            if not self._device_identity_path:
+                raise ConnectionError(
+                    "use_device_identity=True requires device_identity_path",
+                )
+            from pathlib import Path
+
+            from openclaw_target.device_identity import (
+                OPERATOR_SCOPES,
+                build_device_auth_payload_v3,
+                load_or_create_device_identity,
+                public_key_raw_base64url,
+                sign_device_payload,
+            )
+
+            identity = load_or_create_device_identity(
+                Path(self._device_identity_path),
+            )
+            signed_at_ms = int(time.time() * 1000)
+            payload = build_device_auth_payload_v3(
+                device_id=identity.device_id,
+                client_id="cli",
+                client_mode="cli",
+                role="operator",
+                scopes=list(OPERATOR_SCOPES),
+                signed_at_ms=signed_at_ms,
+                token=self._auth_token,
+                nonce=challenge_nonce,
+                platform="linux",
+            )
+            connect_params: dict[str, Any] = {
+                "minProtocol": 3,
+                "maxProtocol": 4,
+                "client": {
+                    "id": "cli",
+                    "version": "0.1.0",
+                    "platform": "linux",
+                    "mode": "cli",
+                },
+                "role": "operator",
+                "scopes": list(scopes),
+                "caps": [],
+                "commands": [],
+                "permissions": {},
+                "auth": {"token": self._auth_token},
+                "device": {
+                    "id": identity.device_id,
+                    "publicKey": public_key_raw_base64url(identity.public_key_pem),
+                    "signature": sign_device_payload(identity.private_key_pem, payload),
+                    "signedAt": signed_at_ms,
+                    "nonce": challenge_nonce,
+                },
+                "locale": "en-US",
+                "userAgent": "superred/0.1.0",
+            }
+        else:
+            # Direct-local backend path: loopback + gateway-client/backend only.
+            connect_params = {
                 "minProtocol": 3,
                 "maxProtocol": 4,
                 "client": {
@@ -107,28 +163,52 @@ class OpenClawWSClient:
                     "mode": "backend",
                 },
                 "role": "operator",
-                # operator.admin is required for agents.files.set (planting the
-                # AGENTS.md system prompt / workspace files) and sessions.reset;
-                # read/write alone reject those, which silently broke config and
-                # reset. Request the full operator scope set.
-                "scopes": ["operator.read", "operator.write", "operator.admin"],
+                "scopes": scopes,
                 "caps": [],
                 "commands": [],
                 "permissions": {},
                 "auth": {"token": self._auth_token},
                 "locale": "en-US",
                 "userAgent": "superred/0.1.0",
-            },
+            }
+
+        connect_req: dict[str, Any] = {
+            "type": "req",
+            "id": connect_id,
+            "method": "connect",
+            "params": connect_params,
         }
 
-        result = await self._send_request(connect_req, connect_id)
+        result: dict[str, Any] = {}
+        deadline = time.time() + 30.0
+        while time.time() < deadline:
+            connect_id = self._next_id()
+            connect_req["id"] = connect_id
+            result = await self._send_request(connect_req, connect_id)
+            if result.get("ok"):
+                break
+            error = result.get("error")
+            if isinstance(error, dict) and error.get("retryable") and error.get("code") == "UNAVAILABLE":
+                retry_ms = int(error.get("retryAfterMs") or 500)
+                await asyncio.sleep(retry_ms / 1000.0)
+                continue
+            break
+
         if not result.get("ok"):
             error = result.get("error", "unknown error")
             raise ConnectionError(f"Gateway connect failed: {error}")
 
+        hello = result.get("payload", {})
+        granted = hello.get("auth", {}).get("scopes") or hello.get("scopes") or []
+        if self._use_device_identity and scopes and not granted:
+            raise ConnectionError(
+                f"Gateway granted empty scopes {granted!r}; "
+                "device pairing or identity may be misconfigured",
+            )
+
         self._connected = True
         logger.info("Connected to OpenClaw Gateway at %s", self._url)
-        return result.get("payload", {})
+        return hello
 
     async def close(self) -> None:
         """Close the WebSocket connection."""
