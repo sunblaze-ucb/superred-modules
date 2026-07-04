@@ -177,7 +177,12 @@ class HostMCPProxy:
         try:
             from fastmcp import Client  # lazy: container-only dependency
 
-            async with Client(url, timeout=30.0) as client:
+            # 60s per-call timeout mirrors upstream openclaw MCPProxyServer._call_tool
+            # (asyncio.wait_for(session.call_tool(...), timeout=60.0)); the sibling
+            # tools-list fetch below deliberately stays at 30s, matching upstream's
+            # _fetch_tools_list. On a declined run the genuine return must be identical
+            # to upstream, so this timeout must not be shorter than upstream's.
+            async with Client(url, timeout=60.0) as client:
                 result = await client.call_tool(tool, params)
             return _extract_mcp_result(result)
         except Exception as exc:  # noqa: BLE001 - upstream returns errors as content
