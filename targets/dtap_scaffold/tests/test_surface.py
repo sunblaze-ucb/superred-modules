@@ -14,7 +14,7 @@ import dtap_scaffold as S  # noqa: N812
 def test_default_domain_roots():
     assert isinstance(S.DOMAIN, SecurityDomain)
     roots = {t.name for t in S.DOMAIN.roots}
-    assert roots == {"system", "user", "tools", "environment"}
+    assert roots == {"system", "user", "tools", "environment", "host"}
 
 
 def test_subsumption_hierarchy():
@@ -23,9 +23,14 @@ def test_subsumption_hierarchy():
     assert S.SYSTEM_TAG.includes(S.TOOL_CATALOGUE_EDIT_TAG)
     assert S.TOOL_CATALOGUE_TAG.includes(S.TOOL_CATALOGUE_EDIT_TAG)
     assert S.AGENT_TRACE_TAG.includes(S.AGENT_TRACE_TOOL_CALLS_TAG)
+    # host root subsumes both host capabilities; the two are independent of each other
+    assert S.HOST_TAG.includes(S.HOST_FILESYSTEM_TAG)
+    assert S.HOST_TAG.includes(S.HOST_CODE_EXECUTION_TAG)
+    assert not S.HOST_FILESYSTEM_TAG.includes(S.HOST_CODE_EXECUTION_TAG)
     # not the other way round
     assert not S.SYSTEM_PROMPT_TAG.includes(S.SYSTEM_TAG)
     assert not S.USER_TAG.includes(S.SYSTEM_TAG)
+    assert not S.HOST_FILESYSTEM_TAG.includes(S.HOST_TAG)
 
 
 def test_fixed_controllables():
@@ -35,6 +40,8 @@ def test_fixed_controllables():
         "skill",
         "tool_description_override",
         "tool_description_suffix",
+        "filesystem",
+        "code_execution",
     ]
     assert all(isinstance(c, Controllable) for c in S.FIXED_CONTROLLABLES)
     assert S.USER_PROMPT_CTRL.security_domain is S.USER_TAG
@@ -43,6 +50,11 @@ def test_fixed_controllables():
     assert S.SKILL_CTRL.value_type == "json"
     assert S.TOOL_DESCRIPTION_OVERRIDE_CTRL.security_domain is S.TOOL_CATALOGUE_EDIT_TAG
     assert S.TOOL_DESCRIPTION_SUFFIX_CTRL.security_domain is S.TOOL_CATALOGUE_EDIT_TAG
+    # the host trust boundary: filesystem (PreCall) + code_execution (PostCall loop)
+    assert S.FILESYSTEM_CTRL.security_domain is S.HOST_FILESYSTEM_TAG
+    assert S.FILESYSTEM_CTRL.value_type == "json"
+    assert S.CODE_EXECUTION_CTRL.security_domain is S.HOST_CODE_EXECUTION_TAG
+    assert S.CODE_EXECUTION_CTRL.value_type == "text"
 
 
 def test_env_controllable_builders():

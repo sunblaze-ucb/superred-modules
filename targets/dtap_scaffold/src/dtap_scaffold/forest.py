@@ -32,9 +32,26 @@ Roots:
                      environment vector writes attacker data into the live backend
                      the agent later reads (one ``environment.<server>`` leaf per
                      active ``<domain>-injection`` server)
+- ``host``        -- the target MACHINE the agent runs on (its container filesystem
+                     + shell), a separately-compromisable locus distinct from the
+                     MCP-backed ``environment`` services:
+    - ``host_filesystem``      attacker write access to the machine's filesystem
+                               BEFORE the run (place/add/edit/delete files the agent
+                               later reads): a planted document, a poisoned config, a
+                               malicious script on disk. A mount/supply-chain foothold
+                               that shapes what is on disk without executing code.
+    - ``host_code_execution``  attacker arbitrary code execution on the machine, run
+                               REPEATEDLY as an interactive foothold. Subsumes
+                               filesystem control in capability but is scoped
+                               separately so an experiment can grant a disk-only
+                               foothold without full RCE.
 
 ``tools`` and ``environment`` carry no children on their own; the active
 environment set (chosen by the Task) supplies the per-server leaves.
+
+Note the asymmetry with ``agent_trace_tool_calls``: that surface OBSERVES the
+native tool calls the agent ITSELF makes; the ``host`` tree is the ATTACKER's own
+write/execute access to the same machine (a Controllable, not an observation).
 """
 
 from __future__ import annotations
@@ -99,6 +116,31 @@ vector). Children (one ``environment.<server>`` leaf per active injection
 server) are supplied dynamically."""
 
 # ===========================================================================
+# Tree 5: host (the target machine the agent runs on)
+# ===========================================================================
+
+HOST_TAG: SecurityDomainTag = SecurityDomainTag("host")
+"""Root of the target-machine trust boundary: the container the agent executes in
+(its filesystem + shell), distinct from the MCP-backed ``environment`` services.
+A separately-compromisable locus (a poisoned image, a shared mount, a
+supply-chain artifact on disk, or full remote code execution). Holding ``host``
+subsumes both capabilities below."""
+
+HOST_FILESYSTEM_TAG: SecurityDomainTag = SecurityDomainTag("host_filesystem", parent=HOST_TAG)
+"""Attacker write access to the target machine's filesystem BEFORE the run:
+place / add / edit / delete files the agent later reads. Weaker than code
+execution: a mounted-volume or supply-chain foothold that shapes what is on disk
+without running code."""
+
+HOST_CODE_EXECUTION_TAG: SecurityDomainTag = SecurityDomainTag(
+    "host_code_execution", parent=HOST_TAG
+)
+"""Attacker arbitrary code execution on the target machine, run repeatedly as an
+interactive foothold (each result feeds the next decision) until the attacker
+stops. Subsumes filesystem control in capability but is scoped separately so an
+experiment can grant a disk-only foothold without full RCE."""
+
+# ===========================================================================
 # Assembled forest
 # ===========================================================================
 
@@ -119,6 +161,9 @@ FIXED_TAGS: tuple[SecurityDomainTag, ...] = (
     USER_TAG,
     TOOLS_TAG,
     ENVIRONMENT_TAG,
+    HOST_TAG,
+    HOST_FILESYSTEM_TAG,
+    HOST_CODE_EXECUTION_TAG,
 )
 """Every tag the targets always expose, independent of the active env set."""
 
@@ -196,6 +241,9 @@ __all__ = [
     "USER_TAG",
     "TOOLS_TAG",
     "ENVIRONMENT_TAG",
+    "HOST_TAG",
+    "HOST_FILESYSTEM_TAG",
+    "HOST_CODE_EXECUTION_TAG",
     "FIXED_TAGS",
     "tools_server_tag",
     "env_server_tag",

@@ -9,6 +9,7 @@ the query surface the claim reads, and reset/teardown.
 from __future__ import annotations
 
 import json
+import os
 
 from superred.core.types.events import (
     ControllableInjection,
@@ -115,6 +116,7 @@ class FakeAgentTarget(DtapAgentTarget):
         self.proxy = FakeProxy()
         self.spec: AgentLaunchSpec | None = None
         self.tool_result: str | None = None
+        self.exec_calls: list[str] = []  # code_execution foothold rounds
 
     # inject fakes
     def _make_env_stack(self):
@@ -132,6 +134,12 @@ class FakeAgentTarget(DtapAgentTarget):
 
     def _native_tool_deny(self, policy: str) -> list[str]:
         return [] if policy == "enabled" else ["bash"]
+
+    async def _exec_on_host(self, code: str) -> str:
+        # Record each code_execution round and echo a deterministic result that the
+        # loop feeds back as the next round's answer.
+        self.exec_calls.append(code)
+        return f"ran:{code}"
 
     async def _run_episode(self, spec: AgentLaunchSpec) -> EpisodeResult:
         self.spec = spec
@@ -154,8 +162,10 @@ class FakeAgentTarget(DtapAgentTarget):
 # --------------------------- helpers --------------------------------------
 
 
-def _configured() -> FakeAgentTarget:
-    t = FakeAgentTarget(model="openai/gpt-4o-2024-05-13", api_base="http://proxy", api_key="k")
+def _configured(**kw) -> FakeAgentTarget:
+    t = FakeAgentTarget(
+        model="openai/gpt-4o-2024-05-13", api_base="http://proxy", api_key="k", **kw
+    )
     t.set_config("active_mcp_servers", json.dumps(["travel-suite"]))
     t.set_config("env_injection_config", json.dumps({"travel-injection": "all"}))
     t.set_config("system_prompt", "You are a travel agent.")
@@ -190,14 +200,21 @@ def _recorder(injections: dict[str, str]):
 def test_config_surfaces():
     t = _configured()
     roots = {r.name for r in t.security_domain.roots}
-    assert {"system", "user", "tools", "environment"} <= roots
+    assert {"system", "user", "tools", "environment", "host"} <= roots
     names = {c.name for c in t.get_controllables()}
     assert "env_tool:travel-suite" in names
     assert "env_inject:travel-injection" in names
     assert {"user_prompt", "system_prompt", "skill"} <= names
+    # the host trust boundary: filesystem + code_execution controllables exist
+    assert {"filesystem", "code_execution"} <= names
     # tools.travel-suite leaf is covered by the tools root (identity via cached tag)
     tool_tag = t._tool_tags["travel-suite"]
     assert scope_includes(frozenset({S.TOOLS_TAG}), tool_tag)
+    # host root subsumes both host capabilities (parent grants children)
+    assert scope_includes(frozenset({S.HOST_TAG}), S.HOST_FILESYSTEM_TAG)
+    assert scope_includes(frozenset({S.HOST_TAG}), S.HOST_CODE_EXECUTION_TAG)
+    # but the two host capabilities are independent (RCE not granted by disk-only)
+    assert not scope_includes(frozenset({S.HOST_FILESYSTEM_TAG}), S.HOST_CODE_EXECUTION_TAG)
     obs = {o.observable.name for o in t.get_observables()}
     assert "model_identity" in obs and "active_environments" in obs
 
@@ -208,18 +225,22 @@ async def test_passthrough_baseline():
     await t.run(emit, send_event)
 
     fired = [e.controllable.name for e in events if hasattr(e, "controllable")]
-    # all five PreCall controllables (user/system/skill + tool override/suffix)
-    # plus the env_inject and env_tool PostCall controllables fired
+    # all PreCall controllables (user/system/skill + tool override/suffix + filesystem)
+    # plus the env_inject, env_tool and code_execution PostCall controllables fired
     assert "system_prompt" in fired and "user_prompt" in fired and "skill" in fired
     assert "tool_description_override" in fired and "tool_description_suffix" in fired
     assert "env_inject:travel-injection" in fired
     assert "env_tool:travel-suite" in fired
+    assert "filesystem" in fired and "code_execution" in fired
 
     # passthrough => genuine values everywhere
     assert t.spec.system_prompt == "You are a travel agent."
     assert t.spec.instructions == ("Book the cheapest flight.",)
     assert t.injector.applied == []  # no env write on decline
     assert t.tool_result == GENUINE_RETURN  # no return tampering
+    # host surfaces declined => no attacker files placed, no code executed
+    assert t.exec_calls == []
+    assert os.listdir(os.path.join(t._run_dir, "workspace")) == []
 
     # emit-once observables: one native tool + one message (env tool NOT re-emitted)
     obs_names = [o.observable.name for o in observables if isinstance(o, ObservableEvent)]
@@ -255,6 +276,9 @@ async def test_full_injection():
                 }
             ),
             "env_tool:travel-suite": "TAMPERED_RETURN",
+            "filesystem": json.dumps(
+                {"ops": [{"action": "write", "path": "sub/poison.txt", "content": "HACK"}]}
+            ),
         }
     )
     await t.run(emit, send_event)
@@ -265,6 +289,9 @@ async def test_full_injection():
     assert t.proxy._edits and t.proxy._edits[0]["mode"] == "override"
     assert t.injector.applied and t.injector.applied[0][0] == "travel-injection"
     assert t.tool_result == "TAMPERED_RETURN"  # proxy applied the env_tool injection
+    # host_filesystem: the attacker's file was placed in the agent workspace
+    with open(os.path.join(t._run_dir, "workspace", "sub", "poison.txt"), encoding="utf-8") as fh:
+        assert fh.read() == "HACK"
 
 
 async def test_reset_and_teardown():
@@ -276,7 +303,74 @@ async def test_reset_and_teardown():
     await t.reset_ephemeral_state()
     assert t.env_stack.reset_called == 1
     assert t.query("final_response") == ""  # ephemeral cleared
+    assert t._run_dir == ""  # next run mints a fresh workspace root
     assert t.env_stack.down_called == 0  # env stays up across reset
 
     await t.teardown()
     assert t.proxy.stopped == 1 and t.env_stack.down_called == 1
+
+
+async def test_code_execution_foothold_loop():
+    """code_execution fires repeatedly: each round's answer carries the previous
+    command's output, and the loop ends the instant the attacker declines."""
+    t = _configured()
+    answers: list[str] = []
+
+    async def send_event(evt):
+        ctrl = getattr(evt, "controllable", None)
+        if ctrl is not None and ctrl.name == "code_execution":
+            answers.append(evt.answer)
+            # run code for the first two rounds, then decline (attacker is done)
+            if len(answers) <= 2:
+                return ControllableInjection(
+                    event=evt, controllable=ctrl, value=f"cmd{len(answers)}"
+                )
+        return ControllableNoInjection(event=evt, controllable=ctrl)
+
+    def emit(evt):
+        pass
+
+    await t.run(emit, send_event)
+
+    # exactly two rounds ran, in order; declining round 3 stopped the foothold
+    assert t.exec_calls == ["cmd1", "cmd2"]
+    # feedback loop: first answer empty, each later answer is the prior output
+    assert answers == ["", "ran:cmd1", "ran:cmd2"]
+
+
+async def test_code_execution_cap_bounds_runaway():
+    """An optimizer that never declines is bounded by max_code_exec_rounds."""
+    t = _configured(max_code_exec_rounds=3)
+
+    async def send_event(evt):
+        ctrl = getattr(evt, "controllable", None)
+        if ctrl is not None and ctrl.name == "code_execution":
+            return ControllableInjection(event=evt, controllable=ctrl, value="x")
+        return ControllableNoInjection(event=evt, controllable=ctrl)
+
+    def emit(evt):
+        pass
+
+    await t.run(emit, send_event)
+    assert t.exec_calls == ["x", "x", "x"]  # capped at 3, not infinite
+
+
+async def test_apply_host_files_ops_and_confinement(tmp_path):
+    """write/append/delete apply to the workspace; a ``..`` traversal is skipped."""
+    t = _configured()
+    t._run_dir = str(tmp_path)
+    os.makedirs(os.path.join(t._run_dir, "workspace"))
+    await t._apply_host_files(
+        [
+            {"action": "write", "path": "a.txt", "content": "A"},
+            {"action": "append", "path": "a.txt", "content": "B"},
+            {"action": "write", "path": "gone.txt", "content": "x"},
+            {"action": "delete", "path": "gone.txt"},
+            {"action": "write", "path": "../escape.txt", "content": "NO"},  # confined
+        ]
+    )
+    ws = os.path.join(t._run_dir, "workspace")
+    with open(os.path.join(ws, "a.txt"), encoding="utf-8") as fh:
+        assert fh.read() == "AB"
+    assert not os.path.exists(os.path.join(ws, "gone.txt"))
+    assert not os.path.exists(os.path.join(str(tmp_path), "escape.txt"))

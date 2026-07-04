@@ -137,3 +137,50 @@ permitted judge-MODEL change). Because judges import `BaseJudge` via both
 `sys.modules["judge"]` to the one patched module so a single patch covers both
 styles. The substitute model must be one the judge endpoint serves; the claim/
 experiment passes it through `run_dtap_judge(judge_model=...)`.
+
+## F. The `host` trust boundary (superred-afforded, beyond DTAP's vectors)
+
+DTAP itself enumerates four attack vectors (`dt_arena/src/types/task.py`:
+prompt / tool / environment / skill). superred additionally exposes the target
+MACHINE as its own trust boundary, because these agents (Claude Code, OpenClaw)
+run with native OS tools in a container -- a locus that can realistically be
+compromised (a poisoned image, a shared mount, a supply-chain artifact on disk, or
+full RCE) independent of the MCP-backed `environment` services. This is a
+framework-completeness addition, not a DTAP fidelity claim, and it is strictly
+additive: a passthrough optimizer places no files and runs no code, so the machine
+is exactly what DTAP would run.
+
+- **F.1 Native tool CALLS stay observable-only.** The agent's own bash/edit/exec
+  are observed under `agent_trace_tool_calls`, never tampered mid-run. The `host`
+  tree is the ATTACKER's own write/execute access, a Controllable. The two are
+  distinct surfaces (observe the agent vs. the attacker acting on the machine).
+- **F.2 Two independent capabilities.** `host_filesystem` (place/add/edit/delete
+  files before the run) and `host_code_execution` (arbitrary code) are siblings
+  under `host`: code execution subsumes filesystem in raw capability, but they are
+  scoped separately so an experiment can grant a disk-only foothold (a mounted
+  document, no RCE) without granting full code execution. Holding `host` grants
+  both.
+- **F.3 The base owns the per-run workspace.** So the host surfaces can shape the
+  machine BEFORE the agent launches, the base mints `self._run_dir` (with a
+  `workspace/`) at the top of `run()`, applies file ops into it, runs the
+  code-execution foothold against it, then hands it to the subclass, which mounts
+  THAT dir as the agent's workspace (claudecode at `/dtap/workspace`, openclaw at
+  `/state/workspace`). On a declined run the workspace is identical to before; it
+  is created one step earlier, nothing else changes.
+- **F.4 Code execution is a pre-agent, attacker-terminated LOOP.** `code_execution`
+  fires a `ControllablePostCallEvent` repeatedly: each round's `answer` carries the
+  previous command's combined output (empty first), an injection is a shell
+  command run via `_exec_on_host`, and its output feeds the next round. The loop
+  ends the instant the optimizer declines ("the attacker decides it doesn't need
+  anymore"); `max_code_exec_rounds` (default 64) is only a runaway backstop for an
+  optimizer that never declines, and the optimizer's LLM budget bounds it in
+  practice. It runs as a foothold BEFORE the agent loop (not concurrently); files
+  it writes to the shared workspace persist into the run. `_exec_on_host` runs the
+  code in the agent's OWN image with the workspace mounted (entrypoint overridden
+  to `sh`), so background processes it starts live in a separate short-lived
+  container -- filesystem/workspace effects persist, in-memory daemons do not.
+  Concurrent-with-agent execution would be a larger, separate design and is not
+  implemented.
+- **F.5 Filesystem ops are confined to the workspace.** `_apply_host_files` rejects
+  any path that would escape `workspace/` (a `..` traversal is skipped), so the
+  surface stays scoped to the machine-as-the-agent-sees-it.

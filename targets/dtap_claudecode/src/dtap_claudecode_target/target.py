@@ -1,10 +1,10 @@
 """``ClaudeCodeDtapTarget``: the Claude Code concrete DTAP agent target.
 
 Subclasses :class:`dtap_scaffold.agent_base.DtapAgentTarget`, which owns the whole
-superred lifecycle (env activation, the security-domain forest, the five DTAP
+superred lifecycle (env activation, the security-domain forest, the DTAP
 controllables, the emit-once observables, the Docker/proxy/injection
 collaborators, and the query surface the claim's OOB judge reads). This class
-implements only the four per-agent hooks:
+implements only the per-agent hooks:
 
 - ``_agent_kind`` -> ``"claude_code"``
 - ``_native_tool_deny`` -> Claude Code's native deny list for the configured policy
@@ -12,6 +12,8 @@ implements only the four per-agent hooks:
   and read back its outputs
 - ``_extract_trajectory`` -> parse the in-container transcript via
   :func:`dtap_claudecode_target.trajectory.convert`
+- ``_exec_on_host`` -> run attacker code in the agent image for the code_execution
+  surface (the workspace is shared with the run, so its file effects persist)
 
 The actual ``docker run`` is isolated in the single overridable ``_docker_run``
 helper so the whole lifecycle is testable offline with a fake (see tests).
@@ -115,7 +117,13 @@ class ClaudeCodeDtapTarget(DtapAgentTarget):
         Tests override this to drop a canned transcript instead, so the whole
         lifecycle runs offline.
         """
-        instance_dir = tempfile.mkdtemp(prefix="dtap-cc-", dir=self._state_root or None)
+        # The base mints the per-run dir (with ``workspace/``) before the host
+        # surfaces shape it; reuse it so attacker-placed files + code_execution
+        # effects land in the workspace this container mounts. Fall back to a fresh
+        # dir only when called outside run() (direct-call tests).
+        instance_dir = self._run_dir or tempfile.mkdtemp(
+            prefix="dtap-cc-", dir=self._state_root or None
+        )
         os.makedirs(os.path.join(instance_dir, "workspace"), exist_ok=True)
         task = self._build_task(spec, output_dir=CONTAINER_MOUNT, workspace_dir=CONTAINER_WORKSPACE)
         with open(os.path.join(instance_dir, TASK_FILENAME), "w", encoding="utf-8") as fh:
@@ -129,6 +137,42 @@ class ClaudeCodeDtapTarget(DtapAgentTarget):
         )
         await proc.communicate()
         return instance_dir
+
+    async def _exec_on_host(self, code: str) -> str:  # pragma: no cover - needs Docker
+        """Run attacker *code* on the target machine (host_code_execution vector).
+
+        Runs in the SAME agent image with the run workspace bind-mounted at the
+        agent's workspace path, so files the code writes are exactly what the agent
+        later reads. The entrypoint is overridden to ``sh`` (the image otherwise
+        launches the Claude driver). Combined stdout/stderr is returned to feed the
+        next foothold round. Only invoked when code_execution is in scope.
+        """
+        workspace = os.path.join(self._run_dir, "workspace")
+        cmd = [
+            "docker",
+            "run",
+            "--rm",
+            "--entrypoint",
+            "sh",
+            "--add-host",
+            "host.docker.internal:host-gateway",
+            "-e",
+            "IS_SANDBOX=1",
+            "-v",
+            f"{workspace}:{CONTAINER_WORKSPACE}",
+            "-w",
+            CONTAINER_WORKSPACE,
+            self._image,
+            "-c",
+            code,
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        out, _ = await proc.communicate()
+        return out.decode("utf-8", "replace") if out else ""
 
     # ----- pure host helpers (unit-tested) ----------------------------------
 

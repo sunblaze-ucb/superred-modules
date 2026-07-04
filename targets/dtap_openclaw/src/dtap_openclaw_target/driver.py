@@ -264,12 +264,16 @@ def run_openclaw_container(
     thinking: str = "off",
     network: str | None = None,
     provider_api: str = "openai-completions",
+    episode_dir: str | None = None,
 ) -> str:
     """Run ONE OpenClaw episode in a container; return the episode output dir.
 
-    Creates a per-episode directory under ``spec.output_dir`` (so concurrent runs
-    of one task never share state), writes the episode inputs into it, then
-    ``docker run``s the image with that dir bound at ``/state``. The container's
+    When *episode_dir* is given (the base's per-run workspace root, already holding
+    any attacker-placed files under ``workspace/``), the episode runs IN it so the
+    host_filesystem / code_execution surfaces and the agent share one workspace.
+    Otherwise a fresh per-episode directory is created under ``spec.output_dir`` (so
+    concurrent runs of one task never share state). Either way the inputs are
+    written in, then ``docker run`` binds the dir at ``/state``; the container's
     entrypoint reads ``/state/task.json`` and runs the turns; the session JSONL
     lands under ``/state/traces``.
 
@@ -280,8 +284,9 @@ def run_openclaw_container(
     turns) as a backstop; upstream instead applies ``OPENCLAW_TIMEOUT_SECONDS`` PER
     TURN (see ASSUMPTIONS A.6).
     """
-    base_dir = spec.output_dir or tempfile.mkdtemp(prefix="dtap-openclaw-")
-    episode_dir = os.path.join(base_dir, f"episode-{uuid.uuid4().hex[:8]}")
+    if episode_dir is None:
+        base_dir = spec.output_dir or tempfile.mkdtemp(prefix="dtap-openclaw-")
+        episode_dir = os.path.join(base_dir, f"episode-{uuid.uuid4().hex[:8]}")
     os.makedirs(episode_dir, exist_ok=True)
 
     session_id = f"dtap-{uuid.uuid4().hex[:8]}"

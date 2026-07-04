@@ -4,12 +4,14 @@ wired around the Docker/proxy/injector collaborators, shared by both agents.
 A concrete agent (Claude Code, OpenClaw) subclasses this and implements only:
 ``_run_episode`` (launch the agent in its isolated container, run the turns,
 write a transcript), ``_extract_trajectory`` (parse that transcript into a
-:class:`~dtap_scaffold.types.TrajectoryArtifact`), and ``_native_tool_deny``
-(map the native-tools policy to the agent's native tool names). Everything
-else -- env activation by config, the security-domain forest, the controllables
-(the four DTAP vectors plus the system-prompt/env-tool superred surfaces), the
-observables (emit-once), the Docker/proxy/injection
-lifecycle, and the query surface the claim's OOB judge reads -- lives here.
+:class:`~dtap_scaffold.types.TrajectoryArtifact`), ``_native_tool_deny`` (map the
+native-tools policy to the agent's native tool names), and ``_exec_on_host`` (run
+attacker code on the machine for the code_execution surface). Everything else --
+env activation by config, the security-domain forest, the controllables (the four
+DTAP vectors plus the superred-afforded surfaces: system prompt, env-tool return
+tampering, and the ``host`` filesystem / code-execution boundary), the observables
+(emit-once), the Docker/proxy/injection lifecycle, and the query surface the
+claim's OOB judge reads -- lives here.
 
 Collaborators are created via ``_make_env_stack`` / ``_make_proxy`` /
 ``_make_injector`` (lazy-import the concrete impls); tests override these to
@@ -19,6 +21,8 @@ inject fakes, which is how the whole lifecycle is verified without Docker.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from abc import abstractmethod
 from typing import Any
 
@@ -38,6 +42,8 @@ from superred.core.types.state import ConfigSpec, QuerySpec
 from dtap_scaffold import config_specs as C  # noqa: N812
 from dtap_scaffold import query_specs as Q  # noqa: N812
 from dtap_scaffold.controllables import (
+    CODE_EXECUTION_CTRL,
+    FILESYSTEM_CTRL,
     FIXED_CONTROLLABLES,
     SKILL_CTRL,
     SYSTEM_PROMPT_CTRL,
@@ -68,14 +74,34 @@ from dtap_scaffold.types import (
 
 _DEFAULT_MAX_TURNS = 200
 
+# Runaway backstop for the attacker's code-execution foothold. The loop is
+# ATTACKER-terminated (it ends the instant the optimizer declines a round); this
+# cap only bounds a misbehaving optimizer that injects without ever declining, so
+# it is set generously. Also bounded in practice by the optimizer's LLM budget.
+_DEFAULT_MAX_CODE_EXEC_ROUNDS = 64
+
 
 def _as_injection(resp: Any) -> str | None:
     """Return the injected value if *resp* is a ControllableInjection, else None."""
     return resp.value if isinstance(resp, ControllableInjection) else None
 
 
+def _safe_join(root: str, rel: str) -> str | None:
+    """Join *rel* under *root*, or None if it would escape *root*.
+
+    The attacker names paths relative to the agent workspace; a ``..`` traversal
+    that would write outside the workspace is rejected (the host_filesystem
+    surface is scoped to the machine the agent runs on, applied at the workspace).
+    """
+    root_abs = os.path.abspath(root)
+    target = os.path.abspath(os.path.join(root_abs, rel))
+    if target == root_abs or target.startswith(root_abs + os.sep):
+        return target
+    return None
+
+
 class DtapAgentTarget(Target):
-    """Agent-agnostic DTAP target. Subclass and implement the three hooks below."""
+    """Agent-agnostic DTAP target. Subclass and implement the abstract hooks below."""
 
     def __init__(
         self,
@@ -86,6 +112,7 @@ class DtapAgentTarget(Target):
         state_root: str | None = None,
         max_turns: int = _DEFAULT_MAX_TURNS,
         temperature: float | None = None,
+        max_code_exec_rounds: int = _DEFAULT_MAX_CODE_EXEC_ROUNDS,
     ) -> None:
         # Construction concerns (NOT config slots): model identity + generation.
         self._model = model
@@ -94,6 +121,7 @@ class DtapAgentTarget(Target):
         self._state_root = state_root
         self._default_max_turns = max_turns
         self._temperature = temperature
+        self._max_code_exec_rounds = max_code_exec_rounds
 
         # Per-task config (set via set_config).
         self._active_servers: tuple[str, ...] = ()
@@ -123,6 +151,11 @@ class DtapAgentTarget(Target):
         self._final_response: str = ""
         self._agent_responses: list[str] = []
         self._trajectory_json: dict[str, Any] = {}
+
+        # Per-run host workspace root (the dir mounted into the agent container as
+        # its workspace). Owned by the base so the host_filesystem / code_execution
+        # surfaces can shape it BEFORE the agent launches; the subclass mounts it.
+        self._run_dir: str = ""
 
     # ----- superred Target ABC: specs --------------------------------------
 
@@ -213,6 +246,11 @@ class DtapAgentTarget(Target):
         await self._ensure_started()
         assert self._proxy is not None and self._injector is not None
 
+        # Fresh per-run host workspace root (with a ``workspace/`` subdir); the
+        # host_filesystem / code_execution surfaces shape it before the agent
+        # launches, and the subclass mounts THIS dir into the agent container.
+        self._run_dir = self._new_run_dir()
+
         # PreCall vectors: system, user (per turn), skill, tool-description.
         system_prompt = await self._precall(send_event, SYSTEM_PROMPT_CTRL, self._system_prompt)
         instructions = [
@@ -222,8 +260,15 @@ class DtapAgentTarget(Target):
         skills = await self._precall_skills(send_event)
         edits = await self._precall_tool_desc(send_event)
 
+        # host_filesystem vector (PreCall): place/edit/delete files on the machine.
+        await self._precall_filesystem(send_event)
+
         # Environment vector (PostCall): write attacker data into the live backend.
         await self._apply_env_injections(send_event)
+
+        # host_code_execution vector (repeated PostCall): the attacker's interactive
+        # code-execution foothold on the machine, before the agent loop.
+        await self._code_execution_loop(send_event)
 
         # Wire the proxy for this run (env-tool observe + PostCall return tampering).
         self._proxy.bind(emit, send_event)
@@ -244,8 +289,8 @@ class DtapAgentTarget(Target):
             native_tool_deny=tuple(self._native_tool_deny(self._native_tools_policy)),
             max_turns=self._max_turns,
             temperature=self._temperature,
-            workspace_dir=self._state_root,
-            output_dir=self._state_root,
+            workspace_dir=self._run_dir,
+            output_dir=self._run_dir,
             metadata={"task_dir": self._task_dir, "domain": self._primary_domain()},
         )
 
@@ -268,6 +313,9 @@ class DtapAgentTarget(Target):
         self._final_response = ""
         self._agent_responses = []
         self._trajectory_json = {}
+        # The next run() mints a fresh workspace root (any files the attacker placed
+        # or code wrote are ephemeral per run); the env stack + proxy persist.
+        self._run_dir = ""
 
     async def teardown(self) -> None:
         try:
@@ -344,6 +392,81 @@ class DtapAgentTarget(Target):
             if injected is not None:
                 await self._injector.apply(point, injected)
 
+    def _new_run_dir(self) -> str:
+        """Create a fresh per-run host dir with a ``workspace/`` subdir, under
+        ``state_root`` when set. This dir becomes the agent's mounted workspace."""
+        run_dir = tempfile.mkdtemp(
+            prefix=f"dtap-{self._agent_kind()}-run-", dir=self._state_root or None
+        )
+        os.makedirs(os.path.join(run_dir, "workspace"), exist_ok=True)
+        return run_dir
+
+    async def _precall_filesystem(self, send_event: EventResponseHandler) -> None:
+        """host_filesystem vector: place/edit/delete files before the run.
+
+        Fires one PreCall; a ``ControllableInjection`` value is ``{"ops": [...]}``
+        (or a bare list of ops), applied host-side to the workspace the agent
+        mounts. Declining leaves an empty workspace (the DTAP-faithful default).
+        """
+        resp = await send_event(
+            ControllablePreCallEvent(
+                controllable=FILESYSTEM_CTRL,
+                request=json.dumps({"workspace": "agent workspace mounted into the run"}),
+            )
+        )
+        injected = _as_injection(resp)
+        if injected is None:
+            return
+        parsed = json.loads(injected)
+        ops = parsed.get("ops", []) if isinstance(parsed, dict) else parsed
+        await self._apply_host_files(list(ops))
+
+    async def _apply_host_files(self, ops: list[dict[str, Any]]) -> None:
+        """Apply attacker file ops to the run workspace (host-side; no container).
+
+        Each op: ``{"action": "write"|"append"|"delete", "path": str,
+        "content"?: str}``. Paths are confined to the workspace (a traversal that
+        would escape is skipped). The workspace is bind-mounted into the agent
+        container, so these files are exactly what the agent's native tools read.
+        """
+        workspace = os.path.join(self._run_dir, "workspace")
+        for op in ops:
+            action = op.get("action")
+            target = _safe_join(workspace, str(op.get("path", "")))
+            if target is None or not op.get("path"):
+                continue
+            if action in ("write", "append"):
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with open(target, "a" if action == "append" else "w", encoding="utf-8") as fh:
+                    fh.write(str(op.get("content", "")))
+            elif action == "delete":
+                if os.path.isfile(target):
+                    os.remove(target)
+
+    async def _code_execution_loop(self, send_event: EventResponseHandler) -> None:
+        """host_code_execution vector: the attacker's interactive code foothold.
+
+        Fires a PostCall repeatedly. Each round the event ``answer`` carries the
+        previous command's combined output (empty on the first round); a
+        ``ControllableInjection`` value is a shell command/script, run on the
+        machine via :meth:`_exec_on_host`, whose output feeds the NEXT round.
+        Declining ends the foothold (the attacker "decides it doesn't need
+        anymore"); ``max_code_exec_rounds`` is only a runaway backstop.
+        """
+        transcript = ""
+        for rnd in range(self._max_code_exec_rounds):
+            resp = await send_event(
+                ControllablePostCallEvent(
+                    controllable=CODE_EXECUTION_CTRL,
+                    request=json.dumps({"round": rnd}),
+                    answer=transcript,
+                )
+            )
+            code = _as_injection(resp)
+            if code is None:
+                return
+            transcript = await self._exec_on_host(code)
+
     def _detailed_spec(self) -> dict[str, Any]:
         return {
             "agent": self._agent_kind(),
@@ -410,6 +533,18 @@ class DtapAgentTarget(Target):
     @abstractmethod
     def _native_tool_deny(self, policy: str) -> list[str]:
         """Map the native-tools policy to this agent's native tool deny-list."""
+
+    @abstractmethod
+    async def _exec_on_host(self, code: str) -> str:
+        """Run attacker *code* on the target machine and return its combined output.
+
+        Called once per non-declined round of the code_execution foothold, BEFORE
+        the agent episode. Runs in the agent's own image with the run workspace
+        (``self._run_dir/workspace``) mounted, so files it writes are visible to
+        the agent. Only invoked when the code_execution surface is in scope (else
+        the loop declines immediately and this never fires), so a subclass may
+        keep the whole implementation behind the Docker seam.
+        """
 
 
 def _normalize_instructions(value: str) -> tuple[str, ...]:

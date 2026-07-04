@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from dtap_scaffold.config_specs import CONFIG_SPECS
 from dtap_scaffold.controllables import (
+    CODE_EXECUTION_CTRL,
+    FILESYSTEM_CTRL,
     FIXED_CONTROLLABLES,
     SKILL_CTRL,
     SYSTEM_PROMPT_CTRL,
@@ -31,6 +33,9 @@ from dtap_scaffold.forest import (
     DOMAIN,
     ENVIRONMENT_TAG,
     FIXED_TAGS,
+    HOST_CODE_EXECUTION_TAG,
+    HOST_FILESYSTEM_TAG,
+    HOST_TAG,
     MAX_TURNS_TAG,
     MODEL_IDENTITY_TAG,
     SKILL_TAG,
@@ -77,6 +82,9 @@ __all__ = [
     "USER_TAG",
     "TOOLS_TAG",
     "ENVIRONMENT_TAG",
+    "HOST_TAG",
+    "HOST_FILESYSTEM_TAG",
+    "HOST_CODE_EXECUTION_TAG",
     "FIXED_TAGS",
     "DOMAIN",
     "build_domain",
@@ -88,6 +96,8 @@ __all__ = [
     "SKILL_CTRL",
     "TOOL_DESCRIPTION_OVERRIDE_CTRL",
     "TOOL_DESCRIPTION_SUFFIX_CTRL",
+    "FILESYSTEM_CTRL",
+    "CODE_EXECUTION_CTRL",
     "FIXED_CONTROLLABLES",
     "env_tool_output_controllable",
     "env_inject_controllable",

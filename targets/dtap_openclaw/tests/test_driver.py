@@ -214,6 +214,26 @@ def test_run_container_builds_command_and_returns_episode_dir(tmp_path, monkeypa
     assert task["thinking"] == "high"
 
 
+def test_run_container_uses_provided_episode_dir(tmp_path, monkeypatch) -> None:
+    """When the base passes ``episode_dir`` (its per-run workspace root), the episode
+    runs IN it verbatim -- no per-episode subdir -- so the host_filesystem /
+    code_execution surfaces and the agent share one workspace."""
+    captured: dict = {}
+
+    def fake_run_docker(cmd, timeout):
+        captured["cmd"] = cmd
+        return 0, "ok", ""
+
+    monkeypatch.setattr(driver, "_run_docker", fake_run_docker)
+    run_dir = str(tmp_path / "run")
+
+    out = driver.run_openclaw_container(_spec(), episode_dir=run_dir)
+
+    assert out == run_dir  # used verbatim, NOT a fresh episode-<uuid> subdir
+    assert f"{run_dir}:/state" in captured["cmd"]
+    assert Path(run_dir, "task.json").exists()  # inputs materialized into the shared dir
+
+
 def test_run_container_uses_network_when_given(tmp_path, monkeypatch) -> None:
     captured: dict = {}
 

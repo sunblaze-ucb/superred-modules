@@ -48,8 +48,12 @@ Upstream: `AI-secure/DecodingTrust-Agent`, commit `e0323a52`, Apache-2.0.
 - The **attack content and the injection vector are the optimizer's and the
   Controller scope's concern, not the claim's**: there is no bundled attacker.
   DTAP's four vectors map to controllables (user prompt, tool description,
-  environment content, skill) plus the system prompt; the Controller scope
-  selects which are live per experiment.
+  environment content, skill) plus superred-afforded surfaces the Controller scope
+  selects per experiment: the system prompt, env-tool return tampering, and the
+  `host` trust boundary (the machine the agent runs on) split into
+  `host_filesystem` (place/edit/delete files before the run) and
+  `host_code_execution` (an interactive code-execution foothold). The agent's own
+  native OS tool calls stay observable-only.
 
 ## Sourcing: images, SDKs, dataset
 

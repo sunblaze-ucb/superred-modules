@@ -1,18 +1,21 @@
 """``OpenClawDtapTarget``: the OpenClaw concrete DTAP agent target.
 
-All the superred Target machinery -- the security-domain forest, the five DTAP
-injection vectors (system / user / skill / tool-description PreCall, env-write
-PostCall), the env-tool observe/tamper PostCall through the host MCP proxy, the
-emit-once observables, and the query surface the claim's OOB judge reads -- lives
-in the frozen :class:`~dtap_scaffold.agent_base.DtapAgentTarget` base. This module
-implements only the four agent-specific hooks:
+All the superred Target machinery -- the security-domain forest, the DTAP injection
+vectors (system / user / skill / tool-description PreCall, env-write PostCall), the
+env-tool observe/tamper PostCall through the host MCP proxy, the host filesystem /
+code-execution surfaces, the emit-once observables, and the query surface the
+claim's OOB judge reads -- lives in the frozen
+:class:`~dtap_scaffold.agent_base.DtapAgentTarget` base. This module implements only
+the agent-specific hooks:
 
 * :meth:`_agent_kind` -> ``"openclaw"``;
 * :meth:`_native_tool_deny` -> map the native-tools policy to OpenClaw tool names;
 * :meth:`_run_episode` -> run one episode in an isolated Docker container (behind
   the single monkeypatchable :meth:`_docker_run` seam);
 * :meth:`_extract_trajectory` -> parse the container's session JSONL via
-  :mod:`~dtap_openclaw_target.trajectory`.
+  :mod:`~dtap_openclaw_target.trajectory`;
+* :meth:`_exec_on_host` -> run attacker code in the OpenClaw image for the
+  code_execution surface (workspace shared with the run).
 
 Importing this module requires neither Node nor OpenClaw nor Docker -- those are
 needed only when an episode actually runs.
@@ -21,7 +24,9 @@ needed only when an episode actually runs.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
+from typing import Any
 
 from dtap_scaffold.agent_base import DtapAgentTarget
 from dtap_scaffold.types import AgentLaunchSpec, EpisodeResult, TrajectoryArtifact
@@ -115,14 +120,52 @@ class OpenClawDtapTarget(DtapAgentTarget):
         """Run one OpenClaw episode in a container; return its output directory.
 
         The blocking ``docker run`` is offloaded to a worker thread so the
-        controller's event loop is never blocked.
+        controller's event loop is never blocked. When the base has minted a
+        per-run workspace root (the normal run() path), the episode runs IN it so
+        the host_filesystem / code_execution surfaces and the agent share one
+        workspace.
         """
-        return await asyncio.to_thread(
-            driver.run_openclaw_container,
-            spec,
+        kwargs: dict[str, Any] = dict(
             image=self._image,
             timeout=self._docker_timeout,
             thinking=self._thinking,
             network=self._network,
             provider_api=self._provider_api,
         )
+        if self._run_dir:
+            kwargs["episode_dir"] = self._run_dir
+        return await asyncio.to_thread(driver.run_openclaw_container, spec, **kwargs)
+
+    async def _exec_on_host(self, code: str) -> str:  # pragma: no cover - needs Docker
+        """Run attacker *code* on the target machine (host_code_execution vector).
+
+        Runs in the SAME OpenClaw image with the run workspace bind-mounted at the
+        agent's workspace path, so files it writes are exactly what the agent later
+        reads. The entrypoint is overridden to ``sh`` (the image otherwise launches
+        the turn runner). Combined stdout/stderr is returned to feed the next
+        foothold round. Only invoked when code_execution is in scope.
+        """
+        workspace = os.path.join(self._run_dir, "workspace")
+        cmd = [
+            "docker",
+            "run",
+            "--rm",
+            "--entrypoint",
+            "sh",
+            "--add-host",
+            "host.docker.internal:host-gateway",
+            "-v",
+            f"{workspace}:{driver.CONTAINER_WORKSPACE}",
+            "-w",
+            driver.CONTAINER_WORKSPACE,
+            self._image,
+            "-c",
+            code,
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        out, _ = await proc.communicate()
+        return out.decode("utf-8", "replace") if out else ""
