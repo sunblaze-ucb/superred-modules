@@ -25,7 +25,7 @@ def openclaw_target_factory(
     auth_token: str = "",
     gateway_url: str | None = None,
     session_key: str = "superred",
-    agent_id: str = "default",
+    agent_id: str = "main",
     model_id: str = "",
     enable_tool_injection: bool = False,
     enable_llm_proxy: bool | None = None,

@@ -21,6 +21,20 @@ spliced into the persisted tool result by the *synchronous*
 ``tool_result_persist`` hook on the plugin side. ``tool_result_persist``
 does no network I/O, so all optimizer-in-the-loop work happens in
 ``before_tool_call``.
+
+Empirically-verified scope of ``tool_result_persist`` (live-tested
+against a real gateway, no mocks): it rewrites what gets *persisted* to
+the session transcript. OpenClaw's embedded agent runner drives a
+same-turn tool-calling continuation (the internal provider loop
+following a ``tool_calls`` response) from its own in-memory buffer, not
+from the transcript, so the *current* tool-calling loop still completes
+with the real tool output. The injected content lands in the persisted
+transcript and is what every *subsequent* prompt submission in the same
+session (the next ``agent``/``agent.wait`` call, a session resume, etc.)
+loads as history. This is tool-result poisoning that surfaces on a later
+turn, not a mid-loop rewrite of the turn currently in flight — no
+documented OpenClaw hook can do the latter (``before_tool_call`` can only
+rewrite ``params`` pre-execution or block the call outright).
 """
 
 from __future__ import annotations
@@ -63,6 +77,26 @@ logger = logging.getLogger(__name__)
 def _plugin_dir() -> Path:
     """Filesystem path to the bundled OpenClaw injection plugin."""
     return Path(__file__).resolve().parent / "plugin"
+
+
+# ``agents.files.set``/``agents.files.get`` are capped to this fixed set of
+# bootstrap/memory filenames (gateway-enforced; verified live against a real
+# gateway - any other name is rejected with
+# ``INVALID_REQUEST: unsupported file "<name>"``). See
+# ``src/gateway/server-methods/agents.ts`` (``ALLOWED_FILE_NAMES`` =
+# ``BOOTSTRAP_FILE_NAMES`` + ``MEMORY_FILE_NAMES``) and
+# ``src/agents/workspace.ts`` / ``src/memory/root-memory-files.ts`` for the
+# filename constants.
+ALLOWED_WORKSPACE_BOOTSTRAP_FILES = frozenset({
+    "AGENTS.md",
+    "SOUL.md",
+    "TOOLS.md",
+    "IDENTITY.md",
+    "USER.md",
+    "HEARTBEAT.md",
+    "BOOTSTRAP.md",
+    "MEMORY.md",
+})
 
 
 # -- Controllable definitions --------------------------------------------------
@@ -239,6 +273,10 @@ class OpenClawTarget(Target):
             Can be omitted when ``managed=True`` (auto-generated).
         session_key: Session routing key used for agent runs.
         agent_id: OpenClaw agent id used for ``agents.files.set`` calls.
+            Default ``"main"`` matches the agent id ``config.py`` always
+            registers for a managed gateway (``agents.defaults`` / ``agents.list``);
+            override only when pointing at an externally managed gateway with a
+            differently named agent.
         model_id: Configured target model identifier, surfaced as a static
             observable so the optimizer sees it at initialization.
         agent_timeout_s: Max seconds to wait for an agent run.
@@ -246,7 +284,12 @@ class OpenClawTarget(Target):
             controllables via the plugin-hook bridge. The async
             ``before_tool_call`` hook emits a live
             ``ControllablePostCallEvent`` (tool-output injection) and the
-            sync ``tool_result_persist`` hook splices the result.
+            sync ``tool_result_persist`` hook splices the result into the
+            persisted session transcript. The real tool always executes
+            for real; the injected content poisons what subsequent turns
+            of the same session see as history (verified live: it does
+            not rewrite the tool result the in-flight tool-calling loop
+            continues with, only what later prompt submissions load).
         reset_session_between_runs: If ``True``, clear the OpenClaw
             conversation/session in :meth:`reset_ephemeral_state`. Default
             ``False`` keeps the session across runs of a task — OpenClaw
@@ -289,7 +332,7 @@ class OpenClawTarget(Target):
         auth_token: str = "",
         gateway_url: str = DEFAULT_GATEWAY_URL,
         session_key: str = "superred",
-        agent_id: str = "default",
+        agent_id: str = "main",
         model_id: str = "",
         agent_timeout_s: float = DEFAULT_AGENT_TIMEOUT_S,
         enable_tool_injection: bool = False,
@@ -646,7 +689,12 @@ class OpenClawTarget(Target):
                 security_domain=EXTERNAL_DATA_TAG,
                 description=(
                     "JSON dict of {filename: content} to write into the "
-                    "agent workspace before each run."
+                    "agent workspace before each run. ``agents.files.set`` "
+                    "only accepts the fixed bootstrap/memory filenames in "
+                    f"{sorted(ALLOWED_WORKSPACE_BOOTSTRAP_FILES)} "
+                    "(gateway-enforced allowlist, src/gateway/server-methods/"
+                    "agents.ts ALLOWED_FILE_NAMES); any other name is "
+                    "rejected by the gateway and silently skipped (logged)."
                 ),
             ),
             ConfigSpec(
@@ -967,10 +1015,15 @@ class OpenClawTarget(Target):
             # planted file by overwriting it with empty content.
             for filename in self._planted_files:
                 try:
-                    await self._client.rpc(
+                    result = await self._client.rpc(
                         "agents.files.set",
                         {"agentId": self._agent_id, "name": filename, "content": ""},
                     )
+                    if isinstance(result, dict) and result.get("error"):
+                        logger.debug(
+                            "Could not clear planted file %s: %s",
+                            filename, result["error"],
+                        )
                 except Exception:
                     logger.debug("Could not clear planted file %s", filename, exc_info=True)
             self._planted_files.clear()
@@ -997,14 +1050,23 @@ class OpenClawTarget(Target):
 
         ``agents.files.set`` params are ``{agentId, name, content}`` (schema
         is ``additionalProperties:false``). AGENTS.md is a recognized
-        bootstrap workspace file.
+        bootstrap workspace file. ``rpc`` returns an ``{"error": ...}`` dict
+        rather than raising on a gateway-level rejection (e.g. unknown
+        ``agentId``), so that must be checked explicitly - an exception
+        handler alone silently no-ops the injection.
         """
         try:
-            await client.rpc("agents.files.set", {
+            result = await client.rpc("agents.files.set", {
                 "agentId": self._agent_id,
                 "name": "AGENTS.md",
                 "content": self._system_prompt_append,
             })
+            if isinstance(result, dict) and result.get("error"):
+                logger.warning(
+                    "agents.files.set(AGENTS.md) rejected by gateway: %s; "
+                    "system prompt append will not take effect.",
+                    result["error"],
+                )
         except Exception:
             logger.warning(
                 "Could not set AGENTS.md via RPC; system prompt append "
@@ -1015,18 +1077,29 @@ class OpenClawTarget(Target):
     async def _write_workspace_files(self, client: OpenClawWSClient) -> None:
         """Write workspace files before a run (for data injection scenarios).
 
-        Uses ``agents.files.set`` ({agentId, name, content}). Note: this RPC
-        manages the agent's bootstrap workspace files; planting arbitrary
-        nested paths may require a shared workspace dir on a real gateway
-        (see runtime ``workspace_dir``).
+        Uses ``agents.files.set`` ({agentId, name, content}). The gateway
+        caps this RPC to a fixed allowlist of bootstrap/memory filenames
+        (``ALLOWED_WORKSPACE_BOOTSTRAP_FILES`` -
+        ``src/gateway/server-methods/agents.ts`` ``ALLOWED_FILE_NAMES`` -
+        verified live: any other name is rejected with
+        ``INVALID_REQUEST: unsupported file "<name>"``). It cannot plant
+        arbitrary nested paths; that requires a shared workspace dir on a
+        real gateway (see runtime ``workspace_dir``).
         """
         for filename, content in self._workspace_files.items():
             try:
-                await client.rpc("agents.files.set", {
+                result = await client.rpc("agents.files.set", {
                     "agentId": self._agent_id,
                     "name": filename,
                     "content": content,
                 })
+                if isinstance(result, dict) and result.get("error"):
+                    logger.warning(
+                        "agents.files.set(%s) rejected by gateway: %s; "
+                        "file was not planted.",
+                        filename, result["error"],
+                    )
+                    continue
                 self._planted_files.append(filename)
             except Exception:
                 logger.warning(

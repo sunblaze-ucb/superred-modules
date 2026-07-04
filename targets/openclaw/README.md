@@ -67,7 +67,18 @@ not env vars.)
    `session.tool` (tool calls) events. Final text falls back to `chat.history`.
 5. Mid-run, each intercepted tool call fires a `ControllablePostCallEvent`
    (tool-output injection) through the plugin → injection-server → optimizer
-   bridge; the injected value is spliced into the persisted tool result.
+   bridge; the injected value is spliced into the tool result as it is
+   persisted to the session transcript. The real tool always executes for
+   real. **Verified live against a real gateway (no mocks):** OpenClaw's
+   embedded agent runner drives a same-turn tool-calling continuation (the
+   provider call that immediately follows a `tool_calls` response) from its
+   own in-memory buffer, not the transcript, so that in-flight continuation
+   still sees the real tool output; the injected content is what every
+   *subsequent* prompt submission in the same session (the next turn, a
+   session resume, etc.) loads as history. This is tool-result poisoning
+   that surfaces on a later turn — there is no documented OpenClaw hook that
+   rewrites a tool result before the same tool-calling loop's own next
+   provider call.
 6. Record `last_response` / `tool_calls` / `events` for the evaluator.
 
 ## Capabilities
@@ -193,14 +204,32 @@ pytest                      # from this directory
 
 Tests use an in-process `MockGateway` (no Node/Docker) in
 `test_openclaw_integration.py`, exercising the full `Controller` pipeline,
-the injection bridge, ws session helpers, and the reset lifecycle. **Live**
-tests in `test_openclaw_live.py` spawn the real `openclaw gateway` CLI (skipped
-when the CLI is missing) and drive RPCs plus a full managed `OpenClawTarget` run
-against a stub LLM upstream — no API keys required. Config/command builders are
-covered in `test_runtime_config.py`. When Docker is available,
-`test_docker_smoke.py` exercises real containers: operator scopes over a
-published port (Ed25519 device identity + pre-seeded pairing), injection plugin
-boot (`openclaw.plugin.json`), RPCs, and a stub-LLM agent turn.
+the injection bridge, ws session helpers, and the reset lifecycle.
+
+**Live** tests in `test_openclaw_live.py` spawn the real `openclaw gateway`
+CLI (skipped when the CLI is missing) and drive RPCs plus a full managed
+`OpenClawTarget` run against a stub LLM upstream — no API keys required. This
+includes `test_live_tool_injection_round_trip_through_real_plugin`, which
+drives the real Node plugin (not `MockGateway`) through an actual tool call:
+a stub LLM response with an OpenAI-style `tool_calls` payload makes the real
+agent loop invoke the real `read` tool, the real plugin's `before_tool_call`
+hook POSTs to a real `InjectionServer`, and `tool_result_persist` splices the
+injected content into the persisted transcript — verified by asserting a
+*second* `target.run()` in the same session sees the poisoned tool result on
+its next prompt submission (see the run-flow note above on why this doesn't
+show up in the same tool-calling loop's own continuation).
+`test_live_model_response_injection_through_real_proxy` and
+`test_live_reset_and_teardown_against_real_gateway` cover model-response
+injection and reset/teardown against the same real CLI process.
+
+Config/command builders are covered in `test_runtime_config.py`. When Docker
+is available, `test_docker_smoke.py` exercises real containers: operator
+scopes over a published port (Ed25519 device identity + pre-seeded pairing),
+injection plugin boot (`openclaw.plugin.json`), RPCs, a stub-LLM agent turn,
+and (`test_docker_tool_injection_round_trip_through_real_plugin`) the same
+real tool-call + plugin-hook round trip as the live suite, but with the
+plugin executing *inside the container* and POSTing back to the host over
+`host.docker.internal`.
 
 ## Known limitations / notes
 

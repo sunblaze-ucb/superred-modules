@@ -12,6 +12,7 @@ from openclaw_target.constants import (
 from openclaw_target.factory import openclaw_target_factory
 from openclaw_target.docker_runtime import DEFAULT_DOCKER_IMAGE
 from openclaw_target.target import (
+    ALLOWED_WORKSPACE_BOOTSTRAP_FILES,
     FILE_CONTENT_CTRL,
     MESSAGE_CONTENT_CTRL,
     MODEL_RESPONSE_CTRL,
@@ -42,4 +43,5 @@ __all__ = [
     "MODEL_SYSTEM_PROMPT_CTRL",
     "MODEL_RESPONSE_CTRL",
     "TOOL_OUTPUT_CONTROLLABLES",
+    "ALLOWED_WORKSPACE_BOOTSTRAP_FILES",
 ]
