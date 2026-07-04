@@ -133,6 +133,7 @@ class OpenClawRuntime:
     openclaw_bin: str = "openclaw"
     host: str = "127.0.0.1"
     host_port: int = 0
+    bind: str = "loopback"
     model_id: str = ""
     provider_base_url: str | None = None
     provider_api_key: str = ""
@@ -171,7 +172,11 @@ class OpenClawRuntime:
 
     @property
     def use_device_identity(self) -> bool:
-        return False
+        # A loopback-bound gateway reached over 127.0.0.1 qualifies for the
+        # direct-local backend path (no device identity). Any non-loopback bind
+        # is reached as a "remote" client, so the gateway clears device-less
+        # scope requests — those connects must sign with device identity.
+        return self.bind != "loopback"
 
     def _prepare_state_dir(self) -> Path:
         if self.state_dir is not None:
@@ -220,11 +225,14 @@ class OpenClawRuntime:
     def _build_cmd(self) -> list[str]:
         # Verified flags (src/cli/gateway-cli/run-options.ts): the listener
         # interface is `--bind <loopback|lan|tailnet|auto|custom>` and the port
-        # is `--port`. A managed local gateway pins loopback (no auth required;
-        # non-loopback binds are rejected without a token).
+        # is `--port`. A managed local gateway pins loopback by default (no auth
+        # required; non-loopback binds are rejected without a token, which we
+        # always set). ``bind="lan"`` is used by remote-path tests so a
+        # non-loopback client exercises the same device-identity handshake as a
+        # containerised gateway reached over a published port.
         cmd = [
             self.openclaw_bin, "gateway",
-            "--bind", "loopback",
+            "--bind", self.bind,
             "--port", str(self.host_port),
         ]
         if self.allow_unconfigured:

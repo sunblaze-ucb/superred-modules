@@ -15,6 +15,7 @@ Run explicitly::
 from __future__ import annotations
 
 import shutil
+import socket
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -22,6 +23,7 @@ import pytest
 from aiohttp import web
 
 from openclaw_target import OpenClawTarget
+from openclaw_target.device_identity import OPERATOR_SCOPES
 from openclaw_target.proxy_llm import LLMProxy
 from openclaw_target.runtime import OpenClawRuntime
 from openclaw_target.ws_client import OpenClawWSClient
@@ -31,6 +33,17 @@ from superred.core.types.events import ControllableInjection
 
 def _openclaw_cli_ready() -> bool:
     return shutil.which("openclaw") is not None
+
+
+def _lan_ip() -> str | None:
+    """Best-effort non-loopback IPv4 for the remote-path test."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+        return ip if not ip.startswith("127.") else None
+    except OSError:
+        return None
 
 
 pytestmark = pytest.mark.skipif(
@@ -152,6 +165,63 @@ async def test_live_agent_run_with_stub_llm() -> None:
                 await client.close()
         finally:
             await proxy.stop()
+
+
+@pytest.mark.asyncio
+async def test_live_remote_path_grants_operator_scopes_via_device_identity() -> None:
+    """Reproduce the Docker "remote" connect path without Docker.
+
+    A ``lan``-bound gateway reached over a non-loopback IP is treated as a
+    remote client, exactly like a containerised gateway reached over a
+    published port. The device-less backend path yields ``scopes: []`` (and
+    ``missing scope: operator.write`` on run); the device-identity path with a
+    pre-seeded operator pairing must grant read/write/admin and allow the
+    admin-scoped RPCs (``agents.files.set`` / ``sessions.reset``).
+    """
+    lan_ip = _lan_ip()
+    if lan_ip is None:
+        pytest.skip("no non-loopback IPv4 available")
+
+    rt = OpenClawRuntime(model_id="openai/gpt-4o-mini", bind="lan")
+    await rt.start()
+    try:
+        assert rt.use_device_identity is True
+        remote_url = f"ws://{lan_ip}:{rt.host_port}"
+
+        # Device-less backend path over a remote address: scopes cleared to [].
+        backend = OpenClawWSClient(
+            gateway_url=remote_url,
+            auth_token=rt.auth_token or "",
+            use_device_identity=False,
+        )
+        hello = await backend.connect()
+        granted = hello.get("auth", {}).get("scopes") or hello.get("scopes") or []
+        assert granted == [], f"expected empty scopes on backend remote path, got {granted}"
+        await backend.close()
+
+        # Device-identity path with pre-seeded pairing: full operator scopes.
+        client = OpenClawWSClient(
+            gateway_url=remote_url,
+            auth_token=rt.auth_token or "",
+            use_device_identity=rt.use_device_identity,
+            device_identity_path=rt.device_identity_path,
+        )
+        hello = await client.connect()
+        granted = hello.get("auth", {}).get("scopes") or hello.get("scopes") or []
+        for scope in OPERATOR_SCOPES:
+            assert scope in granted, f"missing {scope} in {granted}"
+
+        # Admin-scoped RPCs must now succeed (file planting + session reset).
+        await client.rpc(
+            "agents.files.set",
+            {"agentId": "main", "name": "AGENTS.md", "content": "# remote"},
+        )
+        await client.reset_session("remote-path")
+        catalog = await client.rpc("tools.catalog")
+        assert isinstance(catalog, dict)
+        await client.close()
+    finally:
+        await rt.stop()
 
 
 @pytest.mark.asyncio

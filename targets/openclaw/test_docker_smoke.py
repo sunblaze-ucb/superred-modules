@@ -48,6 +48,13 @@ async def _stub_llm_server(
     *,
     reply: str = "Docker stub LLM reply.",
 ) -> AsyncIterator[str]:
+    """Start a stub LLM server and yield the URL the *container* reaches it on.
+
+    Binds ``0.0.0.0`` (not just loopback) and returns a ``host.docker.internal``
+    URL — a containerised gateway resolves ``127.0.0.1`` to itself, not the
+    host, so a loopback-only stub is unreachable from inside the container.
+    """
+
     async def completions(request: web.Request) -> web.Response:
         return web.json_response(
             {
@@ -60,11 +67,11 @@ async def _stub_llm_server(
     app.router.add_post("/v1/chat/completions", completions)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 0)
+    site = web.TCPSite(runner, "0.0.0.0", 0)  # noqa: S104 - needed for container reachability
     await site.start()
     port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
     try:
-        yield f"http://127.0.0.1:{port}"
+        yield f"http://host.docker.internal:{port}"
     finally:
         await runner.cleanup()
 

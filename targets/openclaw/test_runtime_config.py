@@ -197,6 +197,60 @@ async def test_ensure_image_raises_when_missing_and_auto_pull_disabled() -> None
         await rt._ensure_image()
 
 
+@pytest.mark.asyncio
+async def test_seed_state_volume_uses_docker_cp_not_bind_mount(tmp_path: Path) -> None:
+    """The seed path must go through ``docker cp`` (portable across Docker
+    VMs / remote daemons), not a host bind mount of the source dir."""
+    rt = OpenClawDockerRuntime(image="openclaw:local", container_name="cname")
+    calls: list[list[str]] = []
+
+    async def fake_docker(args: list[str], *, check: bool) -> tuple[int, str]:
+        calls.append(args)
+        return 0, ""
+
+    rt._docker = fake_docker  # type: ignore[method-assign]
+    volume = await rt._seed_state_volume(tmp_path)
+
+    assert volume == "cname-state"
+    assert calls[0] == ["volume", "create", "cname-state"]
+    run_call = calls[1]
+    assert run_call[:3] == ["run", "-d", "--name"]
+    assert "cname-seed" in run_call
+    assert "--user" in run_call and "root" in run_call
+    assert "cname-state:/home/node/.openclaw" in run_call
+    # No host directory should ever be bind-mounted for the seed step.
+    assert not any(str(tmp_path) in arg for arg in run_call)
+    cp_call = calls[2]
+    assert cp_call[0] == "cp"
+    assert cp_call[1] == f"{tmp_path}/."
+    assert cp_call[2] == "cname-seed:/home/node/.openclaw"
+    chown_call = calls[3]
+    assert chown_call[:3] == ["exec", "--user", "root"]
+    assert "chown" in chown_call and "node:node" in chown_call
+    assert calls[-1] == ["rm", "-f", "cname-seed"]
+
+
+@pytest.mark.asyncio
+async def test_seed_state_volume_cleans_up_volume_on_failure(tmp_path: Path) -> None:
+    rt = OpenClawDockerRuntime(image="openclaw:local", container_name="cname")
+    calls: list[list[str]] = []
+
+    async def fake_docker(args: list[str], *, check: bool) -> tuple[int, str]:
+        calls.append(args)
+        if args[0] == "cp":
+            if check:
+                raise RuntimeError("docker cp failed: boom")
+            return 1, "boom"
+        return 0, ""
+
+    rt._docker = fake_docker  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="docker cp failed"):
+        await rt._seed_state_volume(tmp_path)
+
+    assert ["volume", "rm", "-f", "cname-state"] in calls
+    assert ["rm", "-f", "cname-seed"] in calls
+
+
 def test_docker_run_cmd_grounded(tmp_path: Path) -> None:
     rt = OpenClawDockerRuntime(
         image="openclaw:local",
@@ -206,6 +260,7 @@ def test_docker_run_cmd_grounded(tmp_path: Path) -> None:
     )
     rt._auth_token = "tok"
     rt._state_path = tmp_path
+    rt._volume_name = "superred-openclaw-test-state"
     cmd = rt._build_run_cmd()
     joined = " ".join(cmd)
 
@@ -217,8 +272,9 @@ def test_docker_run_cmd_grounded(tmp_path: Path) -> None:
     # Non-loopback bind => token is mandatory; passed via env.
     assert "OPENCLAW_GATEWAY_TOKEN=tok" in cmd
     assert "SUPERRED_CALLBACK_URL=http://host.docker.internal:8899" in cmd
-    # State dir mounted into the pinned container path.
-    assert f"{tmp_path}:/home/node/.openclaw" in cmd
+    # Seeded named volume (not a raw host bind - see _seed_state_volume) is
+    # mounted into the pinned container path.
+    assert "superred-openclaw-test-state:/home/node/.openclaw" in cmd
     # Hardening from compose.
     assert "no-new-privileges:true" in cmd
     # Gateway launched bound to lan on the container port.
@@ -234,7 +290,6 @@ def test_docker_run_cmd_includes_callback_token(tmp_path: Path) -> None:
         callback_token="cb-tok",
     )
     rt._auth_token = "tok"
-    rt._state_path = tmp_path
     cmd = rt._build_run_cmd()
     assert "SUPERRED_CALLBACK_TOKEN=cb-tok" in cmd
 

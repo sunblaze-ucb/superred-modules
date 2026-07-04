@@ -17,10 +17,20 @@ https://docs.openclaw.ai/install/docker:
 - The host reaches the container via ``-p <dynamicHostPort>:18789``; the
   container reaches host-side services (the injection server and LLM proxy) via
   ``--add-host host.docker.internal:host-gateway`` (works on Linux Docker too).
-- State (``openclaw.json`` + ``extensions/``) is materialized in a per-instance
-  host dir bind-mounted at ``/home/node/.openclaw``.
-- Readiness is the container's own ``GET /healthz`` probe, polled on the
-  published host port.
+- State (``openclaw.json`` + ``extensions/`` + device identity/pairing) is
+  materialized in a per-instance host dir, then ``docker cp``'d into a
+  dedicated named Docker volume mounted at ``/home/node/.openclaw`` via a
+  short-lived root placeholder container, which also ``chown``'s it to
+  ``node:node``. A direct host bind mount does *not* work, for two reasons:
+  the official image runs as the unprivileged ``node`` user (uid 1000) and
+  cannot write to a host directory owned by the host uid
+  (``EACCES: permission denied, mkdir '.../state'``); and Docker VMs (Colima,
+  Lima) commonly only share specific host paths (e.g. ``$HOME``), so a bind
+  mount of a ``tempfile.mkdtemp()`` dir can silently mount empty. ``docker cp``
+  sidesteps both: it streams over the same API connection used for every other
+  Docker command, local or remote.
+- Readiness is the container's own ``GET /healthz`` + ``/readyz`` probes, polled
+  on the published host port.
 
 Concurrency safety falls out of this design: dynamic host port, dedicated
 container name, and a private state/workspace dir per instance.
@@ -129,6 +139,7 @@ class OpenClawDockerRuntime:
     _state_path: Path | None = None
     _device_identity_path: Path | None = None
     _owns_state_dir: bool = False
+    _volume_name: str | None = None
 
     @property
     def gateway_url(self) -> str:
@@ -179,6 +190,64 @@ class OpenClawDockerRuntime:
         self._device_identity_path = ensure_device_auth_for_state_dir(path)
         return path
 
+    async def _seed_state_volume(self, host_state_path: Path) -> str:
+        """Create a named volume and copy+chown the prepared state into it.
+
+        Two host-uid problems have to be solved:
+
+        1. The official image runs as the unprivileged ``node`` user
+           (uid 1000). A direct host bind mount keeps the host uid/gid, so
+           ``mkdir``/``open`` inside the container fails with ``EACCES``.
+        2. A host *bind mount* additionally requires the Docker daemon's VM
+           (Docker Desktop, Colima, Lima, or a remote daemon) to actually have
+           the host path visible/shared. Colima's default config only shares
+           ``$HOME`` — a bind mount of ``tempfile.mkdtemp()`` (macOS
+           ``/var/folders/...``, outside ``$HOME``) silently mounts an *empty*
+           directory in the VM, so the seed copy copies nothing. ``docker cp``
+           avoids this: it streams a tar archive over the same Docker API
+           connection used for every other command, so it works identically
+           whether the daemon is local, Colima/Lima, or remote/SSH — no host
+           path needs to be shared with the daemon's filesystem.
+
+        So we start a short-lived ``--user root`` placeholder container (same
+        image, so ``chown``/``sh`` are guaranteed present) with the named
+        volume mounted, ``docker cp`` the locally materialized state into it,
+        ``chown`` to ``node:node``, then stop the placeholder. The gateway
+        container mounts that same volume (no host bind) for its whole run.
+        """
+        volume_name = f"{self.container_name}-state"
+        placeholder = f"{self.container_name}-seed"
+        await self._docker(["volume", "create", volume_name], check=True)
+        try:
+            await self._docker(
+                [
+                    "run", "-d", "--name", placeholder,
+                    "--user", "root",
+                    "-v", f"{volume_name}:{CONTAINER_STATE_DIR}",
+                    "--entrypoint", "sh",
+                    self.image,
+                    "-c", "sleep 300",
+                ],
+                check=True,
+            )
+            await self._docker(
+                ["cp", f"{host_state_path}/.", f"{placeholder}:{CONTAINER_STATE_DIR}"],
+                check=True,
+            )
+            await self._docker(
+                [
+                    "exec", "--user", "root", placeholder,
+                    "chown", "-R", "node:node", CONTAINER_STATE_DIR,
+                ],
+                check=True,
+            )
+        except Exception:
+            await self._docker(["volume", "rm", "-f", volume_name], check=False)
+            raise
+        finally:
+            await self._docker(["rm", "-f", placeholder], check=False)
+        return volume_name
+
     def _build_run_cmd(self) -> list[str]:
         """Build the ``docker run`` argv (pure; depends only on resolved fields)."""
         name = self.container_name or f"superred-openclaw-{secrets.token_hex(6)}"
@@ -205,8 +274,8 @@ class OpenClawDockerRuntime:
             cmd += ["-e", f"SUPERRED_CALLBACK_TOKEN={self.callback_token}"]
         for key, value in self.extra_env.items():
             cmd += ["-e", f"{key}={value}"]
-        if self._state_path is not None:
-            cmd += ["-v", f"{self._state_path}:{CONTAINER_STATE_DIR}"]
+        if self._volume_name is not None:
+            cmd += ["-v", f"{self._volume_name}:{CONTAINER_STATE_DIR}"]
         cmd += list(self.extra_run_args)
         cmd += [
             self.image,
@@ -239,9 +308,11 @@ class OpenClawDockerRuntime:
         if self.host_port == 0:
             self.host_port = free_port()
         self._auth_token = secrets.token_hex(24)
+        self.container_name = self.container_name or f"superred-openclaw-{secrets.token_hex(6)}"
 
         await self._ensure_image()
-        self._prepare_state_dir()
+        host_state_path = self._prepare_state_dir()
+        self._volume_name = await self._seed_state_volume(host_state_path)
         cmd = self._build_run_cmd()
 
         logger.info("Starting OpenClaw gateway container: %s", " ".join(cmd))
@@ -252,6 +323,9 @@ class OpenClawDockerRuntime:
         )
         stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
+            if self._volume_name is not None:
+                await self._docker(["volume", "rm", "-f", self._volume_name], check=False)
+                self._volume_name = None
             self._cleanup_state_dir()
             raise RuntimeError(
                 f"docker run failed (code {proc.returncode}): {stderr.decode().strip()}",
@@ -266,13 +340,17 @@ class OpenClawDockerRuntime:
 
     async def stop(self) -> None:
         container = self._container_id
+        volume = self._volume_name
         self._container_id = None
+        self._volume_name = None
         self._auth_token = None
         try:
             if container is not None:
                 await self._docker(["stop", container], check=False)
                 if self.remove_on_stop:
                     await self._docker(["rm", "-f", container], check=False)
+            if volume is not None and self.remove_on_stop:
+                await self._docker(["volume", "rm", "-f", volume], check=False)
         finally:
             self._cleanup_state_dir()
 

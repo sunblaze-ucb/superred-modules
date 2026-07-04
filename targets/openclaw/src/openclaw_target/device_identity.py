@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import secrets
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,7 +24,14 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 
 OPERATOR_SCOPES = ("operator.read", "operator.write", "operator.admin")
 
-_DEVICE_JSON = "identity/device.json"
+# NOTE: this must NOT be "identity/device.json" — that path is OpenClaw's own
+# reserved *gateway self-identity* (loadOrCreateDeviceIdentity() in
+# src/infra/device-identity.ts, used by heartbeat/APNs-relay/node-host), which
+# the gateway unconditionally (re)writes on startup. Writing our *operator
+# client* identity there gets silently clobbered the moment the container
+# boots, and the pairing record we seeded no longer matches the connecting
+# client's key. Use a namespaced path OpenClaw never looks at.
+_DEVICE_JSON = "superred-operator/identity.json"
 _PAIRED_JSON = "devices/paired.json"
 
 
@@ -163,12 +171,21 @@ def seed_operator_device_pairing(
     platform: str = "linux",
     scopes: tuple[str, ...] = OPERATOR_SCOPES,
 ) -> None:
-    """Pre-approve the superred operator device in ``devices/paired.json``."""
+    """Pre-approve the superred operator device in ``devices/paired.json``.
+
+    The gateway derives a paired device's *effective* roles from its active
+    ``tokens`` map, not the ``role``/``roles`` fields
+    (``listEffectivePairedDeviceRoles`` in ``src/infra/device-pairing.ts`` — a
+    tokenless record "fails closed" and returns no roles, which the connect
+    handshake treats as a ``role-upgrade`` and rejects). So we must seed an
+    active operator token entry, keyed by role, carrying the approved scopes.
+    """
     paired_path = state_dir / _PAIRED_JSON
     paired_path.parent.mkdir(parents=True, exist_ok=True)
     now = int(time.time() * 1000)
     public_raw = public_key_raw_base64url(identity.public_key_pem)
     scope_list = list(scopes)
+    token = _b64url(secrets.token_bytes(32))
     paired_path.write_text(
         json.dumps(
             {
@@ -182,6 +199,14 @@ def seed_operator_device_pairing(
                     "clientId": client_id,
                     "clientMode": client_mode,
                     "platform": platform,
+                    "tokens": {
+                        "operator": {
+                            "token": token,
+                            "role": "operator",
+                            "scopes": scope_list,
+                            "createdAtMs": now,
+                        },
+                    },
                     "createdAtMs": now,
                     "approvedAtMs": now,
                 },
