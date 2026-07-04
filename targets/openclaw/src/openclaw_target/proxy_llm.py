@@ -15,6 +15,7 @@ Requires ``aiohttp``.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -166,39 +167,152 @@ class LLMProxy:
             text = await resp.text()
             return {"error": {"message": text[:4000] or f"HTTP {resp.status}", "code": resp.status}}
 
+    async def _consume_sse(
+        self,
+        resp: aiohttp.ClientResponse,
+        *,
+        forward_to: aiohttp.web.StreamResponse | None,
+        model: str,
+    ) -> tuple[dict[str, Any], bytes | None]:
+        """Parse an upstream SSE chat-completion stream into a single
+        non-streaming-shaped response dict (for injection/recording).
+
+        If ``forward_to`` is given, every genuine content/tool-call delta is
+        relayed to it live, as it arrives - true incremental streaming, not
+        buffered-then-replayed. The terminal (``finish_reason``) frame is
+        *not* written here; it is returned as ``pending_finish_frame`` so the
+        caller can splice in a response-injection delta chunk, if any,
+        strictly *before* it (matching where ``_inject_response`` appends
+        injected text: after all real content). This keeps genuine model
+        output fully live-streamed while still injecting correctly.
+        """
+        content_parts: list[str] = []
+        tool_calls: dict[int, dict[str, Any]] = {}
+        meta: dict[str, Any] = {}
+        usage: dict[str, Any] | None = None
+        pending_finish_frame: bytes | None = None
+
+        def meta_base() -> dict[str, Any]:
+            return {
+                "id": meta.get("id", "chatcmpl-proxy"),
+                "object": "chat.completion.chunk",
+                "created": meta.get("created") or int(time.time()),
+                "model": meta.get("model", model),
+            }
+
+        async for raw_line in resp.content:
+            line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+            if not line or not line.startswith("data:"):
+                continue
+            data = line[len("data:"):].strip()
+            if data == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+
+            if "error" in chunk:
+                if forward_to is not None:
+                    await forward_to.write(f"data: {json.dumps(chunk)}\n\n".encode())
+                return {"error": chunk["error"]}, None
+
+            for key in ("id", "object", "created", "model"):
+                if chunk.get(key) is not None:
+                    meta[key] = chunk[key]
+            if chunk.get("usage") is not None:
+                usage = chunk["usage"]
+
+            choices = chunk.get("choices") or []
+            if not choices:
+                continue
+            choice = choices[0]
+            delta = choice.get("delta") or {}
+            finish_reason = choice.get("finish_reason")
+
+            content_piece = delta.get("content")
+            if content_piece:
+                content_parts.append(content_piece)
+            tc_pieces = delta.get("tool_calls") or []
+            for tc in tc_pieces:
+                idx = tc.get("index", 0)
+                slot = tool_calls.setdefault(
+                    idx,
+                    {"id": None, "type": "function", "function": {"name": "", "arguments": ""}},
+                )
+                if tc.get("id"):
+                    slot["id"] = tc["id"]
+                if tc.get("type"):
+                    slot["type"] = tc["type"]
+                fn = tc.get("function") or {}
+                if fn.get("name"):
+                    slot["function"]["name"] = fn["name"]
+                if fn.get("arguments"):
+                    slot["function"]["arguments"] += fn["arguments"]
+
+            if forward_to is not None and (content_piece or tc_pieces or delta.get("role")):
+                live_chunk = {
+                    **meta_base(),
+                    "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
+                }
+                await forward_to.write(f"data: {json.dumps(live_chunk)}\n\n".encode())
+
+            if finish_reason:
+                final_chunk = {
+                    **meta_base(),
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
+                }
+                pending_finish_frame = f"data: {json.dumps(final_chunk)}\n\n".encode()
+
+        final_content = "".join(content_parts) or None
+        message: dict[str, Any] = {"role": "assistant", "content": final_content}
+        if tool_calls:
+            message["tool_calls"] = [tool_calls[i] for i in sorted(tool_calls)]
+
+        response_raw: dict[str, Any] = {
+            "id": meta.get("id", "chatcmpl-proxy"),
+            "object": "chat.completion",
+            "created": meta.get("created"),
+            "model": meta.get("model", model),
+            "choices": [{"index": 0, "message": message, "finish_reason": None}],
+            "usage": usage or {},
+        }
+        return response_raw, pending_finish_frame
+
     async def _handle_completions(
         self, request: aiohttp.web.Request,
-    ) -> aiohttp.web.Response:
-        """Intercept chat completions: record, optionally modify, forward."""
+    ) -> aiohttp.web.StreamResponse:
+        """Intercept chat completions: record, optionally modify, forward.
+
+        OpenClaw's real openai-completions client always sends
+        `stream: true` (verified against openclaw/openclaw
+        src/llm/providers/openai-completions.ts), and real providers honor
+        it with a genuine SSE reply (`Content-Type: text/event-stream`) -
+        unlike our stub test LLM servers, which ignore the flag and always
+        reply with plain JSON. The upstream response shape is auto-detected
+        (not assumed from the request), so both cases work: a real
+        provider's SSE stream is relayed to the client live, chunk by
+        chunk, as it arrives (true incremental delivery is preserved end to
+        end - forcing non-streaming upstream would silently degrade
+        ``assistant_stream`` from live token-by-token deltas to a single
+        chunk delivered only once generation fully finishes, verified live
+        against Gemini: 3 incremental deltas direct vs. 1 batched delta
+        through an earlier version of this proxy that forced
+        `stream: false` upstream); a stub's plain JSON reply is still
+        forwarded as plain JSON (OpenClaw's client already tolerates that
+        for a `stream: true` request, proven by every stub-LLM test in this
+        suite), so nothing here depends on real API keys to test.
+        """
         if not self._authorized(request):
             return aiohttp.web.json_response({"error": "unauthorized"}, status=401)
 
         body = await request.json()
         messages = body.get("messages", [])
         model = body.get("model", "unknown")
+        client_wants_stream = bool(body.get("stream"))
 
         if self.system_prompt_injection is not None:
             self._inject_system_prompt(messages)
-
-        # OpenClaw's real openai-completions client always sends
-        # `stream: true` (verified against openclaw/openclaw
-        # src/llm/providers/openai-completions.ts) - and, unlike our stub
-        # test LLM servers, real providers honor it and reply with an SSE
-        # body (`Content-Type: text/event-stream`), not a single JSON
-        # object. `resp.json()` on that body raises `ContentTypeError` and
-        # crashes this handler (reproduced live against Gemini). We don't
-        # need genuine incremental delivery for a recording/injection proxy,
-        # so request the non-streaming shape from the *upstream* provider
-        # regardless of what the client asked for, and hand that same JSON
-        # straight back to the gateway unchanged. This is safe: OpenClaw's
-        # client already tolerates a plain JSON reply to a `stream: true`
-        # request (every existing stub-LLM test does exactly this - the
-        # stub always replies non-streaming JSON and every agent run
-        # completes normally), it's specifically forwarding *upstream* with
-        # `stream: true` to a provider that actually honors it that breaks.
-        upstream_body = dict(body)
-        upstream_body["stream"] = False
-        upstream_body.pop("stream_options", None)
 
         upstream_url = self._upstream_chat_completions_url()
         headers = {
@@ -207,21 +321,40 @@ class LLMProxy:
         }
 
         assert self._session is not None
-        async with self._session.post(
-            upstream_url, json=upstream_body, headers=headers,
-        ) as resp:
-            resp_body = await self._read_upstream_json(resp)
+        resp = await self._session.post(upstream_url, json=body, headers=headers)
+        stream_resp: aiohttp.web.StreamResponse | None = None
+        pending_finish_frame: bytes | None = None
+        try:
             upstream_status = resp.status
+            is_upstream_sse = "text/event-stream" in (resp.content_type or "")
+            if is_upstream_sse:
+                if client_wants_stream:
+                    stream_resp = aiohttp.web.StreamResponse(
+                        status=upstream_status,
+                        headers={
+                            "Content-Type": "text/event-stream",
+                            "Cache-Control": "no-cache",
+                        },
+                    )
+                    await stream_resp.prepare(request)
+                resp_body, pending_finish_frame = await self._consume_sse(
+                    resp, forward_to=stream_resp, model=model,
+                )
+            else:
+                resp_body = await self._read_upstream_json(resp)
+        finally:
+            resp.release()
 
         # Rewrite the model's reply before it reaches the agent. Done before
-        # recording so the trace reflects what the agent actually saw.
+        # recording so the trace reflects what the agent actually saw. For
+        # the live-relay case, the wire already carries the real content;
+        # the injection delta is appended to the wire separately below
+        # (after the finish frame is held back), so this mutation only
+        # affects the *recorded* text, not a second copy sent over HTTP.
         if self.response_injection is not None:
             self._inject_response(resp_body)
 
         response_text = ""
-        input_tokens = 0
-        output_tokens = 0
-
         choices = resp_body.get("choices", [])
         if choices:
             msg = choices[0].get("message", {})
@@ -229,18 +362,37 @@ class LLMProxy:
             response_text = msg.get("content") or ""
 
         usage = resp_body.get("usage", {})
-        input_tokens = usage.get("prompt_tokens", 0)
-        output_tokens = usage.get("completion_tokens", 0)
-
         self.records.append(ModelCallRecord(
             timestamp_ms=int(time.time() * 1000),
             request_messages=messages,
             request_model=model,
             response_text=response_text,
             response_raw=resp_body,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
+            input_tokens=usage.get("prompt_tokens", 0),
+            output_tokens=usage.get("completion_tokens", 0),
         ))
+
+        if stream_resp is not None:
+            if self.response_injection is not None:
+                inject_chunk = {
+                    "id": resp_body.get("id", "chatcmpl-proxy"),
+                    "object": "chat.completion.chunk",
+                    "created": resp_body.get("created") or int(time.time()),
+                    "model": resp_body.get("model", model),
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": "\n" + self.response_injection},
+                            "finish_reason": None,
+                        },
+                    ],
+                }
+                await stream_resp.write(f"data: {json.dumps(inject_chunk)}\n\n".encode())
+            if pending_finish_frame is not None:
+                await stream_resp.write(pending_finish_frame)
+            await stream_resp.write(b"data: [DONE]\n\n")
+            await stream_resp.write_eof()
+            return stream_resp
 
         return aiohttp.web.json_response(resp_body, status=upstream_status)
 
@@ -283,6 +435,7 @@ class LLMProxy:
 
     def _inject_response(self, resp_body: dict[str, Any]) -> None:
         """Append injection content to the assistant message in the response."""
+        assert self.response_injection is not None
         for choice in resp_body.get("choices", []):
             msg = choice.get("message")
             if isinstance(msg, dict):

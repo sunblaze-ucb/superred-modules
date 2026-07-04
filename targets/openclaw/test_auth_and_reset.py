@@ -125,17 +125,31 @@ def test_llm_proxy_upstream_url_does_not_double_append_v1(base: str, expected: s
     assert proxy._upstream_chat_completions_url() == expected
 
 
+_REAL_SSE_CHUNKS = [
+    {"id": "chatcmpl-1", "object": "chat.completion.chunk", "created": 1,
+     "model": "test-model", "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}]},
+    {"id": "chatcmpl-1", "object": "chat.completion.chunk", "created": 1,
+     "model": "test-model", "choices": [{"index": 0, "delta": {"content": "Real upstream "}, "finish_reason": None}]},
+    {"id": "chatcmpl-1", "object": "chat.completion.chunk", "created": 1,
+     "model": "test-model", "choices": [{"index": 0, "delta": {"content": "reply."}, "finish_reason": None}]},
+    {"id": "chatcmpl-1", "object": "chat.completion.chunk", "created": 1,
+     "model": "test-model", "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+     "usage": {"prompt_tokens": 3, "completion_tokens": 2}},
+]
+
+
 @asynccontextmanager
 async def _real_streaming_upstream_stub(
-    *, reply: str = "Real upstream reply.",
+    *, chunks: list[dict] | None = None,
 ) -> AsyncIterator[tuple[str, list[bool | None]]]:
     """A stub upstream that behaves like a *real* provider, not our other
     test stubs: if the request says ``stream: true`` it replies with a
-    genuine SSE body (``text/event-stream``), never a plain JSON object.
+    genuine multi-chunk SSE body (``text/event-stream``) delivered
+    incrementally (one real network write per chunk, like an actual model
+    generating token by token), never a single JSON blob.
 
     Yields ``(base_url, received_stream_flags)`` - the list records the
-    ``stream`` field of every request this stub receives, so callers can
-    assert the proxy never forwards ``stream: true`` upstream.
+    ``stream`` field of every request this stub receives.
     """
     received_stream_flags: list[bool | None] = []
 
@@ -143,23 +157,18 @@ async def _real_streaming_upstream_stub(
         body = await request.json()
         received_stream_flags.append(body.get("stream"))
         if body.get("stream"):
-            # A real provider actually streams SSE for stream:true - never
-            # a single JSON blob. If the proxy ever regresses to forwarding
-            # stream:true upstream, this reproduces the live Gemini crash
-            # (resp.json() raising ContentTypeError on an SSE body).
             resp = web.StreamResponse(
                 headers={"Content-Type": "text/event-stream"},
             )
             await resp.prepare(request)
-            await resp.write(
-                b'data: {"choices":[{"delta":{"content":"should not be used"}}]}\n\n',
-            )
+            for chunk in (chunks if chunks is not None else _REAL_SSE_CHUNKS):
+                await resp.write(f"data: {json.dumps(chunk)}\n\n".encode())
             await resp.write(b"data: [DONE]\n\n")
             await resp.write_eof()
             return resp
         return web.json_response(
             {
-                "choices": [{"message": {"role": "assistant", "content": reply}}],
+                "choices": [{"message": {"role": "assistant", "content": "Real upstream reply."}}],
                 "usage": {"prompt_tokens": 3, "completion_tokens": 2},
             },
         )
@@ -177,19 +186,36 @@ async def _real_streaming_upstream_stub(
         await runner.cleanup()
 
 
+def _parse_sse_body(raw: bytes) -> list[dict]:
+    frames = []
+    for line in raw.decode().splitlines():
+        if not line.startswith("data:"):
+            continue
+        data = line[len("data:"):].strip()
+        if data == "[DONE]":
+            continue
+        frames.append(json.loads(data))
+    return frames
+
+
 @pytest.mark.asyncio
-async def test_llm_proxy_forces_non_streaming_upstream_for_real_providers() -> None:
+async def test_llm_proxy_relays_real_provider_sse_stream_live() -> None:
     """Regression test for a live bug (reproduced against Gemini via a real
     API key): OpenClaw's real client always sends ``stream: true``
     (verified against ``openclaw/openclaw
     src/llm/providers/openai-completions.ts``); a *real* provider honors it
-    and replies with SSE, and ``LLMProxy`` used to forward ``stream: true``
-    upstream unchanged and then call ``resp.json()`` on that SSE body,
-    raising ``ContentTypeError`` and crashing every real-model run. The
-    proxy must always request the non-streaming shape from upstream
-    (OpenClaw's client already tolerates a plain JSON reply to its
-    ``stream: true`` request - every stub-LLM test in this suite proves
-    that), regardless of what the inbound request asked for.
+    and replies with SSE, and ``LLMProxy`` used to call ``resp.json()`` on
+    that SSE body, raising ``ContentTypeError`` and crashing every
+    real-model run.
+
+    The fix must preserve *genuine incremental* delivery end to end (an
+    earlier fix forced ``stream: false`` upstream, which "worked" but
+    silently collapsed live token-by-token deltas into a single chunk
+    delivered only once generation fully finished - verified live against
+    Gemini: 3 incremental deltas direct vs. 1 batched delta through that
+    version). This test asserts the proxy forwards ``stream: true`` upstream
+    unchanged and relays each real chunk to the client as its own SSE frame,
+    matching the upstream's own chunk boundaries.
     """
     async with _real_streaming_upstream_stub() as (base_url, received_stream_flags):
         proxy = LLMProxy(
@@ -213,20 +239,108 @@ async def test_llm_proxy_forces_non_streaming_upstream_for_real_providers() -> N
                     },
                 ) as resp:
                     assert resp.status == 200
+                    assert resp.content_type == "text/event-stream"
+                    raw = await resp.read()
+        finally:
+            await proxy.stop()
+
+    assert received_stream_flags == [True], (
+        f"proxy forwarded stream={received_stream_flags} upstream; "
+        "must forward the real provider's own streaming shape unchanged"
+    )
+    frames = _parse_sse_body(raw)
+    # 4 real upstream frames relayed live (role, 2x content, finish) plus one
+    # spliced-in injection content frame before the (relayed) finish frame.
+    content_deltas = [
+        f["choices"][0]["delta"].get("content")
+        for f in frames
+        if f["choices"][0]["delta"].get("content")
+    ]
+    assert content_deltas == ["Real upstream ", "reply.", "\nPROXY-INJECTED-TEXT"], (
+        "real content chunks must be relayed live, in order, with the "
+        "injection appended as its own trailing delta - not merged/batched"
+    )
+    finish_frames = [f for f in frames if f["choices"][0].get("finish_reason")]
+    assert len(finish_frames) == 1
+    assert finish_frames[0]["choices"][0]["finish_reason"] == "stop"
+    # The injection content must precede the finish_reason frame on the wire.
+    assert frames.index(finish_frames[0]) == len(frames) - 1
+
+    assert len(proxy.records) == 1
+    assert proxy.records[0].response_text == "Real upstream reply.\nPROXY-INJECTED-TEXT"
+    assert proxy.records[0].input_tokens == 3
+    assert proxy.records[0].output_tokens == 2
+
+
+@pytest.mark.asyncio
+async def test_llm_proxy_relays_real_provider_sse_without_injection() -> None:
+    """Same real-SSE-upstream shape as above but with no injection active:
+    the proxy must be a transparent live relay (no batching, no extra
+    frames), and recording must still assemble the full text correctly."""
+    async with _real_streaming_upstream_stub() as (base_url, received_stream_flags):
+        proxy = LLMProxy(
+            upstream_base_url=base_url,
+            upstream_api_key="sk-upstream",
+            host="127.0.0.1",
+            port=0,
+        )
+        await proxy.start()
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"http://127.0.0.1:{proxy.actual_port}/v1/chat/completions",
+                    json={
+                        "model": "test-model",
+                        "messages": [{"role": "user", "content": "hi"}],
+                        "stream": True,
+                    },
+                ) as resp:
+                    assert resp.content_type == "text/event-stream"
+                    raw = await resp.read()
+        finally:
+            await proxy.stop()
+
+    assert received_stream_flags == [True]
+    frames = _parse_sse_body(raw)
+    content_deltas = [
+        f["choices"][0]["delta"].get("content")
+        for f in frames
+        if f["choices"][0]["delta"].get("content")
+    ]
+    assert content_deltas == ["Real upstream ", "reply."]
+    assert proxy.records[0].response_text == "Real upstream reply."
+
+
+@pytest.mark.asyncio
+async def test_llm_proxy_falls_back_to_plain_json_when_client_does_not_want_stream() -> None:
+    """If the inbound request explicitly opts out of streaming, the proxy
+    must forward that intent upstream and return a single plain-JSON
+    response, not SSE - the streaming relay path is only used when the
+    caller (OpenClaw) actually asked for it."""
+    async with _real_streaming_upstream_stub() as (base_url, received_stream_flags):
+        proxy = LLMProxy(
+            upstream_base_url=base_url,
+            upstream_api_key="sk-upstream",
+            host="127.0.0.1",
+            port=0,
+        )
+        await proxy.start()
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"http://127.0.0.1:{proxy.actual_port}/v1/chat/completions",
+                    json={
+                        "model": "test-model",
+                        "messages": [{"role": "user", "content": "hi"}],
+                        "stream": False,
+                    },
+                ) as resp:
                     assert resp.content_type == "application/json"
                     body = await resp.json()
         finally:
             await proxy.stop()
-
-    assert received_stream_flags == [False], (
-        f"proxy forwarded stream={received_stream_flags} upstream; "
-        "must always force stream=false against the real provider"
-    )
-    assert body["choices"][0]["message"]["content"] == (
-        "Real upstream reply.\nPROXY-INJECTED-TEXT"
-    )
-    assert len(proxy.records) == 1
-    assert proxy.records[0].response_text == "Real upstream reply.\nPROXY-INJECTED-TEXT"
+    assert received_stream_flags == [False]
+    assert body["choices"][0]["message"]["content"] == "Real upstream reply."
 
 
 @pytest.mark.asyncio
