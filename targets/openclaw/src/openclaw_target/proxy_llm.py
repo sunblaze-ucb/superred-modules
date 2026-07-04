@@ -136,6 +136,36 @@ class LLMProxy:
         expected = f"Bearer {self._inbound_token}"
         return header == expected
 
+    def _upstream_chat_completions_url(self) -> str:
+        """Build the upstream ``/chat/completions`` URL.
+
+        Mirrors ``config.py``'s ``build_gateway_config`` normalization
+        (append ``/v1`` only if the caller's base URL doesn't already end in
+        it) so a ``provider_base_url`` that already contains a trailing
+        ``/v1`` segment - as OpenAI-compatible endpoints from providers other
+        than OpenAI itself commonly do, e.g. Gemini's
+        ``https://generativelanguage.googleapis.com/v1beta/openai/v1`` -
+        doesn't get double-appended into ``.../v1/v1/chat/completions``
+        (verified live: this 404s).
+        """
+        base = self._upstream_base_url
+        if base.endswith("/v1"):
+            return f"{base}/chat/completions"
+        return f"{base}/v1/chat/completions"
+
+    async def _read_upstream_json(
+        self, resp: aiohttp.ClientResponse,
+    ) -> dict[str, Any]:
+        """Parse the upstream body as JSON, tolerating a non-JSON error body
+        (some providers return plain-text/HTML for 4xx/5xx responses, which
+        would otherwise raise and crash the handler with an unrelated
+        ``ContentTypeError``)."""
+        try:
+            return await resp.json(content_type=None)  # type: ignore[no-any-return]
+        except (aiohttp.ContentTypeError, ValueError):
+            text = await resp.text()
+            return {"error": {"message": text[:4000] or f"HTTP {resp.status}", "code": resp.status}}
+
     async def _handle_completions(
         self, request: aiohttp.web.Request,
     ) -> aiohttp.web.Response:
@@ -150,7 +180,27 @@ class LLMProxy:
         if self.system_prompt_injection is not None:
             self._inject_system_prompt(messages)
 
-        upstream_url = f"{self._upstream_base_url}/v1/chat/completions"
+        # OpenClaw's real openai-completions client always sends
+        # `stream: true` (verified against openclaw/openclaw
+        # src/llm/providers/openai-completions.ts) - and, unlike our stub
+        # test LLM servers, real providers honor it and reply with an SSE
+        # body (`Content-Type: text/event-stream`), not a single JSON
+        # object. `resp.json()` on that body raises `ContentTypeError` and
+        # crashes this handler (reproduced live against Gemini). We don't
+        # need genuine incremental delivery for a recording/injection proxy,
+        # so request the non-streaming shape from the *upstream* provider
+        # regardless of what the client asked for, and hand that same JSON
+        # straight back to the gateway unchanged. This is safe: OpenClaw's
+        # client already tolerates a plain JSON reply to a `stream: true`
+        # request (every existing stub-LLM test does exactly this - the
+        # stub always replies non-streaming JSON and every agent run
+        # completes normally), it's specifically forwarding *upstream* with
+        # `stream: true` to a provider that actually honors it that breaks.
+        upstream_body = dict(body)
+        upstream_body["stream"] = False
+        upstream_body.pop("stream_options", None)
+
+        upstream_url = self._upstream_chat_completions_url()
         headers = {
             "Authorization": f"Bearer {self._upstream_api_key}",
             "Content-Type": "application/json",
@@ -158,9 +208,10 @@ class LLMProxy:
 
         assert self._session is not None
         async with self._session.post(
-            upstream_url, json=body, headers=headers,
+            upstream_url, json=upstream_body, headers=headers,
         ) as resp:
-            resp_body = await resp.json()
+            resp_body = await self._read_upstream_json(resp)
+            upstream_status = resp.status
 
         # Rewrite the model's reply before it reaches the agent. Done before
         # recording so the trace reflects what the agent actually saw.
@@ -174,7 +225,8 @@ class LLMProxy:
         choices = resp_body.get("choices", [])
         if choices:
             msg = choices[0].get("message", {})
-            response_text = msg.get("content", "")
+            # `or ""`: a tool-calls-only assistant message has content=None.
+            response_text = msg.get("content") or ""
 
         usage = resp_body.get("usage", {})
         input_tokens = usage.get("prompt_tokens", 0)
@@ -190,7 +242,7 @@ class LLMProxy:
             output_tokens=output_tokens,
         ))
 
-        return aiohttp.web.json_response(resp_body, status=resp.status)
+        return aiohttp.web.json_response(resp_body, status=upstream_status)
 
     async def _handle_passthrough(
         self, request: aiohttp.web.Request,
