@@ -18,7 +18,14 @@ Deviations specific to those hooks are below.
 - **A.1 SDK driver.** `driver.py` reproduces the upstream `ClaudeSDKAgent` run
   loop: `ClaudeSDKClient(options=ClaudeAgentOptions(...))`, `connect()`, then per
   turn `await client.query(turn)` and `async for message in
-  client.receive_response()`, recording each message. Option values match
+  client.receive_response()`, recording each message. `max_turns` is applied
+  exactly as upstream does: as the SDK's per-query turn cap (via
+  `ClaudeAgentOptions.max_turns`) *and* as a cumulative cap on tool-use turns
+  across the whole instruction sequence -- the driver counts each assistant
+  message that used a tool (`_is_tool_use_turn`, mirroring upstream's
+  `_turn_count`) and stops issuing further instructions once the count reaches
+  `max_turns`. For DTAP's single-instruction tasks the two coincide; the
+  cumulative cap only bites for a multi-turn `user_prompt`. Option values match
   upstream where they apply: `permission_mode="bypassPermissions"`,
   `max_turns`, `model`, `system_prompt`, `cwd` (workspace), and
   `disallowed_tools` (the native deny list). Live-verification note:
@@ -94,15 +101,33 @@ toolset and is the single place to update if the CLI's native tool names change.
 The `"disabled"` deny list is upstream's
 `OS_FILESYSTEM_CLAUDE_SDK_DISALLOWED_TOOLS` verbatim.
 
-## D. Skill injection (known limitation)
+## D. Skill injection
 
-The `skill` controllable still fires (the base handles it) and the chosen skills
-are passed through in `task.json`, but `driver.py` does **not** yet materialize
-them into the container's `.claude/skills/` (upstream's
-`create_injected_skills_directory`). Skill-vector attacks against this target are
-therefore not yet exercised; the other four DTAP vectors (system prompt, user
-prompt, tool-description, environment) work fully. This is a deliberate scoped
-limitation, not a silent gap.
+The `skill` controllable fires (the base handles it), the chosen skills are passed
+through in `task.json`, and `driver.materialize_skills` writes each one to
+`<workspace>/.claude/skills/<name>/SKILL.md` before the episode runs -- the location
+Claude Code discovers skills from under its `cwd`. This mirrors upstream's
+`create_injected_skills_directory` (`utils/skill_helpers.py`), which builds the same
+`.claude/skills/<name>/SKILL.md` layout and points the SDK's `cwd` at it. All four
+DTAP injection vectors are therefore exercised against this target: prompt (system +
+user), tool (description), environment, and skill.
+
+Two deliberate, faithful-to-intent narrowings of the upstream skill machinery:
+
+- **Create-from-scratch only.** Upstream seeds the directory from benign base skills
+  (`source_skill_dirs`, i.e. `AgentConfig.skill_directories`): it copies each existing
+  `SKILL.md`, then applies `insert`/`append` injections *on top of that base*. This
+  port loads no base skills -- it materializes only the skills named in the injection
+  spec. So `mode="create"` (write/overwrite the file) is the primary path;
+  `mode="append"`/`mode="insert"` only modify a file a prior entry in the same spec
+  already created, and otherwise degrade to `create` (write the content as a fresh
+  `SKILL.md`). This matches upstream's own create branch, which likewise builds a
+  brand-new skill from `create_configs[0].content`; only the benign-base overlay is
+  dropped, and it has no analogue here.
+- **Append separator.** Upstream's `apply_injection_to_content` prepends a blank line
+  before appended content (`lines.append("")` then extend), so an append reads
+  `"<orig>\n\n<content>"`. This port joins with a single newline
+  (`"<orig>\n<content>"`). The injected bytes are otherwise identical.
 
 ## E. Out-of-band model client / budget
 

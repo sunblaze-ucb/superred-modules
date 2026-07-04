@@ -101,6 +101,15 @@ def test_final_text_tracking():
     assert driver._final_text_from_message(object()) is None
 
 
+def test_is_tool_use_turn():
+    # Only assistant messages that used a tool count (mirrors upstream _turn_count).
+    assert driver._is_tool_use_turn(AssistantMessage([ToolUseBlock("i", "Bash", {})])) is True
+    assert driver._is_tool_use_turn(AssistantMessage([TextBlock("hi")])) is False
+    assert driver._is_tool_use_turn(AssistantMessage([])) is False
+    assert driver._is_tool_use_turn(ResultMessage("r")) is False
+    assert driver._is_tool_use_turn(object()) is False
+
+
 def test_build_options_wiring():
     captured = {}
 
@@ -127,7 +136,7 @@ def test_build_options_wiring():
     assert "Bash" in captured["allowed_tools"]
     assert "mcp__dtap_proxy__*" in captured["allowed_tools"]
     assert captured["disallowed_tools"] == ["Bash"]
-    assert captured["include_partial_messages"] is True
+    assert "include_partial_messages" not in captured  # dropped to match upstream
     assert captured["max_turns"] == 7
     assert captured["system_prompt"] == "sys"
     assert captured["cwd"] == "/dtap/workspace"

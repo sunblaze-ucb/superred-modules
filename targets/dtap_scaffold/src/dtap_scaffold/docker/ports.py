@@ -58,9 +58,7 @@ def is_bindable(port: int) -> bool:
 
 
 def _lock_dir() -> Path:
-    base = os.getenv("DT_PORT_LOCK_DIR") or os.path.join(
-        tempfile.gettempdir(), "dtap_port_locks"
-    )
+    base = os.getenv("DT_PORT_LOCK_DIR") or os.path.join(tempfile.gettempdir(), "dtap_port_locks")
     path = Path(base)
     path.mkdir(parents=True, exist_ok=True)
     return path
@@ -101,9 +99,7 @@ class PortLeaser:
         if not self._bind_test(port):
             return False
         try:
-            fd = os.open(
-                str(self._lock_path(port)), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644
-            )
+            fd = os.open(str(self._lock_path(port)), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
         except FileExistsError:
             return False
         except OSError:
@@ -124,9 +120,7 @@ class PortLeaser:
             for port in range(start, end + 1):
                 if self._try_claim(port):
                     return port
-        raise RuntimeError(
-            f"unable to lease a free port in range [{start}, {end}] for {name!r}"
-        )
+        raise RuntimeError(f"unable to lease a free port in range [{start}, {end}] for {name!r}")
 
     def release(self, port: int) -> None:
         """Release a previously leased *port* (idempotent)."""

@@ -22,6 +22,7 @@ only on the live path).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import tempfile
@@ -29,6 +30,8 @@ import uuid
 from typing import Any
 
 from dtap_scaffold.types import AgentLaunchSpec
+
+_log = logging.getLogger(__name__)
 
 __all__ = [
     "DEFAULT_IMAGE",
@@ -55,6 +58,15 @@ CONTAINER_TRACES = f"{CONTAINER_STATE}/traces"
 # OpenClaw provider id under ``models.providers`` and the routing prefix it adds to
 # ``agents.defaults.model.primary``.
 _PROVIDER = "litellm"
+
+# OpenClaw native web tool group, ALWAYS denied for determinism so the agent cannot
+# reach the live web (a benchmark must be reproducible). Mirrors upstream's
+# unconditional web-disable (``agent.py:392-405``). The ``full`` tools profile
+# re-enables web egress, and OpenClaw 2026.6.10 rejects the granular
+# ``tools.web.*.enabled`` shape (same schema change as ASSUMPTIONS B.1), so the
+# denial goes through ``tools.deny`` with the group id upstream itself denies
+# (``utils/agent_helpers.py:OS_FILESYSTEM_OPENCLAW_DISALLOWED_TOOLS``).
+_WEB_DENY: tuple[str, ...] = ("group:web",)
 
 
 def _profile_config_rel(profile: str) -> str:
@@ -86,10 +98,12 @@ def build_openclaw_config(
 
     Wires (1) the provider to the LiteLLM proxy (``models.providers.litellm`` +
     ``agents.defaults.model.primary``), (2) the env MCP servers to the host proxy
-    (``mcp.servers`` over streamable-http), (3) NATIVE tools ON (``exec`` / ``fs``
-    at ``security=full``, ``ask=off``) minus ``spec.native_tool_deny``, and (4)
-    injected skills via ``skills.load.extraDirs``. Web search / fetch and the
-    browser are disabled for determinism (mirrors upstream).
+    (``mcp.servers`` over streamable-http), (3) NATIVE tools ON via the ``full``
+    tools profile (``exec`` / ``fs`` / ...) minus ``spec.native_tool_deny``, and
+    (4) injected skills via ``skills.load.extraDirs``. Web search / fetch are
+    denied (``tools.deny`` always includes ``group:web``) for determinism, mirroring
+    upstream's unconditional web-disable (``agent.py:392-405``); the native browser
+    is moot (the image ships no Chromium).
     """
     url = proxy_url if proxy_url is not None else spec.proxy_url
     model_id = spec.model
@@ -126,8 +140,12 @@ def build_openclaw_config(
     # Native tools: ENABLED here (upstream DTAP disabled them; see ASSUMPTIONS B.1).
     # openclaw 2026.6.10 takes a tools PROFILE ("full" turns on exec/fs/etc.); the
     # granular {security, ask} per-tool shape is rejected (tools.fs: Invalid input).
+    # Web search/fetch are ALWAYS denied for determinism via _WEB_DENY ("group:web"),
+    # mirroring upstream's unconditional web-disable (agent.py:392-405): the "full"
+    # profile re-enables web egress, and 2026.6.10 rejects the granular
+    # tools.web.*.enabled shape, so the deny-list is the faithful mechanism.
     tools: dict[str, Any] = {"profile": "full"}
-    deny = sorted({t for t in spec.native_tool_deny if t})
+    deny = sorted({t for t in (*_WEB_DENY, *spec.native_tool_deny) if t})
     if deny:
         tools["deny"] = deny
     config["tools"] = tools
@@ -253,7 +271,14 @@ def run_openclaw_container(
     of one task never share state), writes the episode inputs into it, then
     ``docker run``s the image with that dir bound at ``/state``. The container's
     entrypoint reads ``/state/task.json`` and runs the turns; the session JSONL
-    lands under ``/state/traces``. Raises ``RuntimeError`` on a non-zero exit.
+    lands under ``/state/traces``.
+
+    A non-zero or timed-out container exit is **non-fatal** (mirrors upstream, which
+    swallows per-turn failures and always generates a trajectory): it is logged and
+    the episode dir is still returned, so the (possibly partial) trajectory is
+    extracted and the run is still judged. ``timeout`` bounds the WHOLE episode (all
+    turns) as a backstop; upstream instead applies ``OPENCLAW_TIMEOUT_SECONDS`` PER
+    TURN (see ASSUMPTIONS A.6).
     """
     base_dir = spec.output_dir or tempfile.mkdtemp(prefix="dtap-openclaw-")
     episode_dir = os.path.join(base_dir, f"episode-{uuid.uuid4().hex[:8]}")
@@ -280,9 +305,29 @@ def run_openclaw_container(
         cmd += ["--add-host", "host.docker.internal:host-gateway"]
     cmd += [image]
 
-    returncode, _stdout, stderr = _run_docker(cmd, timeout)
+    try:
+        returncode, _stdout, stderr = _run_docker(cmd, timeout)
+    except subprocess.TimeoutExpired:
+        # Whole-episode backstop fired: the container was killed mid-run, but any
+        # trajectory already flushed to the bound traces dir survives on disk.
+        # Mirror upstream, which turns a per-turn timeout into a non-fatal error and
+        # still generates the trajectory (agent.py:_run_openclaw_cli catches
+        # asyncio.TimeoutError -> success:False; run() always calls
+        # _generate_trajectory). Return the episode dir so the converter reads the
+        # partial trace and evaluate() re-queries env state -- an attack that mutated
+        # state and then timed out is still judged.
+        _log.warning("openclaw container timed out after %ss; extracting partial trace", timeout)
+        return episode_dir
     if returncode != 0:
-        raise RuntimeError(
-            f"openclaw container exited {returncode}: {stderr[:500] if stderr else '(no stderr)'}"
+        # A non-zero container exit is NON-fatal: do NOT raise. Upstream swallows
+        # per-turn openclaw failures into final_output and still generates the
+        # trajectory, and DTAP judges re-query LIVE env state, so a partial run that
+        # already mutated state can still be a success. Log and return the episode
+        # dir so the trajectory is extracted and evaluate() runs (a missing/empty
+        # trace degrades to an empty artifact in trajectory.convert).
+        _log.warning(
+            "openclaw container exited %s: %s",
+            returncode,
+            stderr[:500] if stderr else "(no stderr)",
         )
     return episode_dir

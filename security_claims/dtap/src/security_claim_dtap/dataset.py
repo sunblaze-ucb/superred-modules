@@ -5,10 +5,11 @@ The DTAP per-task tree is NOT vendored in this package (it is large and licensed
 separately; upstream auto-downloads it from HuggingFace, or point
 ``$DTAP_DATASET_ROOT`` at a local checkout). What this claim DOES ship is a
 ``data/golden_hashes.json`` manifest pinning the byte-identity of the two
-faithfulness-critical pieces of each sampled task: the attacker objective
-(``config.yaml`` ``Attack.malicious_goal``, which the Task turns into the Goal)
-and the judge logic (``judge.py``, which decides success). A faithfulness test
-re-hashes those task dirs and compares, so a future dataset change is caught.
+faithfulness-critical pieces of each sampled task: the objective the Task turns
+into the Goal (``config.yaml`` ``Attack.malicious_goal`` for a malicious task, or
+the first ``Task.task_instruction`` for a benign task) and the judge logic
+(``judge.py``, which decides success). A faithfulness test re-hashes those task
+dirs and compares, so a future dataset change is caught.
 """
 
 from __future__ import annotations
@@ -37,17 +38,32 @@ GOLDEN_SAMPLE_SIZE: int = 16
 
 
 def hash_task(task_dir: str | Path) -> str:
-    """SHA-256 over a task's ``config.yaml`` ``malicious_goal`` + ``judge.py`` bytes.
+    """SHA-256 over the bytes a DTAP task exposes as the Goal + its ``judge.py``.
 
     These are the two byte-identity-critical pieces of a DTAP task for this claim:
-    the attacker objective the Task exposes as the Goal, and the judge that decides
-    the outcome. A missing piece contributes empty bytes (benign tasks have no
-    ``malicious_goal``; a task without a ``judge.py`` contributes none).
+    the objective the Task turns into the ``Goal``, and the judge that decides the
+    outcome. The Goal bytes are the attacker objective (``config.yaml``
+    ``Attack.malicious_goal``) for a malicious task; when there is no
+    ``malicious_goal`` (a benign task) they are the first ``Task.task_instruction``
+    -- exactly the string ``task.py`` exposes as the benign Goal
+    (``TaskConfig.instructions[0]``), so benign-goal drift is caught too. A missing
+    piece contributes empty bytes (a task with neither goal source, or without a
+    ``judge.py``, contributes none).
     """
     task_dir = Path(task_dir)
     cfg_path = task_dir / "config.yaml"
     cfg = yaml.safe_load(cfg_path.read_text()) or {} if cfg_path.is_file() else {}
     goal = (cfg.get("Attack") or {}).get("malicious_goal") or ""
+    if not goal:
+        # Benign task: pin the first task_instruction, the exact bytes task.py
+        # uses as the Goal. Mirror the scaffold parser's normalization of
+        # ``Task.task_instruction`` into ``instructions[0]`` (dtap_scaffold.dataset)
+        # so the hashed bytes equal the Goal bytes.
+        raw_instr = (cfg.get("Task") or {}).get("task_instruction")
+        if isinstance(raw_instr, str):
+            goal = raw_instr
+        elif isinstance(raw_instr, list) and raw_instr:
+            goal = str(raw_instr[0])
     judge_path = task_dir / "judge.py"
     judge_bytes = judge_path.read_bytes() if judge_path.is_file() else b""
 

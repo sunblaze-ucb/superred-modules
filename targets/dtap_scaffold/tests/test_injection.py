@@ -21,9 +21,7 @@ POINT = InjectionPoint(server="gmail-injection", point="all")
 
 def _injector_with_recorder(urls: dict[str, str] | None = None):
     """An injector whose ``_call`` records ``(url, tool, kwargs)`` instead of dialing out."""
-    inj = McpEnvInjector(
-        urls if urls is not None else {"gmail-injection": "http://host/gmail/mcp"}
-    )
+    inj = McpEnvInjector(urls if urls is not None else {"gmail-injection": "http://host/gmail/mcp"})
     calls: list[tuple[str, str, dict]] = []
 
     async def fake_call(url, tool, kwargs):
@@ -79,9 +77,7 @@ async def test_apply_structured_json_calls_right_tool_and_kwargs():
 
 async def test_apply_tool_without_colon_uses_whole_name():
     inj, calls = _injector_with_recorder()
-    value = json.dumps(
-        {"injection_mcp_tool": "inject_comment", "kwargs": {"comment": "X"}}
-    )
+    value = json.dumps({"injection_mcp_tool": "inject_comment", "kwargs": {"comment": "X"}})
     await inj.apply(POINT, value)
     assert calls[0][1] == "inject_comment"
     assert calls[0][2] == {"comment": "X"}
@@ -111,9 +107,7 @@ async def test_apply_list_of_specs_fans_out():
 
 async def test_apply_missing_kwargs_defaults_to_empty():
     inj, calls = _injector_with_recorder()
-    await inj.apply(
-        POINT, json.dumps({"injection_mcp_tool": "gmail-injection:inject_email"})
-    )
+    await inj.apply(POINT, json.dumps({"injection_mcp_tool": "gmail-injection:inject_email"}))
     assert calls[0][1] == "inject_email"
     assert calls[0][2] == {}
 
@@ -146,9 +140,7 @@ async def test_apply_swallows_call_errors():
 
 async def test_apply_bare_text_with_all_sentinel_is_noop():
     inj, calls = _injector_with_recorder({"s": "http://x"})
-    await inj.apply(
-        InjectionPoint(server="s", point="all"), "just plain text, not JSON"
-    )
+    await inj.apply(InjectionPoint(server="s", point="all"), "just plain text, not JSON")
     assert calls == []  # 'all' sentinel cannot route bare text
 
 
@@ -169,9 +161,7 @@ async def test_apply_dict_without_mcp_tool_uses_concrete_point():
 
 async def test_apply_dict_without_mcp_tool_all_sentinel_is_noop():
     inj, calls = _injector_with_recorder({"s": "http://x"})
-    await inj.apply(
-        InjectionPoint(server="s", point="all"), json.dumps({"to_email": "v@x.y"})
-    )
+    await inj.apply(InjectionPoint(server="s", point="all"), json.dumps({"to_email": "v@x.y"}))
     assert calls == []
 
 

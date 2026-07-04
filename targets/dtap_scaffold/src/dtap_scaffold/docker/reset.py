@@ -59,18 +59,14 @@ async def reset_via_endpoints(
         last_error: Exception | None = None
         for attempt in range(1, max_retries + 1):
             try:
-                status = await asyncio.to_thread(
-                    _http_post, url, method=method, timeout=timeout
-                )
+                status = await asyncio.to_thread(_http_post, url, method=method, timeout=timeout)
                 if 200 <= status < 300:
                     break
                 last_error = RuntimeError(
                     f"reset endpoint {endpoint_name!r} returned HTTP {status}"
                 )
             except (urllib.error.HTTPError, urllib.error.URLError, OSError) as exc:
-                last_error = RuntimeError(
-                    f"reset endpoint {endpoint_name!r} failed: {exc}"
-                )
+                last_error = RuntimeError(f"reset endpoint {endpoint_name!r} failed: {exc}")
             if attempt < max_retries:
                 await asyncio.sleep(retry_delay)
             elif last_error is not None:
@@ -101,13 +97,9 @@ async def reset_via_scripts(
             ["exec", "-T", service, "/bin/sh", "-c", str(script_path)],
             sudo=sudo,
         )
-        rc, _, err = await compose._exec(
-            cmd, cwd=Path(compose_file).parent, timeout=timeout
-        )
+        rc, _, err = await compose._exec(cmd, cwd=Path(compose_file).parent, timeout=timeout)
         if rc != 0:
-            raise RuntimeError(
-                f"reset script for {env_name}/{service} failed: {err.strip()}"
-            )
+            raise RuntimeError(f"reset script for {env_name}/{service} failed: {err.strip()}")
 
 
 async def reset_environment(
@@ -119,7 +111,7 @@ async def reset_environment(
     compose_file: str | Path | None = None,
     sudo: bool | None = None,
     endpoint_timeout: float = 30,
-    script_timeout: float = 30,
+    script_timeout: float = 60,
     max_retries: int = 10,
 ) -> None:
     """Reset *env_name*: endpoints first, scripts as fallback. No-op if neither configured."""

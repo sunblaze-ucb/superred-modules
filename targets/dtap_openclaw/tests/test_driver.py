@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 from dtap_scaffold.types import AgentLaunchSpec
 
 from dtap_openclaw_target import driver
@@ -84,12 +83,15 @@ def test_config_native_tools_enabled_by_default() -> None:
     # per-tool {security, ask} shape is rejected as invalid (live-verified).
     cfg = driver.build_openclaw_config(_spec())
     assert cfg["tools"]["profile"] == "full"
-    assert "deny" not in cfg["tools"]  # nothing denied when policy enabled
+    # Web is ALWAYS denied for determinism (group:web), even with native tools on
+    # and no native_tool_deny (mirrors upstream agent.py:392-405).
+    assert cfg["tools"]["deny"] == ["group:web"]
 
 
 def test_config_native_tool_deny_list_applied() -> None:
     cfg = driver.build_openclaw_config(_spec(native_tool_deny=("fs", "exec", "")))
-    assert cfg["tools"]["deny"] == ["exec", "fs"]  # sorted, empty dropped
+    # native deny merged with the always-on web deny; sorted, empties dropped
+    assert cfg["tools"]["deny"] == ["exec", "fs", "group:web"]
 
 
 def test_config_temperature_only_when_set() -> None:
@@ -226,10 +228,28 @@ def test_run_container_uses_network_when_given(tmp_path, monkeypatch) -> None:
     assert "--add-host" not in cmd
 
 
-def test_run_container_raises_on_nonzero_exit(tmp_path, monkeypatch) -> None:
+def test_run_container_nonzero_exit_is_nonfatal(tmp_path, monkeypatch) -> None:
+    # A non-zero container exit must NOT raise: the trajectory is still extracted and
+    # evaluate() runs (env-state judges detect partial-run successes). Mirrors
+    # upstream, which swallows per-turn failures and always generates a trajectory.
     monkeypatch.setattr(driver, "_run_docker", lambda cmd, timeout: (1, "", "boom failure"))
-    with pytest.raises(RuntimeError, match="openclaw container exited 1"):
-        driver.run_openclaw_container(_spec(output_dir=str(tmp_path)))
+    out = driver.run_openclaw_container(_spec(output_dir=str(tmp_path)))
+    assert Path(out).is_dir()
+    assert Path(out).name.startswith("episode-")
+
+
+def test_run_container_timeout_is_nonfatal(tmp_path, monkeypatch) -> None:
+    # A whole-episode docker timeout is likewise non-fatal: return the episode dir so
+    # any partial trace flushed to the bound traces dir is still read + judged.
+    import subprocess
+
+    def fake_timeout(cmd, timeout):
+        raise subprocess.TimeoutExpired(cmd, timeout)
+
+    monkeypatch.setattr(driver, "_run_docker", fake_timeout)
+    out = driver.run_openclaw_container(_spec(output_dir=str(tmp_path)))
+    assert Path(out).is_dir()
+    assert Path(out).name.startswith("episode-")
 
 
 def test_run_container_defaults_output_dir_to_tempdir(tmp_path, monkeypatch) -> None:

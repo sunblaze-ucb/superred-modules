@@ -134,7 +134,6 @@ def _build_options(task: dict[str, Any], options_cls: Any) -> Any:
         "mcp_servers": {PROXY_SERVER_NAME: {"type": "http", "url": task.get("proxy_url")}},
         "allowed_tools": allowed,
         "disallowed_tools": deny,
-        "include_partial_messages": True,
         "max_turns": int(task.get("max_turns") or 200),
     }
     system_prompt = task.get("system_prompt")
@@ -159,6 +158,21 @@ def _final_text_from_message(message: Any) -> str | None:
         result = getattr(message, "result", None)
         return result if isinstance(result, str) and result else None
     return None
+
+
+def _is_tool_use_turn(message: Any) -> bool:
+    """True for an ``AssistantMessage`` that used at least one tool.
+
+    Mirrors upstream ``ClaudeSDKAgent.run``'s cumulative turn counter, which
+    increments once per assistant message containing a ``ToolUseBlock``. Duck-typed
+    by class name so it is import-safe and unit-testable on the host without the SDK.
+    """
+    if type(message).__name__ != "AssistantMessage":
+        return False
+    return any(
+        type(block).__name__ == "ToolUseBlock"
+        for block in getattr(message, "content", []) or []
+    )
 
 
 def materialize_skills(skills: Any, workspace_dir: str) -> list[str]:
@@ -232,6 +246,13 @@ async def run_episode(task: dict[str, Any], output_dir: str) -> dict[str, Any]: 
         options = _build_options(task, ClaudeAgentOptions)
         client = ClaudeSDKClient(options=options)
         await client.connect()
+        # Mirror upstream ClaudeSDKAgent.run: max_turns bounds a single query via the
+        # SDK option (set in _build_options) AND caps cumulative tool-use turns across
+        # the whole instruction sequence. Count each assistant message that used a tool
+        # and stop issuing further instructions once the budget is spent. Same default
+        # (200) as _build_options; a no-op for single-instruction DTAP tasks.
+        max_turns = int(task.get("max_turns") or 200)
+        turn_count = 0
         try:
             for turn in task.get("instructions") or [""]:
                 write({"record": "user_input", "trace_id": trace_id, "content": turn, "ts": _now()})
@@ -248,6 +269,10 @@ async def run_episode(task: dict[str, Any], output_dir: str) -> dict[str, Any]: 
                     candidate = _final_text_from_message(message)
                     if candidate:
                         final_output = candidate
+                    if _is_tool_use_turn(message):
+                        turn_count += 1
+                if turn_count >= max_turns:
+                    break
         except Exception as exc:  # noqa: BLE001 - surface any agent failure
             error = str(exc)
             write({"record": "error", "trace_id": trace_id, "error": error, "ts": _now()})

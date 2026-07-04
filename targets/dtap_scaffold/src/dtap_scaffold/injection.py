@@ -80,9 +80,7 @@ class McpEnvInjector:
             return await client.call_tool(tool, kwargs)
 
 
-def _parse_injection_calls(
-    value: str, point: InjectionPoint
-) -> list[tuple[str, dict[str, Any]]]:
+def _parse_injection_calls(value: str, point: InjectionPoint) -> list[tuple[str, dict[str, Any]]]:
     """Parse an ``env_inject`` value into ``[(tool, kwargs), ...]`` calls.
 
     Primary form (the env_inject controllable's ``value_type`` is JSON):

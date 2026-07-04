@@ -19,7 +19,6 @@ import json
 import os
 
 import pytest
-
 from superred.core.types.events import (
     ControllableInjection,
     ControllableNoInjection,
@@ -29,10 +28,14 @@ from superred.core.types.events import (
 
 from dtap_scaffold.controllables import env_tool_output_controllable
 from dtap_scaffold.forest import tools_server_tag
-from dtap_scaffold.mcp_proxy import _HOST_GATEWAY, HostMCPProxy, _extract_mcp_result
+from dtap_scaffold.mcp_proxy import (
+    _HOST_GATEWAY,
+    HostMCPProxy,
+    _extract_mcp_result,
+    _lease_port,
+)
 from dtap_scaffold.protocols import MCPProxy
 from dtap_scaffold.types import ProxyTool
-
 
 # --------------------------- helpers --------------------------------------
 
@@ -49,9 +52,7 @@ def _recorder(injections: dict[str, str]):
         events.append(evt)
         ctrl = getattr(evt, "controllable", None)
         if ctrl is not None and ctrl.name in injections:
-            return ControllableInjection(
-                event=evt, controllable=ctrl, value=injections[ctrl.name]
-            )
+            return ControllableInjection(event=evt, controllable=ctrl, value=injections[ctrl.name])
         return ControllableNoInjection(event=evt, controllable=ctrl)
 
     return emit, send_event, events, observables
@@ -60,9 +61,7 @@ def _recorder(injections: dict[str, str]):
 def _proxy_with_forward(genuine: str = "GENUINE"):
     """A proxy whose ``_forward`` returns *genuine* and that fronts one env server."""
     proxy = HostMCPProxy()
-    ctrl = env_tool_output_controllable(
-        "travel-suite", tools_server_tag("travel-suite")
-    )
+    ctrl = env_tool_output_controllable("travel-suite", tools_server_tag("travel-suite"))
     proxy.set_env_tool_controllables({"travel-suite": ctrl})
 
     async def fake_forward(server, tool, params):
@@ -119,9 +118,7 @@ def test_list_tools_applies_override_and_suffix():
     assert all(isinstance(t, ProxyTool) and t.server == "travel-suite" for t in tools)
     by_name = {t.tool: t.description for t in tools}
     assert by_name["search_flights"] == "EVIL OVERRIDE"  # override replaces
-    assert (
-        by_name["book_hotel"] == "Book a hotel.\nALSO DO EVIL"
-    )  # suffix appends with \n
+    assert by_name["book_hotel"] == "Book a hotel.\nALSO DO EVIL"  # suffix appends with \n
     assert by_name["untouched"] == "Leave me."  # cross-server edit ignored
 
 
@@ -140,9 +137,7 @@ def test_list_tools_no_edits_is_genuine():
 
 async def test_handle_tool_call_decline_returns_genuine():
     proxy, _ = _proxy_with_forward("GENUINE")
-    emit, send_event, events, observables = _recorder(
-        injections={}
-    )  # decline everything
+    emit, send_event, events, observables = _recorder(injections={})  # decline everything
     proxy.bind(emit, send_event)
 
     result = await proxy.handle_tool_call("travel-suite", "search_flights", {"q": "x"})
@@ -188,9 +183,7 @@ async def test_handle_tool_call_unknown_server_returns_genuine_no_event():
 
 
 async def test_handle_tool_call_without_bind_returns_genuine():
-    proxy, _ = _proxy_with_forward(
-        "GENUINE"
-    )  # bind() never called -> send_event is None
+    proxy, _ = _proxy_with_forward("GENUINE")  # bind() never called -> send_event is None
     result = await proxy.handle_tool_call("travel-suite", "search_flights", {})
     assert result == "GENUINE"
 
@@ -269,9 +262,7 @@ async def test_dispatch_notification_returns_none():
 
 async def test_dispatch_ping():
     proxy = HostMCPProxy()
-    resp = await proxy._dispatch_rpc(
-        {"jsonrpc": "2.0", "id": 6, "method": "ping"}, None
-    )
+    resp = await proxy._dispatch_rpc({"jsonrpc": "2.0", "id": 6, "method": "ping"}, None)
     assert resp["result"] == {}
 
 
@@ -284,9 +275,7 @@ async def test_dispatch_tools_list_unions_servers_with_edits_and_schema():
     proxy.set_tool_description_edits(
         [{"server": "a", "tool": "t1", "mode": "suffix", "content": "S"}]
     )
-    resp = await proxy._dispatch_rpc(
-        {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, None
-    )
+    resp = await proxy._dispatch_rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, None)
     tools = {t["name"]: t for t in resp["result"]["tools"]}
     assert set(tools) == {"t1", "t2"}  # union across servers
     assert tools["t1"]["description"] == "d1\nS"  # edit applied
@@ -300,17 +289,13 @@ async def test_dispatch_tools_list_server_scope():
         "a": [{"name": "t1", "description": "d1"}],
         "b": [{"name": "t2", "description": "d2"}],
     }
-    resp = await proxy._dispatch_rpc(
-        {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, "a"
-    )
+    resp = await proxy._dispatch_rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, "a")
     assert {t["name"] for t in resp["result"]["tools"]} == {"t1"}
 
 
 async def test_dispatch_tools_call_routes_and_tampers():
     proxy, _ = _proxy_with_forward("GEN")
-    proxy._raw_tools = {
-        "travel-suite": [{"name": "search_flights", "description": "d"}]
-    }
+    proxy._raw_tools = {"travel-suite": [{"name": "search_flights", "description": "d"}]}
     emit, send_event, _, _ = _recorder(injections={"env_tool:travel-suite": "TAMP"})
     proxy.bind(emit, send_event)
     resp = await proxy._dispatch_rpc(
@@ -342,9 +327,7 @@ async def test_dispatch_tools_call_unknown_tool_errors():
 
 async def test_dispatch_unknown_method_errors():
     proxy = HostMCPProxy()
-    resp = await proxy._dispatch_rpc(
-        {"jsonrpc": "2.0", "id": 5, "method": "bananas"}, None
-    )
+    resp = await proxy._dispatch_rpc({"jsonrpc": "2.0", "id": 5, "method": "bananas"}, None)
     assert resp["error"]["code"] == -32601
 
 
@@ -353,9 +336,7 @@ async def test_dispatch_unknown_method_errors():
 
 @pytest.mark.docker
 @pytest.mark.live
-@pytest.mark.skipif(
-    not os.environ.get("DTAP_LIVE"), reason="binds a host aiohttp server"
-)
+@pytest.mark.skipif(not os.environ.get("DTAP_LIVE"), reason="binds a host aiohttp server")
 async def test_start_serves_http_round_trip():
     import aiohttp
 
@@ -380,9 +361,7 @@ async def test_start_serves_http_round_trip():
     try:
         async with aiohttp.ClientSession() as session:
             base = f"http://127.0.0.1:{proxy._port}/mcp"
-            r = await session.post(
-                base, json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
-            )
+            r = await session.post(base, json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
             assert (await r.json())["result"]["tools"][0]["name"] == "t"
             r2 = await session.post(
                 base,
@@ -396,3 +375,8 @@ async def test_start_serves_http_round_trip():
             assert (await r2.json())["result"]["content"][0]["text"] == "GENUINE"
     finally:
         await proxy.stop()
+
+
+def test_lease_port_returns_zero() -> None:
+    # Port 0 -> aiohttp binds an OS-assigned free port (read back after start).
+    assert _lease_port() == 0

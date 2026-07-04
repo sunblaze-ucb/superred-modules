@@ -16,8 +16,7 @@ from dtap_scaffold.docker import env_registry
 from dtap_scaffold.docker.env_registry import EnvRegistry, EnvRegistryError
 
 _CLONE_ROOT = Path(
-    os.environ.get("DT_ROOT")
-    or "/Users/simonsure/research/superred/tmp/DecodingTrust-Agent"
+    os.environ.get("DT_ROOT") or "/Users/simonsure/research/superred/tmp/DecodingTrust-Agent"
 )
 _CONFIG_DIR = _CLONE_ROOT / "dt_arena" / "config"
 
@@ -44,9 +43,7 @@ def test_server_environment_string_and_list(reg: EnvRegistry) -> None:
 
 
 def test_server_lookup_is_case_insensitive(reg: EnvRegistry) -> None:
-    assert reg.server_environments("os-filesystem") == reg.server_environments(
-        "OS-filesystem"
-    )
+    assert reg.server_environments("os-filesystem") == reg.server_environments("OS-filesystem")
     assert reg.mcp_server("TELECOM") is reg.mcp_server("telecom")
 
 
@@ -86,6 +83,9 @@ def test_env_metadata(reg: EnvRegistry) -> None:
     assert reg.disable_reuse("travel") is False
     assert reg.reset_endpoints("travel")  # travel has a /reset endpoint
     assert "travel-api" in reg.reset_scripts("travel")  # and a script fallback
+    # per-env reset-script timeout: explicit override vs upstream's 60s default.
+    assert reg.reset_script_timeout("terminal") == 180
+    assert reg.reset_script_timeout("travel") == 60
 
 
 # --------------------------- text-only validation -------------------------
@@ -106,9 +106,7 @@ def test_domain_for_server(reg: EnvRegistry) -> None:
     assert reg.domain_for_server("browser") == "browser"
     assert reg.domain_for_server("macos-os") == "macos"
     assert reg.domain_for_server("windows-os") == "windows"
-    assert (
-        reg.domain_for_server("travel-suite") is None
-    )  # text-only -> no excluded domain
+    assert reg.domain_for_server("travel-suite") is None  # text-only -> no excluded domain
 
 
 # --------------------------- mcp port-key selection -----------------------
@@ -118,23 +116,15 @@ def test_mcp_port_key_selection(reg: EnvRegistry) -> None:
     # Default PORT when no MCP-specific port var exists.
     assert env_registry.mcp_port_key(reg.mcp_server("travel-suite"), "mcp") == "PORT"
     # A dedicated *_MCP_PORT wins.
-    assert (
-        env_registry.mcp_port_key(reg.mcp_server("telecom"), "mcp")
-        == "TELECOM_MCP_PORT"
-    )
-    assert (
-        env_registry.mcp_port_key(reg.mcp_server("HospitalClient"), "mcp")
-        == "HOSPITAL_MCP_PORT"
-    )
+    assert env_registry.mcp_port_key(reg.mcp_server("telecom"), "mcp") == "TELECOM_MCP_PORT"
+    assert env_registry.mcp_port_key(reg.mcp_server("HospitalClient"), "mcp") == "HOSPITAL_MCP_PORT"
 
 
 # --------------------------- injection_mcp.yaml ---------------------------
 
 
 def test_required_injection_servers(reg: EnvRegistry) -> None:
-    required = reg.required_injection_servers(
-        {"travel-injection": "all", "bogus-injection": "all"}
-    )
+    required = reg.required_injection_servers({"travel-injection": "all", "bogus-injection": "all"})
     assert set(required) == {"travel-injection"}  # unknown name dropped
     assert required["travel-injection"]["name"] == "travel-injection"
 
@@ -144,9 +134,7 @@ def test_injection_target_environment(reg: EnvRegistry) -> None:
     assert reg.injection_target_environment("travel-injection") == "travel"
     assert reg.injection_target_environment("salesforce-injection") == "salesforce"
     # No field -> strip the -injection suffix.
-    assert (
-        reg.injection_target_environment("os-filesystem-injection") == "os-filesystem"
-    )
+    assert reg.injection_target_environment("os-filesystem-injection") == "os-filesystem"
 
 
 # --------------------------- config-dir resolution ------------------------

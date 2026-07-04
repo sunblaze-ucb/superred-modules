@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import importlib.resources
 import os
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +45,7 @@ _GUI_ENVIRONMENTS: dict[str, str] = {
 }
 
 _DEFAULT_HEALTH_TIMEOUT = 120
+_DEFAULT_RESET_SCRIPT_TIMEOUT = 60
 
 
 class EnvRegistryError(RuntimeError):
@@ -107,14 +108,10 @@ class EnvRegistry:
 
         # Case-insensitive name maps (mirrors upstream build_server_name_map).
         self._mcp_by_name = {
-            s["name"].lower(): s
-            for s in (self._mcp.get("servers") or [])
-            if s.get("name")
+            s["name"].lower(): s for s in (self._mcp.get("servers") or []) if s.get("name")
         }
         self._inj_by_name = {
-            s["name"].lower(): s
-            for s in (self._inj.get("servers") or [])
-            if s.get("name")
+            s["name"].lower(): s for s in (self._inj.get("servers") or []) if s.get("name")
         }
         self._environments: dict[str, Any] = self._env.get("environments") or {}
         self.default_max_instances = self._env.get("default_max_instances")
@@ -134,14 +131,12 @@ class EnvRegistry:
     def mcp_base_dir(self) -> Path:
         """Directory holding the env MCP server trees (``global.base_dir``)."""
         base = (self._mcp.get("global") or {}).get("base_dir", "../mcp_server")
-        return (self.config_dir / base).resolve()
+        return (self.config_dir / str(base)).resolve()
 
     def injection_base_dir(self) -> Path:
         """Directory holding the injection MCP server trees (``global.base_dir``)."""
-        base = (self._inj.get("global") or {}).get(
-            "base_dir", "../injection_mcp_server"
-        )
-        return (self.config_dir / base).resolve()
+        base = (self._inj.get("global") or {}).get("base_dir", "../injection_mcp_server")
+        return (self.config_dir / str(base)).resolve()
 
     # ----- mcp.yaml ---------------------------------------------------------
 
@@ -159,9 +154,7 @@ class EnvRegistry:
             return []
         return [env] if isinstance(env, str) else [str(e) for e in env]
 
-    def active_environments(
-        self, active_servers: list[str] | tuple[str, ...]
-    ) -> list[str]:
+    def active_environments(self, active_servers: list[str] | tuple[str, ...]) -> list[str]:
         """Deduplicated, order-preserving environments for *active_servers*."""
         seen: list[str] = []
         for server in active_servers:
@@ -176,14 +169,14 @@ class EnvRegistry:
         """The env.yaml entry for *env_name*."""
         if env_name not in self._environments:
             raise EnvRegistryError(f"unknown Docker environment: {env_name!r}")
-        return self._environments[env_name]
+        return dict(self._environments[env_name])
 
     def compose_file(self, env_name: str) -> Path:
         """Absolute path to *env_name*'s docker-compose file (relative to SDK root)."""
         rel = self.environment(env_name).get("docker_compose")
         if not rel:
             raise EnvRegistryError(f"no docker_compose for environment {env_name!r}")
-        return (self.sdk_root / rel).resolve()
+        return (self.sdk_root / str(rel)).resolve()
 
     def env_ports(self, env_name: str) -> dict[str, dict[str, Any]]:
         """Host-port variable map ``{VAR: {default, container_port}}`` for *env_name*."""
@@ -196,27 +189,29 @@ class EnvRegistry:
         return dict(self.environment(env_name).get("reset_scripts") or {})
 
     def max_instances(self, env_name: str) -> int | None:
-        return self.environment(env_name).get(
-            "max_instances", self.default_max_instances
-        )
+        return self.environment(env_name).get("max_instances", self.default_max_instances)
 
     def disable_reuse(self, env_name: str) -> bool:
         return bool(self.environment(env_name).get("disable_reuse", False))
 
     def health_timeout(self, env_name: str) -> int:
+        return int(self.environment(env_name).get("health_timeout", _DEFAULT_HEALTH_TIMEOUT))
+
+    def reset_script_timeout(self, env_name: str) -> int:
+        """Per-env reset-script timeout (env.yaml; upstream default 60).
+
+        Mirrors upstream ``task_executor._reset_instance``
+        (``env_def.get("reset_script_timeout", 60)``); e.g. ``terminal`` sets 180.
+        """
         return int(
-            self.environment(env_name).get("health_timeout", _DEFAULT_HEALTH_TIMEOUT)
+            self.environment(env_name).get("reset_script_timeout", _DEFAULT_RESET_SCRIPT_TIMEOUT)
         )
 
-    def get_compose_files(
-        self, active_servers: list[str] | tuple[str, ...]
-    ) -> set[Path]:
+    def get_compose_files(self, active_servers: list[str] | tuple[str, ...]) -> set[Path]:
         """Set of compose files for the environments backing *active_servers*."""
         out: set[Path] = set()
         for env in self.active_environments(active_servers):
-            if env in self._environments and self._environments[env].get(
-                "docker_compose"
-            ):
+            if env in self._environments and self._environments[env].get("docker_compose"):
                 out.add(self.compose_file(env))
         return out
 
@@ -294,11 +289,11 @@ def mcp_port_key(server_cfg: dict[str, Any], prefix: str = "mcp") -> str:
     for key in env:
         upper = key.upper()
         if "PORT" in upper and prefix.upper() in upper:
-            return key
+            return str(key)
     return "PORT"
 
 
-@lru_cache(maxsize=None)
+@cache
 def _cached_registry(config_dir: str | None) -> EnvRegistry:
     return EnvRegistry(config_dir)
 

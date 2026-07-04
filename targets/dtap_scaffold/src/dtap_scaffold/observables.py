@@ -5,10 +5,11 @@ dynamic observables are emitted live on the trajectory during ``run`` via
 ``emit(ObservableEvent(observable=..., content=...))``.
 
 Emit-once discipline: an MCP env tool's call+return is emitted exactly once, on
-that tool's ``env_tool:<server>:<tool>`` ``ControllablePostCallEvent`` (see
-``controllables``), NOT mirrored here. Only the agent's NATIVE tool calls and its
-non-tool messages come from the in-container transcript, each emitted once. The
-trajectory extractor SKIPS proxied tool entries so they are not double-counted.
+its server's ``env_tool:<server>`` ``ControllablePostCallEvent`` (the specific
+tool + params ride in the event's ``request``; see ``controllables``), NOT
+mirrored here. Only the agent's NATIVE tool calls and its non-tool messages come
+from the in-container transcript, each emitted once. The trajectory extractor
+SKIPS proxied tool entries so they are not double-counted.
 """
 
 from __future__ import annotations
@@ -50,8 +51,10 @@ TOOL_CATALOG_LISTING_OBS: Observable = Observable(
     name="tool_catalog_listing",
     security_domain=TOOL_CATALOGUE_TAG,
     description=(
-        "JSON snapshot of the active MCP servers and their tools (names + "
-        "pre-edit descriptions), as the agent first sees them."
+        "JSON snapshot of the active MCP server names for this task "
+        '(``{"servers": [...]}``). Per-tool listings are not resolved until the '
+        "env boots in run(); each env tool's call+return then surfaces live on "
+        "the trajectory via its env_tool PostCall event."
     ),
     observable_type="json",
 )
@@ -103,9 +106,7 @@ def native_tool_observable(index: int) -> Observable:
     return Observable(
         name=f"native_tool_call_{index:04d}",
         security_domain=AGENT_TRACE_TOOL_CALLS_TAG,
-        description=(
-            f"One native (agent-container) tool call and its return (position {index})."
-        ),
+        description=(f"One native (agent-container) tool call and its return (position {index})."),
         observable_type="json",
     )
 

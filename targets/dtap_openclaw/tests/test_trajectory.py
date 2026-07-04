@@ -174,6 +174,29 @@ def test_find_session_log_picks_newest(tmp_path) -> None:
     assert traj.find_session_log(str(tmp_path)) == str(new)
 
 
+def test_find_session_log_prefers_traces_over_newer_profile_session(tmp_path) -> None:
+    # HOME=/state=episode dir, so the tree holds BOTH the runtime trace (traces/) and
+    # OpenClaw's own profile session store (a DIFFERENT schema). Even when the profile
+    # session file is NEWER, the runtime trace under traces/ must win (else parsing
+    # the wrong-schema file yields an empty artifact -> false-negative grading).
+    import os
+
+    traces = tmp_path / "traces"
+    traces.mkdir()
+    runtime = traces / "dtap-sess.jsonl"
+    runtime.write_text('{"type":"session.ended","data":{"status":"completed"}}\n')
+
+    sessions = tmp_path / ".openclaw-p1" / "agents" / "main" / "sessions"
+    sessions.mkdir(parents=True)
+    profile_session = sessions / "dtap-sess.jsonl"
+    profile_session.write_text('{"schema":"session","messages":[]}\n')
+
+    os.utime(runtime, (1, 1))  # older
+    os.utime(profile_session, (2_000_000_000, 2_000_000_000))  # newer
+
+    assert traj.find_session_log(str(tmp_path)) == str(runtime)
+
+
 def test_convert_missing_file_is_graceful() -> None:
     art = traj.convert("/nonexistent/dir/that/does/not/exist", mcp_servers=MCP_SERVERS)
     assert art.final_response == ""

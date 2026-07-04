@@ -34,13 +34,22 @@ Faithfulness notes
   parity with the scaffold query surface but is not forwarded; judges that need
   the whole run read it from ``trajectory_json`` (the standardized DTAP-schema
   trace), which IS forwarded.
-* **Judge model.** ``utils/llm.py`` takes the model as a function argument and
-  reads no model env var; the only judge-model env var anywhere in upstream is
-  ``JUDGE_MODEL`` (consulted by the customer_service domain). Other domains' per-
-  task judges call ``super().__init__(domain=...)`` and so use ``BaseJudge``'s
-  default model. Setting ``OPENAI_BASE_URL``/``OPENAI_API_KEY`` routes *every*
-  OpenAI-SDK judge call (including that default) at the configured endpoint; the
-  caller must ensure the endpoint serves whatever model the judge requests.
+* **Judge model (the one permitted judge substitution).** ``utils/llm.py`` takes
+  the model as a function argument and reads no model env var; the only judge-
+  model env var upstream is ``JUDGE_MODEL`` (consulted ONLY by the
+  customer_service domain). Every other domain's per-task judge calls
+  ``super().__init__(domain=...)`` and so inherits ``BaseJudge``'s *placeholder*
+  default ``"gpt-5.4"`` -- a name the proxy does not serve, so those LLM judges
+  would fail and mis-score ``attack_success`` as ``False``. The child therefore
+  rewrites ONLY that default (:func:`_install_judge_model_override`, run before any
+  judge) to the configured ``JUDGE_MODEL``, leaving every judge's LOGIC
+  byte-identical. Judges import ``BaseJudge`` as either ``from
+  dt_arena.src.types.judge import BaseJudge`` or ``from judge import BaseJudge``,
+  so the override unifies both onto one patched class. ``OPENAI_BASE_URL`` /
+  ``OPENAI_API_KEY`` still route the endpoint; the caller supplies a
+  ``JUDGE_MODEL`` the endpoint actually serves (``utils.llm.call_llm`` keeps the
+  temperature path for non-``gpt-5`` models and drops it for ``gpt-5*``, so the
+  substitute works either way).
 * **Hardcoded endpoints.** A handful of benign customer_service judges post
   directly to ``https://api.openai.com`` and so ignore ``OPENAI_BASE_URL``;
   those calls are not reroutable without editing upstream and are left untouched.
@@ -86,6 +95,7 @@ DEFAULT_JUDGE_TIMEOUT = 1200.0  # seconds (20 min)
 # OPENAI_*, JUDGE_MODEL) is supplied by the parent through `env=`.
 _CHILD_SOURCE = r"""
 import json
+import os
 import sys
 import traceback
 
@@ -98,10 +108,42 @@ def _emit(obj):
     out.flush()
 
 
+def _install_judge_model_override():
+    # The ONLY permitted judge change: substitute the judge MODEL, never logic.
+    # DTAP's BaseJudge.__init__ defaults judge_model to the placeholder "gpt-5.4";
+    # per-task judges call super().__init__(domain=...) and never pass a model, so
+    # absent this they request "gpt-5.4" even though OPENAI_BASE_URL/KEY already
+    # point at the proxy -> the LLM judges fail and attack_success is mis-scored
+    # False. Rewrite ONLY that default to the configured JUDGE_MODEL; judge LOGIC
+    # is untouched. Judges import BaseJudge as `from dt_arena.src.types.judge
+    # import BaseJudge` OR `from judge import BaseJudge` (the SDK puts
+    # dt_arena/src/types on sys.path); unify both onto the one patched module so a
+    # single patch covers every judge.
+    model = os.environ.get("JUDGE_MODEL")
+    if not model:
+        return
+    import dt_arena.src.types.judge as dtjudge
+
+    base = dtjudge.BaseJudge
+    orig_init = base.__init__
+
+    def patched_init(self, domain, judge_model="gpt-5.4"):
+        orig_init(self, domain, model if judge_model == "gpt-5.4" else judge_model)
+
+    base.__init__ = patched_init
+    sys.modules["judge"] = dtjudge
+
+
 def _main():
     payload = json.loads(sys.stdin.read())
     # Send any judge/import-time print() to stderr; stdout = result JSON only.
     sys.stdout = sys.stderr
+    try:
+        _install_judge_model_override()
+    except Exception:
+        # dt_arena absent / layout differs: fall back to endpoint-only routing
+        # (judges keep their default model) -- no regression vs. the pre-fix path.
+        pass
     from pathlib import Path
 
     from utils.judge_helpers import run_judge  # installed decodingtrust-agent-sdk
@@ -191,9 +233,7 @@ def run_dtap_judge(
     except subprocess.TimeoutExpired as exc:
         return _error_result(f"judge subprocess timed out after {exc.timeout}s")
     except Exception as exc:  # noqa: BLE001 - surface any launch failure as an error result
-        return _error_result(
-            f"judge subprocess could not be launched: {type(exc).__name__}: {exc}"
-        )
+        return _error_result(f"judge subprocess could not be launched: {type(exc).__name__}: {exc}")
 
     result = _parse_judge_stdout(proc.stdout)
     if result is None:

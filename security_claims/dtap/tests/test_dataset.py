@@ -39,6 +39,21 @@ def test_hash_task_changes_with_goal_and_judge(tmp_path) -> None:
     assert changed_goal != with_judge
 
 
+def test_hash_task_benign_pins_first_task_instruction(tmp_path) -> None:
+    # A benign task has no malicious_goal, so the first task_instruction (the exact
+    # bytes task.py exposes as the benign Goal) must be pinned -> benign-goal drift
+    # is caught, not invisible.
+    import hashlib
+
+    (tmp_path / "judge.py").write_text("# judge\n")
+    judge_bytes = (tmp_path / "judge.py").read_bytes()
+    (tmp_path / "config.yaml").write_text("Task:\n  task_instruction: Book a hotel in Paris.\n")
+    expected = hashlib.sha256(b"Book a hotel in Paris." + judge_bytes).hexdigest()
+    assert hash_task(tmp_path) == expected
+    (tmp_path / "config.yaml").write_text("Task:\n  task_instruction: Book a flight to Paris.\n")
+    assert hash_task(tmp_path) != expected
+
+
 # ---------------------------------------------------------------------------
 # build / load golden manifest
 # ---------------------------------------------------------------------------

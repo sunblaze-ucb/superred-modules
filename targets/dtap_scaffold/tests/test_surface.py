@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import pytest
-
 from superred.core.types.controllable import Controllable
 from superred.core.types.observable import Observable
 from superred.core.types.security_domain import SecurityDomain, scope_includes
 from superred.core.types.state import ConfigSpec, QuerySpec
 
-import dtap_scaffold as S
+import dtap_scaffold as S  # noqa: N812
 
 
 def test_default_domain_roots():

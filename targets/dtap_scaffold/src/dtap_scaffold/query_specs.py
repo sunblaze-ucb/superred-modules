@@ -25,8 +25,7 @@ QUERY_SPECS: tuple[QuerySpec, ...] = (
     QuerySpec(
         name=AGENT_RESPONSES,
         description=(
-            "JSON list[str] of per-turn final outputs (the judge's "
-            "`agent_responses` argument)."
+            "JSON list[str] of per-turn final outputs (the judge's `agent_responses` argument)."
         ),
     ),
     QuerySpec(

@@ -7,7 +7,8 @@ write a transcript), ``_extract_trajectory`` (parse that transcript into a
 :class:`~dtap_scaffold.types.TrajectoryArtifact`), and ``_native_tool_deny``
 (map the native-tools policy to the agent's native tool names). Everything
 else -- env activation by config, the security-domain forest, the controllables
-(all five DTAP vectors), the observables (emit-once), the Docker/proxy/injection
+(the four DTAP vectors plus the system-prompt/env-tool superred surfaces), the
+observables (emit-once), the Docker/proxy/injection
 lifecycle, and the query surface the claim's OOB judge reads -- lives here.
 
 Collaborators are created via ``_make_env_stack`` / ``_make_proxy`` /
@@ -23,6 +24,7 @@ from typing import Any
 
 from superred.core.interfaces.target import Target
 from superred.core.types.controllable import Controllable
+from superred.core.types.event import EventHandler, EventResponseHandler
 from superred.core.types.events import (
     ControllableInjection,
     ControllablePostCallEvent,
@@ -31,9 +33,10 @@ from superred.core.types.events import (
 )
 from superred.core.types.observable import ObservableValue
 from superred.core.types.security_domain import SecurityDomain
+from superred.core.types.state import ConfigSpec, QuerySpec
 
-from dtap_scaffold import config_specs as C
-from dtap_scaffold import query_specs as Q
+from dtap_scaffold import config_specs as C  # noqa: N812
+from dtap_scaffold import query_specs as Q  # noqa: N812
 from dtap_scaffold.controllables import (
     FIXED_CONTROLLABLES,
     SKILL_CTRL,
@@ -124,11 +127,11 @@ class DtapAgentTarget(Target):
     # ----- superred Target ABC: specs --------------------------------------
 
     @property
-    def config_specs(self):
+    def config_specs(self) -> list[ConfigSpec]:
         return list(C.CONFIG_SPECS)
 
     @property
-    def query_specs(self):
+    def query_specs(self) -> list[QuerySpec]:
         return list(Q.QUERY_SPECS)
 
     def set_config(self, name: str, value: str) -> None:
@@ -179,14 +182,8 @@ class DtapAgentTarget(Target):
 
     def get_controllables(self) -> list[Controllable]:
         ctrls = list(FIXED_CONTROLLABLES)
-        ctrls += [
-            env_tool_output_controllable(s, self._tool_tags[s])
-            for s in self._active_servers
-        ]
-        ctrls += [
-            env_inject_controllable(s, self._env_tags[s])
-            for s in self._injection_servers
-        ]
+        ctrls += [env_tool_output_controllable(s, self._tool_tags[s]) for s in self._active_servers]
+        ctrls += [env_inject_controllable(s, self._env_tags[s]) for s in self._injection_servers]
         return ctrls
 
     def get_observables(self) -> list[ObservableValue]:
@@ -212,14 +209,12 @@ class DtapAgentTarget(Target):
 
     # ----- superred Target ABC: run lifecycle ------------------------------
 
-    async def run(self, emit, send_event) -> None:
+    async def run(self, emit: EventHandler, send_event: EventResponseHandler) -> None:
         await self._ensure_started()
         assert self._proxy is not None and self._injector is not None
 
         # PreCall vectors: system, user (per turn), skill, tool-description.
-        system_prompt = await self._precall(
-            send_event, SYSTEM_PROMPT_CTRL, self._system_prompt
-        )
+        system_prompt = await self._precall(send_event, SYSTEM_PROMPT_CTRL, self._system_prompt)
         instructions = [
             await self._precall(send_event, USER_PROMPT_CTRL, turn)
             for turn in (self._user_instructions or ("",))
@@ -234,10 +229,7 @@ class DtapAgentTarget(Target):
         self._proxy.bind(emit, send_event)
         self._proxy.set_tool_description_edits(edits)
         self._proxy.set_env_tool_controllables(
-            {
-                s: env_tool_output_controllable(s, self._tool_tags[s])
-                for s in self._active_servers
-            }
+            {s: env_tool_output_controllable(s, self._tool_tags[s]) for s in self._active_servers}
         )
 
         spec = AgentLaunchSpec(
@@ -262,9 +254,7 @@ class DtapAgentTarget(Target):
 
         # Emit observables once each (proxied env-tool calls were emitted by the proxy).
         for i, message in enumerate(traj.messages):
-            emit(
-                ObservableEvent(observable=agent_message_observable(i), content=message)
-            )
+            emit(ObservableEvent(observable=agent_message_observable(i), content=message))
         for i, call in enumerate(traj.native_tool_calls):
             emit(ObservableEvent(observable=native_tool_observable(i), content=call))
 
@@ -300,39 +290,33 @@ class DtapAgentTarget(Target):
         self._proxy_url = await self._proxy.start(self._handle.server_urls)
         self._started = True
 
-    async def _precall(self, send_event, ctrl: Controllable, default: str) -> str:
-        resp = await send_event(
-            ControllablePreCallEvent(controllable=ctrl, request=default)
-        )
+    async def _precall(
+        self, send_event: EventResponseHandler, ctrl: Controllable, default: str
+    ) -> str:
+        resp = await send_event(ControllablePreCallEvent(controllable=ctrl, request=default))
         injected = _as_injection(resp)
         return injected if injected is not None else default
 
-    async def _precall_skills(self, send_event) -> list[dict[str, Any]]:
-        resp = await send_event(
-            ControllablePreCallEvent(controllable=SKILL_CTRL, request="")
-        )
+    async def _precall_skills(self, send_event: EventResponseHandler) -> list[dict[str, Any]]:
+        resp = await send_event(ControllablePreCallEvent(controllable=SKILL_CTRL, request=""))
         injected = _as_injection(resp)
         if injected is None:
             return []
         spec = json.loads(injected)
         return [spec] if isinstance(spec, dict) else list(spec)
 
-    async def _precall_tool_desc(self, send_event) -> list[dict[str, Any]]:
+    async def _precall_tool_desc(self, send_event: EventResponseHandler) -> list[dict[str, Any]]:
         edits: list[dict[str, Any]] = []
         for ctrl, mode in (
             (TOOL_DESCRIPTION_OVERRIDE_CTRL, "override"),
             (TOOL_DESCRIPTION_SUFFIX_CTRL, "suffix"),
         ):
-            resp = await send_event(
-                ControllablePreCallEvent(controllable=ctrl, request="")
-            )
+            resp = await send_event(ControllablePreCallEvent(controllable=ctrl, request=""))
             injected = _as_injection(resp)
             if injected is None:
                 continue
             spec = json.loads(injected)
-            content = (
-                spec.get("description") if mode == "override" else spec.get("suffix")
-            )
+            content = spec.get("description") if mode == "override" else spec.get("suffix")
             edits.append(
                 {
                     "server": spec.get("server"),
@@ -343,7 +327,7 @@ class DtapAgentTarget(Target):
             )
         return edits
 
-    async def _apply_env_injections(self, send_event) -> None:
+    async def _apply_env_injections(self, send_event: EventResponseHandler) -> None:
         assert self._injector is not None
         for server in self._injection_servers:
             point = InjectionPoint(server=server, point="all")
@@ -373,9 +357,19 @@ class DtapAgentTarget(Target):
         }
 
     def _primary_domain(self) -> str:
-        # The domain is carried in metadata by the claim; for spec/observable text
-        # we expose the active-server set (the registry maps servers -> domain).
-        return self._task_dir.rstrip("/").split("/")[-3] if self._task_dir else ""
+        # The domain is the path segment immediately before the benign/malicious
+        # split -- mirrors dataset._path_facts (domain == parts[0] under the
+        # dataset root). Robust for 3-level (<domain>/benign/<id>) and 4-5-level
+        # (<domain>/malicious/<threat>/<risk>/<id>) task dirs.
+        if not self._task_dir:
+            return ""
+        parts = self._task_dir.rstrip("/").split("/")
+        for marker in ("malicious", "benign"):
+            if marker in parts:
+                i = parts.index(marker)
+                if i > 0:
+                    return parts[i - 1]
+        return ""
 
     # ----- collaborator factories (overridable in tests) -------------------
 

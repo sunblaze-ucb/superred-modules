@@ -56,6 +56,24 @@ run is a clean OpenClaw episode. Attacks are an optimizer's concern.
   `medium` (`Thinking level "medium" is not supported ... Use one of: off`). `off`
   is the safe cross-model default; override via the constructor `thinking=` arg
   (validated against `off`/`minimal`/`low`/`medium`/`high`).
+- **A.6** **Per-turn failures are non-fatal; the episode always completes.**
+  `docker/run_turns.mjs` runs every turn and **logs-and-continues** on a failed turn
+  (spawn error, non-zero openclaw exit), exiting `0` once the episode finishes --
+  mirroring upstream `OpenClawAgent.run`, whose loop swallows a failed turn into
+  `final_output` (`_run_openclaw_cli` returns `success:False` on a non-zero exit or
+  timeout, never raising) and **always** calls `_generate_trajectory` afterwards.
+  The driver (`run_openclaw_container`) likewise **never raises** on a non-zero or
+  timed-out container exit: it logs and still returns the episode dir, so the
+  (possibly partial) trajectory is extracted and `evaluate()` runs. This matters
+  because DTAP judges re-query the **live** environment state: an attack that mutated
+  state and then crashed or timed out is a success upstream, and would otherwise be
+  lost here as a hard task-error (understated attack-success-rate). **Timeout
+  granularity is a documented deviation:** upstream applies `OPENCLAW_TIMEOUT_SECONDS`
+  (default 1000s) **per turn** (`agent.py:_run_openclaw_cli`); the port applies its
+  `docker_timeout` (default 1000s) as a **whole-episode** backstop on the single
+  `docker run`. For single-turn DTAP tasks these coincide; a multi-turn episode is
+  bounded more tightly (all turns share one budget), and when the backstop fires the
+  partial trace is still extracted.
 
 ## B. Native tools ENABLED (the headline deviation)
 
@@ -77,9 +95,17 @@ run is a clean OpenClaw episode. Attacks are an optimizer's concern.
   feeds `openclaw.json` `tools.deny`, mirroring upstream's mechanism. To reproduce
   upstream's exact `os-filesystem` behaviour, construct the target with
   `disabled_native_tools=("group:fs", "group:runtime", ...)`.
-- **B.3** Web search/fetch and the browser are **disabled** (`tools.web.*.enabled
-  = false`, `browser.enabled = false`), matching upstream
-  (`agent.py:392-405`) for determinism.
+- **B.3** Web search/fetch are **denied** for determinism, mirroring upstream's
+  unconditional web-disable (`agent.py:392-405`, which sets
+  `tools.web.search.enabled = false` / `tools.web.fetch.enabled = false`). That
+  granular `tools.web.*.enabled` shape is **rejected** by OpenClaw `2026.6.10` (the
+  same schema change that rejects the per-tool `{security, ask}` shape, B.1), so the
+  port applies the equivalent via `tools.deny` (always including `group:web` -- the
+  `_WEB_DENY` constant in `driver.py`), the same `group:web` identifier upstream
+  itself denies for the `os-filesystem` domain
+  (`utils/agent_helpers.py:OS_FILESYSTEM_OPENCLAW_DISALLOWED_TOOLS`). The **browser**
+  is not configured: the image ships no Chromium, so the native browser tool cannot
+  launch regardless (upstream's `browser.enabled = false` is moot here).
 
 ## C. Provider / LLM transport (LiteLLM proxy)
 
@@ -137,8 +163,13 @@ run is a clean OpenClaw episode. Attacks are an optimizer's concern.
   **full** trace (env + native + messages) is still assembled into `trajectory_json`
   for the OOB judge.
 - **E.3** `agent_responses` is the per-turn final assistant text, segmented by
-  `prompt.submitted` boundaries in the event stream (the base/claim feed this list
-  to the judge's per-turn predicates). `final_response` is the last assistant text.
+  `prompt.submitted` boundaries in the event stream, and is exposed on the base's
+  `agent_responses` query slot. It is **not** forwarded to the judge: the OOB judge
+  runner grades `final_response` + `trajectory_json` only
+  (`dtap_scaffold.judge_runner.run_dtap_judge` explicitly does `del agent_responses`,
+  mirroring upstream `eval/task_runner.py`, which passes only the final `response`);
+  a judge that needs the whole run reads it from `trajectory_json`. `final_response`
+  is the last assistant text.
 - **E.4** A missing / empty / unreadable trace **degrades gracefully** to an empty
   artifact (the run yields a vacuous result rather than crashing the controller);
   upstream logs an error and yields `None`. The session JSONL is located by globbing
@@ -157,9 +188,11 @@ run is a clean OpenClaw episode. Attacks are an optimizer's concern.
   context carries across turns.
 - **F.2** `thinking` (OpenClaw `--thinking`) is a construction arg validated against
   upstream's `VALID_THINKING_LEVELS = ("off","minimal","low","medium","high")`
-  (`agent.py:48`), default `"medium"` (upstream's default). `max_turns` is carried
-  in `task.json` for record only (it bounds the conversation-turn count upstream;
-  the superred run budget bounds re-runs).
+  (`agent.py:48`). The port's default is **`off`** (per A.5: some models reject
+  `medium`), whereas upstream's default is `"medium"` (`agent.py:135`,
+  `agent_kwargs.get("thinking_level", "medium")`); pass `thinking="medium"` to match
+  upstream. `max_turns` is carried in `task.json` for record only (it bounds the
+  conversation-turn count upstream; the superred run budget bounds re-runs).
 
 ## G. Out of scope for the target
 

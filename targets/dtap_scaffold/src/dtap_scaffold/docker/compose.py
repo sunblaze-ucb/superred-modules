@@ -3,9 +3,11 @@
 Mirrors the upstream ``utils/task_executor.py`` compose handling: ``up -d`` with
 the env's host-port variables exported, ``down --remove-orphans --volumes`` for
 teardown, ``ps --format json`` polled until every container is running/healthy,
-and ``sudo`` auto-detected when the daemon needs it. The ``-hub`` compose files
-(referenced from ``env.yaml``) pull prebuilt images from Docker Hub, so ``up``
-passes ``--no-build`` after a best-effort ``pull``.
+and ``sudo`` auto-detected when the daemon needs it. Every shipped env compose is
+image-based (each service names a prebuilt ``decodingtrustagent/*`` image; none
+has a ``build:`` section), so ``up -d`` never builds -- matching upstream
+``task_executor`` (plain ``up -d``); a best-effort ``pull`` first warms the image
+cache but is otherwise redundant with ``up -d``'s default missing-image pull.
 
 EVERY subprocess invocation goes through :func:`_exec`, the single seam tests
 monkeypatch to run the whole lifecycle without a Docker daemon.
@@ -52,7 +54,7 @@ async def _exec(
     )
     try:
         out, err = await asyncio.wait_for(proc.communicate(), timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         proc.kill()
         await proc.wait()
         raise
@@ -115,7 +117,7 @@ async def compose_up(
     sudo: bool | None = None,
     pull: bool = True,
 ) -> None:
-    """``docker compose -p <project> -f <file> up -d --no-build`` with *ports* exported."""
+    """``docker compose -p <project> -f <file> up -d`` with *ports* exported (upstream parity)."""
     if sudo is None:
         sudo = await needs_sudo()
     cwd = Path(compose_file).parent
@@ -131,9 +133,7 @@ async def compose_up(
         )
 
     rc, _, err = await _exec(
-        _compose_cmd(
-            project, compose_file, ["up", "-d", "--no-build"], sudo=sudo, ports=ports
-        ),
+        _compose_cmd(project, compose_file, ["up", "-d"], sudo=sudo, ports=ports),
         cwd=cwd,
         env=run_env,
         timeout=UP_TIMEOUT,

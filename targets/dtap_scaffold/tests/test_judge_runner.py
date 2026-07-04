@@ -171,11 +171,7 @@ def test_judge_model_substitution_explicit(monkeypatch):
 def test_judge_model_defaults_when_none(monkeypatch):
     rec = _install(monkeypatch, _Recorder(stdout=json.dumps(UPSTREAM_OK)))
     _call(judge_model=None)
-    assert (
-        rec.env[jr.JUDGE_MODEL_ENV]
-        == jr.DEFAULT_JUDGE_MODEL
-        == "openai/gpt-4o-2024-05-13"
-    )
+    assert rec.env[jr.JUDGE_MODEL_ENV] == jr.DEFAULT_JUDGE_MODEL == "openai/gpt-4o-2024-05-13"
 
 
 def test_creds_left_to_ambient_when_none(monkeypatch):
@@ -328,9 +324,7 @@ def test_launch_failure_returns_error(monkeypatch):
 
 
 def test_unparseable_stdout_returns_error(monkeypatch):
-    _install(
-        monkeypatch, _Recorder(stdout="not json at all", stderr="boom", returncode=1)
-    )
+    _install(monkeypatch, _Recorder(stdout="not json at all", stderr="boom", returncode=1))
     out = _call()
     assert out["attack_success"] is None and out["task_success"] is None
     assert "no parseable JSON" in out["error"]
@@ -368,6 +362,23 @@ def test_tolerant_parse_ignores_leading_print_noise(monkeypatch):
 @pytest.mark.faithfulness
 def test_child_imports_installed_sdk_run_judge():
     assert "from utils.judge_helpers import run_judge" in jr._CHILD_SOURCE
+
+
+@pytest.mark.faithfulness
+def test_child_installs_judge_model_override():
+    # The child must substitute the judge MODEL (not logic): rewrite BaseJudge's
+    # "gpt-5.4" placeholder default to JUDGE_MODEL, before any judge runs, covering
+    # both `from dt_arena.src.types.judge import BaseJudge` and `from judge import`.
+    src = jr._CHILD_SOURCE
+    assert "_install_judge_model_override" in src
+    assert 'os.environ.get("JUDGE_MODEL")' in src
+    assert "dt_arena.src.types.judge" in src
+    assert "BaseJudge" in src
+    assert 'sys.modules["judge"]' in src
+    # and it runs before the judge import inside _main
+    assert src.index("_install_judge_model_override()") < src.index(
+        "from utils.judge_helpers import run_judge"
+    )
 
 
 @pytest.mark.faithfulness
@@ -436,9 +447,7 @@ def test_real_subprocess_roundtrip_with_fake_sdk(monkeypatch, tmp_path):
     cannot corrupt the result."""
     fake_root = _write_fake_sdk(tmp_path)
     existing = os.environ.get("PYTHONPATH", "")
-    monkeypatch.setenv(
-        "PYTHONPATH", fake_root + (os.pathsep + existing if existing else "")
-    )
+    monkeypatch.setenv("PYTHONPATH", fake_root + (os.pathsep + existing if existing else ""))
     monkeypatch.setenv(jr.JUDGE_TIMEOUT_ENV, "60")  # never hang the suite
 
     task_dir = tmp_path / "task"
@@ -477,9 +486,7 @@ def test_real_subprocess_child_error_becomes_error_result(monkeypatch, tmp_path)
     (shadow / "utils").mkdir(parents=True)
     (shadow / "utils" / "__init__.py").write_text("", encoding="utf-8")  # no judge_helpers
     existing = os.environ.get("PYTHONPATH", "")
-    monkeypatch.setenv(
-        "PYTHONPATH", str(shadow) + (os.pathsep + existing if existing else "")
-    )
+    monkeypatch.setenv("PYTHONPATH", str(shadow) + (os.pathsep + existing if existing else ""))
     monkeypatch.setenv(jr.JUDGE_TIMEOUT_ENV, "60")
     task_dir = tmp_path / "task2"
     task_dir.mkdir()
@@ -510,7 +517,8 @@ _DATASET_ROOT = os.getenv("DTAP_DATASET_ROOT", "")
 @pytest.mark.docker
 @pytest.mark.skipif(
     not (_SDK_PRESENT and _DATASET_ROOT and os.path.isdir(_DATASET_ROOT)),
-    reason="needs the installed decodingtrust-agent-sdk, a live env (Docker), and DTAP_DATASET_ROOT",
+    reason="needs the installed decodingtrust-agent-sdk, a live env (Docker), and "
+    "DTAP_DATASET_ROOT",
 )
 def test_real_sdk_judge_smoke():  # pragma: no cover - exercised only where Docker+SDK exist
     # A minimal real-SDK round trip: pick any task dir with a judge.py and run

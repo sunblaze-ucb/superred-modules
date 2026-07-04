@@ -22,14 +22,18 @@ re-expressing one per-task config as one `Task`. The scoring predicates
   `macos`, and `windows` are vision/GUI driven and out of scope; the scaffold
   enumerator skips them, so the claim can never construct a task for them.
 - **A.3** **Golden-hash manifest.** `data/golden_hashes.json` pins
-  `sha256(Attack.malicious_goal bytes + judge.py bytes)` for a deterministic
-  strided sample (default 16 `travel` tasks, spanning benign and malicious; see
-  `dataset.build_golden_hashes`). Those are the two byte-identity-critical pieces
-  per task: the attacker objective this claim turns into the `Goal`, and the judge
-  that decides the outcome. A faithfulness test re-hashes the sampled dirs and
-  compares, so a dataset drift in either piece must be consciously re-baselined.
-  The manifest is a dev/faithfulness artifact at the package root (it pins
-  external bytes), not runtime data.
+  `sha256(Goal bytes + judge.py bytes)` for a deterministic strided sample
+  (default 16 `travel` tasks, spanning benign and malicious; see
+  `dataset.build_golden_hashes`). The *Goal bytes* are exactly what the `Task`
+  exposes as the `Goal`: `Attack.malicious_goal` for a malicious task, and the
+  first `Task.task_instruction` for a benign task (mirroring
+  `TaskConfig.instructions[0]`, which `task.py` uses). Together with each task's
+  `judge.py` those are the two byte-identity-critical pieces per task: the
+  objective the attacker pursues and the judge that decides the outcome. A
+  faithfulness test re-hashes the sampled dirs and compares, so a dataset drift in
+  either piece must be consciously re-baselined (regenerate with
+  `dataset.build_golden_hashes(root)`). The manifest is a dev/faithfulness
+  artifact at the package root (it pins external bytes), not runtime data.
 
 ## B. Predicates (scoring)
 
@@ -50,10 +54,19 @@ re-expressing one per-task config as one `Task`. The scoring predicates
   `judge_api_base` / `judge_api_key` are forwarded to those LLM-using judges;
   substituting a proxy-served model for the canonical judge model is the single
   permitted deviation (recorded by the caller).
-- **B.4 Undecidable verdicts never crash.** `attack_success` / `task_success` may
-  be `None` (the judge could not decide, e.g. the env was unreachable). `bool(None)
-  == False`, so an undecidable verdict scores `0.0` and the judge's `error` string
-  is appended to the rationale rather than raised.
+- **B.4 An un-evaluable run is surfaced as an error, not a clean negative.** The
+  judge may fail to produce a verdict for the deciding metric -- `attack_success`
+  (malicious) or `task_success` (benign) -- because its subprocess crashed or
+  timed out, or a verifiable judge's live env was unreachable. `run_dtap_judge`
+  reports that as a truthy `error` with the successes left `None`. `evaluate`
+  raises on it (deciding metric `None`, or any `error`), so the controller records
+  the task with `stop_reason="error"` and the traceback on `TaskResult.error` --
+  kept distinct from a genuine negative (a real "attack blocked" / "task not
+  done"). Collapsing it to `0.0` / `success=False` would count an un-evaluable run
+  as a safe result and inflate the benchmark; upstream likewise never treats an
+  undecidable verdict as a failure (`eval/task_runner.py:387` tests
+  `task_success is False`, not `not task_success`). A benign task's naturally-
+  `None` `attack_success` is NOT an error: only the deciding metric is checked.
 
 ## C. Transport & scoring shape
 

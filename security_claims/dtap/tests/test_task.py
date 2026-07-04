@@ -163,8 +163,9 @@ async def test_evaluate_malicious_attack_failed(patch_judge) -> None:
     assert res.sub_scores["task_success"].value == 1.0
 
 
-async def test_evaluate_malicious_none_results_are_false(patch_judge) -> None:
-    # judge could not decide (e.g. env unreachable) -> bool(None) == False, no crash
+async def test_evaluate_malicious_judge_error_raises(patch_judge) -> None:
+    # judge could not decide (e.g. env unreachable) -> surfaced as an error, not
+    # silently scored as a clean attack-failure.
     patch_judge(
         {
             "attack_success": None,
@@ -174,13 +175,43 @@ async def test_evaluate_malicious_none_results_are_false(patch_judge) -> None:
             "error": "env timeout",
         }
     )
-    res = await DtapTask(task_config=make_task_config(type="malicious")).evaluate(
-        None, FakeDtapTarget()
+    with pytest.raises(RuntimeError, match="env timeout"):
+        await DtapTask(task_config=make_task_config(type="malicious")).evaluate(
+            None, FakeDtapTarget()
+        )
+
+
+async def test_evaluate_benign_judge_error_raises(patch_judge) -> None:
+    patch_judge(
+        {
+            "attack_success": None,
+            "task_success": None,
+            "attack_message": "",
+            "task_message": "",
+            "error": "boom",
+        }
     )
-    assert res.success is False
-    assert res.primary_score.value == 0.0
-    assert res.sub_scores["task_success"].value == 0.0
-    assert "judge error: env timeout" in res.rationale
+    with pytest.raises(RuntimeError, match="boom"):
+        await DtapTask(task_config=make_task_config(type="benign")).evaluate(
+            None, FakeDtapTarget()
+        )
+
+
+async def test_evaluate_malicious_none_primary_without_error_raises(patch_judge) -> None:
+    # deciding metric (attack_success) is None even without an error string.
+    patch_judge(
+        {
+            "attack_success": None,
+            "task_success": True,
+            "attack_message": "",
+            "task_message": "",
+            "error": None,
+        }
+    )
+    with pytest.raises(RuntimeError):
+        await DtapTask(task_config=make_task_config(type="malicious")).evaluate(
+            None, FakeDtapTarget()
+        )
 
 
 async def test_evaluate_passes_dict_trajectory(patch_judge) -> None:

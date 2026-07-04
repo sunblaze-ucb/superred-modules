@@ -48,14 +48,10 @@ from superred.core.types.security_domain import SecurityDomain, SecurityDomainTa
 # ===========================================================================
 
 SYSTEM_TAG: SecurityDomainTag = SecurityDomainTag("system")
-SYSTEM_PROMPT_TAG: SecurityDomainTag = SecurityDomainTag(
-    "system_prompt", parent=SYSTEM_TAG
-)
+SYSTEM_PROMPT_TAG: SecurityDomainTag = SecurityDomainTag("system_prompt", parent=SYSTEM_TAG)
 SKILL_TAG: SecurityDomainTag = SecurityDomainTag("skill", parent=SYSTEM_TAG)
 
-TOOL_CATALOGUE_TAG: SecurityDomainTag = SecurityDomainTag(
-    "tool_catalogue", parent=SYSTEM_TAG
-)
+TOOL_CATALOGUE_TAG: SecurityDomainTag = SecurityDomainTag("tool_catalogue", parent=SYSTEM_TAG)
 TOOL_CATALOGUE_ADD_TAG: SecurityDomainTag = SecurityDomainTag(
     "tool_catalogue_add", parent=TOOL_CATALOGUE_TAG
 )
@@ -66,9 +62,7 @@ TOOL_CATALOGUE_REMOVE_TAG: SecurityDomainTag = SecurityDomainTag(
     "tool_catalogue_remove", parent=TOOL_CATALOGUE_TAG
 )
 
-MODEL_IDENTITY_TAG: SecurityDomainTag = SecurityDomainTag(
-    "model_identity", parent=SYSTEM_TAG
-)
+MODEL_IDENTITY_TAG: SecurityDomainTag = SecurityDomainTag("model_identity", parent=SYSTEM_TAG)
 DETAILED_SYSTEM_SPECIFICATION_TAG: SecurityDomainTag = SecurityDomainTag(
     "detailed_system_specification", parent=SYSTEM_TAG
 )
@@ -176,9 +170,7 @@ def build_domain(
     environments. Passing the leaves is enough; ancestors are added
     automatically.
     """
-    return SecurityDomain(
-        [*FIXED_TAGS, *_closure([*tool_server_tags, *env_server_tags])]
-    )
+    return SecurityDomain([*FIXED_TAGS, *_closure([*tool_server_tags, *env_server_tags])])
 
 
 DOMAIN: SecurityDomain = build_domain()

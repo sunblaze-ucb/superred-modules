@@ -50,7 +50,7 @@ def _spawn_process(
     cwd: str | None = None,
     env: dict[str, str] | None = None,
     log_path: str | None = None,
-) -> "subprocess.Popen[bytes]":
+) -> subprocess.Popen[bytes]:
     """Start a long-lived MCP server process (the process-spawn seam).
 
     When *log_path* is given, the server's stdout+stderr are written there (so a
@@ -108,9 +108,7 @@ async def _wait_for_ready(
         if pending:
             await asyncio.sleep(interval)
     if pending:
-        raise RuntimeError(
-            f"MCP servers failed to become ready: {', '.join(sorted(pending))}"
-        )
+        raise RuntimeError(f"MCP servers failed to become ready: {', '.join(sorted(pending))}")
 
 
 # --------------------------- templating helpers ---------------------------
@@ -141,9 +139,7 @@ def _expand_command(cfg: dict[str, Any], env: dict[str, str]) -> list[str]:
     for part in cfg.get("command") or []:
         expanded = str(part)
         for key, value in env.items():
-            expanded = expanded.replace(f"${{{key}}}", str(value)).replace(
-                f"${key}", str(value)
-            )
+            expanded = expanded.replace(f"${{{key}}}", str(value)).replace(f"${key}", str(value))
         cmd.append(expanded)
     return cmd
 
@@ -208,9 +204,7 @@ class DockerEnvStack:
         self._registry.require_text_only(self._active_servers)
 
         self._iid = uuid.uuid4().hex[:8]
-        self._state = state_mod.make_instance_state(
-            self._iid, state_root=self._state_root
-        )
+        self._state = state_mod.make_instance_state(self._iid, state_root=self._state_root)
         self._sudo = await compose.needs_sudo()
 
         await self._bring_up_environments()
@@ -245,6 +239,7 @@ class DockerEnvStack:
                 project_name=project,
                 compose_file=compose_file,
                 sudo=self._sudo,
+                script_timeout=self._registry.reset_script_timeout(env),
             )
         await self._run_setup()
 
@@ -285,9 +280,7 @@ class DockerEnvStack:
 
             project = f"dtap_{self._iid}_{state_mod.sanitize_name(env)}"
             self._projects[env] = project
-            await compose.compose_up(
-                project, compose_file, ports=env_ports, sudo=self._sudo
-            )
+            await compose.compose_up(project, compose_file, ports=env_ports, sudo=self._sudo)
             await compose.wait_healthy(
                 project,
                 compose_file,
@@ -324,9 +317,7 @@ class DockerEnvStack:
             cfg = self._registry.mcp_server(server)
             if cfg is None:
                 raise env_registry.EnvRegistryError(f"unknown MCP server: {server!r}")
-            url = self._launch(
-                server, cfg, prefix="mcp", base_dir=self._registry.mcp_base_dir()
-            )
+            url = self._launch(server, cfg, prefix="mcp", base_dir=self._registry.mcp_base_dir())
             self._server_urls[server] = url
 
     async def _start_injection_servers(self) -> None:
@@ -358,31 +349,23 @@ class DockerEnvStack:
             for env, project in self._projects.items()
         }
 
-    def _launch(
-        self, name: str, cfg: dict[str, Any], *, prefix: str, base_dir: Path
-    ) -> str:
+    def _launch(self, name: str, cfg: dict[str, Any], *, prefix: str, base_dir: Path) -> str:
         """Lease a listen port, spawn the server process, return its ``/mcp`` URL."""
         port_key = env_registry.mcp_port_key(cfg, prefix)
         listen = self._leaser.lease(f"{prefix}.{name.lower()}")
         extra = dict(self._state.env_overrides()) if self._state is not None else {}
-        extra.update(
-            self._project_name_overrides()
-        )  # <ENV>_PROJECT_NAME for exec-based servers
+        extra.update(self._project_name_overrides())  # <ENV>_PROJECT_NAME for exec-based servers
         env = _server_env(cfg, port_key, listen, self._container_ports, extra)
         cmd = _expand_command(cfg, env)
         cwd = base_dir / Path(cfg["path"]).parent
-        log_path = str(
-            self._logs_dir() / f"{prefix}_{state_mod.sanitize_name(name)}.log"
-        )
+        log_path = str(self._logs_dir() / f"{prefix}_{state_mod.sanitize_name(name)}.log")
         self._server_logs[name] = log_path
         proc = _spawn_process(cmd, cwd=str(cwd), env=env, log_path=log_path)
         (self._inj_procs if prefix == "injection" else self._mcp_procs)[name] = proc
-        return self._registry.server_url(name, listen, host=self._host)
+        return str(self._registry.server_url(name, listen, host=self._host))
 
     def _logs_dir(self) -> Path:
-        base = (
-            Path(self._state_root) if self._state_root else Path(tempfile.gettempdir())
-        )
+        base = Path(self._state_root) if self._state_root else Path(tempfile.gettempdir())
         directory = base / f"dtap_logs_{self._iid}"
         directory.mkdir(parents=True, exist_ok=True)
         return directory

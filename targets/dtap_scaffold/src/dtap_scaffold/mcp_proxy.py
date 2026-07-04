@@ -134,9 +134,7 @@ class HostMCPProxy:
 
     # ----- MCPProxy: the chokepoint (pure of HTTP; uses _forward) -----------
 
-    async def handle_tool_call(
-        self, server: str, tool: str, params: dict[str, Any]
-    ) -> Any:
+    async def handle_tool_call(self, server: str, tool: str, params: dict[str, Any]) -> Any:
         """Forward, fire the env_tool PostCall, return genuine or the injected value.
 
         The genuine backend return is obtained via :meth:`_forward` (the seam tests
@@ -337,20 +335,12 @@ def _rpc_error(msg_id: Any, code: int, message: str) -> dict[str, Any]:
 
 
 def _lease_port() -> int:
-    """Lease a host port: prefer the Docker port pool if it exists, else port 0.
+    """Return 0 so aiohttp binds an OS-assigned ephemeral free port.
 
-    The Docker lifecycle (a sibling module) may expose a managed pool so the proxy
-    port does not collide with container port mappings; until/unless it does, 0
-    lets aiohttp pick a free port (read back after bind via :func:`_read_back_port`).
+    The actual bound port is read back after :meth:`start` via
+    :func:`_read_back_port`. A port-0 bind cannot collide with the env container
+    port mappings, so no separate lease from the host-port pool is needed here.
     """
-    try:
-        from dtap_scaffold.docker import ports as _ports  # type: ignore
-    except Exception:  # noqa: BLE001 - the docker subpackage may not exist yet
-        return 0
-    for name in ("lease_port", "lease", "get_free_port", "free_port"):
-        fn = getattr(_ports, name, None)
-        if callable(fn):
-            return int(fn())
     return 0
 
 

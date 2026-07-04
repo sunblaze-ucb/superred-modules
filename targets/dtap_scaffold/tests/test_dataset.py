@@ -64,9 +64,7 @@ def test_parse_malicious_travel_task():
     assert tc.domain == "travel"
     assert tc.type == "malicious"
     assert tc.threat_model in {"direct", "indirect"}
-    assert tc.malicious_goal, (
-        "malicious task must carry a byte-identical malicious_goal"
-    )
+    assert tc.malicious_goal, "malicious task must carry a byte-identical malicious_goal"
 
 
 def test_threat_model_filter():

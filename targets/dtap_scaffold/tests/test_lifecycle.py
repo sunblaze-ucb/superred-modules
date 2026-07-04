@@ -1,9 +1,11 @@
 """Offline tests for ``DockerEnvStack`` (the per-instance Docker + MCP lifecycle).
 
-No Docker daemon, no MCP servers, no network: the collaborator seams
+No Docker daemon and no MCP servers: the collaborator seams
 (``compose.*`` / ``reset.*`` / ``env_registry.load`` / ``_spawn_process`` /
 ``_wait_for_ready``) are monkeypatched, and the real ``PortLeaser`` /
-``make_instance_state`` run against ``tmp_path``. These tests pin the lifecycle's
+``make_instance_state`` run against ``tmp_path`` (the leaser still bind-tests
+loopback sockets and writes its lock files under a per-test ``tmp_path`` lock
+dir, so no shared state leaks between tests). These tests pin the lifecycle's
 ordering and the fixes found during live verification:
 
 * ``_spawn_process(log_path=...)`` captures a crashing server's stdout+stderr
@@ -21,10 +23,10 @@ import os
 from pathlib import Path
 
 import pytest
+
 from dtap_scaffold.docker import compose
 from dtap_scaffold.docker import lifecycle as lc
 from dtap_scaffold.docker import reset as reset_mod
-
 
 # --------------------------------------------------------------------------- #
 # a fake registry: one env ("travelenv") backing one server ("travel-suite")  #
@@ -51,6 +53,9 @@ class FakeRegistry:
 
     def health_timeout(self, env):
         return 120
+
+    def reset_script_timeout(self, env):
+        return 180  # distinctive per-env value (mimics env.yaml terminal=180)
 
     def mcp_server(self, server):
         if server == "travel-suite":
@@ -89,9 +94,7 @@ class FakeRegistry:
 
     @property
     def env_config(self):
-        return {
-            "environments": {"travelenv": {"reset_scripts": {"default": "reset.sh"}}}
-        }
+        return {"environments": {"travelenv": {"reset_scripts": {"default": "reset.sh"}}}}
 
 
 class _FakeProc:
@@ -105,6 +108,7 @@ class _FakeProc:
 @pytest.fixture
 def patched(monkeypatch, tmp_path):
     """Install all collaborator fakes; return a recorder of side effects."""
+    monkeypatch.setenv("DT_PORT_LOCK_DIR", str(tmp_path / "port_locks"))
     rec: dict = {
         "compose_up": [],
         "compose_down": [],
@@ -233,9 +237,7 @@ def test_server_env_inherits_parent_environment(monkeypatch):
             "API": "http://h:${TRAVEL_PORT}",
         }
     }
-    env = lc._server_env(
-        cfg, "TRAVEL_MCP_PORT", 12345, {"TRAVEL_PORT": 8080}, {"X": "y"}
-    )
+    env = lc._server_env(cfg, "TRAVEL_MCP_PORT", 12345, {"TRAVEL_PORT": 8080}, {"X": "y"})
     assert env["PATH"] == os.environ["PATH"]  # inherited -> python3 is findable
     assert env["DTAP_SENTINEL_VAR"] == "keepme"
     assert env["TRAVEL_MCP_PORT"] == "12345"  # own listen port
@@ -356,9 +358,7 @@ async def test_up_rejects_gui_server_before_touching_docker(patched, tmp_path):
 # --------------------------------------------------------------------------- #
 
 
-async def test_up_wraps_readiness_failure_with_log_tails(
-    patched, tmp_path, monkeypatch
-):
+async def test_up_wraps_readiness_failure_with_log_tails(patched, tmp_path, monkeypatch):
     # Make the spawned "server" write a crash to its log, like a missing dep.
     def _spawn_crashing(cmd, *, cwd=None, env=None, log_path=None):
         if log_path:
@@ -409,6 +409,22 @@ async def test_reset_resets_each_env(patched, tmp_path):
     assert [e for e, _ in patched["reset_env"]] == ["travelenv"]
 
 
+async def test_reset_threads_env_script_timeout(patched, tmp_path, monkeypatch):
+    # The env's reset_script_timeout (env.yaml; terminal=180) must reach
+    # reset_environment, not be silently dropped to the default. Upstream
+    # task_executor._reset_instance passes env_def.get("reset_script_timeout", 60).
+    calls: list[dict] = []
+
+    async def _capture(env_name, ports, env_config, **kw):
+        calls.append({"env": env_name, **kw})
+
+    monkeypatch.setattr(reset_mod, "reset_environment", _capture)
+    stack = _stack(tmp_path)
+    await stack.up()
+    await stack.reset()
+    assert calls and calls[0]["script_timeout"] == 180
+
+
 async def test_down_terminates_procs_and_releases_leases(patched, tmp_path):
     stack = _stack(tmp_path, injection={"travel-injection": "all"})
     await stack.up()
@@ -431,3 +447,37 @@ async def test_down_is_safe_when_compose_down_raises(patched, tmp_path, monkeypa
     monkeypatch.setattr(compose, "compose_down", _boom)
     await stack.down()  # best-effort: must not raise
     assert stack._leaser.leased == ()
+
+
+async def test_reset_reseeds_and_forwards_project_and_compose(patched, tmp_path, monkeypatch):
+    # reset() must (1) re-run setup.sh to re-seed the env, and (2) forward the
+    # env's per-instance project_name + compose_file to reset_environment (needed
+    # for the docker-exec script fallback).
+    task = tmp_path / "task"
+    task.mkdir()
+    (task / "setup.sh").write_text("#!/bin/sh\necho seed\n")
+
+    calls: list[dict] = []
+
+    async def _capture(env_name, ports, env_config, **kw):
+        calls.append({"env": env_name, **kw})
+
+    monkeypatch.setattr(reset_mod, "reset_environment", _capture)
+
+    stack = lc.DockerEnvStack(
+        active_servers=("travel-suite",),
+        injection_config=None,
+        task_dir=str(task),
+        state_root=str(tmp_path / "state"),
+    )
+    await stack.up()
+    setup_after_up = sum(1 for c in patched["setup"] if c["cmd"][:1] == ["bash"])
+    await stack.reset()
+    setup_after_reset = sum(1 for c in patched["setup"] if c["cmd"][:1] == ["bash"])
+
+    assert setup_after_up == 1  # seeded once during up()
+    assert setup_after_reset == 2  # re-seeded again during reset()
+    assert len(calls) == 1
+    assert calls[0]["env"] == "travelenv"
+    assert calls[0]["project_name"].endswith("_travelenv")
+    assert str(calls[0]["compose_file"]).endswith("docker-compose.yml")

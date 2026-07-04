@@ -7,7 +7,7 @@ name = "dtap-scaffold"
 version = "0.1.0"
 description = "Shared scaffolding for the DecodingTrust-Agent (DTAP) superred targets: the agent-agnostic Target base, the security-domain forest, controllables/observables, env/MCP/Docker lifecycle, and the byte-faithful judge runner."
 requires-python = ">=3.11,<3.14"
-dependencies = ["superred", "pyyaml", "aiohttp", "requests"]
+dependencies = ["superred>=0.1.0", "pyyaml", "aiohttp"]
 
 # Optional heavier deps:
 #   dataset auto-download from HuggingFace -> huggingface_hub (else use DTAP_DATASET_ROOT)
@@ -41,3 +41,23 @@ markers = [
 
 [tool.coverage.report]
 fail_under = 90
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["UP046", "UP047"]
+
+[tool.mypy]
+strict = true
+python_version = "3.13"
+
+[[tool.mypy.overrides]]
+module = [
+    "fastmcp.*",
+    "huggingface_hub.*",
+    "yaml",
+]
+ignore_missing_imports = true

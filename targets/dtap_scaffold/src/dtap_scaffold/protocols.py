@@ -76,9 +76,7 @@ class MCPProxy(Protocol):
         """Tools for *server*, with description edits applied (for the listing)."""
         ...
 
-    async def handle_tool_call(
-        self, server: str, tool: str, params: dict[str, Any]
-    ) -> Any:
+    async def handle_tool_call(self, server: str, tool: str, params: dict[str, Any]) -> Any:
         """The chokepoint: observe, fire env_tool PostCall, forward, return result.
 
         Called by the HTTP layer for the real agent; called directly by tests.

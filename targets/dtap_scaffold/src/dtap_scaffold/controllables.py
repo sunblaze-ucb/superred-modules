@@ -8,20 +8,23 @@ unattacked run -- the clean baseline. The byte-identical upstream attack payload
 are NOT defaults here; they live only in the claim's replay-based faithfulness
 test.
 
-The five DTAP injection vectors map to these controllables:
+The four DTAP injection vectors map to these controllables:
 
 - prompt      -> ``user_prompt``                       (USER, PreCall)
-- system      -> ``system_prompt``                     (SYSTEM_PROMPT, PreCall)
 - skill       -> ``skill``                             (SKILL, PreCall)
 - tool        -> ``tool_description_override`` /       (TOOL_CATALOGUE_EDIT, PreCall;
                  ``tool_description_suffix``             applied in the proxy list_tools)
-- environment -> ``env_inject:<server>:<point>``       (environment.<server>, PostCall;
-                 per injection point                     writes attacker data to the live backend)
+- environment -> ``env_inject:<server>``               (environment.<server>, PostCall,
+                 (one per injection server)             one per injection server; writes
+                                                        attacker data to the live backend)
 
-Plus a superred-afforded direct content surface (one per active MCP tool):
+Plus two superred-afforded surfaces DTAP does not itself enumerate as vectors:
 
-- ``env_tool:<server>:<tool>``                          (tools.<server>, PostCall;
-                                                          replaces what that tool returns)
+- ``system_prompt``                                    (SYSTEM_PROMPT, PreCall; overrides
+                                                        the agent's system message)
+- ``env_tool:<server>``                                (tools.<server>, PostCall, one per
+                                                        active env server; replaces what a
+                                                        tool on that server returns)
 
 Native agent tools (bash/edit/exec/fs) run inside the agent container and are
 observable-only (see ``observables.AGENT_TRACE_TOOL_CALLS_TAG``); they are not
@@ -113,9 +116,7 @@ note)."""
 # ---------------------------------------------------------------------------
 
 
-def env_tool_output_controllable(
-    server: str, security_domain: SecurityDomainTag
-) -> Controllable:
+def env_tool_output_controllable(server: str, security_domain: SecurityDomainTag) -> Controllable:
     """Per-MCP-SERVER return-tampering controllable (the proxy content surface).
 
     One per active env server (enumerable pre-run from ``active_mcp_servers``,
@@ -138,9 +139,7 @@ def env_tool_output_controllable(
     )
 
 
-def env_inject_controllable(
-    server: str, security_domain: SecurityDomainTag
-) -> Controllable:
+def env_inject_controllable(server: str, security_domain: SecurityDomainTag) -> Controllable:
     """DTAP environment-vector controllable for one injection SERVER.
 
     One per ``<server>-injection`` server in ``env_injection_config`` (enumerable

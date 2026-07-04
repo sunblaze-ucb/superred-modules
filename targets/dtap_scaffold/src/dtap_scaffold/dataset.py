@@ -51,9 +51,7 @@ def resolve_dataset_root(
     the upstream loader (per-domain ``allow_patterns``, pinned to
     :data:`DATASET_REVISION`). Requires ``huggingface_hub`` (lazy import).
     """
-    base = Path(
-        root or os.environ.get("DTAP_DATASET_ROOT") or (Path.cwd() / "dataset")
-    ).resolve()
+    base = Path(root or os.environ.get("DTAP_DATASET_ROOT") or (Path.cwd() / "dataset")).resolve()
     if not download:
         return base
 
@@ -114,9 +112,7 @@ class TaskConfig:
     env_injection_config: dict[str, Any] = field(default_factory=dict)
 
 
-def _path_facts(
-    config_path: Path, root: Path
-) -> tuple[str, str, str | None, str | None, str]:
+def _path_facts(config_path: Path, root: Path) -> tuple[str, str, str | None, str | None, str]:
     """Derive (domain, type, threat_model, risk_category, task_id) from the layout.
 
     benign (flat):   <domain>/benign/<task_id>/config.yaml
@@ -152,9 +148,7 @@ def parse_task_config(
         seg = "malicious" if "malicious" in parts else "benign"
         root_p = Path(*parts[: parts.index(seg) - 1])
 
-    domain, ttype, threat_model, risk_category, task_id = _path_facts(
-        config_path, root_p
-    )
+    domain, ttype, threat_model, risk_category, task_id = _path_facts(config_path, root_p)
 
     with config_path.open() as fh:
         cfg = yaml.safe_load(fh) or {}

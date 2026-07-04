@@ -389,17 +389,35 @@ def _join_texts(texts: Any) -> str | None:
 
 
 def find_session_log(output_dir: str) -> str | None:
-    """Locate the OpenClaw session-trajectory JSONL beneath *output_dir*.
+    """Locate the OpenClaw runtime session-trajectory JSONL beneath *output_dir*.
 
-    The in-container driver writes the trace under ``<state>/traces`` (the bound
-    ``OPENCLAW_TRAJECTORY_DIR``); a profile-managed fallback path is searched too.
-    Returns the most recently modified ``*.jsonl`` found, or ``None``.
+    The in-container driver binds OpenClaw's ``OPENCLAW_TRAJECTORY_DIR`` to
+    ``<output_dir>/traces``; that dir holds ONLY the runtime-trajectory JSONL (the
+    ``openclaw-trajectory`` schema this converter parses). Because ``HOME`` is also
+    the episode dir, OpenClaw ALSO writes a same-suffix ``*.jsonl`` under its own
+    profile session store (``.openclaw-<profile>/agents/main/sessions/``) in a
+    DIFFERENT schema; a plain newest-``*.jsonl`` walk over the whole episode dir can
+    return that file and yield an empty parse (false-negative grading). So the
+    ``traces`` dir is searched FIRST -- mirroring upstream's runtime-trace-dir-first
+    selection (``agent.py:_get_session_log_path`` prefers ``OPENCLAW_TRAJECTORY_DIR``
+    over the profile session dir). Only if ``traces`` holds no JSONL does the broad
+    newest-``*.jsonl`` fallback run. Returns the chosen path, or ``None``.
     """
+    traces_dir = os.path.join(output_dir, "traces")
+    if os.path.isdir(traces_dir):
+        scoped = _newest_jsonl(traces_dir)
+        if scoped is not None:
+            return scoped
+    return _newest_jsonl(output_dir)
+
+
+def _newest_jsonl(root: str) -> str | None:
+    """Most recently modified ``*.jsonl`` anywhere under *root*, or ``None``."""
     candidates: list[str] = []
-    for root, _dirs, files in os.walk(output_dir):
+    for dirpath, _dirs, files in os.walk(root):
         for name in files:
             if name.endswith(".jsonl"):
-                candidates.append(os.path.join(root, name))
+                candidates.append(os.path.join(dirpath, name))
     if not candidates:
         return None
     candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)

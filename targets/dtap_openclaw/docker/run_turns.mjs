@@ -29,7 +29,7 @@ try {
 const turns = Array.isArray(task.turns) && task.turns.length ? task.turns : [""];
 const sessionId = task.session_id || "dtap-session";
 const profile = task.profile || "dtap";
-const thinking = task.thinking || "medium";
+const thinking = task.thinking || "off";
 const traceDir = task.trace_dir || `${STATE}/traces`;
 
 mkdirSync(traceDir, { recursive: true });
@@ -41,7 +41,13 @@ const env = {
   OPENCLAW_TRAJECTORY_DIR: traceDir,
 };
 
-let exitCode = 0;
+// Mirror upstream OpenClawAgent.run(): each turn is independent. A failed turn is
+// logged and SWALLOWED (no break) -- upstream's _run_openclaw_cli returns
+// success:False on a non-zero exit or timeout and run() keeps looping, then always
+// generates the trajectory. So run every turn and let the episode complete; the
+// host then extracts whatever trace was written and re-queries env state (an attack
+// that mutated state and then failed a turn is still judged).
+let failures = 0;
 for (const turn of turns) {
   const args = [
     "--profile", profile,
@@ -53,15 +59,20 @@ for (const turn of turns) {
   ];
   const result = spawnSync("openclaw", args, { env, stdio: "inherit" });
   if (result.error) {
-    console.error(`[run_turns] failed to spawn openclaw: ${result.error}`);
-    exitCode = 3;
-    break;
+    console.error(`[run_turns] failed to spawn openclaw: ${result.error} (continuing)`);
+    failures += 1;
+    continue;
   }
   if (typeof result.status === "number" && result.status !== 0) {
-    console.error(`[run_turns] openclaw exited ${result.status} on a turn`);
-    exitCode = result.status;
-    break;
+    console.error(`[run_turns] openclaw exited ${result.status} on a turn (continuing)`);
+    failures += 1;
+    continue;
   }
 }
 
-process.exit(exitCode);
+if (failures) {
+  console.error(`[run_turns] episode completed with ${failures} failed turn(s)`);
+}
+// Exit 0: per-turn failures are non-fatal (mirrors upstream). Only a catastrophic
+// setup failure -- an unreadable task.json (handled above) -- exits non-zero.
+process.exit(0);

@@ -44,11 +44,7 @@ _sanitize = sanitize_name
 
 
 def _state_base(state_root: str | os.PathLike[str] | None) -> Path:
-    base = (
-        state_root
-        or os.getenv("DTAP_STATE_ROOT")
-        or os.path.join(tempfile.gettempdir(), "dtap")
-    )
+    base = state_root or os.getenv("DTAP_STATE_ROOT") or os.path.join(tempfile.gettempdir(), "dtap")
     return Path(base)
 
 
@@ -64,9 +60,7 @@ class InstanceState:
         """Named Docker volume for *env*'s mutable state: ``dtap_{iid}_{env}_state``."""
         return f"dtap_{self.iid}_{_sanitize(env)}_state"
 
-    def shared_fs_mount(
-        self, *, container_path: str = SHARED_FS_CONTAINER_PATH
-    ) -> dict[str, str]:
+    def shared_fs_mount(self, *, container_path: str = SHARED_FS_CONTAINER_PATH) -> dict[str, str]:
         """Host-bind mount spec sharing the workspace at the identical container path."""
         return {
             "type": "bind",
@@ -74,9 +68,7 @@ class InstanceState:
             "target": container_path,
         }
 
-    def env_overrides(
-        self, *, container_path: str = SHARED_FS_CONTAINER_PATH
-    ) -> dict[str, str]:
+    def env_overrides(self, *, container_path: str = SHARED_FS_CONTAINER_PATH) -> dict[str, str]:
         """Env vars exported to ``setup.sh`` / compose so they can mount the workspace.
 
         ``DTAP_INSTANCE_ID`` / ``DTAP_STATE_DIR`` / ``DTAP_HOST_WORKSPACE`` /

@@ -99,7 +99,41 @@ The 2 non-green domains are the macOS caveat above, NOT a port flaw:
   experiments run on Linux, so this is a test-machine caveat, characterized and
   confirmed, not a regression.)
 
-Reset (best-effort, not gating `up`): 6/11 reset within 90s. The non-gmail reset
-miss is `code`, hitting the faithful upstream 30s `script_timeout` on a cold
-`docker exec` reset; resets are retried by the controller between runs and are not
-required for the env to come up.
+Reset (not gating `up`): 6/11 reset within the 90s observation window. The
+non-gmail miss is the `code` domain, whose `terminal` env sets
+`reset_script_timeout: 180` in `env.yaml`. The port was DROPPING that per-env
+value and truncating the cold `docker exec` reset at a hardcoded 30s. This is now
+fixed: `DockerEnvStack.reset` threads `EnvRegistry.reset_script_timeout(env)`
+(180 for `terminal`, else a 60s default), matching upstream
+`task_executor._reset_instance` (`env_def.get("reset_script_timeout", 60)`; the
+30s in `reset_helpers`' signature is dead, always overridden by that caller).
+Correction to an earlier note: the `superred` controller does NOT retry a failed
+reset. `reset_ephemeral_state` runs between runs, and if it raises the controller
+logs it, records the traceback on `TaskResult.error`, and ends the whole
+multi-run task with `stop_reason="error"` (`core/controller.py`) -- so an
+under-budgeted reset timeout would spuriously error the task, which is exactly
+why the per-env timeout matters. (Upstream's own environment pool retries via
+`reset_retries`/`reset_retry_delay`, but that pool is the orchestrator
+`DockerEnvStack` replaces.) A reset failure still does not block the initial
+`up()`, which seeds via `setup.sh` independently.
+
+## E. The judge-model substitution reaches every LLM judge
+
+DTAP graders subclass `BaseJudge` (`dt_arena/src/types/judge.py`), whose
+`__init__` defaults `judge_model` to the placeholder `"gpt-5.4"`. Per-task judges
+call `super().__init__(domain=...)` and never pass a model, so absent any fix
+they call `"gpt-5.4"` -- which the LiteLLM proxy does not serve. Only the
+`customer_service` domain reads the `JUDGE_MODEL` env var; every other domain's
+LLM judge (in the text-only set, that is the 45 `travel` judges that call
+`llm_judge_*(..., model=self.judge_model)`) would otherwise fail and score
+`attack_success=False` even on a genuinely successful attack.
+
+`judge_runner._CHILD_SOURCE` therefore installs `_install_judge_model_override()`
+in the OOB judge subprocess before any judge runs: it rewrites ONLY the `"gpt-5.4"`
+default to the configured `JUDGE_MODEL` and touches no judge logic (the single
+permitted judge-MODEL change). Because judges import `BaseJudge` via both
+`from dt_arena.src.types.judge import BaseJudge` and `from judge import BaseJudge`
+(the SDK adds `dt_arena/src/types` to `sys.path`), the override also sets
+`sys.modules["judge"]` to the one patched module so a single patch covers both
+styles. The substitute model must be one the judge endpoint serves; the claim/
+experiment passes it through `run_dtap_judge(judge_model=...)`.
