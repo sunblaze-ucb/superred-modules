@@ -13,7 +13,7 @@ from aiohttp import web
 
 from openclaw_target.injection_server import InjectionServer
 from openclaw_target.proxy_llm import LLMProxy
-from openclaw_target.target import MODEL_RESPONSE_CTRL, OpenClawTarget
+from openclaw_target.target import MODEL_RESPONSE_CTRL, MODEL_SYSTEM_PROMPT_CTRL, OpenClawTarget
 from openclaw_target.ws_client import OpenClawWSClient
 
 from superred.core.types.events import ControllableInjection, ObservableEvent
@@ -104,6 +104,33 @@ async def test_llm_proxy_injects_response_text() -> None:
     proxy.response_injection = "INJECTED"
     proxy._inject_response(resp_body)
     assert resp_body["choices"][0]["message"]["content"] == "original\nINJECTED"
+
+
+def test_llm_proxy_injects_system_prompt_text() -> None:
+    proxy = LLMProxy(
+        upstream_base_url="http://example.invalid",
+        upstream_api_key="sk-upstream",
+        host="127.0.0.1",
+        port=0,
+    )
+    messages = [{"role": "system", "content": "Base system."}]
+    proxy.system_prompt_injection = "APPENDED-SYSTEM-TEXT"
+    proxy._inject_system_prompt(messages)
+    assert messages[0]["content"] == "Base system.\nAPPENDED-SYSTEM-TEXT"
+
+
+def test_llm_proxy_injects_system_prompt_when_missing() -> None:
+    proxy = LLMProxy(
+        upstream_base_url="http://example.invalid",
+        upstream_api_key="sk-upstream",
+        host="127.0.0.1",
+        port=0,
+    )
+    messages = [{"role": "user", "content": "hi"}]
+    proxy.system_prompt_injection = "NEW-SYSTEM-TEXT"
+    proxy._inject_system_prompt(messages)
+    assert messages[0] == {"role": "system", "content": "NEW-SYSTEM-TEXT"}
+    assert messages[1] == {"role": "user", "content": "hi"}
 
 
 @pytest.mark.parametrize(
@@ -450,6 +477,8 @@ def test_llm_proxy_controllables_include_model_response() -> None:
     names = {c.name for c in target.get_controllables()}
     assert "model_response_injection" in names
     assert MODEL_RESPONSE_CTRL.name == "model_response_injection"
+    assert "model_system_prompt" in names
+    assert MODEL_SYSTEM_PROMPT_CTRL.name == "model_system_prompt"
 
 
 def test_factory_enables_proxy_when_provider_set() -> None:
