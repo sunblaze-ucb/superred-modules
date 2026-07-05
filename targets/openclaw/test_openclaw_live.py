@@ -810,6 +810,93 @@ async def test_live_message_content_injection_round_trip_through_real_plugin() -
 
 
 @pytest.mark.asyncio
+async def test_live_web_search_alias_injection_round_trip_through_real_plugin() -> None:
+    """``web_content`` via the ``web_search`` tool alias (not ``web_fetch``)."""
+    async with _stub_tool_calling_llm_server(
+        tool_name="web_search",
+        tool_arguments={"query": "ORIGINAL-WEB-SEARCH-NOT-INJECTED"},
+    ) as (stub_url, requests):
+        target = OpenClawTarget(
+            managed=True,
+            model_id="openai/gpt-4o-mini",
+            provider_base_url=stub_url,
+            provider_api_key="sk-stub",
+            enable_tool_injection=True,
+        )
+        try:
+            await target.warmup_static_observables()
+            target.set_config("tool_policy", "coding")
+            hook_calls: list[tuple[str, dict[str, Any]]] = []
+            send_event = _injecting_send_event(
+                user_message="Search the web for ORIGINAL-WEB-SEARCH-NOT-INJECTED.",
+                hook_calls=hook_calls,
+                injections={"web_content": "INJECTED-WEB-SEARCH-78"},
+            )
+            emitted: list[object] = []
+            await target.run(lambda e: emitted.append(e), send_event)
+
+            assert len(hook_calls) == 1
+            assert hook_calls[0][0] == "web_content"
+            assert hook_calls[0][1]["tool"] == "web_search"
+
+            await _assert_tool_injection_persisted_on_next_run(
+                target,
+                requests=requests,
+                followup_user_message="What did the search return?",
+                hook_calls=hook_calls,
+                injection_marker="INJECTED-WEB-SEARCH-78",
+                original_marker="ORIGINAL-WEB-SEARCH-NOT-INJECTED",
+                emitted=emitted,
+            )
+        finally:
+            await target.teardown()
+
+
+@pytest.mark.asyncio
+async def test_live_process_alias_injection_round_trip_through_real_plugin() -> None:
+    """``shell_output`` via the ``process`` tool alias (session management)."""
+    async with _stub_tool_calling_llm_server(
+        tool_name="process",
+        tool_arguments={"action": "list"},
+    ) as (stub_url, requests):
+        target = OpenClawTarget(
+            managed=True,
+            model_id="openai/gpt-4o-mini",
+            provider_base_url=stub_url,
+            provider_api_key="sk-stub",
+            enable_tool_injection=True,
+        )
+        try:
+            await target.warmup_static_observables()
+            target.set_config("tool_policy", "coding")
+            hook_calls: list[tuple[str, dict[str, Any]]] = []
+            send_event = _injecting_send_event(
+                user_message="List all background process sessions.",
+                hook_calls=hook_calls,
+                injections={"shell_output": "INJECTED-PROCESS-79"},
+            )
+            emitted: list[object] = []
+            await target.run(lambda e: emitted.append(e), send_event)
+
+            assert len(hook_calls) == 1
+            assert hook_calls[0][0] == "shell_output"
+            assert hook_calls[0][1]["tool"] == "process"
+            assert hook_calls[0][1]["params"].get("action") == "list"
+
+            await _assert_tool_injection_persisted_on_next_run(
+                target,
+                requests=requests,
+                followup_user_message="What did the process list show?",
+                hook_calls=hook_calls,
+                injection_marker="INJECTED-PROCESS-79",
+                original_marker="ORIGINAL-PROCESS-LIST-NOT-INJECTED",
+                emitted=emitted,
+            )
+        finally:
+            await target.teardown()
+
+
+@pytest.mark.asyncio
 async def test_live_all_controllables_in_one_session() -> None:
     """One session exercising every controllable path against a real gateway.
 

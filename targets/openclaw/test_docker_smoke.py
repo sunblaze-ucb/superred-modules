@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -589,3 +590,58 @@ async def test_docker_openclaw_target_tool_injection_round_trip() -> None:
             )
         finally:
             await target.teardown()
+
+
+DEFAULT_GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/v1"
+DEFAULT_GEMINI_MODEL = "google/gemini-2.5-flash"
+_DOCKER_PROVIDER_TIMEOUT_S = 240
+
+
+def _gemini_api_key() -> str | None:
+    key = os.environ.get("GEMINI_API_KEY", "").strip()
+    return key or None
+
+
+def _provider_model() -> str:
+    return os.environ.get("OPENCLAW_PROVIDER_MODEL", DEFAULT_GEMINI_MODEL)
+
+
+def _provider_base_url() -> str:
+    return os.environ.get("OPENCLAW_PROVIDER_BASE_URL", DEFAULT_GEMINI_BASE)
+
+
+@pytest.mark.provider
+@pytest.mark.skipif(_gemini_api_key() is None, reason="GEMINI_API_KEY not set")
+@pytest.mark.asyncio
+async def test_docker_openclaw_target_real_gemini_turn() -> None:
+    """``OpenClawTarget(managed_runtime=\"docker\")`` with a real Gemini upstream."""
+    key = _gemini_api_key()
+    assert key is not None
+    target = _docker_target(
+        model_id=_provider_model(),
+        provider_base_url=_provider_base_url(),
+        provider_api_key=key,
+        agent_timeout_s=_DOCKER_PROVIDER_TIMEOUT_S,
+    )
+    try:
+        await target.warmup_static_observables()
+
+        async def send_event(event: object) -> ControllableInjection:
+            controllable = getattr(event, "controllable")
+            value = (
+                "What is 17 + 25? Reply with only the number."
+                if controllable is USER_MESSAGE_CTRL
+                else ""
+            )
+            return ControllableInjection(
+                event=event, controllable=controllable, value=value,  # type: ignore[arg-type]
+            )
+
+        await target.run(lambda _e: None, send_event)
+
+        response = target.query("last_response") or ""
+        assert re.search(r"\b42\b", response), response
+        assert target._llm_proxy is not None
+        assert target._llm_proxy.records, "proxy should record the upstream call"
+    finally:
+        await target.teardown()

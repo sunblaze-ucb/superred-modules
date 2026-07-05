@@ -244,7 +244,14 @@ plugin executing *inside the container* and POSTing back to the host over
 and ``test_docker_openclaw_target_tool_injection_round_trip`` exercise the
 same Docker path through :class:`OpenClawTarget` / ``managed_runtime=\"docker\"``
 (including the host-side LLM proxy wiring), not just
-:class:`OpenClawDockerRuntime` directly.
+:class:`OpenClawDockerRuntime` directly. With ``GEMINI_API_KEY`` set,
+``test_docker_openclaw_target_real_gemini_turn`` runs the same Target Docker
+path against real Gemini. ``test_docker_concurrency.py`` exercises
+``TargetFactory.concurrency=2`` with two parallel containerised gateways.
+
+**Live** tests in ``test_openclaw_live.py`` also cover ``web_search`` and
+``process`` tool-name aliases for the ``web_content`` and ``shell_output``
+controllables (alongside ``web_fetch`` and ``exec``).
 
 ## Known limitations / notes
 

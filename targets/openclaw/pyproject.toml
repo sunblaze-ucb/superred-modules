@@ -28,4 +28,5 @@ testpaths = ["."]
 markers = [
     "provider: opt-in tests against a real LLM provider (requires GEMINI_API_KEY)",
     "tier3: full Controller + real gateway + real provider E2E (requires GEMINI_API_KEY)",
+    "docker: opt-in tests requiring a Docker daemon",
 ]
