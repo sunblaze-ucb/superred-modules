@@ -58,14 +58,14 @@ def _recorder(injections: dict[str, str]):
     return emit, send_event, events, observables
 
 
-def _proxy_with_forward(genuine: str = "GENUINE"):
-    """A proxy whose ``_forward`` returns *genuine* and that fronts one env server."""
+def _proxy_with_forward(genuine: str = "GENUINE", is_error: bool = False):
+    """A proxy whose ``_forward`` returns ``(genuine, is_error)`` and fronts one env server."""
     proxy = HostMCPProxy()
     ctrl = env_tool_output_controllable("travel-suite", tools_server_tag("travel-suite"))
     proxy.set_env_tool_controllables({"travel-suite": ctrl})
 
     async def fake_forward(server, tool, params):
-        return genuine
+        return genuine, is_error
 
     proxy._forward = fake_forward  # type: ignore[method-assign]
     return proxy, ctrl
@@ -140,9 +140,10 @@ async def test_handle_tool_call_decline_returns_genuine():
     emit, send_event, events, observables = _recorder(injections={})  # decline everything
     proxy.bind(emit, send_event)
 
-    result = await proxy.handle_tool_call("travel-suite", "search_flights", {"q": "x"})
+    text, is_error = await proxy.handle_tool_call("travel-suite", "search_flights", {"q": "x"})
 
-    assert result == "GENUINE"  # no tampering on decline
+    assert text == "GENUINE"  # no tampering on decline
+    assert is_error is False
     posts = [e for e in events if isinstance(e, ControllablePostCallEvent)]
     assert len(posts) == 1  # exactly one PostCall fired
     assert posts[0].controllable.name == "env_tool:travel-suite"
@@ -163,13 +164,35 @@ async def test_handle_tool_call_injection_returns_tampered():
     )
     proxy.bind(emit, send_event)
 
-    result = await proxy.handle_tool_call("travel-suite", "search_flights", {"q": "x"})
+    text, is_error = await proxy.handle_tool_call("travel-suite", "search_flights", {"q": "x"})
 
-    assert result == "TAMPERED_RETURN"  # return tampering applied
+    assert text == "TAMPERED_RETURN"  # return tampering applied
+    assert is_error is False  # attacker-overwritten -> never an error
     # the optimizer still observed the GENUINE return in the fired event
     posts = [e for e in events if isinstance(e, ControllablePostCallEvent)]
     assert posts[0].answer == "GENUINE"
     assert observables == []
+
+
+async def test_handle_tool_call_decline_preserves_backend_error():
+    # A genuine backend error flag survives a declined (non-injected) call.
+    proxy, _ = _proxy_with_forward("BACKEND_ERR", is_error=True)
+    emit, send_event, _, _ = _recorder(injections={})  # decline
+    proxy.bind(emit, send_event)
+    text, is_error = await proxy.handle_tool_call("travel-suite", "search_flights", {})
+    assert text == "BACKEND_ERR"
+    assert is_error is True  # preserved (upstream _format_tool_result parity)
+
+
+async def test_handle_tool_call_injection_clears_backend_error():
+    # Overwriting a genuine ERROR return clears the flag: the injected value is plain
+    # content the agent should treat as a normal result, not an error.
+    proxy, _ = _proxy_with_forward("BACKEND_ERR", is_error=True)
+    emit, send_event, _, _ = _recorder(injections={"env_tool:travel-suite": "CLEAN"})
+    proxy.bind(emit, send_event)
+    text, is_error = await proxy.handle_tool_call("travel-suite", "search_flights", {})
+    assert text == "CLEAN"
+    assert is_error is False  # overwritten -> not an error
 
 
 async def test_handle_tool_call_unknown_server_returns_genuine_no_event():
@@ -177,15 +200,15 @@ async def test_handle_tool_call_unknown_server_returns_genuine_no_event():
     emit, send_event, events, _ = _recorder(injections={})
     proxy.bind(emit, send_event)
     # a server without a configured env_tool controllable: genuine, no firing
-    result = await proxy.handle_tool_call("UNCONFIGURED", "t", {})
-    assert result == "GENUINE"
+    text, _ = await proxy.handle_tool_call("UNCONFIGURED", "t", {})
+    assert text == "GENUINE"
     assert events == []
 
 
 async def test_handle_tool_call_without_bind_returns_genuine():
     proxy, _ = _proxy_with_forward("GENUINE")  # bind() never called -> send_event is None
-    result = await proxy.handle_tool_call("travel-suite", "search_flights", {})
-    assert result == "GENUINE"
+    text, _ = await proxy.handle_tool_call("travel-suite", "search_flights", {})
+    assert text == "GENUINE"
 
 
 # --------------------------- _forward + small helpers ---------------------
@@ -193,8 +216,9 @@ async def test_handle_tool_call_without_bind_returns_genuine():
 
 async def test_forward_without_backend_url_returns_error_string():
     # real _forward (not patched): no server_urls -> error string, no fastmcp import
-    out = await HostMCPProxy()._forward("travel-suite", "search_flights", {})
-    assert "no backend URL" in out
+    text, is_error = await HostMCPProxy()._forward("travel-suite", "search_flights", {})
+    assert "no backend URL" in text
+    assert is_error is True  # a proxy-level failure is an error (upstream parity)
 
 
 def test_resolve_server_maps_tool_to_owner():

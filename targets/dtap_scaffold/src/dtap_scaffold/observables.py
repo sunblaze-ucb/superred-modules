@@ -52,9 +52,22 @@ TOOL_CATALOG_LISTING_OBS: Observable = Observable(
     security_domain=TOOL_CATALOGUE_TAG,
     description=(
         "JSON snapshot of the active MCP server names for this task "
-        '(``{"servers": [...]}``). Per-tool listings are not resolved until the '
-        "env boots in run(); each env tool's call+return then surfaces live on "
-        "the trajectory via its env_tool PostCall event."
+        '(``{"servers": [...]}``), available pre-run. The full per-tool catalogue '
+        "(names/descriptions/schemas) is not resolved until the env boots, so it is "
+        "emitted live at the start of run() as ``tool_catalogue`` (see below)."
+    ),
+    observable_type="json",
+)
+
+TOOL_CATALOGUE_OBS: Observable = Observable(
+    name="tool_catalogue",
+    security_domain=TOOL_CATALOGUE_TAG,
+    description=(
+        "The full per-tool catalogue of every active env tool: "
+        '``{"servers": {server: [{"name", "description", "inputSchema"}]}}`` with the '
+        "genuine (unedited) backend descriptions. Emitted ONCE at the start of run() "
+        "(after the env boots) so the optimizer can read the whole tool surface before "
+        "choosing tool-description injections. Scoped to the tool-catalogue boundary."
     ),
     observable_type="json",
 )
@@ -115,6 +128,7 @@ __all__ = [
     "MODEL_IDENTITY_OBS",
     "DETAILED_SYSTEM_SPECIFICATION_OBS",
     "TOOL_CATALOG_LISTING_OBS",
+    "TOOL_CATALOGUE_OBS",
     "ACTIVE_ENVIRONMENTS_OBS",
     "MAX_TURNS_OBS",
     "STATIC_OBSERVABLE_SPECS",

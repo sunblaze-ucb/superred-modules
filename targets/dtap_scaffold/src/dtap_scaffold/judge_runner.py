@@ -50,9 +50,18 @@ Faithfulness notes
   ``JUDGE_MODEL`` the endpoint actually serves (``utils.llm.call_llm`` keeps the
   temperature path for non-``gpt-5`` models and drops it for ``gpt-5*``, so the
   substitute works either way).
-* **Hardcoded endpoints.** A handful of benign customer_service judges post
-  directly to ``https://api.openai.com`` and so ignore ``OPENAI_BASE_URL``;
-  those calls are not reroutable without editing upstream and are left untouched.
+* **Hardcoded endpoints (redirected, not edited).** The benign customer_service
+  judges ``urllib``-post directly to ``https://api.openai.com`` and ignore
+  ``OPENAI_BASE_URL``, so a proxy-only key would 401 there and mis-score utility as
+  ``0``. :func:`_install_openai_endpoint_redirect` (installed in the child before any
+  judge runs) rewrites ONLY that origin onto the ``OPENAI_BASE_URL`` proxy origin,
+  keeping the request path, model, and parsing byte-identical -- the SAME judge call
+  reaches the experiment proxy instead of OpenAI directly. This is an endpoint
+  substitution, the twin of the model-default substitution, never a judge-logic
+  change; the ``research`` judges and the OpenAI-client / ``BaseJudge`` judges already
+  honor ``OPENAI_BASE_URL`` and route to the proxy, so the rewrite is a no-op for them
+  (their URLs never start with ``api.openai.com``). No upstream file is edited; nothing
+  is sent to OpenAI directly.
 """
 
 from __future__ import annotations
@@ -134,12 +143,50 @@ def _install_judge_model_override():
     sys.modules["judge"] = dtjudge
 
 
+def _install_openai_endpoint_redirect():
+    # Endpoint redirect (NOT a model/logic change): the benign customer_service judges
+    # urllib.urlopen() a HARDCODED https://api.openai.com/v1/chat/completions and IGNORE
+    # OPENAI_BASE_URL, so a proxy-only OPENAI_API_KEY 401s at OpenAI and the judge scores
+    # utility 0. Rewrite ONLY the origin api.openai.com -> the OPENAI_BASE_URL proxy
+    # origin (keeping path + body: same model, prompt, parsing), so the SAME call reaches
+    # the experiment proxy. Every judge that already honors OPENAI_BASE_URL (research,
+    # the OpenAI-client/BaseJudge judges) builds a non-openai.com URL, so this is a no-op
+    # for them. Same rationale as the model override: substitute WHERE, never the logic.
+    base = os.environ.get("OPENAI_BASE_URL")
+    if not base:
+        return
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(base)
+    if not parts.scheme or not parts.netloc:
+        return
+    origin = parts.scheme + "://" + parts.netloc
+
+    import urllib.request as _u
+
+    _orig_urlopen = _u.urlopen
+    _MARK = "https://api.openai.com"
+
+    def _redirect(url, *args, **kwargs):
+        full = getattr(url, "full_url", url)
+        if isinstance(full, str) and full.startswith(_MARK):
+            new = origin + full[len(_MARK):]
+            if hasattr(url, "full_url"):
+                url.full_url = new  # mutate the Request in place, preserving data/headers
+            else:
+                url = new
+        return _orig_urlopen(url, *args, **kwargs)
+
+    _u.urlopen = _redirect
+
+
 def _main():
     payload = json.loads(sys.stdin.read())
     # Send any judge/import-time print() to stderr; stdout = result JSON only.
     sys.stdout = sys.stderr
     try:
         _install_judge_model_override()
+        _install_openai_endpoint_redirect()
     except Exception:
         # dt_arena absent / layout differs: fall back to endpoint-only routing
         # (judges keep their default model) -- no regression vs. the pre-fix path.

@@ -87,6 +87,17 @@ class FakeProxy:
     def list_tools(self, server):
         return []
 
+    def tool_catalogue(self):
+        return {
+            "travel-suite": [
+                {
+                    "name": "search_flights",
+                    "description": "genuine backend description",
+                    "inputSchema": {"type": "object", "properties": {"q": {"type": "string"}}},
+                }
+            ]
+        }
+
     async def handle_tool_call(self, server, tool, params):
         # The proxy chokepoint: fire the per-server env_tool PostCall (return tampering).
         ctrl = self._env_tool_ctrls[server]
@@ -247,6 +258,18 @@ async def test_passthrough_baseline():
     assert obs_names.count("native_tool_call_0000") == 1
     assert obs_names.count("agent_trace_message_0000") == 1
     assert not any(n.startswith("env_tool") for n in obs_names)
+
+    # per-tool catalogue emitted ONCE at run-start (names/descriptions/schemas)
+    assert obs_names.count("tool_catalogue") == 1
+    cat = next(
+        o.content
+        for o in observables
+        if isinstance(o, ObservableEvent) and o.observable.name == "tool_catalogue"
+    )
+    tool0 = cat["servers"]["travel-suite"][0]
+    assert tool0["name"] == "search_flights"
+    assert tool0["description"] == "genuine backend description"
+    assert "inputSchema" in tool0
 
     # query surface the claim reads
     assert t.query("final_response") == "DONE"

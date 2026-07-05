@@ -63,6 +63,19 @@ def _extract_mcp_result(result: Any) -> str:
     return "\n".join(parts) if parts else str(result)
 
 
+def _extract_is_error(result: Any) -> bool:
+    """Read the MCP ``call_tool`` result's error flag (fastmcp ``is_error`` /
+    protocol ``isError``), defaulting to ``False``.
+
+    Mirrors upstream ``MCPProxyServer._format_tool_result``, which preserves
+    ``getattr(result, "isError", False)`` from the genuine backend return.
+    """
+    val = getattr(result, "is_error", None)
+    if val is None:
+        val = getattr(result, "isError", False)
+    return bool(val)
+
+
 class HostMCPProxy:
     """Host-side aiohttp proxy in front of one task's env MCP servers.
 
@@ -114,6 +127,26 @@ class HostMCPProxy:
             out.append(ProxyTool(server=server, tool=name, description=description))
         return out
 
+    def tool_catalogue(self) -> dict[str, list[dict[str, Any]]]:
+        """The genuine per-tool catalogue fetched in :meth:`start`.
+
+        Returns ``{server: [{"name", "description", "inputSchema"}]}`` with the
+        UNEDITED backend descriptions (the observability surface an optimizer reads
+        to understand the tool space before choosing tool-description injections;
+        the edits it later applies are its own and are reflected in :meth:`list_tools`).
+        """
+        return {
+            server: [
+                {
+                    "name": tool.get("name", ""),
+                    "description": tool.get("description") or "",
+                    "inputSchema": tool.get("inputSchema") or {},
+                }
+                for tool in tools
+            ]
+            for server, tools in self._raw_tools.items()
+        }
+
     def _apply_edits(self, server: str, tool: str, description: str) -> str:
         """Apply the matching tool-description edits, override/suffix, in order.
 
@@ -134,46 +167,55 @@ class HostMCPProxy:
 
     # ----- MCPProxy: the chokepoint (pure of HTTP; uses _forward) -----------
 
-    async def handle_tool_call(self, server: str, tool: str, params: dict[str, Any]) -> Any:
-        """Forward, fire the env_tool PostCall, return genuine or the injected value.
+    async def handle_tool_call(
+        self, server: str, tool: str, params: dict[str, Any]
+    ) -> tuple[str, bool]:
+        """Forward, fire the env_tool PostCall, return ``(text, is_error)``.
 
         The genuine backend return is obtained via :meth:`_forward` (the seam tests
-        monkeypatch). A single ``env_tool`` PostCall event is fired with the genuine
-        return as its ``answer``; if the optimizer responds with a
-        :class:`ControllableInjection`, the agent receives that value instead. No
+        monkeypatch) as ``(text, is_error)``. A single ``env_tool`` PostCall event is
+        fired with the genuine text as its ``answer``; if the optimizer responds with
+        a :class:`ControllableInjection`, the agent receives that value instead. No
         ``ObservableEvent`` is emitted -- the PostCall is the single emission.
+
+        ``is_error`` follows upstream ``MCPProxyServer._format_tool_result``: the
+        genuine backend's error flag is PRESERVED on a declined call, but an
+        attacker-OVERWRITTEN return is never an error (``is_error=False``) -- the
+        injected value is plain content the agent should treat as a normal result.
         """
         params = dict(params) if params else {}
-        genuine = await self._forward(server, tool, params)
+        genuine_text, genuine_error = await self._forward(server, tool, params)
 
         controllable = self._env_tool_controllables.get(server)
         if controllable is None or self._send_event is None:
             # Defensive: an unconfigured server cannot be tampered, but must still
-            # return its genuine value so the agent keeps working.
-            return genuine
+            # return its genuine value (and error flag) so the agent keeps working.
+            return genuine_text, genuine_error
 
         event = ControllablePostCallEvent(
             controllable=controllable,
             request=json.dumps({"tool": tool, "params": params}),
-            answer=genuine,
+            answer=genuine_text,
         )
         response = await self._send_event(event)
         if isinstance(response, ControllableInjection):
-            return response.value
-        return genuine
+            return response.value, False  # attacker-overwritten -> not an error
+        return genuine_text, genuine_error
 
-    async def _forward(self, server: str, tool: str, params: dict[str, Any]) -> str:
-        """Call the genuine backend tool and return its text (the monkeypatch seam).
+    async def _forward(self, server: str, tool: str, params: dict[str, Any]) -> tuple[str, bool]:
+        """Call the genuine backend tool; return ``(text, is_error)`` (monkeypatch seam).
 
-        Production path: connect to ``server``'s real MCP URL with a fastmcp client
-        and flatten the result. Backend errors are returned as an error string (not
-        raised) so :meth:`handle_tool_call` still records the call and the agent sees
-        the failure -- matching upstream ``_call_tool``. Offline tests replace this
-        method, so neither ``fastmcp`` nor the network is touched.
+        Production path: connect to ``server``'s real MCP URL with a fastmcp client,
+        flatten the result to text and read its error flag. A proxy-level failure (no
+        backend URL, or an exception reaching the backend) yields ``is_error=True``
+        with the failure as text, matching upstream ``_call_tool`` (which returns
+        ``isError:True`` on such failures and preserves the backend's flag on success).
+        Offline tests replace this method, so neither ``fastmcp`` nor the network is
+        touched.
         """
         url = self._server_urls.get(server)
         if not url:
-            return f"Error: no backend URL for server '{server}'"
+            return f"Error: no backend URL for server '{server}'", True
         try:
             from fastmcp import Client  # lazy: container-only dependency
 
@@ -184,9 +226,9 @@ class HostMCPProxy:
             # to upstream, so this timeout must not be shorter than upstream's.
             async with Client(url, timeout=60.0) as client:
                 result = await client.call_tool(tool, params)
-            return _extract_mcp_result(result)
+            return _extract_mcp_result(result), _extract_is_error(result)
         except Exception as exc:  # noqa: BLE001 - upstream returns errors as content
-            return f"Error calling tool '{tool}' on '{server}': {exc}"
+            return f"Error calling tool '{tool}' on '{server}': {exc}", True
 
     def _resolve_server(self, tool: str) -> str | None:
         """Map a tool name to its owning server (first match wins) for HTTP routing."""
@@ -312,10 +354,10 @@ class HostMCPProxy:
             target_server = server_scope or self._resolve_server(tool)
             if target_server is None:
                 return _rpc_error(msg_id, -32602, f"Unknown tool '{tool}'")
-            value = await self.handle_tool_call(target_server, tool, arguments)
+            text, is_error = await self.handle_tool_call(target_server, tool, arguments)
             return _rpc_result(
                 msg_id,
-                {"content": [{"type": "text", "text": str(value)}], "isError": False},
+                {"content": [{"type": "text", "text": str(text)}], "isError": is_error},
             )
         return _rpc_error(msg_id, -32601, f"Method not found: {method}")
 

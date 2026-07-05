@@ -546,3 +546,59 @@ def test_real_sdk_judge_smoke():  # pragma: no cover - exercised only where Dock
         "task_message",
         "error",
     }
+
+
+# --------------------------------------------------------------------------- #
+# the judge child's OpenAI endpoint redirect (customer_service hardcoded URLs) #
+# --------------------------------------------------------------------------- #
+
+
+def test_child_openai_endpoint_redirect_rewrites_only_openai(monkeypatch):
+    """The child redirect reroutes a hardcoded api.openai.com urllib call to the
+    OPENAI_BASE_URL proxy origin (keeping the path) and leaves other URLs untouched."""
+    import urllib.request as u
+
+    ns: dict = {"__name__": "dtap_judge_child_test"}
+    exec(jr._CHILD_SOURCE, ns)  # the real child functions, without running _main
+
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://litellm.example.run.app/")
+    captured: dict = {}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b"{}"
+
+    def fake_urlopen(url, *a, **k):
+        captured["url"] = getattr(url, "full_url", url)
+        return _Resp()
+
+    monkeypatch.setattr(u, "urlopen", fake_urlopen)
+    ns["_install_openai_endpoint_redirect"]()
+
+    # a hardcoded api.openai.com Request is rerouted to the proxy origin, path kept
+    with u.urlopen(u.Request("https://api.openai.com/v1/chat/completions", data=b"{}")):
+        pass
+    assert captured["url"] == "https://litellm.example.run.app/v1/chat/completions"
+
+    # a non-openai URL (e.g. a verifiable judge hitting an env container) is untouched
+    with u.urlopen(u.Request("http://127.0.0.1:9000/api/v1/messages")):
+        pass
+    assert captured["url"] == "http://127.0.0.1:9000/api/v1/messages"
+
+
+def test_child_openai_redirect_noop_without_base(monkeypatch):
+    """No OPENAI_BASE_URL -> the redirect installs nothing (urlopen unchanged)."""
+    import urllib.request as u
+
+    ns: dict = {"__name__": "dtap_judge_child_test"}
+    exec(jr._CHILD_SOURCE, ns)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    sentinel = u.urlopen
+    ns["_install_openai_endpoint_redirect"]()
+    assert u.urlopen is sentinel  # early return, nothing patched

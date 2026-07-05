@@ -60,6 +60,7 @@ from dtap_scaffold.observables import (
     MAX_TURNS_OBS,
     MODEL_IDENTITY_OBS,
     TOOL_CATALOG_LISTING_OBS,
+    TOOL_CATALOGUE_OBS,
     agent_message_observable,
     native_tool_observable,
 )
@@ -250,6 +251,16 @@ class DtapAgentTarget(Target):
         # host_filesystem / code_execution surfaces shape it before the agent
         # launches, and the subclass mounts THIS dir into the agent container.
         self._run_dir = self._new_run_dir()
+
+        # Per-tool catalogue (names/descriptions/schemas of every active env tool),
+        # emitted ONCE now that the env has booted, so the optimizer can read the full
+        # tool surface before it chooses tool-description injections below.
+        emit(
+            ObservableEvent(
+                observable=TOOL_CATALOGUE_OBS,
+                content={"servers": self._proxy.tool_catalogue()},
+            )
+        )
 
         # PreCall vectors: system, user (per turn), skill, tool-description.
         system_prompt = await self._precall(send_event, SYSTEM_PROMPT_CTRL, self._system_prompt)

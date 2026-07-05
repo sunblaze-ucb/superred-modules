@@ -84,6 +84,9 @@ class FakeProxy:
     def list_tools(self, server):
         return []
 
+    def tool_catalogue(self):
+        return {"travel-suite": [{"name": "t", "description": "d", "inputSchema": {}}]}
+
     async def handle_tool_call(self, server, tool, params):
         ctrl = self._env_tool_ctrls[server]
         resp = await self._send(

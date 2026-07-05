@@ -76,8 +76,16 @@ class MCPProxy(Protocol):
         """Tools for *server*, with description edits applied (for the listing)."""
         ...
 
-    async def handle_tool_call(self, server: str, tool: str, params: dict[str, Any]) -> Any:
-        """The chokepoint: observe, fire env_tool PostCall, forward, return result.
+    def tool_catalogue(self) -> dict[str, list[dict[str, Any]]]:
+        """The genuine per-tool catalogue after :meth:`start`:
+        ``{server: [{"name", "description", "inputSchema"}]}`` (pre-edit), the
+        observability surface the optimizer reads to understand the tool space."""
+        ...
+
+    async def handle_tool_call(
+        self, server: str, tool: str, params: dict[str, Any]
+    ) -> tuple[str, bool]:
+        """The chokepoint: observe, fire env_tool PostCall, forward, return ``(text, is_error)``.
 
         Called by the HTTP layer for the real agent; called directly by tests.
         """
