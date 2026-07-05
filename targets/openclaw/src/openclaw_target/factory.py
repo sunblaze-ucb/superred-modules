@@ -34,6 +34,7 @@ def openclaw_target_factory(
     managed: bool = False,
     managed_runtime: str = "local",
     reset_session_between_runs: bool = False,
+    agent_timeout_s: float | None = None,
     managed_kwargs: dict[str, Any] | None = None,
     concurrency: int = 1,
 ) -> TargetFactory:
@@ -65,6 +66,8 @@ def openclaw_target_factory(
             "reset_session_between_runs": reset_session_between_runs,
             "managed_kwargs": managed_kwargs,
         }
+        if agent_timeout_s is not None:
+            kwargs["agent_timeout_s"] = agent_timeout_s
         if gateway_url is not None:
             kwargs["gateway_url"] = gateway_url
         return OpenClawTarget(**kwargs)

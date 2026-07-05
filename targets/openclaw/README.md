@@ -228,6 +228,11 @@ Run with ``GEMINI_API_KEY=... pytest test_openclaw_provider_live.py -v``.
 These cover direct provider turns, proxy response/system injection, live SSE
 streaming, and a real model-driven tool-call plugin hook — no stub upstream.
 
+**Tier 3** tests in `test_openclaw_tier3_e2e.py` drive the same paths through
+the full ``Controller`` → factory → managed target stack with a real Gemini
+upstream (also opt-in). Run with
+``GEMINI_API_KEY=... pytest test_openclaw_tier3_e2e.py -v``.
+
 Config/command builders are covered in `test_runtime_config.py`. When Docker
 is available, `test_docker_smoke.py` exercises real containers: operator
 scopes over a published port (Ed25519 device identity + pre-seeded pairing),
