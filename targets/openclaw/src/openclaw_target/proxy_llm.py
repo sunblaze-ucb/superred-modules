@@ -154,6 +154,44 @@ class LLMProxy:
             return f"{base}/chat/completions"
         return f"{base}/v1/chat/completions"
 
+    @staticmethod
+    def _normalize_upstream_model(model: str) -> str:
+        """Strip OpenClaw's provider-qualified id before upstream relay.
+
+        OpenClaw sends ``google/gemini-2.5-flash``; Gemini's OpenAI-compatible
+        endpoint expects ``gemini-2.5-flash`` (verified live: the qualified
+        form 400s and returns a JSON *array* error body).
+        """
+        if "/" in model:
+            return model.split("/", 1)[1]
+        return model
+
+    @staticmethod
+    def _coerce_completion_response(payload: Any, *, status: int) -> dict[str, Any]:
+        """Normalize upstream success/error payloads to a response dict."""
+        if isinstance(payload, dict):
+            if "error" in payload or "choices" in payload:
+                return payload
+            return {
+                "error": {
+                    "message": json.dumps(payload)[:4000],
+                    "code": status,
+                },
+            }
+        if isinstance(payload, list) and payload:
+            first = payload[0]
+            if isinstance(first, dict) and "error" in first:
+                error = first["error"]
+                if isinstance(error, dict):
+                    return {"error": error}
+                return {"error": {"message": str(error), "code": status}}
+        return {
+            "error": {
+                "message": str(payload)[:4000] or f"HTTP {status}",
+                "code": status,
+            },
+        }
+
     async def _read_upstream_json(
         self, resp: aiohttp.ClientResponse,
     ) -> dict[str, Any]:
@@ -162,10 +200,11 @@ class LLMProxy:
         would otherwise raise and crash the handler with an unrelated
         ``ContentTypeError``)."""
         try:
-            return await resp.json(content_type=None)  # type: ignore[no-any-return]
+            payload = await resp.json(content_type=None)
         except (aiohttp.ContentTypeError, ValueError):
             text = await resp.text()
             return {"error": {"message": text[:4000] or f"HTTP {resp.status}", "code": resp.status}}
+        return self._coerce_completion_response(payload, status=resp.status)
 
     async def _consume_sse(
         self,
@@ -314,6 +353,9 @@ class LLMProxy:
         if self.system_prompt_injection is not None:
             self._inject_system_prompt(messages)
 
+        upstream_body = dict(body)
+        upstream_body["model"] = self._normalize_upstream_model(str(model))
+
         upstream_url = self._upstream_chat_completions_url()
         headers = {
             "Authorization": f"Bearer {self._upstream_api_key}",
@@ -321,7 +363,9 @@ class LLMProxy:
         }
 
         assert self._session is not None
-        resp = await self._session.post(upstream_url, json=body, headers=headers)
+        resp = await self._session.post(
+            upstream_url, json=upstream_body, headers=headers,
+        )
         stream_resp: aiohttp.web.StreamResponse | None = None
         pending_finish_frame: bytes | None = None
         try:
@@ -345,13 +389,15 @@ class LLMProxy:
         finally:
             resp.release()
 
+        resp_body = self._coerce_completion_response(resp_body, status=upstream_status)
+
         # Rewrite the model's reply before it reaches the agent. Done before
         # recording so the trace reflects what the agent actually saw. For
         # the live-relay case, the wire already carries the real content;
         # the injection delta is appended to the wire separately below
         # (after the finish frame is held back), so this mutation only
         # affects the *recorded* text, not a second copy sent over HTTP.
-        if self.response_injection is not None:
+        if self.response_injection is not None and "error" not in resp_body:
             self._inject_response(resp_body)
 
         response_text = ""
@@ -373,6 +419,12 @@ class LLMProxy:
         ))
 
         if stream_resp is not None:
+            if "error" in resp_body:
+                await stream_resp.write(
+                    f"data: {json.dumps(resp_body)}\n\n".encode(),
+                )
+                await stream_resp.write_eof()
+                return stream_resp
             if self.response_injection is not None:
                 inject_chunk = {
                     "id": resp_body.get("id", "chatcmpl-proxy"),

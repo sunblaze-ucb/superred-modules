@@ -36,6 +36,19 @@ DEFAULT_PLUGIN_NAME = "superred-injection"
 # ``MODEL_APIS`` (src/config/types.models.ts).
 DEFAULT_PROVIDER_API = "openai-completions"
 
+# OpenClaw resolves ``options.apiKey || getEnvApiKey(provider)`` (see
+# openclaw/openclaw src/llm/providers/openai-completions.ts). When the
+# managed gateway is routed through our LLM proxy, ``openclaw.json`` carries
+# the proxy inbound token as ``apiKey`` — but a provider env var such as
+# ``GEMINI_API_KEY`` still wins and gets sent to the proxy, which rejects it
+# with 401 (verified live). Strip these from the gateway subprocess env
+# whenever model calls are proxied.
+PROVIDER_ENV_API_KEYS: dict[str, tuple[str, ...]] = {
+    "google": ("GEMINI_API_KEY",),
+    "openai": ("OPENAI_API_KEY",),
+    "anthropic": ("ANTHROPIC_API_KEY",),
+}
+
 
 def _split_model_id(model_id: str) -> tuple[str, str]:
     """Split ``"<provider>/<model>"`` into ``(provider, model)``.

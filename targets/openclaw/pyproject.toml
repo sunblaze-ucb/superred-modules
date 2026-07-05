@@ -25,3 +25,6 @@ packages = ["src/openclaw_target"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["."]
+markers = [
+    "provider: opt-in tests against a real LLM provider (requires GEMINI_API_KEY)",
+]

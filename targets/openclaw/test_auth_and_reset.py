@@ -152,6 +152,77 @@ def test_llm_proxy_upstream_url_does_not_double_append_v1(base: str, expected: s
     assert proxy._upstream_chat_completions_url() == expected
 
 
+@pytest.mark.parametrize(
+    ("qualified", "expected"),
+    [
+        ("google/gemini-2.5-flash", "gemini-2.5-flash"),
+        ("openai/gpt-4o-mini", "gpt-4o-mini"),
+        ("gemini-2.5-flash", "gemini-2.5-flash"),
+    ],
+)
+def test_llm_proxy_normalizes_qualified_upstream_model(
+    qualified: str, expected: str,
+) -> None:
+    assert LLMProxy._normalize_upstream_model(qualified) == expected
+
+
+def test_llm_proxy_coerces_list_shaped_upstream_error() -> None:
+    payload = [{"error": {"code": 400, "message": "bad model", "status": "INVALID_ARGUMENT"}}]
+    coerced = LLMProxy._coerce_completion_response(payload, status=400)
+    assert coerced == {"error": payload[0]["error"]}
+
+
+@pytest.mark.asyncio
+async def test_llm_proxy_forwards_bare_model_name_upstream() -> None:
+    """Regression: OpenClaw sends ``google/<model>``; upstream must receive
+    the bare model id (verified live against Gemini)."""
+    received_models: list[str] = []
+
+    async def completions(request: web.Request) -> web.Response:
+        body = await request.json()
+        received_models.append(body.get("model", ""))
+        return web.json_response(
+            {
+                "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+        )
+
+    app = web.Application()
+    app.router.add_post("/v1/chat/completions", completions)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
+
+    try:
+        proxy = LLMProxy(
+            upstream_base_url=f"http://127.0.0.1:{port}",
+            upstream_api_key="sk-upstream",
+            host="127.0.0.1",
+            port=0,
+        )
+        await proxy.start()
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"http://127.0.0.1:{proxy.actual_port}/v1/chat/completions",
+                    json={
+                        "model": "google/gemini-2.5-flash",
+                        "messages": [{"role": "user", "content": "hi"}],
+                        "stream": True,
+                    },
+                ) as resp:
+                    assert resp.status == 200
+        finally:
+            await proxy.stop()
+    finally:
+        await runner.cleanup()
+
+    assert received_models == ["gemini-2.5-flash"]
+
+
 _REAL_SSE_CHUNKS = [
     {"id": "chatcmpl-1", "object": "chat.completion.chunk", "created": 1,
      "model": "test-model", "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}]},

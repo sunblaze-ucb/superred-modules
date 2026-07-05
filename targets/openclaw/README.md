@@ -222,6 +222,12 @@ show up in the same tool-calling loop's own continuation).
 `test_live_reset_and_teardown_against_real_gateway` cover model-response
 injection and reset/teardown against the same real CLI process.
 
+**Provider** tests in `test_openclaw_provider_live.py` are opt-in only: they
+call a real Gemini endpoint and are skipped unless ``GEMINI_API_KEY`` is set.
+Run with ``GEMINI_API_KEY=... pytest test_openclaw_provider_live.py -v``.
+These cover direct provider turns, proxy response/system injection, live SSE
+streaming, and a real model-driven tool-call plugin hook — no stub upstream.
+
 Config/command builders are covered in `test_runtime_config.py`. When Docker
 is available, `test_docker_smoke.py` exercises real containers: operator
 scopes over a published port (Ed25519 device identity + pre-seeded pairing),

@@ -514,6 +514,12 @@ class OpenClawTarget(Target):
             # Never write the real provider key into the gateway config in this
             # path.
             kwargs.setdefault("provider_api_key", self._proxy_token)
+            from openclaw_target.config import PROVIDER_ENV_API_KEYS, _split_model_id
+
+            provider, _ = _split_model_id(self._model_id or "")
+            env_keys = PROVIDER_ENV_API_KEYS.get(provider)
+            if env_keys:
+                kwargs.setdefault("unset_env_keys", env_keys)
         else:
             provider_url = self._provider_base_url or None
             if self._provider_api_key:

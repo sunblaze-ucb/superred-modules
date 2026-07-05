@@ -147,6 +147,7 @@ class OpenClawRuntime:
     allow_unconfigured: bool = True
     state_dir: str | None = None
     extra_env: dict[str, str] = field(default_factory=dict)
+    unset_env_keys: tuple[str, ...] = ()
     startup_timeout_s: float = _READY_TIMEOUT_S
 
     _proc: asyncio.subprocess.Process | None = None
@@ -220,6 +221,8 @@ class OpenClawRuntime:
         if self.callback_token:
             env["SUPERRED_CALLBACK_TOKEN"] = self.callback_token
         env.update(self.extra_env)
+        for key in self.unset_env_keys:
+            env.pop(key, None)
         return env
 
     def _build_cmd(self) -> list[str]:
