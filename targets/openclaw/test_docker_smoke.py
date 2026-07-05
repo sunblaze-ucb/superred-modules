@@ -27,8 +27,14 @@ from aiohttp import web
 from openclaw_target.device_identity import OPERATOR_SCOPES
 from openclaw_target.docker_runtime import DEFAULT_DOCKER_IMAGE, OpenClawDockerRuntime
 from openclaw_target.injection_server import InjectionServer
-from openclaw_target.target import _plugin_dir
+from openclaw_target.target import FILE_CONTENT_CTRL, OpenClawTarget, USER_MESSAGE_CTRL, _plugin_dir
 from openclaw_target.ws_client import OpenClawWSClient
+
+from superred.core.types.events import (
+    ControllableInjection,
+    ControllablePostCallEvent,
+    ControllablePreCallEvent,
+)
 
 
 def _docker_daemon_ready() -> bool:
@@ -78,6 +84,137 @@ async def _stub_llm_server(
         yield f"http://host.docker.internal:{port}"
     finally:
         await runner.cleanup()
+
+
+@asynccontextmanager
+async def _stub_llm_upstream_for_host_proxy(
+    *,
+    reply: str = "Docker Target stub LLM reply.",
+) -> AsyncIterator[str]:
+    """Stub upstream for :class:`OpenClawTarget`'s host-side LLM proxy.
+
+    With ``managed_runtime="docker"`` the container reaches the proxy on
+    ``host.docker.internal``; the proxy (on the host) forwards to this
+    loopback-only upstream.
+    """
+
+    async def completions(request: web.Request) -> web.Response:
+        return web.json_response(
+            {
+                "choices": [{"message": {"role": "assistant", "content": reply}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+        )
+
+    app = web.Application()
+    app.router.add_post("/v1/chat/completions", completions)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        await runner.cleanup()
+
+
+@asynccontextmanager
+async def _stub_tool_calling_upstream_for_host_proxy(
+    *,
+    tool_name: str,
+    tool_arguments: dict[str, Any],
+    final_reply: str = "Docker Target tool loop complete.",
+) -> AsyncIterator[tuple[str, list[dict[str, Any]]]]:
+    """Tool-calling stub upstream for the host-side LLM proxy (see above)."""
+    requests: list[dict[str, Any]] = []
+
+    async def completions(request: web.Request) -> web.Response:
+        body = await request.json()
+        requests.append(body)
+        if len(requests) == 1:
+            message = {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call1",
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "arguments": json.dumps(tool_arguments),
+                        },
+                    },
+                ],
+            }
+            finish_reason = "tool_calls"
+        else:
+            message = {"role": "assistant", "content": final_reply}
+            finish_reason = "stop"
+        return web.json_response(
+            {
+                "id": f"chatcmpl-docker-target-stub-{len(requests)}",
+                "object": "chat.completion",
+                "choices": [
+                    {"index": 0, "message": message, "finish_reason": finish_reason},
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+        )
+
+    app = web.Application()
+    app.router.add_post("/v1/chat/completions", completions)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
+    try:
+        yield f"http://127.0.0.1:{port}", requests
+    finally:
+        await runner.cleanup()
+
+
+def _docker_image() -> str:
+    return os.environ.get("OPENCLAW_DOCKER_IMAGE", DEFAULT_DOCKER_IMAGE)
+
+
+def _docker_target(**kwargs: Any) -> OpenClawTarget:
+    """Build an :class:`OpenClawTarget` on the containerised managed runtime."""
+    return OpenClawTarget(
+        managed=True,
+        managed_runtime="docker",
+        managed_kwargs={"image": _docker_image()},
+        **kwargs,
+    )
+
+
+def _passthrough_send_event(
+    user_message: str,
+    hook_calls: list[tuple[str, dict[str, Any]]],
+    *,
+    injection_marker: str = "DOCKER-TARGET-INJECTED-88",
+):
+    async def send_event(event: object) -> ControllableInjection:
+        controllable = getattr(event, "controllable")
+        if isinstance(event, ControllablePostCallEvent) and controllable is FILE_CONTENT_CTRL:
+            hook_calls.append((controllable.name, json.loads(event.request)))
+            return ControllableInjection(
+                event=event,  # type: ignore[arg-type]
+                controllable=controllable,
+                value=injection_marker,
+            )
+        if isinstance(event, ControllablePreCallEvent) and controllable is USER_MESSAGE_CTRL:
+            return ControllableInjection(
+                event=event,  # type: ignore[arg-type]
+                controllable=controllable,
+                value=user_message,
+            )
+        return ControllableInjection(
+            event=event, controllable=controllable, value="",  # type: ignore[arg-type]
+        )
+
+    return send_event
 
 
 @asynccontextmanager
@@ -339,3 +476,116 @@ async def test_docker_tool_injection_round_trip_through_real_plugin() -> None:
         finally:
             await rt.stop()
             await injection.stop()
+
+
+@pytest.mark.asyncio
+async def test_docker_openclaw_target_managed_run_with_stub_llm() -> None:
+    """``OpenClawTarget(managed_runtime=\"docker\")`` end to end via the Target.
+
+    Unlike the other tests here (which call :class:`OpenClawDockerRuntime`
+    directly), this exercises the integrated path: Target starts the
+    host-side LLM proxy + optional injection server, materialises state,
+    launches the container, connects over WS, and completes a managed run.
+    """
+    async with _stub_llm_upstream_for_host_proxy() as stub_url:
+        target = _docker_target(
+            model_id="openai/gpt-4o-mini",
+            provider_base_url=stub_url,
+            provider_api_key="stub-key",
+        )
+        try:
+            await target.warmup_static_observables()
+            assert target._runtime is not None
+            assert target._llm_proxy is not None
+
+            async def send_event(event: object) -> ControllableInjection:
+                controllable = getattr(event, "controllable")
+                value = (
+                    "Say hello from the Docker Target path."
+                    if controllable is USER_MESSAGE_CTRL
+                    else ""
+                )
+                return ControllableInjection(
+                    event=event, controllable=controllable, value=value,  # type: ignore[arg-type]
+                )
+
+            await target.run(lambda _e: None, send_event)
+
+            response = target.query("last_response")
+            assert response is not None
+            assert "Docker Target stub LLM reply." in response
+            assert target._llm_proxy.records, "proxy should record the upstream call"
+            user_messages = [
+                m.get("content", "")
+                for m in target._llm_proxy.records[-1].request_messages
+                if m.get("role") == "user"
+            ]
+            assert any(
+                "Say hello from the Docker Target path." in str(content)
+                for content in user_messages
+            ), user_messages
+        finally:
+            await target.teardown()
+
+
+@pytest.mark.asyncio
+async def test_docker_openclaw_target_tool_injection_round_trip() -> None:
+    """Tool injection through ``OpenClawTarget``'s Docker managed runtime.
+
+    Same proof as ``test_docker_tool_injection_round_trip_through_real_plugin``,
+    but routed through :class:`OpenClawTarget` so the container reaches the
+    host-side injection server and LLM proxy URLs that the Target constructs.
+    """
+    async with _stub_tool_calling_upstream_for_host_proxy(
+        tool_name="read",
+        tool_arguments={"path": "USER.md"},
+    ) as (stub_url, requests):
+        target = _docker_target(
+            model_id="openai/gpt-4o-mini",
+            provider_base_url=stub_url,
+            provider_api_key="stub-key",
+            enable_tool_injection=True,
+        )
+        try:
+            await target.warmup_static_observables()
+            target.set_config(
+                "workspace_files",
+                json.dumps({"USER.md": "DOCKER-TARGET-ORIGINAL-NOT-INJECTED"}),
+            )
+
+            hook_calls: list[tuple[str, dict[str, Any]]] = []
+            send_event = _passthrough_send_event(
+                "Read USER.md and tell me what it says.",
+                hook_calls,
+            )
+            await target.run(lambda _e: None, send_event)
+
+            assert len(hook_calls) == 1, f"plugin hook never fired: {hook_calls}"
+            assert hook_calls[0][0] == "file_content"
+            assert hook_calls[0][1]["tool"] == "read"
+            assert len(requests) >= 2
+
+            requests_before = len(requests)
+            hook_calls.clear()
+            send_event_2 = _passthrough_send_event("What did USER.md say?", hook_calls)
+            await target.run(lambda _e: None, send_event_2)
+
+            assert len(requests) > requests_before
+            tool_messages = [
+                m
+                for m in requests[requests_before]["messages"]
+                if m.get("role") == "tool"
+            ]
+            assert tool_messages, (
+                f"expected persisted tool message: {requests[requests_before]['messages']}"
+            )
+            assert any(
+                "DOCKER-TARGET-INJECTED-88" in str(m.get("content"))
+                for m in tool_messages
+            )
+            assert all(
+                "DOCKER-TARGET-ORIGINAL-NOT-INJECTED" not in str(m.get("content"))
+                for m in tool_messages
+            )
+        finally:
+            await target.teardown()

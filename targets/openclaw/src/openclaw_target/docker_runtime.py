@@ -103,6 +103,8 @@ class OpenClawDockerRuntime:
             (``SUPERRED_CALLBACK_URL``), expressed via ``container_host``.
         callback_token: Bearer token the in-container plugin presents to the
             callback server (``SUPERRED_CALLBACK_TOKEN``).
+        unset_env_keys: Provider API-key env vars to omit from the container
+            env when model calls are proxied (see ``OpenClawRuntime``).
         state_dir: Host dir to materialize + mount. A private temp dir is used
             (and removed on stop) when ``None``.
         container_name: Container name; a unique one is generated when ``None``.
@@ -127,6 +129,7 @@ class OpenClawDockerRuntime:
     plugin_name: str = DEFAULT_PLUGIN_NAME
     callback_url: str | None = None
     callback_token: str | None = None
+    unset_env_keys: tuple[str, ...] = ()
     state_dir: str | None = None
     container_name: str | None = None
     extra_run_args: list[str] = field(default_factory=list)
@@ -273,6 +276,8 @@ class OpenClawDockerRuntime:
         if self.callback_token:
             cmd += ["-e", f"SUPERRED_CALLBACK_TOKEN={self.callback_token}"]
         for key, value in self.extra_env.items():
+            if key in self.unset_env_keys:
+                continue
             cmd += ["-e", f"{key}={value}"]
         if self._volume_name is not None:
             cmd += ["-v", f"{self._volume_name}:{CONTAINER_STATE_DIR}"]

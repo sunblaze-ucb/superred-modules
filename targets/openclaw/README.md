@@ -240,7 +240,11 @@ injection plugin boot (`openclaw.plugin.json`), RPCs, a stub-LLM agent turn,
 and (`test_docker_tool_injection_round_trip_through_real_plugin`) the same
 real tool-call + plugin-hook round trip as the live suite, but with the
 plugin executing *inside the container* and POSTing back to the host over
-`host.docker.internal`.
+`host.docker.internal`. ``test_docker_openclaw_target_managed_run_with_stub_llm``
+and ``test_docker_openclaw_target_tool_injection_round_trip`` exercise the
+same Docker path through :class:`OpenClawTarget` / ``managed_runtime=\"docker\"``
+(including the host-side LLM proxy wiring), not just
+:class:`OpenClawDockerRuntime` directly.
 
 ## Known limitations / notes
 
