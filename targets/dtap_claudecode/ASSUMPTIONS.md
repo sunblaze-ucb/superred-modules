@@ -89,17 +89,19 @@ Deviations specific to those hooks are below.
   then `""`). `final_response` is the last turn's entry, so it equals the upstream
   single final for the common case.
 
-## C. The native-tool menu (calibration point)
+## C. The native-tool menu (upstream-faithful: no `allowed_tools`)
 
-`_native_tool_deny` returns the deny list; `driver._build_options` enables the
-native menu via `allowed_tools = DEFAULT_NATIVE_TOOLS + ["mcp__dtap_proxy__*"]`
-with the deny list subtracted through `disallowed_tools`. The upstream backend
-leaves native tools at the CLI default (allow-all) and only sets
-`disallowed_tools`; we list the full menu explicitly so the proxy glob can be
-allowed alongside it. `DEFAULT_NATIVE_TOOLS` mirrors Claude Code's built-in
-toolset and is the single place to update if the CLI's native tool names change.
-The `"disabled"` deny list is upstream's
-`OS_FILESYSTEM_CLAUDE_SDK_DISALLOWED_TOOLS` verbatim.
+`_native_tool_deny` returns the deny list; `driver._build_options` sets
+`permission_mode="bypassPermissions"` + the MCP proxy server and applies ONLY
+`disallowed_tools`, exactly as upstream `ClaudeSDKAgent._build_options_kwargs`
+does. Upstream never sets `allowed_tools` (`eval/task_runner.py` builds
+`agent_kwargs` with `disallowed_tools` only), and under `bypassPermissions` the CLI
+auto-approves BOTH the native tools and the `mcp__dtap_proxy__*` env tools -- so no
+allow-list is needed or faithful, and there is no hand-maintained native-tool
+constant to keep in sync with the CLI. (An earlier version listed the full native
+menu via `allowed_tools`; that was dropped as redundant-and-non-faithful.) The
+`"disabled"` deny list is upstream's `OS_FILESYSTEM_CLAUDE_SDK_DISALLOWED_TOOLS`
+verbatim.
 
 ## D. Skill injection
 

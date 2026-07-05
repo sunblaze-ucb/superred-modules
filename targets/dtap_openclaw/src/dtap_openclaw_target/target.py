@@ -136,7 +136,7 @@ class OpenClawDtapTarget(DtapAgentTarget):
             kwargs["episode_dir"] = self._run_dir
         return await asyncio.to_thread(driver.run_openclaw_container, spec, **kwargs)
 
-    async def _exec_on_host(self, code: str) -> str:  # pragma: no cover - needs Docker
+    async def _exec_on_host(self, code: str) -> str:
         """Run attacker *code* on the target machine (host_code_execution vector).
 
         Runs in the SAME OpenClaw image with the run workspace bind-mounted at the

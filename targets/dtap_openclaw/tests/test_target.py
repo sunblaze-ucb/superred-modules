@@ -11,6 +11,7 @@ hooks (``_native_tool_deny`` + ``_extract_trajectory``).
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -394,3 +395,36 @@ def test_package_imports_without_node_or_openclaw() -> None:
     assert hasattr(pkg, "driver") and hasattr(pkg, "trajectory")
     # constructing the target requires nothing external
     assert isinstance(pkg.OpenClawDtapTarget(model="m"), TargetClass)
+
+
+# --------------------------- _exec_on_host --------------------------------
+
+
+async def test_exec_on_host_builds_docker_cmd(tmp_path, monkeypatch) -> None:
+    """The host_code_execution seam runs attacker code in the AGENT image with the
+    run workspace bind-mounted at the OpenClaw workspace path (entrypoint ``sh``),
+    returning combined stdout/stderr for the next foothold round."""
+    import asyncio
+
+    t = OpenClawDtapTarget(model="m", api_base="http://p", api_key="k")
+    t._run_dir = str(tmp_path)
+    captured: dict = {}
+
+    class _FakeProc:
+        async def communicate(self):
+            return b"ran-output", None
+
+    async def fake_exec(*cmd, **kwargs):
+        captured["cmd"] = list(cmd)
+        return _FakeProc()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    out = await t._exec_on_host("echo hi")
+
+    assert out == "ran-output"
+    cmd = captured["cmd"]
+    assert cmd[:3] == ["docker", "run", "--rm"]
+    assert "--entrypoint" in cmd and "sh" in cmd
+    workspace = os.path.join(str(tmp_path), "workspace")
+    assert f"{workspace}:{driver.CONTAINER_WORKSPACE}" in cmd  # attacker + agent share it
+    assert cmd[-3:] == [t._image, "-c", "echo hi"]

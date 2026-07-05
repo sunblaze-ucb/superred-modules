@@ -12,6 +12,7 @@ from dtap_scaffold.types import AgentLaunchSpec, EpisodeResult
 from dtap_claudecode_target import ClaudeCodeDtapTarget
 from dtap_claudecode_target.target import (
     CONTAINER_MOUNT,
+    CONTAINER_WORKSPACE,
     OS_FILESYSTEM_DISALLOWED_TOOLS,
 )
 from dtap_claudecode_target.trajectory import RESULT_FILENAME, TRANSCRIPT_FILENAME
@@ -181,3 +182,37 @@ async def test_run_episode_and_extract(tmp_path, monkeypatch):
     art = t._extract_trajectory(episode)
     assert art.final_response == "ANSWER"
     assert art.agent_responses == ("ANSWER",)
+
+
+# ----- _exec_on_host (host_code_execution Docker seam) --------------------
+
+
+async def test_exec_on_host_builds_docker_cmd(tmp_path, monkeypatch):
+    """The host_code_execution seam runs attacker code in the AGENT image with the
+    run workspace bind-mounted at the agent workspace path (entrypoint overridden to
+    ``sh``, IS_SANDBOX=1), and returns the combined stdout/stderr for the next round."""
+    import asyncio
+
+    t = _target()
+    t._run_dir = str(tmp_path)
+    captured: dict = {}
+
+    class _FakeProc:
+        async def communicate(self):
+            return b"ran-output", None
+
+    async def fake_exec(*cmd, **kwargs):
+        captured["cmd"] = list(cmd)
+        return _FakeProc()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    out = await t._exec_on_host("echo hi > f.txt")
+
+    assert out == "ran-output"
+    cmd = captured["cmd"]
+    assert cmd[:3] == ["docker", "run", "--rm"]
+    assert "--entrypoint" in cmd and "sh" in cmd
+    assert "IS_SANDBOX=1" in cmd  # bypassPermissions-as-root seam, same as the episode
+    workspace = os.path.join(str(tmp_path), "workspace")
+    assert f"{workspace}:{CONTAINER_WORKSPACE}" in cmd  # attacker + agent share the workspace
+    assert cmd[-3:] == [t._image, "-c", "echo hi > f.txt"]

@@ -138,7 +138,7 @@ class ClaudeCodeDtapTarget(DtapAgentTarget):
         await proc.communicate()
         return instance_dir
 
-    async def _exec_on_host(self, code: str) -> str:  # pragma: no cover - needs Docker
+    async def _exec_on_host(self, code: str) -> str:
         """Run attacker *code* on the target machine (host_code_execution vector).
 
         Runs in the SAME agent image with the run workspace bind-mounted at the

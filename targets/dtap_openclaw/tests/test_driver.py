@@ -174,6 +174,36 @@ def test_write_episode_inputs_provider_api_threaded(tmp_path) -> None:
     assert config["models"]["providers"]["litellm"]["api"] == "anthropic-messages"
 
 
+def test_write_episode_inputs_skill_append_mode(tmp_path) -> None:
+    """A second skill entry in append mode EXTENDS the SKILL.md (not clobber)."""
+    spec = _spec(
+        skills=(
+            {"name": "s", "content": "BASE", "mode": "create"},
+            {"name": "s", "content": "MORE", "mode": "append"},
+        )
+    )
+    driver.write_episode_inputs(
+        spec, str(tmp_path / "state"), session_id="s", profile="p", thinking="low"
+    )
+    md = (tmp_path / "state" / "skills" / "s" / "SKILL.md").read_text()
+    assert md == "BASE\nMORE"
+
+
+def test_write_episode_inputs_skill_insert_mode(tmp_path) -> None:
+    """insert mode places content before the 1-indexed row (mirrors claudecode/upstream)."""
+    spec = _spec(
+        skills=(
+            {"name": "s", "content": "L1\nL2", "mode": "create"},
+            {"name": "s", "content": "X", "mode": "insert", "row": 2},
+        )
+    )
+    driver.write_episode_inputs(
+        spec, str(tmp_path / "state"), session_id="s", profile="p", thinking="low"
+    )
+    md = (tmp_path / "state" / "skills" / "s" / "SKILL.md").read_text()
+    assert md == "L1\nX\nL2"
+
+
 # --- run_openclaw_container (Docker boundary monkeypatched) -----------------
 
 

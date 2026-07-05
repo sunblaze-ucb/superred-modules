@@ -132,9 +132,9 @@ def test_build_options_wiring():
     assert captured["mcp_servers"] == {
         "dtap_proxy": {"type": "http", "url": "http://host.docker.internal:9000/mcp"}
     }
-    # native menu enabled + proxy glob; deny applied separately
-    assert "Bash" in captured["allowed_tools"]
-    assert "mcp__dtap_proxy__*" in captured["allowed_tools"]
+    # Upstream never sets allowed_tools: bypassPermissions auto-approves the native
+    # menu AND the mcp__dtap_proxy__* env tools, so only the deny list is applied.
+    assert "allowed_tools" not in captured
     assert captured["disallowed_tools"] == ["Bash"]
     assert "include_partial_messages" not in captured  # dropped to match upstream
     assert captured["max_turns"] == 7

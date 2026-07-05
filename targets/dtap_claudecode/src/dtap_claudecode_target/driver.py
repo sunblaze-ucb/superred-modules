@@ -30,31 +30,6 @@ RESULT_FILENAME = "result.json"
 PROXY_SERVER_NAME = "dtap_proxy"
 DEFAULT_TASK_FILE = "/dtap/task.json"
 
-# Claude Code's native (in-container) tool menu. The agent gets all of these
-# EXCEPT the per-task deny list (applied via ``disallowed_tools``), plus the
-# proxy's env tools via the ``mcp__dtap_proxy__*`` glob. This list mirrors the
-# Claude Code built-in toolset; it is the single calibration point if the CLI's
-# native tool names change (see ASSUMPTIONS.md C).
-DEFAULT_NATIVE_TOOLS = (
-    "Task",
-    "Bash",
-    "BashOutput",
-    "KillShell",
-    "Glob",
-    "Grep",
-    "Read",
-    "Edit",
-    "MultiEdit",
-    "Write",
-    "NotebookEdit",
-    "WebFetch",
-    "WebSearch",
-    "TodoWrite",
-    "SlashCommand",
-    "AskUserQuestion",
-    "ExitPlanMode",
-)
-
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
@@ -121,18 +96,20 @@ def _serialize_message(message: Any) -> dict[str, Any]:
 def _build_options(task: dict[str, Any], options_cls: Any) -> Any:
     """Build a ``ClaudeAgentOptions`` from the task spec.
 
-    Native tools are enabled (the full ``DEFAULT_NATIVE_TOOLS`` menu) plus the
-    proxy's env tools via the ``mcp__dtap_proxy__*`` glob, with the per-task deny
-    list subtracted through ``disallowed_tools``. ``options_cls`` is injected so
-    this is unit-testable without the SDK.
+    Faithful to upstream ``ClaudeSDKAgent._build_options_kwargs``: set
+    ``permission_mode="bypassPermissions"`` and the MCP proxy server, and apply
+    ONLY ``disallowed_tools`` (the per-task deny list). Upstream never sets
+    ``allowed_tools`` (``eval/task_runner.py`` populates ``agent_kwargs`` with
+    ``disallowed_tools`` only), and under ``bypassPermissions`` the CLI auto-approves
+    BOTH the native tools and the ``mcp__dtap_proxy__*`` env tools, so no allow-list
+    is needed or faithful. ``options_cls`` is injected so this is unit-testable
+    without the SDK.
     """
     deny = list(task.get("native_tool_deny") or [])
-    allowed = list(DEFAULT_NATIVE_TOOLS) + [f"mcp__{PROXY_SERVER_NAME}__*"]
     kwargs: dict[str, Any] = {
         "model": task.get("model"),
         "permission_mode": "bypassPermissions",
         "mcp_servers": {PROXY_SERVER_NAME: {"type": "http", "url": task.get("proxy_url")}},
-        "allowed_tools": allowed,
         "disallowed_tools": deny,
         "max_turns": int(task.get("max_turns") or 200),
     }

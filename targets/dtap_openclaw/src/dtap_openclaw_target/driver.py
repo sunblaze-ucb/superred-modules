@@ -191,6 +191,34 @@ def build_task_json(
     }
 
 
+def _write_skill_md(path: str, skill: dict[str, Any]) -> None:
+    """Materialize one skill's ``SKILL.md`` honoring the injection ``mode``.
+
+    Mirrors upstream ``utils/skill_helpers`` (valid modes ``insert``/``append``/
+    ``create``) and the claudecode driver's ``materialize_skills``: ``create``
+    (default, overwrite), ``append`` (extend an existing file), or ``insert`` (insert
+    ``content`` before the 1-indexed ``row``). ``append``/``insert`` fall back to
+    ``create`` when no file exists yet, so a first-write or out-of-order injection is
+    never silently dropped -- previously this writer was create-only and clobbered
+    append/insert-mode skill injections.
+    """
+    content = str(skill.get("content", "") or "")
+    mode = skill.get("mode", "create")
+    if mode == "append" and os.path.exists(path):
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write("\n" + content)
+    elif mode == "insert" and os.path.exists(path):
+        row = int(skill.get("row", 1) or 1)
+        lines = open(path, encoding="utf-8").read().splitlines()
+        idx = max(0, min(len(lines), row - 1))
+        lines.insert(idx, content)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("\n".join(lines))
+    else:  # create / overwrite
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(content)
+
+
 def write_episode_inputs(
     spec: AgentLaunchSpec,
     state_dir: str,
@@ -215,8 +243,7 @@ def write_episode_inputs(
             name = str(skill.get("name") or "skill")
             skill_dir = os.path.join(state_dir, "skills", name)
             os.makedirs(skill_dir, exist_ok=True)
-            with open(os.path.join(skill_dir, "SKILL.md"), "w", encoding="utf-8") as handle:
-                handle.write(str(skill.get("content", "")))
+            _write_skill_md(os.path.join(skill_dir, "SKILL.md"), skill)
 
     config = build_openclaw_config(spec, provider_api=provider_api, skills_dir=skills_container)
     config_host = os.path.join(state_dir, _profile_config_rel(profile))
