@@ -16,15 +16,21 @@ dependencies = ["superred>=0.1.0", "pyyaml", "aiohttp"]
 #     Docker Hub (decodingtrustagent/*); no local image builds for the text domains.
 [project.optional-dependencies]
 dataset = ["huggingface_hub>=0.20"]
-# The SDK harness + the env MCP / injection servers (run as host processes).
-# Several upstream servers import third-party packages the SDK wheel and its
-# extras (only agent backends) do NOT pull, so they are declared here (each was
-# found by running the server live and reading the captured crash log):
+# The SDK harness + the env MCP / injection servers (run as host processes) + the
+# host MCP proxy. Several upstream servers import third-party packages the SDK wheel
+# and its extras (only agent backends) do NOT pull, so they are declared here (each
+# was found by running the server live and reading the captured crash log):
+#   - fastmcp:         EVERY env MCP + injection server (`from fastmcp import FastMCP`)
+#                      and the host proxy's genuine-call/list path -> without it every
+#                      env server fails readiness with ModuleNotFoundError
 #   - ujson:           env MCP servers (e.g. travel mcp_server.py) + hospital injection
 #   - psycopg2-binary: the customer_service injection server (env_injection.py does
 #                      `import psycopg2` at module top -> crashes on launch without it)
 #   - uv:              the launch command for some servers (terminal/finance) -> on PATH
-sdk = ["decodingtrust-agent-sdk==0.2.12", "ujson", "psycopg2-binary", "uv>=0.5"]
+# NOTE: the env servers launch via mcp.yaml's `python_executable` ("python3"), so that
+# `python3` must resolve to THIS environment (activate the venv / put its bin on PATH)
+# for the servers to find these deps + the SDK's dt_arena package.
+sdk = ["decodingtrust-agent-sdk==0.2.12", "fastmcp", "ujson", "psycopg2-binary", "uv>=0.5"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pytest-cov>=6.0"]
 
 [tool.hatch.build.targets.wheel]

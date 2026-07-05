@@ -41,11 +41,26 @@ The env MCP / injection servers are upstream Python that imports third-party
 packages the SDK wheel does not pull. Each was found by launching the server and
 reading its captured crash log; they are declared in the `sdk` optional extra:
 
+- `fastmcp` -- EVERY env MCP server (`travel/mcp_server.py` and every sibling) and
+  EVERY injection server (`injection_mcp_server/<env>/env_injection.py`) opens with
+  `from fastmcp import FastMCP`; the host proxy's genuine call/list path imports it
+  too. Without it, every env server crashes at import and `EnvStack.up()` raises
+  `MCP servers failed to become ready` (confirmed live). It is a host dependency, not
+  container-only.
 - `ujson` -- env MCP servers (e.g. travel `mcp_server.py`) + the hospital injection
   server.
 - `psycopg2-binary` -- the customer_service injection server (`import psycopg2` at
   module top).
 - `uv` -- the launch command for some servers (terminal, finance); must be on PATH.
+
+**Launch interpreter (`python3` on PATH).** The env servers are spawned via the
+`mcp.yaml` `python_executable` (`"python3"`) running the SDK's server script (e.g.
+`dt_arena/mcp_server/travel/mcp_server.py`). The interpreter is resolved from PATH,
+NOT `sys.executable`, so the environment holding these `[sdk]` deps + the SDK's
+`dt_arena` package must be the one `python3` resolves to: activate the venv (or put
+its `bin` first on PATH) before a live run, else the servers launch under a different
+`python3` and fail to import `fastmcp`/`dt_arena`. (The offline suites mock every
+server, so this only bites the Docker/live path.)
 
 ## C. Container networking
 
