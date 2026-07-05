@@ -15,86 +15,41 @@ Run explicitly::
 from __future__ import annotations
 
 import json
-import shutil
-import socket
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
-from aiohttp import web
 
 from openclaw_target import OpenClawTarget
 from openclaw_target.device_identity import OPERATOR_SCOPES
 from openclaw_target.proxy_llm import LLMProxy
 from openclaw_target.runtime import OpenClawRuntime
 from openclaw_target.target import (
-    FILE_CONTENT_CTRL,
     MODEL_RESPONSE_CTRL,
     MODEL_SYSTEM_PROMPT_CTRL,
     USER_MESSAGE_CTRL,
 )
 from openclaw_target.ws_client import OpenClawWSClient
-
-from superred.core.types.events import (
-    ControllableInjection,
-    ControllablePostCallEvent,
-    ControllablePreCallEvent,
-    ObservableEvent,
+from test_support import (
+    assert_tool_injection_persisted_on_next_run,
+    injecting_send_event,
+    lan_ip,
+    local_web_page_server,
+    loopback_recording_stub_llm_server,
+    loopback_stub_llm_server,
+    loopback_stub_tool_calling_llm_server,
+    openclaw_cli_ready,
+    passthrough_send_event,
 )
 
-
-def _openclaw_cli_ready() -> bool:
-    return shutil.which("openclaw") is not None
-
-
-def _lan_ip() -> str | None:
-    """Best-effort non-loopback IPv4 for the remote-path test."""
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-        return ip if not ip.startswith("127.") else None
-    except OSError:
-        return None
+from superred.core.types.events import ControllableInjection, ObservableEvent
 
 
 pytestmark = pytest.mark.skipif(
-    not _openclaw_cli_ready(),
+    not openclaw_cli_ready(),
     reason="openclaw CLI unavailable",
 )
-
-
-@asynccontextmanager
-async def _stub_llm_server(
-    *,
-    reply: str = "Hello from stub LLM!",
-) -> AsyncIterator[str]:
-    """Yield the base URL of a minimal OpenAI-compatible chat server."""
-
-    async def completions(request: web.Request) -> web.Response:
-        return web.json_response(
-            {
-                "id": "chatcmpl-stub",
-                "object": "chat.completion",
-                "choices": [
-                    {"message": {"role": "assistant", "content": reply}},
-                ],
-                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
-            },
-        )
-
-    app = web.Application()
-    app.router.add_post("/v1/chat/completions", completions)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 0)
-    await site.start()
-    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
-    try:
-        yield f"http://127.0.0.1:{port}"
-    finally:
-        await runner.cleanup()
 
 
 @asynccontextmanager
@@ -149,7 +104,7 @@ async def test_live_gateway_lifecycle_and_rpc() -> None:
 @pytest.mark.asyncio
 async def test_live_agent_run_with_stub_llm() -> None:
     """Drive a real agent turn through the gateway with a stub upstream."""
-    async with _stub_llm_server(reply="Live agent reply.") as stub_url:
+    async with loopback_stub_llm_server(reply="Live agent reply.") as stub_url:
         proxy = LLMProxy(
             upstream_base_url=stub_url,
             upstream_api_key="sk-stub",
@@ -191,15 +146,15 @@ async def test_live_remote_path_grants_operator_scopes_via_device_identity() -> 
     pre-seeded operator pairing must grant read/write/admin and allow the
     admin-scoped RPCs (``agents.files.set`` / ``sessions.reset``).
     """
-    lan_ip = _lan_ip()
-    if lan_ip is None:
+    ip = lan_ip()
+    if ip is None:
         pytest.skip("no non-loopback IPv4 available")
 
     rt = OpenClawRuntime(model_id="openai/gpt-4o-mini", bind="lan")
     await rt.start()
     try:
         assert rt.use_device_identity is True
-        remote_url = f"ws://{lan_ip}:{rt.host_port}"
+        remote_url = f"ws://{ip}:{rt.host_port}"
 
         # Device-less backend path over a remote address: scopes cleared to [].
         backend = OpenClawWSClient(
@@ -237,231 +192,6 @@ async def test_live_remote_path_grants_operator_scopes_via_device_identity() -> 
         await rt.stop()
 
 
-@asynccontextmanager
-async def _stub_tool_calling_llm_server(
-    *,
-    tool_name: str,
-    tool_arguments: dict[str, Any],
-    final_reply: str = "Tool loop complete.",
-) -> AsyncIterator[tuple[str, list[dict[str, Any]]]]:
-    """A stub LLM that calls one tool on turn 1, then finishes on turn 2.
-
-    Unlike ``_stub_llm_server`` (plain text every turn), this drives the real
-    OpenClaw agent loop into actually invoking a real tool - the only way to
-    make the real gateway execute the real plugin hook chain
-    (``before_tool_call`` / ``tool_result_persist`` in ``plugin/index.js``)
-    instead of it sitting dormant. Yields ``(base_url, requests)`` — the list
-    is mutated in place with every parsed request body the stub receives, so
-    callers can inspect exactly what the gateway sent on each turn (in
-    particular, whether the persisted tool result reflects an injection).
-    """
-    requests: list[dict[str, Any]] = []
-
-    async def completions(request: web.Request) -> web.Response:
-        body = await request.json()
-        requests.append(body)
-        if len(requests) == 1:
-            message = {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [
-                    {
-                        # OpenClaw sanitizes provider tool-call ids to
-                        # alphanumeric-only before using them internally
-                        # (before_tool_call/tool_result_persist correlate on
-                        # the sanitized id, not the raw provider id) - use an
-                        # already-alphanumeric id so both hooks agree on it.
-                        "id": "call1",
-                        "type": "function",
-                        "function": {
-                            "name": tool_name,
-                            "arguments": json.dumps(tool_arguments),
-                        },
-                    },
-                ],
-            }
-            finish_reason = "tool_calls"
-        else:
-            message = {"role": "assistant", "content": final_reply}
-            finish_reason = "stop"
-        return web.json_response(
-            {
-                "id": f"chatcmpl-stub-{len(requests)}",
-                "object": "chat.completion",
-                "choices": [
-                    {"index": 0, "message": message, "finish_reason": finish_reason},
-                ],
-                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
-            },
-        )
-
-    app = web.Application()
-    app.router.add_post("/v1/chat/completions", completions)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 0)
-    await site.start()
-    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
-    try:
-        yield f"http://127.0.0.1:{port}", requests
-    finally:
-        await runner.cleanup()
-
-
-def _passthrough_send_event(user_message: str, hook_calls: list[tuple[str, dict[str, Any]]]):
-    """Build a ``send_event`` that answers every controllable neutrally except
-    ``user_message`` (sends ``user_message``) and ``file_content`` (tool-output
-    injection point, recorded into ``hook_calls`` and answered with a fixed
-    marker so the test can prove the real plugin round-tripped it)."""
-
-    async def send_event(event: object) -> ControllableInjection:
-        controllable = getattr(event, "controllable")
-        if isinstance(event, ControllablePostCallEvent) and controllable is FILE_CONTENT_CTRL:
-            hook_calls.append((controllable.name, json.loads(event.request)))
-            return ControllableInjection(
-                event=event,  # type: ignore[arg-type]
-                controllable=controllable,
-                value="INJECTED-BY-SUPERRED-42",
-            )
-        if isinstance(event, ControllablePreCallEvent) and controllable is USER_MESSAGE_CTRL:
-            return ControllableInjection(
-                event=event,  # type: ignore[arg-type]
-                controllable=controllable,
-                value=user_message,
-            )
-        # Every other controllable (model system prompt / model response
-        # injection pre-call events) declines - value="" means "don't inject".
-        return ControllableInjection(event=event, controllable=controllable, value="")  # type: ignore[arg-type]
-
-    return send_event
-
-
-def _injecting_send_event(
-    *,
-    user_message: str,
-    hook_calls: list[tuple[str, dict[str, Any]]],
-    injections: dict[str, str],
-) -> object:
-    """Build a ``send_event`` that injects per-controllable values from
-    ``injections`` (keyed by controllable ``name``) and records tool-output
-    hook payloads in ``hook_calls``."""
-
-    async def send_event(event: object) -> ControllableInjection:
-        controllable = getattr(event, "controllable")
-        if isinstance(event, ControllablePostCallEvent):
-            hook_calls.append((controllable.name, json.loads(event.request)))
-            value = injections.get(controllable.name, "")
-            return ControllableInjection(
-                event=event,  # type: ignore[arg-type]
-                controllable=controllable,
-                value=value,
-            )
-        if isinstance(event, ControllablePreCallEvent):
-            value = injections.get(controllable.name, "")
-            if controllable is USER_MESSAGE_CTRL and not value:
-                value = user_message
-            return ControllableInjection(
-                event=event,  # type: ignore[arg-type]
-                controllable=controllable,
-                value=value,
-            )
-        return ControllableInjection(
-            event=event, controllable=controllable, value="",  # type: ignore[arg-type]
-        )
-
-    return send_event
-
-
-@asynccontextmanager
-async def _recording_stub_llm_server(
-    *,
-    reply: str = "Stub upstream reply.",
-) -> AsyncIterator[tuple[str, list[dict[str, Any]]]]:
-    """Minimal OpenAI-compatible server that records every request body."""
-    requests: list[dict[str, Any]] = []
-
-    async def completions(request: web.Request) -> web.Response:
-        body = await request.json()
-        requests.append(body)
-        return web.json_response(
-            {
-                "id": "chatcmpl-record",
-                "object": "chat.completion",
-                "choices": [
-                    {"message": {"role": "assistant", "content": reply}},
-                ],
-                "usage": {"prompt_tokens": 2, "completion_tokens": 3},
-            },
-        )
-
-    app = web.Application()
-    app.router.add_post("/v1/chat/completions", completions)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 0)
-    await site.start()
-    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
-    try:
-        yield f"http://127.0.0.1:{port}", requests
-    finally:
-        await runner.cleanup()
-
-
-@asynccontextmanager
-async def _local_web_page_server(
-    *,
-    body: str = "ORIGINAL-WEB-CONTENT-NOT-INJECTED",
-) -> AsyncIterator[str]:
-    """Serve a single static page for ``web_fetch`` live tests."""
-
-    async def page(_request: web.Request) -> web.Response:
-        return web.Response(text=body)
-
-    app = web.Application()
-    app.router.add_get("/page", page)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 0)
-    await site.start()
-    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
-    try:
-        yield f"http://127.0.0.1:{port}/page"
-    finally:
-        await runner.cleanup()
-
-
-async def _assert_tool_injection_persisted_on_next_run(
-    target: OpenClawTarget,
-    *,
-    requests: list[dict[str, Any]],
-    followup_user_message: str,
-    hook_calls: list[tuple[str, dict[str, Any]]],
-    injection_marker: str,
-    original_marker: str,
-    emitted: list[object],
-) -> None:
-    """Shared assertions for the two-run tool-output poisoning shape."""
-    requests_before = len(requests)
-    hook_calls.clear()
-    followup = _injecting_send_event(
-        user_message=followup_user_message,
-        hook_calls=hook_calls,
-        injections={},
-    )
-    await target.run(lambda e: emitted.append(e), followup)
-    assert len(requests) > requests_before
-    next_prompt_messages = requests[requests_before]["messages"]
-    tool_messages = [m for m in next_prompt_messages if m.get("role") == "tool"]
-    assert tool_messages, (
-        f"expected a persisted tool message in history: {next_prompt_messages}"
-    )
-    assert any(injection_marker in str(m.get("content")) for m in tool_messages)
-    assert all(
-        original_marker not in str(m.get("content"))
-        for m in tool_messages
-    )
-
-
 @pytest.mark.asyncio
 async def test_live_tool_injection_round_trip_through_real_plugin() -> None:
     """The real Node plugin - not ``MockGateway`` - actually calls our
@@ -491,7 +221,7 @@ async def test_live_tool_injection_round_trip_through_real_plugin() -> None:
     # accepts (ALLOWED_WORKSPACE_BOOTSTRAP_FILES) - arbitrary names are
     # rejected by the gateway (verified live: INVALID_REQUEST "unsupported
     # file").
-    async with _stub_tool_calling_llm_server(
+    async with loopback_stub_tool_calling_llm_server(
         tool_name="read",
         tool_arguments={"path": "USER.md"},
     ) as (stub_url, requests):
@@ -510,7 +240,7 @@ async def test_live_tool_injection_round_trip_through_real_plugin() -> None:
             )
 
             hook_calls: list[tuple[str, dict[str, Any]]] = []
-            send_event = _passthrough_send_event(
+            send_event = passthrough_send_event(
                 "Read USER.md and tell me what it says.", hook_calls,
             )
 
@@ -555,7 +285,7 @@ async def test_live_tool_injection_round_trip_through_real_plugin() -> None:
             # injected text.
             requests_before = len(requests)
             hook_calls.clear()
-            send_event_2 = _passthrough_send_event("What did USER.md say?", hook_calls)
+            send_event_2 = passthrough_send_event("What did USER.md say?", hook_calls)
             await target.run(lambda e: emitted.append(e), send_event_2)
             assert len(requests) > requests_before
             next_prompt_messages = requests[requests_before]["messages"]
@@ -575,7 +305,7 @@ async def test_live_model_response_injection_through_real_proxy() -> None:
     """``model_response_injection`` end to end: a real gateway receives the
     *modified* text through the real running :class:`LLMProxy` HTTP server,
     not just ``LLMProxy._inject_response`` called directly in Python."""
-    async with _stub_llm_server(reply="Original stub reply.") as stub_url:
+    async with loopback_stub_llm_server(reply="Original stub reply.") as stub_url:
         target = OpenClawTarget(
             managed=True,
             model_id="openai/gpt-4o-mini",
@@ -628,7 +358,7 @@ async def test_live_model_response_injection_through_real_proxy() -> None:
 async def test_live_model_system_prompt_injection_through_real_proxy() -> None:
     """``model_system_prompt`` end to end: the real running proxy splices
     content into the system message the upstream provider receives."""
-    async with _recording_stub_llm_server(reply="Upstream ok.") as (stub_url, requests):
+    async with loopback_recording_stub_llm_server(reply="Upstream ok.") as (stub_url, requests):
         target = OpenClawTarget(
             managed=True,
             model_id="openai/gpt-4o-mini",
@@ -670,7 +400,7 @@ async def test_live_model_system_prompt_injection_through_real_proxy() -> None:
 @pytest.mark.asyncio
 async def test_live_shell_output_injection_round_trip_through_real_plugin() -> None:
     """``shell_output`` controllable: real ``exec`` tool + real plugin hooks."""
-    async with _stub_tool_calling_llm_server(
+    async with loopback_stub_tool_calling_llm_server(
         tool_name="exec",
         tool_arguments={"command": "echo ORIGINAL-EXEC-CONTENT-NOT-INJECTED"},
     ) as (stub_url, requests):
@@ -685,7 +415,7 @@ async def test_live_shell_output_injection_round_trip_through_real_plugin() -> N
             await target.warmup_static_observables()
             target.set_config("tool_policy", "coding")
             hook_calls: list[tuple[str, dict[str, Any]]] = []
-            send_event = _injecting_send_event(
+            send_event = injecting_send_event(
                 user_message=(
                     "Run echo ORIGINAL-EXEC-CONTENT-NOT-INJECTED and report the output."
                 ),
@@ -703,7 +433,7 @@ async def test_live_shell_output_injection_round_trip_through_real_plugin() -> N
             assert "ORIGINAL-EXEC-CONTENT-NOT-INJECTED" in second_turn
             assert "INJECTED-SHELL-77" not in second_turn
 
-            await _assert_tool_injection_persisted_on_next_run(
+            await assert_tool_injection_persisted_on_next_run(
                 target,
                 requests=requests,
                 followup_user_message="What was the command output?",
@@ -719,8 +449,8 @@ async def test_live_shell_output_injection_round_trip_through_real_plugin() -> N
 @pytest.mark.asyncio
 async def test_live_web_content_injection_round_trip_through_real_plugin() -> None:
     """``web_content`` controllable: real ``web_fetch`` + real plugin hooks."""
-    async with _local_web_page_server() as page_url:
-        async with _stub_tool_calling_llm_server(
+    async with local_web_page_server() as page_url:
+        async with loopback_stub_tool_calling_llm_server(
             tool_name="web_fetch",
             tool_arguments={"url": page_url},
         ) as (stub_url, requests):
@@ -735,7 +465,7 @@ async def test_live_web_content_injection_round_trip_through_real_plugin() -> No
                 await target.warmup_static_observables()
                 target.set_config("tool_policy", "coding")
                 hook_calls: list[tuple[str, dict[str, Any]]] = []
-                send_event = _injecting_send_event(
+                send_event = injecting_send_event(
                     user_message=f"Fetch {page_url} and summarize it.",
                     hook_calls=hook_calls,
                     injections={"web_content": "INJECTED-WEB-77"},
@@ -752,7 +482,7 @@ async def test_live_web_content_injection_round_trip_through_real_plugin() -> No
                 # body; the in-flight continuation is therefore not asserted
                 # here. Persistence on the next run is the meaningful check.
 
-                await _assert_tool_injection_persisted_on_next_run(
+                await assert_tool_injection_persisted_on_next_run(
                     target,
                     requests=requests,
                     followup_user_message="What did the page say?",
@@ -768,7 +498,7 @@ async def test_live_web_content_injection_round_trip_through_real_plugin() -> No
 @pytest.mark.asyncio
 async def test_live_message_content_injection_round_trip_through_real_plugin() -> None:
     """``message_content`` controllable: real ``message`` tool + real plugin hooks."""
-    async with _stub_tool_calling_llm_server(
+    async with loopback_stub_tool_calling_llm_server(
         tool_name="message",
         tool_arguments={"action": "send", "text": "ORIGINAL-MSG-NOT-INJECTED"},
     ) as (stub_url, requests):
@@ -783,7 +513,7 @@ async def test_live_message_content_injection_round_trip_through_real_plugin() -
             await target.warmup_static_observables()
             target.set_config("tool_policy", "messaging")
             hook_calls: list[tuple[str, dict[str, Any]]] = []
-            send_event = _injecting_send_event(
+            send_event = injecting_send_event(
                 user_message="Send a message saying ORIGINAL-MSG-NOT-INJECTED.",
                 hook_calls=hook_calls,
                 injections={"message_content": "INJECTED-MSG-77"},
@@ -796,7 +526,7 @@ async def test_live_message_content_injection_round_trip_through_real_plugin() -
             assert hook_calls[0][1]["tool"] == "message"
             assert len(requests) >= 2
 
-            await _assert_tool_injection_persisted_on_next_run(
+            await assert_tool_injection_persisted_on_next_run(
                 target,
                 requests=requests,
                 followup_user_message="What message did you send?",
@@ -812,7 +542,7 @@ async def test_live_message_content_injection_round_trip_through_real_plugin() -
 @pytest.mark.asyncio
 async def test_live_web_search_alias_injection_round_trip_through_real_plugin() -> None:
     """``web_content`` via the ``web_search`` tool alias (not ``web_fetch``)."""
-    async with _stub_tool_calling_llm_server(
+    async with loopback_stub_tool_calling_llm_server(
         tool_name="web_search",
         tool_arguments={"query": "ORIGINAL-WEB-SEARCH-NOT-INJECTED"},
     ) as (stub_url, requests):
@@ -827,7 +557,7 @@ async def test_live_web_search_alias_injection_round_trip_through_real_plugin() 
             await target.warmup_static_observables()
             target.set_config("tool_policy", "coding")
             hook_calls: list[tuple[str, dict[str, Any]]] = []
-            send_event = _injecting_send_event(
+            send_event = injecting_send_event(
                 user_message="Search the web for ORIGINAL-WEB-SEARCH-NOT-INJECTED.",
                 hook_calls=hook_calls,
                 injections={"web_content": "INJECTED-WEB-SEARCH-78"},
@@ -839,7 +569,7 @@ async def test_live_web_search_alias_injection_round_trip_through_real_plugin() 
             assert hook_calls[0][0] == "web_content"
             assert hook_calls[0][1]["tool"] == "web_search"
 
-            await _assert_tool_injection_persisted_on_next_run(
+            await assert_tool_injection_persisted_on_next_run(
                 target,
                 requests=requests,
                 followup_user_message="What did the search return?",
@@ -855,7 +585,7 @@ async def test_live_web_search_alias_injection_round_trip_through_real_plugin() 
 @pytest.mark.asyncio
 async def test_live_process_alias_injection_round_trip_through_real_plugin() -> None:
     """``shell_output`` via the ``process`` tool alias (session management)."""
-    async with _stub_tool_calling_llm_server(
+    async with loopback_stub_tool_calling_llm_server(
         tool_name="process",
         tool_arguments={"action": "list"},
     ) as (stub_url, requests):
@@ -870,7 +600,7 @@ async def test_live_process_alias_injection_round_trip_through_real_plugin() -> 
             await target.warmup_static_observables()
             target.set_config("tool_policy", "coding")
             hook_calls: list[tuple[str, dict[str, Any]]] = []
-            send_event = _injecting_send_event(
+            send_event = injecting_send_event(
                 user_message="List all background process sessions.",
                 hook_calls=hook_calls,
                 injections={"shell_output": "INJECTED-PROCESS-79"},
@@ -883,7 +613,7 @@ async def test_live_process_alias_injection_round_trip_through_real_plugin() -> 
             assert hook_calls[0][1]["tool"] == "process"
             assert hook_calls[0][1]["params"].get("action") == "list"
 
-            await _assert_tool_injection_persisted_on_next_run(
+            await assert_tool_injection_persisted_on_next_run(
                 target,
                 requests=requests,
                 followup_user_message="What did the process list show?",
@@ -905,7 +635,7 @@ async def test_live_all_controllables_in_one_session() -> None:
     on a real ``read`` tool call. Verifies proxy splice, plugin hook, and
     persisted tool-result poisoning on a follow-up turn — all in one session.
     """
-    async with _stub_tool_calling_llm_server(
+    async with loopback_stub_tool_calling_llm_server(
         tool_name="read",
         tool_arguments={"path": "USER.md"},
     ) as (stub_url, requests):
@@ -928,7 +658,7 @@ async def test_live_all_controllables_in_one_session() -> None:
             )
 
             hook_calls: list[tuple[str, dict[str, Any]]] = []
-            send_event = _injecting_send_event(
+            send_event = injecting_send_event(
                 user_message="Read USER.md and tell me what it says.",
                 hook_calls=hook_calls,
                 injections={
@@ -969,7 +699,7 @@ async def test_live_all_controllables_in_one_session() -> None:
             assert "ORIGINAL-ALL-CTRL-NOT-INJECTED" in second_turn
             assert "INJECTED-ALL-CTRL-88" not in second_turn
 
-            await _assert_tool_injection_persisted_on_next_run(
+            await assert_tool_injection_persisted_on_next_run(
                 target,
                 requests=requests,
                 followup_user_message="What did USER.md say?",
@@ -988,7 +718,7 @@ async def test_live_reset_and_teardown_against_real_gateway() -> None:
     ``MockGateway``/a fake in-Python client: durable planted files survive
     ``reset_ephemeral_state`` and are genuinely cleared - on a fresh
     connection, before the process dies - by ``teardown``."""
-    async with _stub_llm_server(reply="ok") as stub_url:
+    async with loopback_stub_llm_server(reply="ok") as stub_url:
         target = OpenClawTarget(
             managed=True,
             model_id="openai/gpt-4o-mini",
@@ -1073,7 +803,7 @@ async def test_live_reset_and_teardown_against_real_gateway() -> None:
 @pytest.mark.asyncio
 async def test_live_openclaw_target_managed_run() -> None:
     """Full OpenClawTarget managed pipeline against a real gateway."""
-    async with _stub_llm_server(reply="Managed target live reply.") as stub_url:
+    async with loopback_stub_llm_server(reply="Managed target live reply.") as stub_url:
         target = OpenClawTarget(
             managed=True,
             model_id="openai/gpt-4o-mini",

@@ -6,7 +6,7 @@ for every controllable path in this PR. Opt-in only (``GEMINI_API_KEY``).
 
 Run explicitly::
 
-    GEMINI_API_KEY=... pytest test_openclaw_tier3_e2e.py -v
+    GEMINI_API_KEY=... pytest test_controller_provider_e2e.py -v
 
 Tier 1 (``test_openclaw_live.py``) covers the same paths with a stub upstream
 for fast CI. Tier 3 repeats them through the real provider and drives them via
@@ -16,22 +16,27 @@ the framework ``Controller`` rather than calling ``target.run`` directly.
 from __future__ import annotations
 
 import json
-import os
 import re
-import shutil
-from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
-from aiohttp import web
 
 from openclaw_target import (
     SYSTEM_TAG,
     openclaw_target_factory,
 )
 from openclaw_target.target import OpenClawTarget
+from test_support import (
+    DEFAULT_PROVIDER_TIMEOUT_S,
+    gemini_api_key,
+    gemini_target,
+    local_web_page_server,
+    openclaw_cli_ready,
+    provider_base_url,
+    provider_model,
+)
 
 from superred.core.controller import Controller
 from superred.core.interfaces.optimizer import Optimizer
@@ -52,56 +57,15 @@ from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
 from superred.core.types.trajectory import Trajectory
 
-DEFAULT_GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/v1"
-DEFAULT_GEMINI_MODEL = "google/gemini-2.5-flash"
-_PROVIDER_TIMEOUT_S = 240
-
-
-def _openclaw_cli_ready() -> bool:
-    return shutil.which("openclaw") is not None
-
-
-def _gemini_api_key() -> str | None:
-    key = os.environ.get("GEMINI_API_KEY", "").strip()
-    return key or None
-
-
-def _provider_model() -> str:
-    return os.environ.get("OPENCLAW_PROVIDER_MODEL", DEFAULT_GEMINI_MODEL)
-
-
-def _provider_base_url() -> str:
-    return os.environ.get("OPENCLAW_PROVIDER_BASE_URL", DEFAULT_GEMINI_BASE)
+_PROVIDER_TIMEOUT_S = DEFAULT_PROVIDER_TIMEOUT_S
 
 
 pytestmark = [
     pytest.mark.provider,
-    pytest.mark.tier3,
-    pytest.mark.skipif(not _openclaw_cli_ready(), reason="openclaw CLI unavailable"),
-    pytest.mark.skipif(_gemini_api_key() is None, reason="GEMINI_API_KEY not set"),
+    pytest.mark.controller_e2e,
+    pytest.mark.skipif(not openclaw_cli_ready(), reason="openclaw CLI unavailable"),
+    pytest.mark.skipif(gemini_api_key() is None, reason="GEMINI_API_KEY not set"),
 ]
-
-
-@asynccontextmanager
-async def _local_web_page_server(
-    *,
-    body: str = "TIER3-ORIGINAL-WEB-NOT-INJECTED",
-) -> AsyncIterator[str]:
-    async def page(_request: web.Request) -> web.Response:
-        return web.Response(text=body)
-
-    app = web.Application()
-    app.router.add_get("/page", page)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 0)
-    await site.start()
-    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
-    try:
-        yield f"http://127.0.0.1:{port}/page"
-    finally:
-        await runner.cleanup()
-
 
 @dataclass
 class _Phase:
@@ -307,12 +271,12 @@ class _Tier3Task(Task[OpenClawTarget]):
 
 
 def _gemini_factory() -> Any:
-    key = _gemini_api_key()
+    key = gemini_api_key()
     assert key is not None
     return openclaw_target_factory(
         managed=True,
-        model_id=_provider_model(),
-        provider_base_url=_provider_base_url(),
+        model_id=provider_model(),
+        provider_base_url=provider_base_url(),
         provider_api_key=key,
         enable_tool_injection=True,
         agent_timeout_s=_PROVIDER_TIMEOUT_S,
@@ -401,17 +365,7 @@ async def test_tier3_controller_model_and_proxy_paths_real_gemini() -> None:
 async def test_tier3_controller_streaming_real_gemini() -> None:
     """Controller stack delivers incremental assistant_stream through real Gemini."""
     stream_chunks: list[str] = []
-    key = _gemini_api_key()
-    assert key is not None
-
-    target = OpenClawTarget(
-        managed=True,
-        model_id=_provider_model(),
-        provider_base_url=_provider_base_url(),
-        provider_api_key=key,
-        enable_tool_injection=True,
-        agent_timeout_s=_PROVIDER_TIMEOUT_S,
-    )
+    target = gemini_target(enable_tool_injection=True, timeout_s=_PROVIDER_TIMEOUT_S)
     try:
         await _configure_base(target)
 
@@ -505,7 +459,7 @@ async def test_tier3_controller_shell_tool_path_real_gemini() -> None:
 @pytest.mark.asyncio
 async def test_tier3_controller_web_tool_path_real_gemini() -> None:
     """Controller + real Gemini: ``web_content`` hook + persisted poison."""
-    async with _local_web_page_server() as page_url:
+    async with local_web_page_server(body="TIER3-ORIGINAL-WEB-NOT-INJECTED") as page_url:
         async def configure(target: OpenClawTarget) -> None:
             await _configure_base(target)
 

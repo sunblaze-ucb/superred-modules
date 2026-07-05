@@ -15,267 +15,36 @@ import json
 import os
 import re
 import secrets
-import shutil
-import subprocess
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 import pytest
-from aiohttp import web
 
 from openclaw_target.device_identity import OPERATOR_SCOPES
-from openclaw_target.docker_runtime import DEFAULT_DOCKER_IMAGE, OpenClawDockerRuntime
+from openclaw_target.docker_runtime import OpenClawDockerRuntime
 from openclaw_target.injection_server import InjectionServer
-from openclaw_target.target import FILE_CONTENT_CTRL, OpenClawTarget, USER_MESSAGE_CTRL, _plugin_dir
+from openclaw_target.target import USER_MESSAGE_CTRL, _plugin_dir
 from openclaw_target.ws_client import OpenClawWSClient
-
-from superred.core.types.events import (
-    ControllableInjection,
-    ControllablePostCallEvent,
-    ControllablePreCallEvent,
+from test_support import (
+    container_stub_llm_server,
+    container_stub_tool_calling_llm_server,
+    docker_daemon_ready,
+    docker_gemini_target,
+    docker_image,
+    docker_target,
+    gemini_api_key,
+    loopback_stub_tool_calling_llm_server,
+    loopback_stub_upstream_for_host_proxy,
+    passthrough_send_event,
 )
 
-
-def _docker_daemon_ready() -> bool:
-    if not shutil.which("docker"):
-        return False
-    return subprocess.run(
-        ["docker", "info"],
-        capture_output=True,
-        check=False,
-    ).returncode == 0
+from superred.core.types.events import ControllableInjection
 
 
 pytestmark = pytest.mark.skipif(
-    not _docker_daemon_ready(),
+    not docker_daemon_ready(),
     reason="Docker daemon unavailable",
 )
-
-
-@asynccontextmanager
-async def _stub_llm_server(
-    *,
-    reply: str = "Docker stub LLM reply.",
-) -> AsyncIterator[str]:
-    """Start a stub LLM server and yield the URL the *container* reaches it on.
-
-    Binds ``0.0.0.0`` (not just loopback) and returns a ``host.docker.internal``
-    URL — a containerised gateway resolves ``127.0.0.1`` to itself, not the
-    host, so a loopback-only stub is unreachable from inside the container.
-    """
-
-    async def completions(request: web.Request) -> web.Response:
-        return web.json_response(
-            {
-                "choices": [{"message": {"role": "assistant", "content": reply}}],
-                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
-            },
-        )
-
-    app = web.Application()
-    app.router.add_post("/v1/chat/completions", completions)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", 0)  # noqa: S104 - needed for container reachability
-    await site.start()
-    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
-    try:
-        yield f"http://host.docker.internal:{port}"
-    finally:
-        await runner.cleanup()
-
-
-@asynccontextmanager
-async def _stub_llm_upstream_for_host_proxy(
-    *,
-    reply: str = "Docker Target stub LLM reply.",
-) -> AsyncIterator[str]:
-    """Stub upstream for :class:`OpenClawTarget`'s host-side LLM proxy.
-
-    With ``managed_runtime="docker"`` the container reaches the proxy on
-    ``host.docker.internal``; the proxy (on the host) forwards to this
-    loopback-only upstream.
-    """
-
-    async def completions(request: web.Request) -> web.Response:
-        return web.json_response(
-            {
-                "choices": [{"message": {"role": "assistant", "content": reply}}],
-                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
-            },
-        )
-
-    app = web.Application()
-    app.router.add_post("/v1/chat/completions", completions)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 0)
-    await site.start()
-    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
-    try:
-        yield f"http://127.0.0.1:{port}"
-    finally:
-        await runner.cleanup()
-
-
-@asynccontextmanager
-async def _stub_tool_calling_upstream_for_host_proxy(
-    *,
-    tool_name: str,
-    tool_arguments: dict[str, Any],
-    final_reply: str = "Docker Target tool loop complete.",
-) -> AsyncIterator[tuple[str, list[dict[str, Any]]]]:
-    """Tool-calling stub upstream for the host-side LLM proxy (see above)."""
-    requests: list[dict[str, Any]] = []
-
-    async def completions(request: web.Request) -> web.Response:
-        body = await request.json()
-        requests.append(body)
-        if len(requests) == 1:
-            message = {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [
-                    {
-                        "id": "call1",
-                        "type": "function",
-                        "function": {
-                            "name": tool_name,
-                            "arguments": json.dumps(tool_arguments),
-                        },
-                    },
-                ],
-            }
-            finish_reason = "tool_calls"
-        else:
-            message = {"role": "assistant", "content": final_reply}
-            finish_reason = "stop"
-        return web.json_response(
-            {
-                "id": f"chatcmpl-docker-target-stub-{len(requests)}",
-                "object": "chat.completion",
-                "choices": [
-                    {"index": 0, "message": message, "finish_reason": finish_reason},
-                ],
-                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
-            },
-        )
-
-    app = web.Application()
-    app.router.add_post("/v1/chat/completions", completions)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 0)
-    await site.start()
-    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
-    try:
-        yield f"http://127.0.0.1:{port}", requests
-    finally:
-        await runner.cleanup()
-
-
-def _docker_image() -> str:
-    return os.environ.get("OPENCLAW_DOCKER_IMAGE", DEFAULT_DOCKER_IMAGE)
-
-
-def _docker_target(**kwargs: Any) -> OpenClawTarget:
-    """Build an :class:`OpenClawTarget` on the containerised managed runtime."""
-    return OpenClawTarget(
-        managed=True,
-        managed_runtime="docker",
-        managed_kwargs={"image": _docker_image()},
-        **kwargs,
-    )
-
-
-def _passthrough_send_event(
-    user_message: str,
-    hook_calls: list[tuple[str, dict[str, Any]]],
-    *,
-    injection_marker: str = "DOCKER-TARGET-INJECTED-88",
-):
-    async def send_event(event: object) -> ControllableInjection:
-        controllable = getattr(event, "controllable")
-        if isinstance(event, ControllablePostCallEvent) and controllable is FILE_CONTENT_CTRL:
-            hook_calls.append((controllable.name, json.loads(event.request)))
-            return ControllableInjection(
-                event=event,  # type: ignore[arg-type]
-                controllable=controllable,
-                value=injection_marker,
-            )
-        if isinstance(event, ControllablePreCallEvent) and controllable is USER_MESSAGE_CTRL:
-            return ControllableInjection(
-                event=event,  # type: ignore[arg-type]
-                controllable=controllable,
-                value=user_message,
-            )
-        return ControllableInjection(
-            event=event, controllable=controllable, value="",  # type: ignore[arg-type]
-        )
-
-    return send_event
-
-
-@asynccontextmanager
-async def _stub_tool_calling_llm_server(
-    *,
-    tool_name: str,
-    tool_arguments: dict[str, Any],
-    final_reply: str = "Docker tool loop complete.",
-) -> AsyncIterator[tuple[str, list[dict[str, Any]]]]:
-    """Docker counterpart of the live-test stub: calls one tool on turn 1,
-    then finishes on turn 2, so the *containerised* gateway drives a real
-    tool-calling loop through the real (in-container) plugin. Binds
-    ``0.0.0.0`` and yields a ``host.docker.internal`` URL for container
-    reachability (see ``_stub_llm_server`` above)."""
-    requests: list[dict[str, Any]] = []
-
-    async def completions(request: web.Request) -> web.Response:
-        body = await request.json()
-        requests.append(body)
-        if len(requests) == 1:
-            message = {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [
-                    {
-                        "id": "call1",
-                        "type": "function",
-                        "function": {
-                            "name": tool_name,
-                            "arguments": json.dumps(tool_arguments),
-                        },
-                    },
-                ],
-            }
-            finish_reason = "tool_calls"
-        else:
-            message = {"role": "assistant", "content": final_reply}
-            finish_reason = "stop"
-        return web.json_response(
-            {
-                "id": f"chatcmpl-docker-stub-{len(requests)}",
-                "object": "chat.completion",
-                "choices": [
-                    {"index": 0, "message": message, "finish_reason": finish_reason},
-                ],
-                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
-            },
-        )
-
-    app = web.Application()
-    app.router.add_post("/v1/chat/completions", completions)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", 0)  # noqa: S104 - needed for container reachability
-    await site.start()
-    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
-    try:
-        yield f"http://host.docker.internal:{port}", requests
-    finally:
-        await runner.cleanup()
 
 
 def _docker_client(rt: OpenClawDockerRuntime) -> OpenClawWSClient:
@@ -290,7 +59,7 @@ def _docker_client(rt: OpenClawDockerRuntime) -> OpenClawWSClient:
 @pytest.mark.asyncio
 async def test_docker_connect_grants_operator_scopes() -> None:
     """Remote connect must receive write/admin scopes (not empty)."""
-    image = os.environ.get("OPENCLAW_DOCKER_IMAGE", DEFAULT_DOCKER_IMAGE)
+    image = docker_image()
     rt = OpenClawDockerRuntime(image=image, model_id="openai/gpt-4o-mini")
     await rt.start()
     try:
@@ -307,8 +76,8 @@ async def test_docker_connect_grants_operator_scopes() -> None:
 @pytest.mark.asyncio
 async def test_docker_gateway_rpc_and_agent_run() -> None:
     """Real container: RPCs + agent turn with stub upstream."""
-    image = os.environ.get("OPENCLAW_DOCKER_IMAGE", DEFAULT_DOCKER_IMAGE)
-    async with _stub_llm_server() as stub_url:
+    image = docker_image()
+    async with container_stub_llm_server() as stub_url:
         rt = OpenClawDockerRuntime(
             image=image,
             model_id="openai/gpt-4o-mini",
@@ -348,7 +117,7 @@ async def test_docker_gateway_rpc_and_agent_run() -> None:
 @pytest.mark.asyncio
 async def test_docker_gateway_starts_with_injection_plugin() -> None:
     """Gateway boots when the superred injection extension is installed."""
-    image = os.environ.get("OPENCLAW_DOCKER_IMAGE", DEFAULT_DOCKER_IMAGE)
+    image = docker_image()
     plugin = _plugin_dir()
     manifest = plugin / "openclaw.plugin.json"
     assert manifest.is_file(), "plugin manifest required for injection runs"
@@ -385,7 +154,7 @@ async def test_docker_tool_injection_round_trip_through_real_plugin() -> None:
     injection_plugin``) but that the actual hook round trip works end to end
     from inside the container.
     """
-    image = os.environ.get("OPENCLAW_DOCKER_IMAGE", DEFAULT_DOCKER_IMAGE)
+    image = docker_image()
     plugin = _plugin_dir()
     callback_token = secrets.token_urlsafe(16)
     hook_calls: list[dict[str, Any]] = []
@@ -409,7 +178,7 @@ async def test_docker_tool_injection_round_trip_through_real_plugin() -> None:
     )
     await injection.start()
 
-    async with _stub_tool_calling_llm_server(
+    async with container_stub_tool_calling_llm_server(
         tool_name="read",
         tool_arguments={"path": "USER.md"},
     ) as (stub_url, requests):
@@ -488,8 +257,8 @@ async def test_docker_openclaw_target_managed_run_with_stub_llm() -> None:
     host-side LLM proxy + optional injection server, materialises state,
     launches the container, connects over WS, and completes a managed run.
     """
-    async with _stub_llm_upstream_for_host_proxy() as stub_url:
-        target = _docker_target(
+    async with loopback_stub_upstream_for_host_proxy() as stub_url:
+        target = docker_target(
             model_id="openai/gpt-4o-mini",
             provider_base_url=stub_url,
             provider_api_key="stub-key",
@@ -537,11 +306,11 @@ async def test_docker_openclaw_target_tool_injection_round_trip() -> None:
     but routed through :class:`OpenClawTarget` so the container reaches the
     host-side injection server and LLM proxy URLs that the Target constructs.
     """
-    async with _stub_tool_calling_upstream_for_host_proxy(
+    async with loopback_stub_tool_calling_llm_server(
         tool_name="read",
         tool_arguments={"path": "USER.md"},
     ) as (stub_url, requests):
-        target = _docker_target(
+        target = docker_target(
             model_id="openai/gpt-4o-mini",
             provider_base_url=stub_url,
             provider_api_key="stub-key",
@@ -555,9 +324,10 @@ async def test_docker_openclaw_target_tool_injection_round_trip() -> None:
             )
 
             hook_calls: list[tuple[str, dict[str, Any]]] = []
-            send_event = _passthrough_send_event(
+            send_event = passthrough_send_event(
                 "Read USER.md and tell me what it says.",
                 hook_calls,
+                file_injection="DOCKER-TARGET-INJECTED-88",
             )
             await target.run(lambda _e: None, send_event)
 
@@ -568,7 +338,7 @@ async def test_docker_openclaw_target_tool_injection_round_trip() -> None:
 
             requests_before = len(requests)
             hook_calls.clear()
-            send_event_2 = _passthrough_send_event("What did USER.md say?", hook_calls)
+            send_event_2 = passthrough_send_event("What did USER.md say?", hook_calls)
             await target.run(lambda _e: None, send_event_2)
 
             assert len(requests) > requests_before
@@ -592,37 +362,12 @@ async def test_docker_openclaw_target_tool_injection_round_trip() -> None:
             await target.teardown()
 
 
-DEFAULT_GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/v1"
-DEFAULT_GEMINI_MODEL = "google/gemini-2.5-flash"
-_DOCKER_PROVIDER_TIMEOUT_S = 240
-
-
-def _gemini_api_key() -> str | None:
-    key = os.environ.get("GEMINI_API_KEY", "").strip()
-    return key or None
-
-
-def _provider_model() -> str:
-    return os.environ.get("OPENCLAW_PROVIDER_MODEL", DEFAULT_GEMINI_MODEL)
-
-
-def _provider_base_url() -> str:
-    return os.environ.get("OPENCLAW_PROVIDER_BASE_URL", DEFAULT_GEMINI_BASE)
-
-
 @pytest.mark.provider
-@pytest.mark.skipif(_gemini_api_key() is None, reason="GEMINI_API_KEY not set")
+@pytest.mark.skipif(gemini_api_key() is None, reason="GEMINI_API_KEY not set")
 @pytest.mark.asyncio
 async def test_docker_openclaw_target_real_gemini_turn() -> None:
     """``OpenClawTarget(managed_runtime=\"docker\")`` with a real Gemini upstream."""
-    key = _gemini_api_key()
-    assert key is not None
-    target = _docker_target(
-        model_id=_provider_model(),
-        provider_base_url=_provider_base_url(),
-        provider_api_key=key,
-        agent_timeout_s=_DOCKER_PROVIDER_TIMEOUT_S,
-    )
+    target = docker_gemini_target(timeout_s=240)
     try:
         await target.warmup_static_observables()
 

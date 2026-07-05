@@ -10,18 +10,11 @@ Run explicitly::
 
 from __future__ import annotations
 
-import os
-import shutil
-import subprocess
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-
 import pytest
-from aiohttp import web
 
 from openclaw_target import SYSTEM_TAG, openclaw_target_factory
-from openclaw_target.docker_runtime import DEFAULT_DOCKER_IMAGE
 from openclaw_target.target import OpenClawTarget, USER_MESSAGE_CTRL
+from test_support import docker_daemon_ready, docker_image, echo_stub_upstream_for_host_proxy
 
 from superred.core.controller import Controller
 from superred.core.interfaces.optimizer import Optimizer
@@ -42,59 +35,10 @@ from superred.core.types.observable import ObservableValue
 from superred.core.types.trajectory import Trajectory
 
 
-def _docker_daemon_ready() -> bool:
-    if not shutil.which("docker"):
-        return False
-    return subprocess.run(
-        ["docker", "info"],
-        capture_output=True,
-        check=False,
-    ).returncode == 0
-
-
 pytestmark = pytest.mark.skipif(
-    not _docker_daemon_ready(),
+    not docker_daemon_ready(),
     reason="Docker daemon unavailable",
 )
-
-
-@asynccontextmanager
-async def _echo_stub_upstream_for_host_proxy() -> AsyncIterator[str]:
-    """Upstream stub that echoes the latest user message in its reply."""
-
-    async def completions(request: web.Request) -> web.Response:
-        body = await request.json()
-        user_messages = [
-            m.get("content", "")
-            for m in body.get("messages", [])
-            if m.get("role") == "user"
-        ]
-        last_user = str(user_messages[-1]) if user_messages else ""
-        return web.json_response(
-            {
-                "choices": [
-                    {
-                        "message": {
-                            "role": "assistant",
-                            "content": f"ACK:{last_user}",
-                        },
-                    },
-                ],
-                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
-            },
-        )
-
-    app = web.Application()
-    app.router.add_post("/v1/chat/completions", completions)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 0)
-    await site.start()
-    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
-    try:
-        yield f"http://127.0.0.1:{port}"
-    finally:
-        await runner.cleanup()
 
 
 class _MarkerEchoOptimizer(Optimizer):
@@ -163,9 +107,8 @@ async def test_docker_controller_concurrency_two_parallel_tasks() -> None:
     """Two Docker-managed targets run concurrently via ``concurrency=2``."""
     marker_a = "CONCURRENT-MARKER-ALPHA-91"
     marker_b = "CONCURRENT-MARKER-BETA-92"
-    image = os.environ.get("OPENCLAW_DOCKER_IMAGE", DEFAULT_DOCKER_IMAGE)
-
-    async with _echo_stub_upstream_for_host_proxy() as stub_url:
+    image = docker_image()
+    async with echo_stub_upstream_for_host_proxy() as stub_url:
         controller = Controller(
             optimizer_factory=lambda: _MarkerEchoOptimizer(),
             target_factory=openclaw_target_factory(

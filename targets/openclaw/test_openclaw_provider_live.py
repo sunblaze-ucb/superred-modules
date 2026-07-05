@@ -18,9 +18,7 @@ Optional overrides::
 from __future__ import annotations
 
 import json
-import os
 import re
-import shutil
 from typing import Any
 
 import pytest
@@ -32,6 +30,7 @@ from openclaw_target.target import (
     MODEL_SYSTEM_PROMPT_CTRL,
     USER_MESSAGE_CTRL,
 )
+from test_support import gemini_api_key, gemini_target, openclaw_cli_ready
 
 from superred.core.types.events import (
     ControllableInjection,
@@ -40,46 +39,12 @@ from superred.core.types.events import (
     ObservableEvent,
 )
 
-DEFAULT_GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/v1"
-DEFAULT_GEMINI_MODEL = "google/gemini-2.5-flash"
-_PROVIDER_TIMEOUT_S = 180
-
-
-def _openclaw_cli_ready() -> bool:
-    return shutil.which("openclaw") is not None
-
-
-def _gemini_api_key() -> str | None:
-    key = os.environ.get("GEMINI_API_KEY", "").strip()
-    return key or None
-
-
-def _provider_model() -> str:
-    return os.environ.get("OPENCLAW_PROVIDER_MODEL", DEFAULT_GEMINI_MODEL)
-
-
-def _provider_base_url() -> str:
-    return os.environ.get("OPENCLAW_PROVIDER_BASE_URL", DEFAULT_GEMINI_BASE)
-
 
 pytestmark = [
     pytest.mark.provider,
-    pytest.mark.skipif(not _openclaw_cli_ready(), reason="openclaw CLI unavailable"),
-    pytest.mark.skipif(_gemini_api_key() is None, reason="GEMINI_API_KEY not set"),
+    pytest.mark.skipif(not openclaw_cli_ready(), reason="openclaw CLI unavailable"),
+    pytest.mark.skipif(gemini_api_key() is None, reason="GEMINI_API_KEY not set"),
 ]
-
-
-def _gemini_target(**kwargs: Any) -> OpenClawTarget:
-    key = _gemini_api_key()
-    assert key is not None
-    return OpenClawTarget(
-        managed=True,
-        model_id=_provider_model(),
-        provider_base_url=_provider_base_url(),
-        provider_api_key=key,
-        agent_timeout_s=_PROVIDER_TIMEOUT_S,
-        **kwargs,
-    )
 
 
 async def _run_with_user_message(
@@ -107,7 +72,7 @@ async def _run_with_user_message(
 @pytest.mark.asyncio
 async def test_provider_direct_gemini_agent_turn() -> None:
     """Real gateway → real Gemini (no proxy): basic agent turn completes."""
-    target = _gemini_target(enable_llm_proxy=False)
+    target = gemini_target(enable_llm_proxy=False)
     try:
         await target.warmup_static_observables()
         response, _ = await _run_with_user_message(
@@ -123,7 +88,7 @@ async def test_provider_direct_gemini_agent_turn() -> None:
 @pytest.mark.asyncio
 async def test_provider_gemini_response_injection_through_real_proxy() -> None:
     """Real gateway → real proxy → real Gemini: response injection lands."""
-    target = _gemini_target()
+    target = gemini_target()
     try:
         await target.warmup_static_observables()
 
@@ -163,7 +128,7 @@ async def test_provider_gemini_response_injection_through_real_proxy() -> None:
 @pytest.mark.asyncio
 async def test_provider_gemini_system_prompt_injection_through_real_proxy() -> None:
     """Real proxy splices ``model_system_prompt`` into upstream requests."""
-    target = _gemini_target()
+    target = gemini_target()
     try:
         await target.warmup_static_observables()
 
@@ -201,7 +166,7 @@ async def test_provider_gemini_system_prompt_injection_through_real_proxy() -> N
 @pytest.mark.asyncio
 async def test_provider_gemini_streaming_through_real_proxy() -> None:
     """Real Gemini SSE via proxy: ``assistant_stream`` is incremental, not batched."""
-    target = _gemini_target()
+    target = gemini_target()
     try:
         await target.warmup_static_observables()
         stream_chunks: list[str] = []
@@ -240,7 +205,7 @@ async def test_provider_gemini_streaming_through_real_proxy() -> None:
 @pytest.mark.asyncio
 async def test_provider_gemini_tool_injection_plugin_hook_fires() -> None:
     """Real Gemini chooses a tool; real plugin hook fires on ``before_tool_call``."""
-    target = _gemini_target(enable_tool_injection=True)
+    target = gemini_target(enable_tool_injection=True)
     try:
         await target.warmup_static_observables()
         target.set_config(

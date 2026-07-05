@@ -228,10 +228,13 @@ Run with ``GEMINI_API_KEY=... pytest test_openclaw_provider_live.py -v``.
 These cover direct provider turns, proxy response/system injection, live SSE
 streaming, and a real model-driven tool-call plugin hook — no stub upstream.
 
-**Tier 3** tests in `test_openclaw_tier3_e2e.py` drive the same paths through
+**Tier 3** tests in `test_controller_provider_e2e.py` drive the same paths through
 the full ``Controller`` → factory → managed target stack with a real Gemini
 upstream (also opt-in). Run with
-``GEMINI_API_KEY=... pytest test_openclaw_tier3_e2e.py -v``.
+``GEMINI_API_KEY=... pytest test_controller_provider_e2e.py -v``.
+
+Shared live-test helpers (stub LLM servers, Gemini/Docker factories, send-event
+builders) live in ``test_support/``.
 
 Config/command builders are covered in `test_runtime_config.py`. When Docker
 is available, `test_docker_smoke.py` exercises real containers: operator
