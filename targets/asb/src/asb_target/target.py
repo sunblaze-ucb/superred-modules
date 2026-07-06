@@ -64,6 +64,11 @@ ensure_vendor_on_path()
 # AIOS local-HF placeholder (backend removed in this port), not ASB's run model.
 _DEFAULT_MODEL = "gpt-4o-mini"
 _DEFAULT_MAX_OUTPUT_TOKENS = 1024  # upstream GPTLLM-faithful (not the argparse 256)
+# Sentinel: embed_api_base/embed_api_key left unset => inherit the chat api_base/
+# api_key (the historical single-credential behaviour). Passing an explicit value
+# (including None) routes the memory embedder to a SEPARATE endpoint/key -- needed
+# when the chat model and the embedder live behind different gateways.
+_EMBED_INHERIT = object()
 _PKG_DIR = os.path.dirname(os.path.abspath(__file__))
 _NORMAL_TOOLS_PATH = os.path.join(_PKG_DIR, "data", "all_normal_tools.jsonl")
 _VENDOR_EXAMPLE_DIR = os.path.join(_PKG_DIR, "_asb_vendor", "pyopenagi", "agents", "example")
@@ -90,15 +95,23 @@ class AsbTarget(Target):
         max_output_tokens: int = _DEFAULT_MAX_OUTPUT_TOKENS,
         embed_model: str = DEFAULT_EMBED_MODEL,
         embed: EmbedFn | None = None,
+        embed_api_base: str | None | object = _EMBED_INHERIT,
+        embed_api_key: str | None | object = _EMBED_INHERIT,
     ) -> None:
         self._model = model
         self._api_base = api_base
         self._api_key = api_key
         self._request_delay_seconds = request_delay_seconds
         self._max_output_tokens = max_output_tokens
+        # The embedder may live behind a different gateway than the chat model
+        # (e.g. the chat model on a proxy that serves no /embeddings route, the
+        # embedder on the real OpenAI API). Inherit the chat credentials unless
+        # embed_api_base/embed_api_key are given explicitly.
+        eb = api_base if embed_api_base is _EMBED_INHERIT else embed_api_base
+        ek = api_key if embed_api_key is _EMBED_INHERIT else embed_api_key
         # Durable per-task memory store (survives reset_ephemeral_state).
         self._memory = MemoryStore(
-            embed_model=embed_model, api_base=api_base, api_key=api_key, embed=embed
+            embed_model=embed_model, api_base=eb, api_key=ek, embed=embed
         )
         # Per-task config (set via set_config).
         self._agent_name = ""
