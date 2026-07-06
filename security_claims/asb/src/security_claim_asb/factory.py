@@ -15,6 +15,7 @@ from typing import cast
 
 from asb_target import AsbTarget
 from asb_target.memory_store import DEFAULT_EMBED_MODEL
+from asb_target.target import _EMBED_INHERIT
 from superred.core.controller import TargetFactory
 from superred.core.interfaces.security_claim import SecurityClaim
 from superred.core.interfaces.task import Task
@@ -219,6 +220,8 @@ def asb_target_factory(
     request_delay_seconds: float = 2.0,
     max_output_tokens: int = 1024,
     embed_model: str = DEFAULT_EMBED_MODEL,
+    embed_api_base: str | None | object = _EMBED_INHERIT,
+    embed_api_key: str | None | object = _EMBED_INHERIT,
 ) -> TargetFactory:
     """A ``TargetFactory`` for the ASB target (concurrency locked to 1).
 
@@ -243,6 +246,8 @@ def asb_target_factory(
             request_delay_seconds=request_delay_seconds,
             max_output_tokens=max_output_tokens,
             embed_model=embed_model,
+            embed_api_base=embed_api_base,
+            embed_api_key=embed_api_key,
         ),
         concurrency=1,
     )
