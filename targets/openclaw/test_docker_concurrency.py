@@ -35,10 +35,10 @@ from superred.core.types.observable import ObservableValue
 from superred.core.types.trajectory import Trajectory
 
 
-pytestmark = pytest.mark.skipif(
-    not docker_daemon_ready(),
-    reason="Docker daemon unavailable",
-)
+pytestmark = [
+    pytest.mark.docker,
+    pytest.mark.skipif(not docker_daemon_ready(), reason="Docker daemon unavailable"),
+]
 
 
 class _MarkerEchoOptimizer(Optimizer):

@@ -33,18 +33,22 @@ from test_support import (
     docker_image,
     docker_target,
     gemini_api_key,
+    loopback_recording_stub_llm_server,
     loopback_stub_tool_calling_llm_server,
     loopback_stub_upstream_for_host_proxy,
     passthrough_send_event,
+    run_all_controllables_scenario,
+    run_model_system_prompt_injection_scenario,
+    run_tool_alias_injection_scenario,
 )
 
 from superred.core.types.events import ControllableInjection
 
 
-pytestmark = pytest.mark.skipif(
-    not docker_daemon_ready(),
-    reason="Docker daemon unavailable",
-)
+pytestmark = [
+    pytest.mark.docker,
+    pytest.mark.skipif(not docker_daemon_ready(), reason="Docker daemon unavailable"),
+]
 
 
 def _docker_client(rt: OpenClawDockerRuntime) -> OpenClawWSClient:
@@ -357,6 +361,112 @@ async def test_docker_openclaw_target_tool_injection_round_trip() -> None:
             assert all(
                 "DOCKER-TARGET-ORIGINAL-NOT-INJECTED" not in str(m.get("content"))
                 for m in tool_messages
+            )
+        finally:
+            await target.teardown()
+
+
+@pytest.mark.asyncio
+async def test_docker_web_search_alias_injection_round_trip_through_real_plugin() -> None:
+    """``web_content`` via the ``web_search`` alias, Docker parity for the
+    same scenario in ``test_openclaw_live.py``."""
+    async with loopback_stub_tool_calling_llm_server(
+        tool_name="web_search",
+        tool_arguments={"query": "DOCKER-ORIGINAL-WEB-SEARCH-NOT-INJECTED"},
+    ) as (stub_url, requests):
+        target = docker_target(
+            model_id="openai/gpt-4o-mini",
+            provider_base_url=stub_url,
+            provider_api_key="stub-key",
+            enable_tool_injection=True,
+        )
+        try:
+            await run_tool_alias_injection_scenario(
+                target,
+                tool_name="web_search",
+                controllable_name="web_content",
+                tool_policy="coding",
+                user_message="Search the web for DOCKER-ORIGINAL-WEB-SEARCH-NOT-INJECTED.",
+                followup_user_message="What did the search return?",
+                injection_marker="DOCKER-INJECTED-WEB-SEARCH-78",
+                original_marker="DOCKER-ORIGINAL-WEB-SEARCH-NOT-INJECTED",
+                requests=requests,
+            )
+        finally:
+            await target.teardown()
+
+
+@pytest.mark.asyncio
+async def test_docker_process_alias_injection_round_trip_through_real_plugin() -> None:
+    """``shell_output`` via the ``process`` alias, Docker parity for the
+    same scenario in ``test_openclaw_live.py``."""
+    async with loopback_stub_tool_calling_llm_server(
+        tool_name="process",
+        tool_arguments={"action": "list"},
+    ) as (stub_url, requests):
+        target = docker_target(
+            model_id="openai/gpt-4o-mini",
+            provider_base_url=stub_url,
+            provider_api_key="stub-key",
+            enable_tool_injection=True,
+        )
+        try:
+            await run_tool_alias_injection_scenario(
+                target,
+                tool_name="process",
+                controllable_name="shell_output",
+                tool_policy="coding",
+                user_message="List all background process sessions.",
+                followup_user_message="What did the process list show?",
+                injection_marker="DOCKER-INJECTED-PROCESS-79",
+                original_marker="DOCKER-ORIGINAL-PROCESS-LIST-NOT-INJECTED",
+                requests=requests,
+            )
+        finally:
+            await target.teardown()
+
+
+@pytest.mark.asyncio
+async def test_docker_model_system_prompt_injection_through_real_proxy() -> None:
+    """``model_system_prompt`` through the host-side proxy reached by a
+    containerised gateway, Docker parity for the same scenario in
+    ``test_openclaw_live.py``."""
+    async with loopback_recording_stub_llm_server(reply="Docker upstream ok.") as (
+        stub_url, requests,
+    ):
+        target = docker_target(
+            model_id="openai/gpt-4o-mini",
+            provider_base_url=stub_url,
+            provider_api_key="stub-key",
+        )
+        try:
+            await run_model_system_prompt_injection_scenario(
+                target,
+                injection_marker="DOCKER-MODEL-SYSTEM-INJECT-55",
+                requests=requests,
+            )
+        finally:
+            await target.teardown()
+
+
+@pytest.mark.asyncio
+async def test_docker_all_controllables_in_one_session() -> None:
+    """One session exercising every controllable path against a real
+    containerised gateway, Docker parity for the same scenario in
+    ``test_openclaw_live.py``."""
+    async with loopback_stub_tool_calling_llm_server(
+        tool_name="read",
+        tool_arguments={"path": "USER.md"},
+    ) as (stub_url, requests):
+        target = docker_target(
+            model_id="openai/gpt-4o-mini",
+            provider_base_url=stub_url,
+            provider_api_key="stub-key",
+            enable_tool_injection=True,
+        )
+        try:
+            await run_all_controllables_scenario(
+                target, marker_prefix="ALL-CTRL-DOCKER", requests=requests,
             )
         finally:
             await target.teardown()

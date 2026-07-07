@@ -28,5 +28,6 @@ testpaths = ["."]
 markers = [
     "provider: opt-in tests against a real LLM provider (requires GEMINI_API_KEY)",
     "controller_e2e: full Controller + real gateway + real provider E2E (requires GEMINI_API_KEY)",
-    "docker: opt-in tests requiring a Docker daemon",
+    "docker: real-container tests (requires Docker daemon) - the production isolation path",
+    "local_gateway: real local `openclaw gateway` CLI tests - fast dev path, no Docker",
 ]

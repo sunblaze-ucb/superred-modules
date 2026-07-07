@@ -241,6 +241,43 @@ async def container_stub_tool_calling_llm_server(
 
 
 @asynccontextmanager
+async def container_recording_stub_llm_server(
+    *,
+    reply: str = "Docker stub upstream reply.",
+) -> AsyncIterator[tuple[str, list[dict[str, Any]]]]:
+    """Chat-completions stub reachable via ``host.docker.internal`` that
+    records every request body (Docker analogue of
+    :func:`loopback_recording_stub_llm_server`)."""
+    requests: list[dict[str, Any]] = []
+
+    async def completions(request: web.Request) -> web.Response:
+        body = await request.json()
+        requests.append(body)
+        return web.json_response(
+            {
+                "id": "chatcmpl-docker-record",
+                "object": "chat.completion",
+                "choices": [
+                    {"message": {"role": "assistant", "content": reply}},
+                ],
+                "usage": {"prompt_tokens": 2, "completion_tokens": 3},
+            },
+        )
+
+    app = web.Application()
+    app.router.add_post("/v1/chat/completions", completions)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", 0)  # noqa: S104 - container reachability
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
+    try:
+        yield f"http://host.docker.internal:{port}", requests
+    finally:
+        await runner.cleanup()
+
+
+@asynccontextmanager
 async def loopback_stub_upstream_for_host_proxy(
     *,
     reply: str = "Docker Target stub LLM reply.",

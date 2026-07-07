@@ -107,13 +107,23 @@ USER_MESSAGE_CTRL = Controllable(
     description="The user message sent to the OpenClaw agent.",
 )
 
+_TOOL_INJECTION_SCOPE_NOTE = (
+    "Poisons the persisted session transcript (via the plugin's "
+    "tool_result_persist hook), not the in-memory copy the current "
+    "tool-calling loop is already acting on. The real tool output is "
+    "what this turn's agent sees; the injected value surfaces on the "
+    "*next* prompt submitted in this session (poison now, trigger "
+    "later) — an OpenClaw platform hook-contract limit, not a wiring "
+    "gap. Requires the injection plugin."
+)
+
 WEB_CONTENT_CTRL = Controllable(
     name="web_content",
     security_domain=EXTERNAL_DATA_TAG,
     description=(
         "Per-call injection for web_fetch / web_search tool results. "
         "Emitted mid-run: one ControllablePostCallEvent per intercepted "
-        "tool invocation. Requires the injection plugin (Phase 2)."
+        "tool invocation. " + _TOOL_INJECTION_SCOPE_NOTE
     ),
 )
 
@@ -123,7 +133,7 @@ FILE_CONTENT_CTRL = Controllable(
     description=(
         "Per-call injection for file read tool results. Emitted "
         "mid-run: one ControllablePostCallEvent per intercepted "
-        "invocation. Requires the injection plugin (Phase 2)."
+        "invocation. " + _TOOL_INJECTION_SCOPE_NOTE
     ),
 )
 
@@ -135,7 +145,7 @@ SHELL_OUTPUT_CTRL = Controllable(
         "`process` agent tools). Emitted mid-run: one ControllablePostCallEvent "
         "per intercepted invocation. Command stdout is untrusted external data "
         "(it may surface attacker-controlled file/process content), so it is a "
-        "tool-output injection point. Requires the injection plugin."
+        "tool-output injection point. " + _TOOL_INJECTION_SCOPE_NOTE
     ),
 )
 
@@ -146,7 +156,7 @@ MESSAGE_CONTENT_CTRL = Controllable(
         "Per-call injection for the messaging tool's returned content "
         "(the `message` tool). Emitted mid-run: one ControllablePostCallEvent "
         "per intercepted invocation. Inbound message bodies surfaced to the "
-        "agent are untrusted. Requires the injection plugin."
+        "agent are untrusted. " + _TOOL_INJECTION_SCOPE_NOTE
     ),
 )
 
@@ -174,11 +184,13 @@ MODEL_RESPONSE_CTRL = Controllable(
 # -- Tool-output injection registry -------------------------------------------
 #
 # Maps an OpenClaw gateway tool name -> the Controllable whose injected value
-# replaces that tool's output (a ControllablePostCallEvent fires per call when
-# ``enable_tool_injection`` is on). This is the single extension point for
-# tool-output injection: ``get_controllables`` and the plugin bridge both
-# derive from it, so adding a new capability is one entry here — define a
-# Controllable with the right security domain and map its gateway tool name(s).
+# poisons that tool's *persisted* output (a ControllablePostCallEvent fires
+# per call when ``enable_tool_injection`` is on; see each Controllable's
+# description / the module docstring for the same-turn-vs-next-turn scope).
+# This is the single extension point for tool-output injection:
+# ``get_controllables`` and the plugin bridge both derive from it, so adding
+# a new capability is one entry here — define a Controllable with the right
+# security domain and map its gateway tool name(s).
 #
 # Tool names are the real OpenClaw *agent-facing* tool identifiers (verified in
 # openclaw/openclaw src/agents/agent-tools.ts and src/agents/*-tools.*):
@@ -630,9 +642,11 @@ class OpenClawTarget(Target):
         if not response.value:
             return None
 
-        # The injected value becomes the tool's returned content (the
-        # adversarial document/page the model will read), applied at
-        # persist time by the plugin.
+        # The injected value becomes the tool's persisted content (the
+        # adversarial document/page a *later* turn's model will read from
+        # the transcript), applied at persist time by the plugin — see
+        # _TOOL_INJECTION_SCOPE_NOTE for why this is next-turn, not
+        # same-turn.
         return {"toolResult": response.value}
 
     def _controllable_for_tool(self, tool_name: str) -> Controllable | None:

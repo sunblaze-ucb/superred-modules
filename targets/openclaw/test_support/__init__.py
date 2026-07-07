@@ -12,12 +12,18 @@ from test_support.gemini import (
     provider_base_url,
     provider_model,
 )
+from test_support.scenarios import (
+    run_all_controllables_scenario,
+    run_model_system_prompt_injection_scenario,
+    run_tool_alias_injection_scenario,
+)
 from test_support.send_event import (
     assert_tool_injection_persisted_on_next_run,
     injecting_send_event,
     passthrough_send_event,
 )
 from test_support.stubs import (
+    container_recording_stub_llm_server,
     container_stub_llm_server,
     container_stub_tool_calling_llm_server,
     echo_stub_upstream_for_host_proxy,
@@ -33,6 +39,7 @@ __all__ = [
     "DEFAULT_GEMINI_MODEL",
     "DEFAULT_PROVIDER_TIMEOUT_S",
     "assert_tool_injection_persisted_on_next_run",
+    "container_recording_stub_llm_server",
     "container_stub_llm_server",
     "container_stub_tool_calling_llm_server",
     "docker_daemon_ready",
@@ -53,4 +60,7 @@ __all__ = [
     "passthrough_send_event",
     "provider_base_url",
     "provider_model",
+    "run_all_controllables_scenario",
+    "run_model_system_prompt_injection_scenario",
+    "run_tool_alias_injection_scenario",
 ]

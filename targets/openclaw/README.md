@@ -90,9 +90,13 @@ Controllables (injection points):
 | `user_message` | `user_input` | PreCall, once per run | Always on. |
 | `web_content` | `external_data` | PostCall, per `web_fetch`/`web_search` call | Needs `enable_tool_injection`. |
 | `file_content` | `external_data` | PostCall, per `read` call | Needs `enable_tool_injection`. |
-| `shell_output` | `external_data` | PostCall, per `bash`/`exec`/`process` call | Needs `enable_tool_injection`. |
+| `shell_output` | `external_data` | PostCall, per `exec`/`process` call | Needs `enable_tool_injection`. |
 | `message_content` | `external_data` | PostCall, per `message` call | Needs `enable_tool_injection`. |
-| `model_system_prompt` | `model` | PreCall, pre-run | Needs the LLM proxy. |
+| `model_system_prompt` | `model` | PreCall, pre-run | Needs the LLM proxy. Same-turn (applied before the run's first model call). |
+| `model_response_injection` | `model` | PreCall, pre-run, applied to every model response | Needs the LLM proxy. **Same-turn** — spliced onto the wire before the agent sees the reply (see Design decisions). |
+
+`web_content`/`file_content`/`shell_output`/`message_content` are **next-turn**
+only: see Design decisions below for why.
 
 Observables: `model_identity`, `system_description`, `tool_list`,
 `system_prompt` (static, populated at `initialize()`); `assistant_stream`,
@@ -112,6 +116,44 @@ the verified OpenClaw identifiers: `web_fetch`/`web_search`, `read`,
 `bash`/`exec`/`process`, `message`. Note: **memory** is an OpenClaw *plugin
 slot* (`plugins.slots.memory`), not a tool, so it is configured via config
 rather than registered as a tool-output controllable.
+
+## Design decisions
+
+**Tool-output injection is next-turn, not same-turn.** OpenClaw's embedded
+agent runner drives the same-turn tool-calling continuation (the provider
+call immediately following a `tool_calls` response) from its own in-memory
+message buffer, not the session transcript. The plugin's `tool_result_persist`
+hook — the only hook that can rewrite a tool result — only rewrites what gets
+*persisted* to the transcript (verified against OpenClaw source:
+`src/agents/session-tool-result-guard-wrapper.ts` wires it solely into
+`transformToolResultForPersistence`). So an injected tool result surfaces on
+the *next* prompt submitted in the same session, not the turn in which the
+tool ran. OpenClaw's own `api.session.workflow.enqueueNextTurnInjection(...)`
+API — documented as "durable context to reach the next model turn exactly
+once" — confirms next-turn delivery is a first-class, intended primitive on
+this platform, not a gap. This also matches the threat model used by
+OpenClaw-specific security literature: SafeClawBench's Persistent State
+Exploitation dimension (arXiv 2606.30755 / SafeClawArena) scores this exact
+shape — whether a planted directive "survives... and biases a follow-up
+conversation" — as a two-phase persisted-then-triggered check, which is what
+`assert_tool_injection_persisted_on_next_run` (`test_support/send_event.py`)
+asserts. For a same-turn attack (fake model output, not fake tool output),
+use `model_response_injection` instead.
+
+**Model streaming: live relay + append, not buffer-then-forward.** OpenClaw's
+real provider client always sends `stream: true`
+(`openclaw/openclaw src/llm/providers/openai-completions.ts`) and expects
+genuine incremental SSE from a real provider. `LLMProxy` relays each upstream
+delta to the gateway live (not buffered-then-replayed) so the
+`assistant_stream` observable keeps real token-by-token granularity — verified
+live against Gemini: 3 incremental deltas direct vs. 1 batched delta when an
+earlier version forced non-streaming upstream. `model_response_injection` is
+appended as a trailing delta chunk before the stream's finish frame, so
+injection is still same-turn even in the live-relay path. A buffer-then-forward
+design would be simpler to implement (reuses the existing SSE assembler) and
+would allow full response *replace* instead of append-only, at the cost of
+time-to-first-token and `assistant_stream` granularity; not implemented since
+no current use case needs full replace.
 
 ## Usage
 
@@ -199,18 +241,32 @@ for `agents.files.set` (planting the system prompt / workspace files) and
 ## Testing
 
 ```bash
-pytest                      # from this directory
+pytest                      # everything (mock + local live + docker, when available)
+pytest -m docker            # Docker only — the production isolation path
+pytest -m local_gateway     # local `openclaw gateway` CLI only — fast dev path
+pytest -m "not docker and not local_gateway and not provider and not controller_e2e"  # mock only
 ```
+
+`docker` and `local_gateway` (`pyproject.toml` markers) exercise the *same*
+real gateway + real Node plugin + real host-side proxy/injection-server stack
+against **both** managed runtimes; almost every scenario below is duplicated
+across both suites via shared helpers in `test_support/scenarios.py` so
+adding a new controllable's test coverage once covers both lanes. Treat
+`docker` as the production/CI path (full isolation, matches how the target
+should actually be deployed) and `local_gateway` as the fast local-dev path
+(no container/pairing/volume-seed overhead; historically caught real bugs —
+SSE relay, upstream URL normalization — before they were reproduced in
+Docker).
 
 Tests use an in-process `MockGateway` (no Node/Docker) in
 `test_openclaw_integration.py`, exercising the full `Controller` pipeline,
 the injection bridge, ws session helpers, and the reset lifecycle.
 
-**Live** tests in `test_openclaw_live.py` spawn the real `openclaw gateway`
-CLI (skipped when the CLI is missing) and drive RPCs plus a full managed
-`OpenClawTarget` run against a stub LLM upstream — no API keys required. This
-includes `test_live_tool_injection_round_trip_through_real_plugin`, which
-drives the real Node plugin (not `MockGateway`) through an actual tool call:
+**Live** (`local_gateway`) tests in `test_openclaw_live.py` spawn the real
+`openclaw gateway` CLI (skipped when the CLI is missing) and drive RPCs plus
+a full managed `OpenClawTarget` run against a stub LLM upstream — no API keys
+required. This includes `test_live_tool_injection_round_trip_through_real_plugin`,
+which drives the real Node plugin (not `MockGateway`) through an actual tool call:
 a stub LLM response with an OpenAI-style `tool_calls` payload makes the real
 agent loop invoke the real `read` tool, the real plugin's `before_tool_call`
 hook POSTs to a real `InjectionServer`, and `tool_result_persist` splices the
@@ -252,9 +308,22 @@ same Docker path through :class:`OpenClawTarget` / ``managed_runtime=\"docker\"`
 path against real Gemini. ``test_docker_concurrency.py`` exercises
 ``TargetFactory.concurrency=2`` with two parallel containerised gateways.
 
-**Live** tests in ``test_openclaw_live.py`` also cover ``web_search`` and
-``process`` tool-name aliases for the ``web_content`` and ``shell_output``
-controllables (alongside ``web_fetch`` and ``exec``).
+**Local/Docker parity.** ``web_search``/``process`` tool-name alias
+round-trips, ``model_system_prompt`` proxy injection, and an
+all-controllables-in-one-session run are each implemented once as a shared
+scenario in ``test_support/scenarios.py`` and exercised by **both**
+``test_openclaw_live.py`` (``test_live_web_search_alias_injection_round_trip_through_real_plugin``,
+``test_live_process_alias_injection_round_trip_through_real_plugin``,
+``test_live_model_system_prompt_injection_through_real_proxy``,
+``test_live_all_controllables_in_one_session``) and ``test_docker_smoke.py``
+(``test_docker_web_search_alias_injection_round_trip_through_real_plugin``,
+``test_docker_process_alias_injection_round_trip_through_real_plugin``,
+``test_docker_model_system_prompt_injection_through_real_proxy``,
+``test_docker_all_controllables_in_one_session``) — closing the coverage gap
+between the two managed runtimes without duplicating assertion logic. The LAN
+device-identity remote-connect path (``test_live_remote_path_grants_operator_scopes_via_device_identity``)
+stays local-only by design: it reproduces the Docker "remote client" auth
+path without needing a container.
 
 ## Known limitations / notes
 
