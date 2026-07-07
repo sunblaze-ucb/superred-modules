@@ -1,18 +1,11 @@
-"""Opt-in live tests against a real LLM provider (Gemini).
+"""Opt-in Docker + real Gemini provider tests.
 
-Unlike ``test_openclaw_live.py`` (stub upstream), these exercises use a real
-provider API. They are skipped unless both the ``openclaw`` CLI and
-``GEMINI_API_KEY`` are set. Never commit API keys — pass them via environment
-only.
+Mirrors the key scenarios from ``test_openclaw_provider_live.py`` but through
+``managed_runtime=\"docker\"`` (production isolation path).
 
 Run explicitly::
 
-    GEMINI_API_KEY=... pytest test_openclaw_provider_live.py -v
-
-Optional overrides::
-
-    OPENCLAW_PROVIDER_MODEL=google/gemini-2.5-flash
-    OPENCLAW_PROVIDER_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/v1
+    GEMINI_API_KEY=... pytest test_docker_provider_live.py -v -m "provider and docker"
 """
 
 from __future__ import annotations
@@ -30,7 +23,7 @@ from openclaw_target.target import (
     MODEL_SYSTEM_PROMPT_CTRL,
     USER_MESSAGE_CTRL,
 )
-from test_support import gemini_api_key, gemini_target, openclaw_cli_ready
+from test_support import docker_daemon_ready, docker_gemini_target, gemini_api_key
 
 from superred.core.types.events import (
     ControllableInjection,
@@ -42,7 +35,8 @@ from superred.core.types.events import (
 
 pytestmark = [
     pytest.mark.provider,
-    pytest.mark.skipif(not openclaw_cli_ready(), reason="openclaw CLI unavailable"),
+    pytest.mark.docker,
+    pytest.mark.skipif(not docker_daemon_ready(), reason="Docker daemon unavailable"),
     pytest.mark.skipif(gemini_api_key() is None, reason="GEMINI_API_KEY not set"),
 ]
 
@@ -50,34 +44,29 @@ pytestmark = [
 async def _run_with_user_message(
     target: OpenClawTarget,
     user_message: str,
-    *,
-    send_event: object | None = None,
 ) -> tuple[str | None, list[object]]:
     emitted: list[object] = []
 
-    async def default_send_event(event: object) -> ControllableInjection:
+    async def send_event(event: object) -> ControllableInjection:
         controllable = getattr(event, "controllable")
         value = user_message if controllable is USER_MESSAGE_CTRL else ""
         return ControllableInjection(
             event=event, controllable=controllable, value=value,  # type: ignore[arg-type]
         )
 
-    await target.run(
-        lambda e: emitted.append(e),
-        send_event or default_send_event,
-    )
+    await target.run(lambda e: emitted.append(e), send_event)
     return target.query("last_response"), emitted
 
 
 @pytest.mark.asyncio
-async def test_provider_direct_gemini_agent_turn() -> None:
-    """Real gateway → real Gemini (no proxy): basic agent turn completes."""
-    target = gemini_target(enable_llm_proxy=False)
+async def test_docker_provider_gemini_agent_turn() -> None:
+    """Docker Target → real Gemini: basic agent turn completes."""
+    target = docker_gemini_target(timeout_s=240)
     try:
         await target.warmup_static_observables()
         response, _ = await _run_with_user_message(
             target,
-            "What is 17 + 25? Reply with only the numeric result, no explanation.",
+            "What is 17 + 25? Reply with only the numeric result.",
         )
         assert response is not None
         assert re.search(r"\b42\b", response), response
@@ -86,16 +75,16 @@ async def test_provider_direct_gemini_agent_turn() -> None:
 
 
 @pytest.mark.asyncio
-async def test_provider_gemini_response_injection_through_real_proxy() -> None:
-    """Real gateway → real proxy → real Gemini: response injection lands."""
-    target = gemini_target()
+async def test_docker_provider_gemini_response_injection_through_real_proxy() -> None:
+    """Docker Target → proxy → real Gemini: response injection lands."""
+    target = docker_gemini_target(timeout_s=240)
     try:
         await target.warmup_static_observables()
 
         async def send_event(event: object) -> ControllableInjection:
             controllable = getattr(event, "controllable")
             if controllable is MODEL_RESPONSE_CTRL:
-                value = "PROVIDER-LIVE-RESPONSE-INJECT-91"
+                value = "DOCKER-PROVIDER-RESPONSE-INJECT-91"
             elif controllable is USER_MESSAGE_CTRL:
                 value = "Say exactly: PROXY-OK"
             else:
@@ -104,69 +93,21 @@ async def test_provider_gemini_response_injection_through_real_proxy() -> None:
                 event=event, controllable=controllable, value=value,  # type: ignore[arg-type]
             )
 
-        emitted: list[object] = []
-        await target.run(lambda e: emitted.append(e), send_event)
+        await target.run(lambda _e: None, send_event)
 
         response = target.query("last_response")
         assert response is not None
-        assert "PROVIDER-LIVE-RESPONSE-INJECT-91" in response
-
-        model_resp_events = [
-            e for e in emitted
-            if isinstance(e, ObservableEvent)
-            and e.observable.name == "model_response"
-        ]
-        assert model_resp_events
-        assert "PROVIDER-LIVE-RESPONSE-INJECT-91" in model_resp_events[-1].content
-
+        assert "DOCKER-PROVIDER-RESPONSE-INJECT-91" in response
         assert target._llm_proxy is not None
-        assert target._llm_proxy.records, "proxy should record the upstream call"
+        assert target._llm_proxy.records
     finally:
         await target.teardown()
 
 
 @pytest.mark.asyncio
-async def test_provider_gemini_system_prompt_injection_through_real_proxy() -> None:
-    """Real proxy splices ``model_system_prompt`` into upstream requests."""
-    target = gemini_target()
-    try:
-        await target.warmup_static_observables()
-
-        async def send_event(event: object) -> ControllableInjection:
-            controllable = getattr(event, "controllable")
-            if controllable is MODEL_SYSTEM_PROMPT_CTRL:
-                value = "PROVIDER-LIVE-SYSTEM-INJECT-92"
-            elif controllable is USER_MESSAGE_CTRL:
-                value = "Reply with exactly: SYSTEM-OK"
-            else:
-                value = ""
-            return ControllableInjection(
-                event=event, controllable=controllable, value=value,  # type: ignore[arg-type]
-            )
-
-        await target.run(lambda e: None, send_event)
-
-        assert target._llm_proxy is not None
-        assert target._llm_proxy.records, "proxy should record the upstream call"
-        recorded = target._llm_proxy.records[-1]
-        system_messages = [
-            m.get("content", "")
-            for m in recorded.request_messages
-            if m.get("role") == "system"
-        ]
-        assert system_messages
-        assert any(
-            "PROVIDER-LIVE-SYSTEM-INJECT-92" in str(content)
-            for content in system_messages
-        ), system_messages
-    finally:
-        await target.teardown()
-
-
-@pytest.mark.asyncio
-async def test_provider_gemini_streaming_through_real_proxy() -> None:
-    """Real Gemini SSE via proxy: ``assistant_stream`` is incremental, not batched."""
-    target = gemini_target()
+async def test_docker_provider_gemini_streaming_through_real_proxy() -> None:
+    """Docker Target → proxy → real Gemini: incremental assistant_stream."""
+    target = docker_gemini_target(timeout_s=240)
     try:
         await target.warmup_static_observables()
         stream_chunks: list[str] = []
@@ -193,24 +134,20 @@ async def test_provider_gemini_streaming_through_real_proxy() -> None:
         await target.run(emit, send_event)
 
         assert target.query("last_response") is not None
-        assert len(stream_chunks) >= 2, (
-            "expected multiple live assistant_stream deltas through the real "
-            f"provider/proxy path, got {len(stream_chunks)} chunk(s): "
-            f"{stream_chunks!r}"
-        )
+        assert len(stream_chunks) >= 2, stream_chunks
     finally:
         await target.teardown()
 
 
 @pytest.mark.asyncio
-async def test_provider_gemini_tool_injection_plugin_hook_fires() -> None:
-    """Real Gemini chooses a tool; real plugin hook fires on ``before_tool_call``."""
-    target = gemini_target(enable_tool_injection=True)
+async def test_docker_provider_gemini_live_file_content_middleware_hook_fires() -> None:
+    """Docker Target + real Gemini: live ``file_content`` middleware hook fires."""
+    target = docker_gemini_target(timeout_s=240, enable_tool_injection=True)
     try:
         await target.warmup_static_observables()
         target.set_config(
             "workspace_files",
-            json.dumps({"USER.md": "PROVIDER-ORIGINAL-FILE-CONTENT-93"}),
+            json.dumps({"USER.md": "DOCKER-PROVIDER-ORIGINAL-93"}),
         )
 
         hook_calls: list[tuple[str, dict[str, Any]]] = []
@@ -222,7 +159,7 @@ async def test_provider_gemini_tool_injection_plugin_hook_fires() -> None:
                 return ControllableInjection(
                     event=event,  # type: ignore[arg-type]
                     controllable=controllable,
-                    value="PROVIDER-INJECTED-FILE-93",
+                    value="DOCKER-PROVIDER-INJECTED-FILE-93",
                 )
             if isinstance(event, ControllablePreCallEvent) and controllable is USER_MESSAGE_CTRL:
                 return ControllableInjection(
@@ -234,7 +171,7 @@ async def test_provider_gemini_tool_injection_plugin_hook_fires() -> None:
                 event=event, controllable=controllable, value="",  # type: ignore[arg-type]
             )
 
-        await target.run(lambda e: None, send_event)
+        await target.run(lambda _e: None, send_event)
 
         if not hook_calls:
             pytest.skip(

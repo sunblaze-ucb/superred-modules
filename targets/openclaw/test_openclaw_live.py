@@ -29,8 +29,10 @@ from openclaw_target.target import MODEL_RESPONSE_CTRL, USER_MESSAGE_CTRL
 from openclaw_target.ws_client import OpenClawWSClient
 from test_support import (
     assert_tool_injection_persisted_on_next_run,
+    assert_tool_injection_visible_same_turn,
     injecting_send_event,
     lan_ip,
+    live_file_send_event,
     local_web_page_server,
     loopback_recording_stub_llm_server,
     loopback_stub_llm_server,
@@ -192,30 +194,50 @@ async def test_live_remote_path_grants_operator_scopes_via_device_identity() -> 
 
 
 @pytest.mark.asyncio
-async def test_live_tool_injection_round_trip_through_real_plugin() -> None:
-    """The real Node plugin - not ``MockGateway`` - actually calls our
-    injection server for a real tool call, and the persisted tool result
-    really reflects the injected content on a *subsequent prompt
-    submission* in the same session.
+async def test_live_file_content_same_turn_through_middleware() -> None:
+    """``file_content`` rewrites the in-flight tool result via middleware."""
+    async with loopback_stub_tool_calling_llm_server(
+        tool_name="read",
+        tool_arguments={"path": "USER.md"},
+    ) as (stub_url, requests):
+        target = OpenClawTarget(
+            managed=True,
+            model_id="openai/gpt-4o-mini",
+            provider_base_url=stub_url,
+            provider_api_key="sk-stub",
+            enable_tool_injection=True,
+        )
+        try:
+            await target.warmup_static_observables()
+            target.set_config(
+                "workspace_files",
+                json.dumps({"USER.md": "ORIGINAL-FILE-CONTENT-NOT-INJECTED"}),
+            )
 
-    This is the one thing no other test proves: ``plugin/index.js``'s
-    ``before_tool_call``/``tool_result_persist`` hooks execute inside a real
-    OpenClaw Node process, round-trip over real HTTP to
-    ``InjectionServer``, and the splice actually lands in the persisted
-    session transcript that the gateway loads as history on the next turn -
-    not simulated in Python.
+            hook_calls: list[tuple[str, dict[str, Any]]] = []
+            send_event = live_file_send_event(
+                "Read USER.md and tell me what it says.", hook_calls,
+            )
 
-    Verified live (no mocks) that this hook rewrites what gets *persisted*,
-    not the in-flight tool-calling loop's own continuation: OpenClaw's
-    embedded agent runner drives the turn-2 continuation that follows a
-    ``tool_calls`` response from its own in-memory buffer, so requests[1]
-    (that continuation) still carries the real, unmodified tool output. The
-    injected content instead shows up once the *persisted* transcript is
-    loaded for a new prompt submission - i.e. a second ``target.run()`` call
-    in the same session - which is exactly the "poison now, triggered later"
-    shape this controllable exists for. This test drives two runs and
-    asserts the second one's first request reflects the injection.
-    """
+            await target.run(lambda _e: None, send_event)
+
+            assert len(hook_calls) == 1, f"plugin hook never fired: {hook_calls}"
+            assert hook_calls[0][0] == "file_content"
+            assert hook_calls[0][1]["hook"] == "tool_result_middleware"
+            assert hook_calls[0][1]["tool"] == "read"
+            assert len(requests) >= 2
+            assert_tool_injection_visible_same_turn(
+                requests,
+                injection_marker="INJECTED-BY-SUPERRED-42",
+                original_marker="ORIGINAL-FILE-CONTENT-NOT-INJECTED",
+            )
+        finally:
+            await target.teardown()
+
+
+@pytest.mark.asyncio
+async def test_live_file_content_transcript_poison_round_trip() -> None:
+    """``file_content_transcript`` poisons the persisted transcript for the next run."""
     # "USER.md" is one of the fixed bootstrap filenames agents.files.set
     # accepts (ALLOWED_WORKSPACE_BOOTSTRAP_FILES) - arbitrary names are
     # rejected by the gateway (verified live: INVALID_REQUEST "unsupported
@@ -246,42 +268,19 @@ async def test_live_tool_injection_round_trip_through_real_plugin() -> None:
             emitted: list[object] = []
             await target.run(lambda e: emitted.append(e), send_event)
 
-            # 1. The real plugin actually POSTed to our injection server.
             assert len(hook_calls) == 1, f"plugin hook never fired: {hook_calls}"
             ctrl_name, payload = hook_calls[0]
-            assert ctrl_name == "file_content"
+            assert ctrl_name == "file_content_transcript"
+            assert payload["hook"] == "before_tool_call"
             assert payload["tool"] == "read"
             assert payload["params"].get("path") == "USER.md"
 
-            # 2. The gateway actually invoked the tool loop twice (tool call,
-            # then the final turn with the tool result folded in).
             assert len(requests) >= 2
-
-            # 3. The in-flight continuation (requests[1], still inside the
-            # *same* tool-calling loop) genuinely ran the real tool - the
-            # real, unmodified file content is what the gateway sent back to
-            # the model to finish this turn. tool_result_persist does not
-            # (and, per OpenClaw's hook contract, cannot) rewrite this
-            # already-in-flight continuation.
             second_turn = json.dumps(requests[1])
             assert "ORIGINAL-FILE-CONTENT-NOT-INJECTED" in second_turn
             assert "INJECTED-BY-SUPERRED-42" not in second_turn
 
             assert target.query("last_response") is not None
-
-            # 4. A *new* prompt submission in the same session - the next
-            # target.run() - loads history from the persisted transcript,
-            # which tool_result_persist really did rewrite. This is the
-            # actual, verified effect of the hook: poisoning that surfaces
-            # on a later turn, proven end to end through the real plugin and
-            # a real gateway (no MockGateway, no direct Python call into the
-            # hook handler).
-            # Note: USER.md is also a bootstrap file baked directly into the
-            # system prompt on every turn (independent of the tool-result
-            # path), so its original content legitimately still appears
-            # there - this assertion only cares that the *poisoned tool
-            # result* (the toolResult-role transcript entry) now carries the
-            # injected text.
             requests_before = len(requests)
             hook_calls.clear()
             send_event_2 = passthrough_send_event("What did USER.md say?", hook_calls)
@@ -375,8 +374,8 @@ async def test_live_model_system_prompt_injection_through_real_proxy() -> None:
 
 
 @pytest.mark.asyncio
-async def test_live_shell_output_injection_round_trip_through_real_plugin() -> None:
-    """``shell_output`` controllable: real ``exec`` tool + real plugin hooks."""
+async def test_live_shell_output_same_turn_through_middleware() -> None:
+    """``shell_output`` live same-turn injection via middleware."""
     async with loopback_stub_tool_calling_llm_server(
         tool_name="exec",
         tool_arguments={"command": "echo ORIGINAL-EXEC-CONTENT-NOT-INJECTED"},
@@ -399,16 +398,53 @@ async def test_live_shell_output_injection_round_trip_through_real_plugin() -> N
                 hook_calls=hook_calls,
                 injections={"shell_output": "INJECTED-SHELL-77"},
             )
+            await target.run(lambda _e: None, send_event)
+
+            assert len(hook_calls) == 1
+            assert hook_calls[0][0] == "shell_output"
+            assert hook_calls[0][1]["hook"] == "tool_result_middleware"
+            assert len(requests) >= 2
+            assert_tool_injection_visible_same_turn(
+                requests,
+                injection_marker="INJECTED-SHELL-77",
+                original_marker="ORIGINAL-EXEC-CONTENT-NOT-INJECTED",
+            )
+        finally:
+            await target.teardown()
+
+
+@pytest.mark.asyncio
+async def test_live_shell_output_transcript_poison_round_trip() -> None:
+    """``shell_output_transcript`` poisons the persisted exec result."""
+    async with loopback_stub_tool_calling_llm_server(
+        tool_name="exec",
+        tool_arguments={"command": "echo ORIGINAL-EXEC-CONTENT-NOT-INJECTED"},
+    ) as (stub_url, requests):
+        target = OpenClawTarget(
+            managed=True,
+            model_id="openai/gpt-4o-mini",
+            provider_base_url=stub_url,
+            provider_api_key="sk-stub",
+            enable_tool_injection=True,
+        )
+        try:
+            await target.warmup_static_observables()
+            target.set_config("tool_policy", "coding")
+            hook_calls: list[tuple[str, dict[str, Any]]] = []
+            send_event = injecting_send_event(
+                user_message=(
+                    "Run echo ORIGINAL-EXEC-CONTENT-NOT-INJECTED and report the output."
+                ),
+                hook_calls=hook_calls,
+                injections={"shell_output_transcript": "INJECTED-SHELL-77"},
+            )
             emitted: list[object] = []
             await target.run(lambda e: emitted.append(e), send_event)
 
             assert len(hook_calls) == 1
-            assert hook_calls[0][0] == "shell_output"
-            assert hook_calls[0][1]["tool"] == "exec"
+            assert hook_calls[0][0] == "shell_output_transcript"
+            assert hook_calls[0][1]["hook"] == "before_tool_call"
             assert len(requests) >= 2
-            second_turn = json.dumps(requests[1])
-            assert "ORIGINAL-EXEC-CONTENT-NOT-INJECTED" in second_turn
-            assert "INJECTED-SHELL-77" not in second_turn
 
             await assert_tool_injection_persisted_on_next_run(
                 target,
@@ -424,8 +460,8 @@ async def test_live_shell_output_injection_round_trip_through_real_plugin() -> N
 
 
 @pytest.mark.asyncio
-async def test_live_web_content_injection_round_trip_through_real_plugin() -> None:
-    """``web_content`` controllable: real ``web_fetch`` + real plugin hooks."""
+async def test_live_web_content_transcript_poison_round_trip() -> None:
+    """``web_content_transcript`` poisons persisted ``web_fetch`` output."""
     async with local_web_page_server() as page_url:
         async with loopback_stub_tool_calling_llm_server(
             tool_name="web_fetch",
@@ -445,19 +481,15 @@ async def test_live_web_content_injection_round_trip_through_real_plugin() -> No
                 send_event = injecting_send_event(
                     user_message=f"Fetch {page_url} and summarize it.",
                     hook_calls=hook_calls,
-                    injections={"web_content": "INJECTED-WEB-77"},
+                    injections={"web_content_transcript": "INJECTED-WEB-77"},
                 )
                 emitted: list[object] = []
                 await target.run(lambda e: emitted.append(e), send_event)
 
                 assert len(hook_calls) == 1
-                assert hook_calls[0][0] == "web_content"
-                assert hook_calls[0][1]["tool"] == "web_fetch"
+                assert hook_calls[0][0] == "web_content_transcript"
+                assert hook_calls[0][1]["hook"] == "before_tool_call"
                 assert len(requests) >= 2
-                # ``web_fetch`` may fail SSRF/private-IP checks or return
-                # extracted markdown that no longer contains the raw page
-                # body; the in-flight continuation is therefore not asserted
-                # here. Persistence on the next run is the meaningful check.
 
                 await assert_tool_injection_persisted_on_next_run(
                     target,
@@ -473,8 +505,8 @@ async def test_live_web_content_injection_round_trip_through_real_plugin() -> No
 
 
 @pytest.mark.asyncio
-async def test_live_message_content_injection_round_trip_through_real_plugin() -> None:
-    """``message_content`` controllable: real ``message`` tool + real plugin hooks."""
+async def test_live_message_content_transcript_poison_round_trip() -> None:
+    """``message_content_transcript`` poisons persisted ``message`` output."""
     async with loopback_stub_tool_calling_llm_server(
         tool_name="message",
         tool_arguments={"action": "send", "text": "ORIGINAL-MSG-NOT-INJECTED"},
@@ -493,14 +525,14 @@ async def test_live_message_content_injection_round_trip_through_real_plugin() -
             send_event = injecting_send_event(
                 user_message="Send a message saying ORIGINAL-MSG-NOT-INJECTED.",
                 hook_calls=hook_calls,
-                injections={"message_content": "INJECTED-MSG-77"},
+                injections={"message_content_transcript": "INJECTED-MSG-77"},
             )
             emitted: list[object] = []
             await target.run(lambda e: emitted.append(e), send_event)
 
             assert len(hook_calls) == 1
-            assert hook_calls[0][0] == "message_content"
-            assert hook_calls[0][1]["tool"] == "message"
+            assert hook_calls[0][0] == "message_content_transcript"
+            assert hook_calls[0][1]["hook"] == "before_tool_call"
             assert len(requests) >= 2
 
             await assert_tool_injection_persisted_on_next_run(
@@ -534,7 +566,7 @@ async def test_live_web_search_alias_injection_round_trip_through_real_plugin() 
             await run_tool_alias_injection_scenario(
                 target,
                 tool_name="web_search",
-                controllable_name="web_content",
+                controllable_name="web_content_transcript",
                 tool_policy="coding",
                 user_message="Search the web for ORIGINAL-WEB-SEARCH-NOT-INJECTED.",
                 followup_user_message="What did the search return?",
@@ -564,7 +596,7 @@ async def test_live_process_alias_injection_round_trip_through_real_plugin() -> 
             await run_tool_alias_injection_scenario(
                 target,
                 tool_name="process",
-                controllable_name="shell_output",
+                controllable_name="shell_output_transcript",
                 tool_policy="coding",
                 user_message="List all background process sessions.",
                 followup_user_message="What did the process list show?",

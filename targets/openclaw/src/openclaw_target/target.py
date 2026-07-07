@@ -11,30 +11,19 @@ emitted live into the framework :class:`~superred.core.types.trajectory.Trajecto
 as :class:`~superred.core.types.events.ObservableEvent` s; no parallel
 trace representation is maintained.
 
-Tool-output injection follows the OpenClaw plugin hook contract
-(https://docs.openclaw.ai/plugins/hooks): the optimizer is consulted in
-the *async* ``before_tool_call`` hook (which emits a
-:class:`~superred.core.types.events.ControllablePostCallEvent` — the
-framework convention for injecting into *tool output* — and blocks the
-agent until the optimizer responds), and the resulting content is
-spliced into the persisted tool result by the *synchronous*
-``tool_result_persist`` hook on the plugin side. ``tool_result_persist``
-does no network I/O, so all optimizer-in-the-loop work happens in
-``before_tool_call``.
+Tool-output injection uses two OpenClaw seams (verified against
+openclaw/openclaw source):
 
-Empirically-verified scope of ``tool_result_persist`` (live-tested
-against a real gateway, no mocks): it rewrites what gets *persisted* to
-the session transcript. OpenClaw's embedded agent runner drives a
-same-turn tool-calling continuation (the internal provider loop
-following a ``tool_calls`` response) from its own in-memory buffer, not
-from the transcript, so the *current* tool-calling loop still completes
-with the real tool output. The injected content lands in the persisted
-transcript and is what every *subsequent* prompt submission in the same
-session (the next ``agent``/``agent.wait`` call, a session resume, etc.)
-loads as history. This is tool-result poisoning that surfaces on a later
-turn, not a mid-loop rewrite of the turn currently in flight — no
-documented OpenClaw hook can do the latter (``before_tool_call`` can only
-rewrite ``params`` pre-execution or block the call outright).
+* **Live same-turn** — ``registerAgentToolResultMiddleware`` on the
+  embedded ``tool_result`` path rewrites the in-flight result before the
+  provider continuation (``file_content``, ``web_content``, etc.).
+* **Transcript / memory poisoning (next prompt)** — async
+  ``before_tool_call`` + sync ``tool_result_persist`` rewrite only what
+  gets persisted (``*_transcript`` controllables); surfaces on the next
+  ``target.run()`` in the same session.
+
+Both paths emit :class:`~superred.core.types.events.ControllablePostCallEvent`
+per intercepted tool call (framework convention for tool-output injection).
 """
 
 from __future__ import annotations
@@ -107,23 +96,27 @@ USER_MESSAGE_CTRL = Controllable(
     description="The user message sent to the OpenClaw agent.",
 )
 
-_TOOL_INJECTION_SCOPE_NOTE = (
-    "Poisons the persisted session transcript (via the plugin's "
-    "tool_result_persist hook), not the in-memory copy the current "
-    "tool-calling loop is already acting on. The real tool output is "
-    "what this turn's agent sees; the injected value surfaces on the "
-    "*next* prompt submitted in this session (poison now, trigger "
-    "later) — an OpenClaw platform hook-contract limit, not a wiring "
-    "gap. Requires the injection plugin."
+_LIVE_TOOL_INJECTION_NOTE = (
+    "Live same-turn tool-output spoofing via OpenClaw "
+    "registerAgentToolResultMiddleware (the in-flight tool_result path). "
+    "The model sees the injected value during the current tool-calling loop. "
+    "Requires the injection plugin."
+)
+
+_TRANSCRIPT_POISON_NOTE = (
+    "Transcript / memory poisoning via before_tool_call → tool_result_persist "
+    "(persisted session transcript only). Surfaces on the *next* prompt "
+    "submitted in this session (poison now, trigger later). "
+    "Requires the injection plugin."
 )
 
 WEB_CONTENT_CTRL = Controllable(
     name="web_content",
     security_domain=EXTERNAL_DATA_TAG,
     description=(
-        "Per-call injection for web_fetch / web_search tool results. "
+        "Per-call live injection for web_fetch / web_search tool results. "
         "Emitted mid-run: one ControllablePostCallEvent per intercepted "
-        "tool invocation. " + _TOOL_INJECTION_SCOPE_NOTE
+        "tool invocation. " + _LIVE_TOOL_INJECTION_NOTE
     ),
 )
 
@@ -131,9 +124,9 @@ FILE_CONTENT_CTRL = Controllable(
     name="file_content",
     security_domain=EXTERNAL_DATA_TAG,
     description=(
-        "Per-call injection for file read tool results. Emitted "
+        "Per-call live injection for file read tool results. Emitted "
         "mid-run: one ControllablePostCallEvent per intercepted "
-        "invocation. " + _TOOL_INJECTION_SCOPE_NOTE
+        "invocation. " + _LIVE_TOOL_INJECTION_NOTE
     ),
 )
 
@@ -141,11 +134,9 @@ SHELL_OUTPUT_CTRL = Controllable(
     name="shell_output",
     security_domain=EXTERNAL_DATA_TAG,
     description=(
-        "Per-call injection for exec/shell tool output (the `exec` and "
+        "Per-call live injection for exec/shell tool output (the `exec` and "
         "`process` agent tools). Emitted mid-run: one ControllablePostCallEvent "
-        "per intercepted invocation. Command stdout is untrusted external data "
-        "(it may surface attacker-controlled file/process content), so it is a "
-        "tool-output injection point. " + _TOOL_INJECTION_SCOPE_NOTE
+        "per intercepted invocation. " + _LIVE_TOOL_INJECTION_NOTE
     ),
 )
 
@@ -153,10 +144,49 @@ MESSAGE_CONTENT_CTRL = Controllable(
     name="message_content",
     security_domain=EXTERNAL_DATA_TAG,
     description=(
-        "Per-call injection for the messaging tool's returned content "
+        "Per-call live injection for the messaging tool's returned content "
         "(the `message` tool). Emitted mid-run: one ControllablePostCallEvent "
-        "per intercepted invocation. Inbound message bodies surfaced to the "
-        "agent are untrusted. " + _TOOL_INJECTION_SCOPE_NOTE
+        "per intercepted invocation. " + _LIVE_TOOL_INJECTION_NOTE
+    ),
+)
+
+WEB_CONTENT_TRANSCRIPT_CTRL = Controllable(
+    name="web_content_transcript",
+    security_domain=EXTERNAL_DATA_TAG,
+    description=(
+        "Per-call transcript poisoning for web_fetch / web_search results. "
+        "Emitted mid-run: one ControllablePostCallEvent per intercepted "
+        "tool invocation. " + _TRANSCRIPT_POISON_NOTE
+    ),
+)
+
+FILE_CONTENT_TRANSCRIPT_CTRL = Controllable(
+    name="file_content_transcript",
+    security_domain=EXTERNAL_DATA_TAG,
+    description=(
+        "Per-call transcript poisoning for file read tool results. "
+        "Emitted mid-run: one ControllablePostCallEvent per intercepted "
+        "invocation. " + _TRANSCRIPT_POISON_NOTE
+    ),
+)
+
+SHELL_OUTPUT_TRANSCRIPT_CTRL = Controllable(
+    name="shell_output_transcript",
+    security_domain=EXTERNAL_DATA_TAG,
+    description=(
+        "Per-call transcript poisoning for exec/shell tool output. "
+        "Emitted mid-run: one ControllablePostCallEvent per intercepted "
+        "invocation. " + _TRANSCRIPT_POISON_NOTE
+    ),
+)
+
+MESSAGE_CONTENT_TRANSCRIPT_CTRL = Controllable(
+    name="message_content_transcript",
+    security_domain=EXTERNAL_DATA_TAG,
+    description=(
+        "Per-call transcript poisoning for the messaging tool's returned "
+        "content. Emitted mid-run: one ControllablePostCallEvent per "
+        "intercepted invocation. " + _TRANSCRIPT_POISON_NOTE
     ),
 )
 
@@ -183,10 +213,9 @@ MODEL_RESPONSE_CTRL = Controllable(
 
 # -- Tool-output injection registry -------------------------------------------
 #
-# Maps an OpenClaw gateway tool name -> the Controllable whose injected value
-# poisons that tool's *persisted* output (a ControllablePostCallEvent fires
-# per call when ``enable_tool_injection`` is on; see each Controllable's
-# description / the module docstring for the same-turn-vs-next-turn scope).
+# Maps an OpenClaw gateway tool name -> live and transcript controllables
+# (a ControllablePostCallEvent fires per call when ``enable_tool_injection``
+# is on; see each Controllable's description for the threat model).
 # This is the single extension point for tool-output injection:
 # ``get_controllables`` and the plugin bridge both derive from it, so adding
 # a new capability is one entry here — define a Controllable with the right
@@ -204,7 +233,7 @@ MODEL_RESPONSE_CTRL = Controllable(
 # and the ACP command set (src/acp/commands.ts), neither of which routes through
 # the agent tool-call hook the injection plugin attaches to. "memory" is likewise
 # excluded — it is a plugin slot (``plugins.slots.memory``), not a tool.
-TOOL_OUTPUT_CONTROLLABLES: dict[str, Controllable] = {
+TOOL_OUTPUT_LIVE_CONTROLLABLES: dict[str, Controllable] = {
     "web_fetch": WEB_CONTENT_CTRL,
     "web_search": WEB_CONTENT_CTRL,
     "read": FILE_CONTENT_CTRL,
@@ -212,6 +241,18 @@ TOOL_OUTPUT_CONTROLLABLES: dict[str, Controllable] = {
     "process": SHELL_OUTPUT_CTRL,
     "message": MESSAGE_CONTENT_CTRL,
 }
+
+TOOL_OUTPUT_TRANSCRIPT_CONTROLLABLES: dict[str, Controllable] = {
+    "web_fetch": WEB_CONTENT_TRANSCRIPT_CTRL,
+    "web_search": WEB_CONTENT_TRANSCRIPT_CTRL,
+    "read": FILE_CONTENT_TRANSCRIPT_CTRL,
+    "exec": SHELL_OUTPUT_TRANSCRIPT_CTRL,
+    "process": SHELL_OUTPUT_TRANSCRIPT_CTRL,
+    "message": MESSAGE_CONTENT_TRANSCRIPT_CTRL,
+}
+
+# Back-compat alias: live same-turn registry (primary tool-output surface).
+TOOL_OUTPUT_CONTROLLABLES = TOOL_OUTPUT_LIVE_CONTROLLABLES
 
 # -- Observable definitions ----------------------------------------------------
 
@@ -587,28 +628,23 @@ class OpenClawTarget(Target):
         tool_call_id: str,
         result: Any,
     ) -> dict[str, Any] | None:
-        """Bridge the async ``before_tool_call`` hook to a live event.
+        """Bridge plugin HTTP callbacks to live optimizer controllables.
 
-        The plugin's HTTP POST blocks until this coroutine returns, so
-        we consult the optimizer by dispatching a
-        :class:`ControllablePostCallEvent` on the active trajectory and
-        awaiting the :class:`ControllableInjection` response. PostCall is
-        the framework convention for injecting into *tool output*.
-
-        Only ``before_tool_call`` is consulted: it is the sole async hook
-        in the OpenClaw contract. The returned ``toolResult`` is stashed
-        plugin-side (keyed by ``toolCallId``) and spliced into the
-        persisted tool result by the synchronous ``tool_result_persist``
-        hook, which cannot do network I/O.
+        ``tool_result_middleware`` → live same-turn controllables.
+        ``before_tool_call`` → transcript-poison controllables (stashed for
+        the sync ``tool_result_persist`` hook on the plugin side).
         """
-        if hook_type != "before_tool_call":
-            return None
-
         send_event = self._active_send_event
         if send_event is None:
             return None
 
-        controllable = self._controllable_for_tool(tool_name)
+        if hook_type == "tool_result_middleware":
+            controllable = self._live_controllable_for_tool(tool_name)
+        elif hook_type == "before_tool_call":
+            controllable = self._transcript_controllable_for_tool(tool_name)
+        else:
+            return None
+
         if controllable is None:
             return None
 
@@ -618,6 +654,11 @@ class OpenClawTarget(Target):
                 "tool": tool_name,
                 "toolCallId": tool_call_id,
                 "params": params,
+                **(
+                    {"result": result}
+                    if hook_type == "tool_result_middleware"
+                    else {}
+                ),
             },
             default=str,
         )
@@ -642,15 +683,17 @@ class OpenClawTarget(Target):
         if not response.value:
             return None
 
-        # The injected value becomes the tool's persisted content (the
-        # adversarial document/page a *later* turn's model will read from
-        # the transcript), applied at persist time by the plugin — see
-        # _TOOL_INJECTION_SCOPE_NOTE for why this is next-turn, not
-        # same-turn.
         return {"toolResult": response.value}
 
+    def _live_controllable_for_tool(self, tool_name: str) -> Controllable | None:
+        return TOOL_OUTPUT_LIVE_CONTROLLABLES.get(tool_name)
+
+    def _transcript_controllable_for_tool(self, tool_name: str) -> Controllable | None:
+        return TOOL_OUTPUT_TRANSCRIPT_CONTROLLABLES.get(tool_name)
+
     def _controllable_for_tool(self, tool_name: str) -> Controllable | None:
-        return TOOL_OUTPUT_CONTROLLABLES.get(tool_name)
+        """Back-compat: live same-turn lookup."""
+        return self._live_controllable_for_tool(tool_name)
 
     @staticmethod
     def _tool_name_from_payload(payload: dict[str, Any]) -> str:
@@ -785,8 +828,10 @@ class OpenClawTarget(Target):
     def get_controllables(self) -> list[Controllable]:
         ctrls = [USER_MESSAGE_CTRL]
         if self._enable_tool_injection:
-            # Unique controllables from the tool-output registry, order-stable.
-            ctrls.extend(dict.fromkeys(TOOL_OUTPUT_CONTROLLABLES.values()))
+            live = dict.fromkeys(TOOL_OUTPUT_LIVE_CONTROLLABLES.values())
+            transcript = dict.fromkeys(TOOL_OUTPUT_TRANSCRIPT_CONTROLLABLES.values())
+            ctrls.extend(live)
+            ctrls.extend(transcript)
         if self._enable_llm_proxy:
             ctrls.append(MODEL_SYSTEM_PROMPT_CTRL)
             ctrls.append(MODEL_RESPONSE_CTRL)

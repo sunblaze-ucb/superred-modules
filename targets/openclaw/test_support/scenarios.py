@@ -19,7 +19,10 @@ from openclaw_target import OpenClawTarget
 from openclaw_target.target import MODEL_SYSTEM_PROMPT_CTRL, USER_MESSAGE_CTRL
 from test_support.send_event import (
     assert_tool_injection_persisted_on_next_run,
+    assert_tool_injection_visible_same_turn,
     injecting_send_event,
+    live_file_send_event,
+    passthrough_send_event,
 )
 
 from superred.core.types.events import ControllableInjection, ObservableEvent
@@ -37,12 +40,11 @@ async def run_tool_alias_injection_scenario(
     original_marker: str,
     requests: list[dict[str, Any]],
 ) -> None:
-    """Drive one tool call through ``tool_name`` and assert next-turn poisoning.
+    """Drive one tool call through ``tool_name`` and assert transcript poisoning.
 
-    Generic over any gateway tool name -> controllable mapping in
-    ``TOOL_OUTPUT_CONTROLLABLES`` (e.g. the ``web_search``/``process``
-    aliases for ``web_content``/``shell_output``), so the same scenario
-    covers both local and Docker managed runtimes.
+    Generic over any gateway tool name -> transcript controllable mapping
+    (e.g. the ``web_search``/``process`` aliases for
+    ``web_content_transcript``/``shell_output_transcript``).
     """
     await target.warmup_static_observables()
     target.set_config("tool_policy", tool_policy)
@@ -116,8 +118,8 @@ async def run_all_controllables_scenario(
 
     Pre-run: ``system_prompt_append`` config, ``model_system_prompt``,
     ``model_response_injection``, ``user_message``. Mid-run: ``file_content``
-    on a real ``read`` tool call. Verifies proxy splice, plugin hook, and
-    persisted tool-result poisoning on a follow-up turn — all in one session.
+    (live same-turn) and ``file_content_transcript`` (next-turn poison) on a
+    real ``read`` tool call.
     ``requests`` must come from a tool-calling stub configured with
     ``tool_name="read"``, ``tool_arguments={"path": "USER.md"}``.
     """
@@ -132,6 +134,7 @@ async def run_all_controllables_scenario(
     system_marker = f"{marker_prefix}-MODEL-SYSTEM"
     response_marker = f"{marker_prefix}-MODEL-RESPONSE"
     file_marker = f"{marker_prefix}-FILE"
+    transcript_marker = f"{marker_prefix}-FILE-TRANSCRIPT"
 
     hook_calls: list[tuple[str, dict[str, Any]]] = []
     send_event = injecting_send_event(
@@ -141,13 +144,15 @@ async def run_all_controllables_scenario(
             "model_system_prompt": system_marker,
             "model_response_injection": response_marker,
             "file_content": file_marker,
+            "file_content_transcript": transcript_marker,
         },
     )
     emitted: list[object] = []
     await target.run(lambda e: emitted.append(e), send_event)
 
-    assert len(hook_calls) == 1
-    assert hook_calls[0][0] == "file_content"
+    assert len(hook_calls) == 2
+    hook_names = {name for name, _ in hook_calls}
+    assert hook_names == {"file_content", "file_content_transcript"}
 
     system_messages = [
         m.get("content", "")
@@ -169,16 +174,18 @@ async def run_all_controllables_scenario(
     ]
     assert model_req and model_resp
 
-    second_turn = json.dumps(requests[1])
-    assert original_marker in second_turn
-    assert file_marker not in second_turn
+    assert_tool_injection_visible_same_turn(
+        requests,
+        injection_marker=file_marker,
+        original_marker=original_marker,
+    )
 
     await assert_tool_injection_persisted_on_next_run(
         target,
         requests=requests,
         followup_user_message="What did USER.md say?",
         hook_calls=hook_calls,
-        injection_marker=file_marker,
+        injection_marker=transcript_marker,
         original_marker=original_marker,
         emitted=emitted,
     )

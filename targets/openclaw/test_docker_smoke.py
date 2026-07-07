@@ -336,8 +336,8 @@ async def test_docker_openclaw_target_tool_injection_round_trip() -> None:
             await target.run(lambda _e: None, send_event)
 
             assert len(hook_calls) == 1, f"plugin hook never fired: {hook_calls}"
-            assert hook_calls[0][0] == "file_content"
-            assert hook_calls[0][1]["tool"] == "read"
+            assert hook_calls[0][0] == "file_content_transcript"
+            assert hook_calls[0][1]["hook"] == "before_tool_call"
             assert len(requests) >= 2
 
             requests_before = len(requests)
@@ -384,7 +384,7 @@ async def test_docker_web_search_alias_injection_round_trip_through_real_plugin(
             await run_tool_alias_injection_scenario(
                 target,
                 tool_name="web_search",
-                controllable_name="web_content",
+                controllable_name="web_content_transcript",
                 tool_policy="coding",
                 user_message="Search the web for DOCKER-ORIGINAL-WEB-SEARCH-NOT-INJECTED.",
                 followup_user_message="What did the search return?",
@@ -414,7 +414,7 @@ async def test_docker_process_alias_injection_round_trip_through_real_plugin() -
             await run_tool_alias_injection_scenario(
                 target,
                 tool_name="process",
-                controllable_name="shell_output",
+                controllable_name="shell_output_transcript",
                 tool_policy="coding",
                 user_message="List all background process sessions.",
                 followup_user_message="What did the process list show?",

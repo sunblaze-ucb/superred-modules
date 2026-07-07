@@ -336,6 +336,10 @@ async def test_openclaw_target_interface_compliance():
         "file_content",
         "shell_output",
         "message_content",
+        "web_content_transcript",
+        "file_content_transcript",
+        "shell_output_transcript",
+        "message_content_transcript",
     }
 
     # set_config / query round-trip (no connection needed)
@@ -512,10 +516,18 @@ async def test_before_tool_call_hook_injects_tool_result():
     )
     assert out == {"toolResult": "ADVERSARIAL PAGE CONTENT"}
 
-    # The synchronous persist hook is handled plugin-side; we don't consult.
     assert await target._handle_injection_hook(
-        "tool_result_persist", "web_fetch", {}, "c1", "r",
+        "tool_result_middleware", "unknown", {}, "c1", None,
     ) is None
+
+    out_live = await target._handle_injection_hook(
+        "tool_result_middleware",
+        "web_fetch",
+        {"url": "http://benign.test"},
+        "c2",
+        {"content": [{"type": "text", "text": "real"}]},
+    )
+    assert out_live == {"toolResult": "ADVERSARIAL PAGE CONTENT"}
 
     # No active run -> the hook declines to inject.
     target._active_send_event = None

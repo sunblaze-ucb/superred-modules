@@ -19,7 +19,9 @@ from test_support.scenarios import (
 )
 from test_support.send_event import (
     assert_tool_injection_persisted_on_next_run,
+    assert_tool_injection_visible_same_turn,
     injecting_send_event,
+    live_file_send_event,
     passthrough_send_event,
 )
 from test_support.stubs import (
@@ -39,6 +41,7 @@ __all__ = [
     "DEFAULT_GEMINI_MODEL",
     "DEFAULT_PROVIDER_TIMEOUT_S",
     "assert_tool_injection_persisted_on_next_run",
+    "assert_tool_injection_visible_same_turn",
     "container_recording_stub_llm_server",
     "container_stub_llm_server",
     "container_stub_tool_calling_llm_server",
@@ -57,6 +60,7 @@ __all__ = [
     "loopback_stub_tool_calling_llm_server",
     "loopback_stub_upstream_for_host_proxy",
     "openclaw_cli_ready",
+    "live_file_send_event",
     "passthrough_send_event",
     "provider_base_url",
     "provider_model",

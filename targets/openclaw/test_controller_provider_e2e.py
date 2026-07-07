@@ -412,8 +412,8 @@ async def test_tier3_controller_file_tool_path_real_gemini() -> None:
     phases = [
         _Phase(
             user_message="Read USER.md and summarize it in one sentence.",
-            post_injections={"file_content": "TIER3-FILE-INJECT-02"},
-            expect_hook_controllables=("file_content",),
+            post_injections={"file_content_transcript": "TIER3-FILE-INJECT-02"},
+            expect_hook_controllables=("file_content_transcript",),
         ),
         _Phase(
             user_message="What did USER.md say? Quote the key content.",
@@ -440,8 +440,8 @@ async def test_tier3_controller_shell_tool_path_real_gemini() -> None:
                 "Run the shell command: echo TIER3-ORIGINAL-SHELL-NOT-INJECTED "
                 "and report the output."
             ),
-            post_injections={"shell_output": "TIER3-SHELL-INJECT-03"},
-            expect_hook_controllables=("shell_output",),
+            post_injections={"shell_output_transcript": "TIER3-SHELL-INJECT-03"},
+            expect_hook_controllables=("shell_output_transcript",),
         ),
         _Phase(
             user_message="What was the command output you saw?",
@@ -466,8 +466,8 @@ async def test_tier3_controller_web_tool_path_real_gemini() -> None:
         phases = [
             _Phase(
                 user_message=f"Fetch {page_url} and summarize it briefly.",
-                post_injections={"web_content": "TIER3-WEB-INJECT-04"},
-                expect_hook_controllables=("web_content",),
+                post_injections={"web_content_transcript": "TIER3-WEB-INJECT-04"},
+                expect_hook_controllables=("web_content_transcript",),
             ),
             _Phase(
                 user_message="What did that web page say?",
@@ -495,8 +495,8 @@ async def test_tier3_controller_message_tool_path_real_gemini() -> None:
                 "Send a message that says exactly: "
                 "TIER3-ORIGINAL-MSG-NOT-INJECTED"
             ),
-            post_injections={"message_content": "TIER3-MSG-INJECT-05"},
-            expect_hook_controllables=("message_content",),
+            post_injections={"message_content_transcript": "TIER3-MSG-INJECT-05"},
+            expect_hook_controllables=("message_content_transcript",),
         ),
         _Phase(
             user_message="What message did you send?",
@@ -533,8 +533,8 @@ async def test_tier3_controller_combined_model_and_read_real_gemini() -> None:
                 "model_system_prompt": "TIER3-COMBINED-SYSTEM-06",
                 "model_response_injection": "TIER3-COMBINED-RESPONSE-06",
             },
-            post_injections={"file_content": "TIER3-COMBINED-FILE-06"},
-            expect_hook_controllables=("file_content",),
+            post_injections={"file_content_transcript": "TIER3-COMBINED-FILE-06"},
+            expect_hook_controllables=("file_content_transcript",),
             expect_response_contains=("TIER3-COMBINED-RESPONSE-06",),
             expect_proxy_system_contains="TIER3-COMBINED-SYSTEM-06",
             expect_model_observables=True,

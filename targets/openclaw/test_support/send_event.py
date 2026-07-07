@@ -6,7 +6,11 @@ import json
 from typing import Any
 
 from openclaw_target import OpenClawTarget
-from openclaw_target.target import FILE_CONTENT_CTRL, USER_MESSAGE_CTRL
+from openclaw_target.target import (
+    FILE_CONTENT_CTRL,
+    FILE_CONTENT_TRANSCRIPT_CTRL,
+    USER_MESSAGE_CTRL,
+)
 
 from superred.core.types.events import (
     ControllableInjection,
@@ -21,7 +25,40 @@ def passthrough_send_event(
     *,
     file_injection: str = "INJECTED-BY-SUPERRED-42",
 ):
-    """Answer ``user_message`` and inject a fixed ``file_content`` value."""
+    """Answer ``user_message`` and inject transcript poison on ``read``."""
+
+    async def send_event(event: object) -> ControllableInjection:
+        controllable = getattr(event, "controllable")
+        if (
+            isinstance(event, ControllablePostCallEvent)
+            and controllable is FILE_CONTENT_TRANSCRIPT_CTRL
+        ):
+            hook_calls.append((controllable.name, json.loads(event.request)))
+            return ControllableInjection(
+                event=event,  # type: ignore[arg-type]
+                controllable=controllable,
+                value=file_injection,
+            )
+        if isinstance(event, ControllablePreCallEvent) and controllable is USER_MESSAGE_CTRL:
+            return ControllableInjection(
+                event=event,  # type: ignore[arg-type]
+                controllable=controllable,
+                value=user_message,
+            )
+        return ControllableInjection(
+            event=event, controllable=controllable, value="",  # type: ignore[arg-type]
+        )
+
+    return send_event
+
+
+def live_file_send_event(
+    user_message: str,
+    hook_calls: list[tuple[str, dict[str, Any]]],
+    *,
+    file_injection: str = "INJECTED-BY-SUPERRED-42",
+):
+    """Answer ``user_message`` and inject live same-turn ``file_content``."""
 
     async def send_event(event: object) -> ControllableInjection:
         controllable = getattr(event, "controllable")
@@ -56,8 +93,9 @@ def injecting_send_event(
     async def send_event(event: object) -> ControllableInjection:
         controllable = getattr(event, "controllable")
         if isinstance(event, ControllablePostCallEvent):
-            hook_calls.append((controllable.name, json.loads(event.request)))
             value = injections.get(controllable.name, "")
+            if value:
+                hook_calls.append((controllable.name, json.loads(event.request)))
             return ControllableInjection(
                 event=event,  # type: ignore[arg-type]
                 controllable=controllable,
@@ -77,6 +115,25 @@ def injecting_send_event(
         )
 
     return send_event
+
+
+def assert_tool_injection_visible_same_turn(
+    requests: list[dict[str, Any]],
+    *,
+    injection_marker: str,
+    original_marker: str,
+    request_index: int = 1,
+) -> None:
+    """Assert live middleware spoofing reached the in-flight continuation."""
+    assert len(requests) > request_index
+    messages = requests[request_index].get("messages", [])
+    tool_messages = [m for m in messages if m.get("role") == "tool"]
+    assert tool_messages, (
+        f"expected a tool message in continuation request: {messages}"
+    )
+    blob = json.dumps(tool_messages)
+    assert injection_marker in blob, blob
+    assert original_marker not in blob, blob
 
 
 async def assert_tool_injection_persisted_on_next_run(

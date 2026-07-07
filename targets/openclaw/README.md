@@ -88,15 +88,20 @@ Controllables (injection points):
 | Controllable | Domain tag | When | Notes |
 |--------------|-----------|------|-------|
 | `user_message` | `user_input` | PreCall, once per run | Always on. |
-| `web_content` | `external_data` | PostCall, per `web_fetch`/`web_search` call | Needs `enable_tool_injection`. |
-| `file_content` | `external_data` | PostCall, per `read` call | Needs `enable_tool_injection`. |
-| `shell_output` | `external_data` | PostCall, per `exec`/`process` call | Needs `enable_tool_injection`. |
-| `message_content` | `external_data` | PostCall, per `message` call | Needs `enable_tool_injection`. |
+| `web_content` | `external_data` | PostCall, per `web_fetch`/`web_search` call | Live same-turn (`registerAgentToolResultMiddleware`). |
+| `file_content` | `external_data` | PostCall, per `read` call | Live same-turn. |
+| `shell_output` | `external_data` | PostCall, per `exec`/`process` call | Live same-turn. |
+| `message_content` | `external_data` | PostCall, per `message` call | Live same-turn. |
+| `web_content_transcript` | `external_data` | PostCall, per `web_fetch`/`web_search` call | Transcript/memory poison (next prompt). |
+| `file_content_transcript` | `external_data` | PostCall, per `read` call | Transcript/memory poison (next prompt). |
+| `shell_output_transcript` | `external_data` | PostCall, per `exec`/`process` call | Transcript/memory poison (next prompt). |
+| `message_content_transcript` | `external_data` | PostCall, per `message` call | Transcript/memory poison (next prompt). |
 | `model_system_prompt` | `model` | PreCall, pre-run | Needs the LLM proxy. Same-turn (applied before the run's first model call). |
 | `model_response_injection` | `model` | PreCall, pre-run, applied to every model response | Needs the LLM proxy. **Same-turn** — spliced onto the wire before the agent sees the reply (see Design decisions). |
 
-`web_content`/`file_content`/`shell_output`/`message_content` are **next-turn**
-only: see Design decisions below for why.
+Live tool controllables (`web_content`, `file_content`, …) and transcript-poison
+controllables (`*_transcript`) are separate threat models — see Design decisions.
+All tool controllables need `enable_tool_injection`.
 
 Observables: `model_identity`, `system_description`, `tool_list`,
 `system_prompt` (static, populated at `initialize()`); `assistant_stream`,
@@ -119,30 +124,25 @@ rather than registered as a tool-output controllable.
 
 ## Design decisions
 
-**Tool-output injection is next-turn, not same-turn.** OpenClaw's embedded
-agent runner drives the same-turn tool-calling continuation (the provider
-call immediately following a `tool_calls` response) from its own in-memory
-message buffer, not the session transcript. The plugin's `tool_result_persist`
-hook — the only hook that can rewrite a tool result — only rewrites what gets
-*persisted* to the transcript (verified against OpenClaw source:
-`src/agents/session-tool-result-guard-wrapper.ts` wires it solely into
-`transformToolResultForPersistence`). So an injected tool result surfaces on
-the *next* prompt submitted in the same session, not the turn in which the
-tool ran. OpenClaw's own `api.session.workflow.enqueueNextTurnInjection(...)`
-API — documented as "durable context to reach the next model turn exactly
-once" — confirms next-turn delivery is a first-class, intended primitive on
-this platform, not a gap. This also matches the threat model used by
-OpenClaw-specific security literature: SafeClawBench's Persistent State
-Exploitation dimension (arXiv 2606.30755 / SafeClawArena) scores this exact
-shape — whether a planted directive "survives... and biases a follow-up
-conversation" — as a two-phase persisted-then-triggered check, which is what
-`assert_tool_injection_persisted_on_next_run` (`test_support/send_event.py`)
-asserts. For a same-turn attack (fake model output, not fake tool output),
-use `model_response_injection` instead.
+**Tool-output injection: live same-turn vs transcript poison.** OpenClaw exposes
+two plugin seams (verified in `openclaw/openclaw`):
+
+- **Live same-turn** — `registerAgentToolResultMiddleware` on the embedded
+  `tool_result` path (`src/agents/embedded-agent-runner/extensions.ts`). The
+  bundled `tokenjuice` plugin uses the same API. Mapped to `web_content`,
+  `file_content`, `shell_output`, `message_content`.
+- **Transcript / memory poisoning (next prompt)** — async `before_tool_call`
+  stashes the optimizer decision; sync `tool_result_persist` splices it into
+  the persisted transcript only (`session-tool-result-guard-wrapper.ts` →
+  `transformToolResultForPersistence`). Mapped to `*_transcript` controllables.
+  Surfaces on the next `target.run()` in the same session — the SafeClawBench
+  PSE / poison-then-trigger shape (`assert_tool_injection_persisted_on_next_run`).
+
+For same-turn *model* output (not tool output), use `model_response_injection`.
 
 **Model streaming: live relay + append, not buffer-then-forward.** OpenClaw's
 real provider client always sends `stream: true`
-(`openclaw/openclaw src/llm/providers/openai-completions.ts`) and expects
+(`packages/ai/src/providers/openai-completions.ts`) and expects
 genuine incremental SSE from a real provider. `LLMProxy` relays each upstream
 delta to the gateway live (not buffered-then-replayed) so the
 `assistant_stream` observable keeps real token-by-token granularity — verified
@@ -278,16 +278,13 @@ show up in the same tool-calling loop's own continuation).
 `test_live_reset_and_teardown_against_real_gateway` cover model-response
 injection and reset/teardown against the same real CLI process.
 
-**Provider** tests in `test_openclaw_provider_live.py` are opt-in only: they
-call a real Gemini endpoint and are skipped unless ``GEMINI_API_KEY`` is set.
-Run with ``GEMINI_API_KEY=... pytest test_openclaw_provider_live.py -v``.
-These cover direct provider turns, proxy response/system injection, live SSE
-streaming, and a real model-driven tool-call plugin hook — no stub upstream.
+**Provider** tests are opt-in (``GEMINI_API_KEY`` required):
 
-**Tier 3** tests in `test_controller_provider_e2e.py` drive the same paths through
-the full ``Controller`` → factory → managed target stack with a real Gemini
-upstream (also opt-in). Run with
-``GEMINI_API_KEY=... pytest test_controller_provider_e2e.py -v``.
+- ``test_openclaw_provider_live.py`` — local CLI gateway (fast dev path).
+- ``test_docker_provider_live.py`` — same scenarios through ``managed_runtime=\"docker\"``.
+- ``test_controller_provider_e2e.py`` — full Controller stack (Tier 3).
+
+Run e.g. ``GEMINI_API_KEY=... pytest test_openclaw_provider_live.py test_docker_provider_live.py -v -m provider``.
 
 Shared live-test helpers (stub LLM servers, Gemini/Docker factories, send-event
 builders) live in ``test_support/``.
