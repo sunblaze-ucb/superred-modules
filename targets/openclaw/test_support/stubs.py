@@ -278,6 +278,29 @@ async def container_recording_stub_llm_server(
 
 
 @asynccontextmanager
+async def container_web_page_server(
+    *,
+    body: str = "ORIGINAL-WEB-CONTENT-NOT-INJECTED",
+) -> AsyncIterator[str]:
+    """Serve a static page reachable from inside a container via ``host.docker.internal``."""
+
+    async def page(_request: web.Request) -> web.Response:
+        return web.Response(text=body)
+
+    app = web.Application()
+    app.router.add_get("/page", page)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", 0)  # noqa: S104 - container reachability
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
+    try:
+        yield f"http://host.docker.internal:{port}/page"
+    finally:
+        await runner.cleanup()
+
+
+@asynccontextmanager
 async def loopback_stub_upstream_for_host_proxy(
     *,
     reply: str = "Docker Target stub LLM reply.",

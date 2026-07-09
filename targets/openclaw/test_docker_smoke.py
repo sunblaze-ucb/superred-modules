@@ -26,20 +26,32 @@ from openclaw_target.injection_server import InjectionServer
 from openclaw_target.target import USER_MESSAGE_CTRL, _plugin_dir
 from openclaw_target.ws_client import OpenClawWSClient
 from test_support import (
+    container_recording_stub_llm_server,
     container_stub_llm_server,
     container_stub_tool_calling_llm_server,
+    container_web_page_server,
     docker_daemon_ready,
     docker_gemini_target,
     docker_image,
     docker_target,
     gemini_api_key,
     loopback_recording_stub_llm_server,
+    loopback_stub_llm_server,
     loopback_stub_tool_calling_llm_server,
     loopback_stub_upstream_for_host_proxy,
     passthrough_send_event,
     run_all_controllables_scenario,
+    run_file_content_same_turn_scenario,
+    run_file_content_transcript_poison_scenario,
+    run_managed_target_scenario,
+    run_message_content_transcript_scenario,
+    run_model_response_injection_scenario,
     run_model_system_prompt_injection_scenario,
+    run_reset_teardown_scenario,
+    run_shell_output_same_turn_scenario,
+    run_shell_output_transcript_scenario,
     run_tool_alias_injection_scenario,
+    run_web_fetch_transcript_scenario,
 )
 
 from superred.core.types.events import ControllableInjection
@@ -467,6 +479,182 @@ async def test_docker_all_controllables_in_one_session() -> None:
         try:
             await run_all_controllables_scenario(
                 target, marker_prefix="ALL-CTRL-DOCKER", requests=requests,
+            )
+        finally:
+            await target.teardown()
+
+
+@pytest.mark.asyncio
+async def test_docker_file_content_same_turn_through_middleware() -> None:
+    """``file_content`` live same-turn injection, Docker parity."""
+    async with loopback_stub_tool_calling_llm_server(
+        tool_name="read",
+        tool_arguments={"path": "USER.md"},
+    ) as (stub_url, requests):
+        target = docker_target(
+            model_id="openai/gpt-4o-mini",
+            provider_base_url=stub_url,
+            provider_api_key="stub-key",
+            enable_tool_injection=True,
+        )
+        try:
+            await run_file_content_same_turn_scenario(target, requests=requests)
+        finally:
+            await target.teardown()
+
+
+@pytest.mark.asyncio
+async def test_docker_file_content_transcript_poison_round_trip() -> None:
+    """``file_content_transcript`` poison round trip, Docker parity."""
+    async with loopback_stub_tool_calling_llm_server(
+        tool_name="read",
+        tool_arguments={"path": "USER.md"},
+    ) as (stub_url, requests):
+        target = docker_target(
+            model_id="openai/gpt-4o-mini",
+            provider_base_url=stub_url,
+            provider_api_key="stub-key",
+            enable_tool_injection=True,
+        )
+        try:
+            await run_file_content_transcript_poison_scenario(target, requests=requests)
+        finally:
+            await target.teardown()
+
+
+@pytest.mark.asyncio
+async def test_docker_model_response_injection_through_real_proxy() -> None:
+    """``model_response_injection`` through host-side proxy, Docker parity."""
+    async with loopback_stub_upstream_for_host_proxy(
+        reply="Docker original stub reply.",
+    ) as stub_url:
+        target = docker_target(
+            model_id="openai/gpt-4o-mini",
+            provider_base_url=stub_url,
+            provider_api_key="stub-key",
+        )
+        try:
+            await run_model_response_injection_scenario(
+                target,
+                stub_reply="Docker original stub reply.",
+            )
+        finally:
+            await target.teardown()
+
+
+@pytest.mark.asyncio
+async def test_docker_shell_output_same_turn_through_middleware() -> None:
+    """``shell_output`` live same-turn injection, Docker parity."""
+    async with loopback_stub_tool_calling_llm_server(
+        tool_name="exec",
+        tool_arguments={"command": "echo ORIGINAL-EXEC-CONTENT-NOT-INJECTED"},
+    ) as (stub_url, requests):
+        target = docker_target(
+            model_id="openai/gpt-4o-mini",
+            provider_base_url=stub_url,
+            provider_api_key="stub-key",
+            enable_tool_injection=True,
+        )
+        try:
+            await run_shell_output_same_turn_scenario(target, requests=requests)
+        finally:
+            await target.teardown()
+
+
+@pytest.mark.asyncio
+async def test_docker_shell_output_transcript_poison_round_trip() -> None:
+    """``shell_output_transcript`` poison round trip, Docker parity."""
+    async with loopback_stub_tool_calling_llm_server(
+        tool_name="exec",
+        tool_arguments={"command": "echo ORIGINAL-EXEC-CONTENT-NOT-INJECTED"},
+    ) as (stub_url, requests):
+        target = docker_target(
+            model_id="openai/gpt-4o-mini",
+            provider_base_url=stub_url,
+            provider_api_key="stub-key",
+            enable_tool_injection=True,
+        )
+        try:
+            await run_shell_output_transcript_scenario(target, requests=requests)
+        finally:
+            await target.teardown()
+
+
+@pytest.mark.asyncio
+async def test_docker_web_content_transcript_poison_round_trip() -> None:
+    """``web_content_transcript`` via ``web_fetch``, Docker parity."""
+    async with container_web_page_server() as page_url:
+        async with loopback_stub_tool_calling_llm_server(
+            tool_name="web_fetch",
+            tool_arguments={"url": page_url},
+        ) as (stub_url, requests):
+            target = docker_target(
+                model_id="openai/gpt-4o-mini",
+                provider_base_url=stub_url,
+                provider_api_key="stub-key",
+                enable_tool_injection=True,
+            )
+            try:
+                await run_web_fetch_transcript_scenario(
+                    target, requests=requests, page_url=page_url,
+                )
+            finally:
+                await target.teardown()
+
+
+@pytest.mark.asyncio
+async def test_docker_message_content_transcript_poison_round_trip() -> None:
+    """``message_content_transcript`` poison round trip, Docker parity."""
+    async with loopback_stub_tool_calling_llm_server(
+        tool_name="message",
+        tool_arguments={"action": "send", "text": "ORIGINAL-MSG-NOT-INJECTED"},
+    ) as (stub_url, requests):
+        target = docker_target(
+            model_id="openai/gpt-4o-mini",
+            provider_base_url=stub_url,
+            provider_api_key="stub-key",
+            enable_tool_injection=True,
+        )
+        try:
+            await run_message_content_transcript_scenario(target, requests=requests)
+        finally:
+            await target.teardown()
+
+
+@pytest.mark.asyncio
+async def test_docker_reset_and_teardown_against_real_gateway() -> None:
+    """Reset/teardown semantics in a real containerised gateway."""
+    async with loopback_stub_upstream_for_host_proxy(reply="ok") as stub_url:
+        target = docker_target(
+            model_id="openai/gpt-4o-mini",
+            provider_base_url=stub_url,
+            provider_api_key="stub-key",
+            reset_session_between_runs=True,
+        )
+        try:
+            await run_reset_teardown_scenario(target)
+        finally:
+            if target._runtime is not None:
+                await target.teardown()
+
+
+@pytest.mark.asyncio
+async def test_docker_openclaw_target_managed_run_full() -> None:
+    """Full managed Target run with tool_list observable, Docker parity."""
+    async with loopback_stub_upstream_for_host_proxy(
+        reply="Docker Target managed reply.",
+    ) as stub_url:
+        target = docker_target(
+            model_id="openai/gpt-4o-mini",
+            provider_base_url=stub_url,
+            provider_api_key="stub-key",
+        )
+        try:
+            await run_managed_target_scenario(
+                target,
+                stub_reply="Docker Target managed reply.",
+                user_message="Run a Docker managed turn.",
+                canary_token="CANARY-DOCKER-TARGET",
             )
         finally:
             await target.teardown()

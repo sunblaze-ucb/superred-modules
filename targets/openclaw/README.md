@@ -278,13 +278,15 @@ show up in the same tool-calling loop's own continuation).
 `test_live_reset_and_teardown_against_real_gateway` cover model-response
 injection and reset/teardown against the same real CLI process.
 
-**Provider** tests are opt-in (``GEMINI_API_KEY`` required):
+**Provider** tests are opt-in (``GEMINI_API_KEY`` required). Docker is the
+canonical path for real-provider runs:
 
-- ``test_openclaw_provider_live.py`` — local CLI gateway (fast dev path).
-- ``test_docker_provider_live.py`` — same scenarios through ``managed_runtime=\"docker\"``.
-- ``test_controller_provider_e2e.py`` — full Controller stack (Tier 3).
+- ``test_docker_provider_live.py`` — full provider parity in Docker
+  (agent turn, proxy injection, streaming, system prompt, live middleware).
+- ``test_controller_provider_e2e.py`` — full Controller stack (Tier 3) in Docker.
+- ``test_openclaw_provider_live.py`` — local CLI gateway (fast dev path only).
 
-Run e.g. ``GEMINI_API_KEY=... pytest test_openclaw_provider_live.py test_docker_provider_live.py -v -m provider``.
+Run e.g. ``GEMINI_API_KEY=... pytest -m "provider and docker" -v``.
 
 Shared live-test helpers (stub LLM servers, Gemini/Docker factories, send-event
 builders) live in ``test_support/``.
@@ -305,22 +307,15 @@ same Docker path through :class:`OpenClawTarget` / ``managed_runtime=\"docker\"`
 path against real Gemini. ``test_docker_concurrency.py`` exercises
 ``TargetFactory.concurrency=2`` with two parallel containerised gateways.
 
-**Local/Docker parity.** ``web_search``/``process`` tool-name alias
-round-trips, ``model_system_prompt`` proxy injection, and an
-all-controllables-in-one-session run are each implemented once as a shared
-scenario in ``test_support/scenarios.py`` and exercised by **both**
-``test_openclaw_live.py`` (``test_live_web_search_alias_injection_round_trip_through_real_plugin``,
-``test_live_process_alias_injection_round_trip_through_real_plugin``,
-``test_live_model_system_prompt_injection_through_real_proxy``,
-``test_live_all_controllables_in_one_session``) and ``test_docker_smoke.py``
-(``test_docker_web_search_alias_injection_round_trip_through_real_plugin``,
-``test_docker_process_alias_injection_round_trip_through_real_plugin``,
-``test_docker_model_system_prompt_injection_through_real_proxy``,
-``test_docker_all_controllables_in_one_session``) — closing the coverage gap
-between the two managed runtimes without duplicating assertion logic. The LAN
-device-identity remote-connect path (``test_live_remote_path_grants_operator_scopes_via_device_identity``)
-stays local-only by design: it reproduces the Docker "remote client" auth
-path without needing a container.
+**Local/Docker parity.** Every stub-LLM gateway scenario in
+``test_openclaw_live.py`` has a Docker counterpart in ``test_docker_smoke.py``
+via shared helpers in ``test_support/scenarios.py`` (file/shell/web/message
+injection — live same-turn and transcript poison — model response injection,
+reset/teardown, managed Target run, alias round-trips, all-controllables, and
+system-prompt proxy injection). The LAN device-identity remote-connect path
+(``test_live_remote_path_grants_operator_scopes_via_device_identity``) stays
+local-only: ``test_docker_connect_grants_operator_scopes`` covers the same
+auth behaviour in the production container path.
 
 ## Known limitations / notes
 

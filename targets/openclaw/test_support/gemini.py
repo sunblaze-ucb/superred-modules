@@ -58,3 +58,22 @@ def docker_gemini_target(
         agent_timeout_s=timeout_s,
         **kwargs,
     )
+
+
+def docker_gemini_factory(**kwargs: Any) -> Any:
+    """``TargetFactory`` for Controller E2E on the Docker managed runtime."""
+    from openclaw_target.factory import openclaw_target_factory
+    from test_support.docker import docker_image
+
+    key = gemini_api_key()
+    assert key is not None
+    return openclaw_target_factory(
+        managed=True,
+        managed_runtime="docker",
+        managed_kwargs={"image": docker_image()},
+        model_id=provider_model(),
+        provider_base_url=provider_base_url(),
+        provider_api_key=key,
+        agent_timeout_s=kwargs.pop("agent_timeout_s", DEFAULT_PROVIDER_TIMEOUT_S),
+        **kwargs,
+    )

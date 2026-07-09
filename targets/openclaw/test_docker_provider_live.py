@@ -140,6 +140,60 @@ async def test_docker_provider_gemini_streaming_through_real_proxy() -> None:
 
 
 @pytest.mark.asyncio
+async def test_docker_provider_gemini_system_prompt_injection_through_real_proxy() -> None:
+    """Docker Target → proxy → real Gemini: system prompt injection lands."""
+    target = docker_gemini_target(timeout_s=240)
+    try:
+        await target.warmup_static_observables()
+
+        async def send_event(event: object) -> ControllableInjection:
+            controllable = getattr(event, "controllable")
+            if controllable is MODEL_SYSTEM_PROMPT_CTRL:
+                value = "DOCKER-PROVIDER-SYSTEM-INJECT-92"
+            elif controllable is USER_MESSAGE_CTRL:
+                value = "Reply with exactly: SYSTEM-OK"
+            else:
+                value = ""
+            return ControllableInjection(
+                event=event, controllable=controllable, value=value,  # type: ignore[arg-type]
+            )
+
+        await target.run(lambda _e: None, send_event)
+
+        assert target._llm_proxy is not None
+        assert target._llm_proxy.records, "proxy should record the upstream call"
+        recorded = target._llm_proxy.records[-1]
+        system_messages = [
+            m.get("content", "")
+            for m in recorded.request_messages
+            if m.get("role") == "system"
+        ]
+        assert system_messages
+        assert any(
+            "DOCKER-PROVIDER-SYSTEM-INJECT-92" in str(content)
+            for content in system_messages
+        ), system_messages
+    finally:
+        await target.teardown()
+
+
+@pytest.mark.asyncio
+async def test_docker_provider_direct_gemini_agent_turn() -> None:
+    """Docker Target → real Gemini (no proxy): basic agent turn completes."""
+    target = docker_gemini_target(timeout_s=240, enable_llm_proxy=False)
+    try:
+        await target.warmup_static_observables()
+        response, _ = await _run_with_user_message(
+            target,
+            "What is 17 + 25? Reply with only the numeric result, no explanation.",
+        )
+        assert response is not None
+        assert re.search(r"\b42\b", response), response
+    finally:
+        await target.teardown()
+
+
+@pytest.mark.asyncio
 async def test_docker_provider_gemini_live_file_content_middleware_hook_fires() -> None:
     """Docker Target + real Gemini: live ``file_content`` middleware hook fires."""
     target = docker_gemini_target(timeout_s=240, enable_tool_injection=True)

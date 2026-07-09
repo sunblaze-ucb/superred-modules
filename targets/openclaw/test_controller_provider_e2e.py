@@ -1,16 +1,12 @@
-"""Tier 3: full Superred Controller + real gateway + real Gemini E2E.
+"""Tier 3: full Superred Controller + Docker gateway + real Gemini E2E.
 
 Proves the complete stack — ``Controller`` → ``openclaw_target_factory`` →
-managed ``OpenClawTarget`` → real ``openclaw gateway`` → real LLM provider —
+managed ``OpenClawTarget`` (``managed_runtime=\"docker\"``) → real Gemini —
 for every controllable path in this PR. Opt-in only (``GEMINI_API_KEY``).
 
 Run explicitly::
 
-    GEMINI_API_KEY=... pytest test_controller_provider_e2e.py -v
-
-Tier 1 (``test_openclaw_live.py``) covers the same paths with a stub upstream
-for fast CI. Tier 3 repeats them through the real provider and drives them via
-the framework ``Controller`` rather than calling ``target.run`` directly.
+    GEMINI_API_KEY=... pytest test_controller_provider_e2e.py -v -m "controller_e2e and docker"
 """
 
 from __future__ import annotations
@@ -23,17 +19,15 @@ from typing import Any
 
 import pytest
 
-from openclaw_target import (
-    SYSTEM_TAG,
-    openclaw_target_factory,
-)
+from openclaw_target import SYSTEM_TAG
 from openclaw_target.target import OpenClawTarget
 from test_support import (
     DEFAULT_PROVIDER_TIMEOUT_S,
+    container_web_page_server,
+    docker_daemon_ready,
+    docker_gemini_factory,
+    docker_gemini_target,
     gemini_api_key,
-    gemini_target,
-    local_web_page_server,
-    openclaw_cli_ready,
     provider_base_url,
     provider_model,
 )
@@ -63,7 +57,8 @@ _PROVIDER_TIMEOUT_S = DEFAULT_PROVIDER_TIMEOUT_S
 pytestmark = [
     pytest.mark.provider,
     pytest.mark.controller_e2e,
-    pytest.mark.skipif(not openclaw_cli_ready(), reason="openclaw CLI unavailable"),
+    pytest.mark.docker,
+    pytest.mark.skipif(not docker_daemon_ready(), reason="Docker daemon unavailable"),
     pytest.mark.skipif(gemini_api_key() is None, reason="GEMINI_API_KEY not set"),
 ]
 
@@ -271,16 +266,7 @@ class _Tier3Task(Task[OpenClawTarget]):
 
 
 def _gemini_factory() -> Any:
-    key = gemini_api_key()
-    assert key is not None
-    return openclaw_target_factory(
-        managed=True,
-        model_id=provider_model(),
-        provider_base_url=provider_base_url(),
-        provider_api_key=key,
-        enable_tool_injection=True,
-        agent_timeout_s=_PROVIDER_TIMEOUT_S,
-    )
+    return docker_gemini_factory(enable_tool_injection=True)
 
 
 async def _run_controller_path(
@@ -365,7 +351,7 @@ async def test_tier3_controller_model_and_proxy_paths_real_gemini() -> None:
 async def test_tier3_controller_streaming_real_gemini() -> None:
     """Controller stack delivers incremental assistant_stream through real Gemini."""
     stream_chunks: list[str] = []
-    target = gemini_target(enable_tool_injection=True, timeout_s=_PROVIDER_TIMEOUT_S)
+    target = docker_gemini_target(enable_tool_injection=True, timeout_s=_PROVIDER_TIMEOUT_S)
     try:
         await _configure_base(target)
 
@@ -459,7 +445,7 @@ async def test_tier3_controller_shell_tool_path_real_gemini() -> None:
 @pytest.mark.asyncio
 async def test_tier3_controller_web_tool_path_real_gemini() -> None:
     """Controller + real Gemini: ``web_content`` hook + persisted poison."""
-    async with local_web_page_server(body="TIER3-ORIGINAL-WEB-NOT-INJECTED") as page_url:
+    async with container_web_page_server(body="TIER3-ORIGINAL-WEB-NOT-INJECTED") as page_url:
         async def configure(target: OpenClawTarget) -> None:
             await _configure_base(target)
 
