@@ -5,13 +5,14 @@ from __future__ import annotations
 import pytest
 import yaml
 from conftest import dataset_root, requires_dataset
-from dtap_scaffold.dataset import iter_task_config_paths, parse_task_config
 
 from security_claim_dtap.dataset import (
     GOLDEN_HASHES_PATH,
     build_golden_hashes,
     hash_task,
+    iter_task_config_paths,
     load_golden_hashes,
+    parse_task_config,
 )
 from security_claim_dtap.task import DtapTask
 

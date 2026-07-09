@@ -13,6 +13,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Auto-download the DTAP per-task dataset (goal enumeration) from HuggingFace;
+# else point $DTAP_DATASET_ROOT at a local checkout. Defining the Goals is the
+# claim's job, so the enumeration + this extra live here (security_claim_dtap.dataset).
+dataset = ["huggingface_hub>=0.20"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -54,6 +58,12 @@ python_version = "3.13"
 # dtap_scaffold ships no py.typed marker yet; yaml has no inline types; the two
 # concrete target packages are lazy-imported (not a hard dependency of this claim).
 [[tool.mypy.overrides]]
-module = ["dtap_scaffold.*", "yaml", "dtap_claudecode_target", "dtap_openclaw_target"]
+module = [
+    "dtap_scaffold.*",
+    "yaml",
+    "huggingface_hub.*",
+    "dtap_claudecode_target",
+    "dtap_openclaw_target",
+]
 ignore_missing_imports = true
 follow_imports = "skip"

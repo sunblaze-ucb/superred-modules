@@ -16,16 +16,16 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import cast
 
-from dtap_scaffold.dataset import (
-    iter_task_config_paths,
-    parse_task_config,
-    resolve_dataset_root,
-)
 from superred.core.controller import TargetFactory
 from superred.core.interfaces.security_claim import SecurityClaim
 from superred.core.interfaces.target import Target
 from superred.core.interfaces.task import Task
 
+from security_claim_dtap.dataset import (
+    iter_task_config_paths,
+    parse_task_config,
+    resolve_dataset_root,
+)
 from security_claim_dtap.task import DtapTask
 
 
@@ -53,7 +53,7 @@ def dtap_claim(
         threat_models: restrict malicious tasks to ``"direct"`` / ``"indirect"``.
         risk_categories: restrict to these ``Attack.risk_category`` values.
         dataset_root: local dataset root override (else ``$DTAP_DATASET_ROOT``
-            then ``./dataset``); see ``dtap_scaffold.dataset.resolve_dataset_root``.
+            then ``./dataset``); see ``security_claim_dtap.dataset.resolve_dataset_root``.
         download: when true, auto-download the requested domains from HuggingFace
             if missing (needs ``huggingface_hub``); default off (fully offline).
         judge_model / judge_api_base / judge_api_key: out-of-band DTAP judge LLM

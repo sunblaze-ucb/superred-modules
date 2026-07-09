@@ -10,12 +10,12 @@ requires-python = ">=3.11,<3.14"
 dependencies = ["superred>=0.1.0", "pyyaml", "aiohttp"]
 
 # Optional heavier deps:
-#   dataset auto-download from HuggingFace -> huggingface_hub (else use DTAP_DATASET_ROOT)
 #   judge runner + harness (mcp.yaml/env.yaml, composes, run_judge, judge helpers) ->
 #     decodingtrust-agent-sdk==0.2.12 (pinned, lazy-imported). Env images pull from
 #     Docker Hub (decodingtrustagent/*); no local image builds for the text domains.
+# (The dataset/goal enumeration + its huggingface_hub extra live in the security
+#  claim -- security_claim_dtap.dataset -- since defining the Goals is the claim's job.)
 [project.optional-dependencies]
-dataset = ["huggingface_hub>=0.20"]
 # The SDK harness + the env MCP / injection servers (run as host processes) + the
 # host MCP proxy. Several upstream servers import third-party packages the SDK wheel
 # and its extras (only agent backends) do NOT pull, so they are declared here (each
@@ -63,7 +63,6 @@ python_version = "3.13"
 [[tool.mypy.overrides]]
 module = [
     "fastmcp.*",
-    "huggingface_hub.*",
     "yaml",
 ]
 ignore_missing_imports = true

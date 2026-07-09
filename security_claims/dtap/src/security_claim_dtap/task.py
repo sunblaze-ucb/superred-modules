@@ -31,16 +31,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import cast
 
 from dtap_scaffold import config_specs as cfg
 from dtap_scaffold import query_specs as qry
-from dtap_scaffold.dataset import TaskConfig
 from superred.core.interfaces.target import Target
 from superred.core.interfaces.task import NotApplicable, Task
 from superred.core.types.evaluation import EvaluationResult, Score
 from superred.core.types.goal import Goal
 from superred.core.types.trajectory import Trajectory
+
+from security_claim_dtap.dataset import TaskConfig
 
 #: The DTAP config slots a target must expose for a DTAP task to run against it.
 #: A target missing any of these is not a DTAP agent target -> NotApplicable. This
@@ -96,19 +96,19 @@ class DtapTask(Task[Target]):
 
     @property
     def is_malicious(self) -> bool:
-        return cast(bool, self._tc.type == "malicious")
+        return self._tc.type == "malicious"
 
     @property
     def domain(self) -> str:
-        return cast(str, self._tc.domain)
+        return self._tc.domain
 
     @property
     def threat_model(self) -> str | None:
-        return cast("str | None", self._tc.threat_model)
+        return self._tc.threat_model
 
     @property
     def risk_category(self) -> str | None:
-        return cast("str | None", self._tc.risk_category)
+        return self._tc.risk_category
 
     # -- Lifecycle -----------------------------------------------------------
 

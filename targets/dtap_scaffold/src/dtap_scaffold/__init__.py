@@ -3,8 +3,10 @@
 This package holds everything agent-agnostic: the security-domain forest, the
 controllables/observables, the pre-run/post-run specs, the text-only domain
 allowlist, and (added incrementally) the env/MCP/Docker lifecycle, the host MCP
-proxy, the env-injection bridge, the byte-faithful judge runner, the dataset
-loader, and the agent-agnostic ``DtapAgentTarget`` base class. The two concrete
+proxy, the env-injection bridge, the byte-faithful judge runner (tooling; the
+claim invokes it), and the agent-agnostic ``DtapAgentTarget`` base class. (The
+dataset/goal enumeration lives in the ``security_claim_dtap`` claim, since
+defining the Goals is the claim's job.) The two concrete
 targets (Claude Code, OpenClaw) subclass the base and implement only a handful
 of agent-specific hooks; the DTAP-BENCH claim drives either through the Target
 ABC.

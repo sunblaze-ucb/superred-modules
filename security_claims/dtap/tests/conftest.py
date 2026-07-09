@@ -18,7 +18,8 @@ from typing import Any
 import pytest
 from dtap_scaffold import config_specs as cfg
 from dtap_scaffold import query_specs as qry
-from dtap_scaffold.dataset import TaskConfig
+
+from security_claim_dtap.dataset import TaskConfig
 
 # ---------------------------------------------------------------------------
 # Dataset availability
