@@ -3,9 +3,11 @@
 Mirrors the upstream ``utils/task_executor.py`` compose handling: ``up -d`` with
 the env's host-port variables exported, ``down --remove-orphans --volumes`` for
 teardown, ``ps --format json`` polled until every container is running/healthy,
-and ``sudo`` auto-detected when the daemon needs it. Every shipped env compose is
-image-based (each service names a prebuilt ``decodingtrustagent/*`` image; none
-has a ``build:`` section), so ``up -d`` never builds -- matching upstream
+and ``sudo`` auto-detected when the daemon needs it. Every env compose the port
+actually brings up (the ``env.yaml``-referenced hub variant) is image-based (each
+service names a prebuilt ``decodingtrustagent/*`` image, no ``build:`` section --
+other, unused ``docker-compose.yml`` variants in the SDK may have one), so
+``up -d`` never builds -- matching upstream
 ``task_executor`` (plain ``up -d``); a best-effort ``pull`` first warms the image
 cache but is otherwise redundant with ``up -d``'s default missing-image pull.
 

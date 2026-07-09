@@ -16,8 +16,9 @@ agent-agnostic :class:`~dtap_scaffold.types.TrajectoryArtifact` rather than the
 DT-Arena ``Trajectory`` object, and it **splits** tool calls:
 
 * env / MCP tool calls (routed through the host proxy) are EXCLUDED from
-  ``native_tool_calls`` because the proxy already emitted one ObservableEvent +
-  one PostCall per call -- re-emitting them here would double-count;
+  ``native_tool_calls`` because the proxy already fired one env-tool PostCall per
+  call (whose recorded event+response IS the observation; no separate
+  ObservableEvent) -- re-emitting them here would double-count;
 * the agent's NATIVE tool calls (``exec`` / ``fs`` / ...) are KEPT.
 
 A call is classified as env iff its name is attributable to one of the configured

@@ -109,8 +109,13 @@ class HostMCPProxy:
     # ----- MCPProxy: per-run wiring (pure) ---------------------------------
 
     def bind(self, emit: EmitFn, send_event: SendEventFn) -> None:
-        """Bind this run's event callbacks (called at the start of each run)."""
-        self._emit = emit
+        """Bind this run's event callbacks (called at the start of each run).
+
+        ``emit`` is accepted for the ``MCPProxy`` protocol but intentionally unused:
+        an env tool call is recorded solely by the ``send_event`` PostCall (event +
+        response), so the proxy emits no separate one-way ObservableEvent.
+        """
+        self._emit = emit  # unused by design; see docstring
         self._send_event = send_event
 
     def set_tool_description_edits(self, edits: list[dict[str, Any]]) -> None:

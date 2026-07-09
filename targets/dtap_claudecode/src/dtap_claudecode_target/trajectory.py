@@ -10,8 +10,9 @@ upstream ``ClaudeSDKTrajectoryConverter`` with one DTAP-specific rule:
 **Proxied env tools are SKIPPED.** In the superred DTAP design every environment
 MCP tool is exposed through a single host proxy server named ``dtap_proxy``, so
 those calls appear in the transcript as ``mcp__dtap_proxy__<tool>``. The host MCP
-proxy already observed each one (it emitted the ObservableEvent and fired the
-per-server env-tool PostCall controllable), so the converter drops every
+proxy already observed each one (it fired the per-node env-tool PostCall
+controllable, whose recorded event+response IS the env-tool observation -- the
+proxy emits no separate ObservableEvent), so the converter drops every
 ``mcp__``-prefixed tool from ``native_tool_calls`` AND from the DTAP-schema
 ``trajectory`` steps -- only the agent's NATIVE (container) tools and its non-tool
 messages survive here, which is what the base emits once.
