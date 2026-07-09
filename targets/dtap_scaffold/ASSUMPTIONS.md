@@ -51,6 +51,9 @@ reading its captured crash log; they are declared in the `sdk` optional extra:
   server.
 - `psycopg2-binary` -- the customer_service injection server (`import psycopg2` at
   module top).
+- `beautifulsoup4` -- the finance MCP server (`server/extractor_simple.py` opens with
+  `from bs4 import BeautifulSoup`); without it the finance server crashes at import and
+  `EnvStack.up()` raises `MCP servers failed to become ready: finance` (confirmed live).
 - `uv` -- the launch command for some servers (terminal, finance); must be on PATH.
 
 **Launch interpreter (`python3` on PATH).** The env servers are spawned via the

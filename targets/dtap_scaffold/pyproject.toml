@@ -30,7 +30,7 @@ dataset = ["huggingface_hub>=0.20"]
 # NOTE: the env servers launch via mcp.yaml's `python_executable` ("python3"), so that
 # `python3` must resolve to THIS environment (activate the venv / put its bin on PATH)
 # for the servers to find these deps + the SDK's dt_arena package.
-sdk = ["decodingtrust-agent-sdk==0.2.12", "fastmcp", "ujson", "psycopg2-binary", "uv>=0.5"]
+sdk = ["decodingtrust-agent-sdk==0.2.12", "fastmcp", "ujson", "psycopg2-binary", "beautifulsoup4", "uv>=0.5"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pytest-cov>=6.0"]
 
 [tool.hatch.build.targets.wheel]
