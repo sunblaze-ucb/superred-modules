@@ -297,6 +297,25 @@ async def test_tool_description_suffix_applied_end_to_end():
     assert suffix_edits[0]["tool"] == "query_flight"
 
 
+async def test_reset_and_teardown_reclaim_the_run_workspace(tmp_path):
+    """The per-run workspace (attacker-placed files + code_execution output) is
+    ephemeral: reset_ephemeral_state reclaims it, and teardown reclaims the final
+    run's (reset is not called after the last run)."""
+    t = _configured(state_root=str(tmp_path))
+    emit, send_event, *_ = _recorder(injections={})
+    await t.run(emit, send_event)
+    run_dir = t._run_dir
+    assert run_dir and os.path.isdir(run_dir)  # the run minted a workspace
+    await t.reset_ephemeral_state()
+    assert not os.path.exists(run_dir)  # reclaimed
+    assert t._run_dir == ""
+    await t.run(emit, send_event)  # a second run mints a fresh one
+    run_dir2 = t._run_dir
+    assert run_dir2 != run_dir and os.path.isdir(run_dir2)
+    await t.teardown()
+    assert not os.path.exists(run_dir2)  # teardown reclaims the last one
+
+
 async def test_out_of_scope_injections_are_filter_blocked_end_to_end():
     """The security contract, exercised end-to-end through the REAL
     security_domain_filter: at scope {USER_TAG} the optimizer may inject the user

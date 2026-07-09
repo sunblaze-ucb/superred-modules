@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 from abc import abstractmethod
 from typing import Any
@@ -353,8 +354,11 @@ class DtapAgentTarget(Target):
         self._final_response = ""
         self._agent_responses = []
         self._trajectory_json = {}
-        # The next run() mints a fresh workspace root (any files the attacker placed
-        # or code wrote are ephemeral per run); the env stack + proxy persist.
+        # The workspace (attacker-placed files + code_execution output) is ephemeral
+        # per run: reclaim it here. The env stack + proxy persist; the next run() mints
+        # a fresh workspace root.
+        if self._run_dir:
+            shutil.rmtree(self._run_dir, ignore_errors=True)
         self._run_dir = ""
 
     async def teardown(self) -> None:
@@ -364,6 +368,10 @@ class DtapAgentTarget(Target):
         finally:
             if self._env_stack is not None:
                 await self._env_stack.down()
+            # Reclaim the last run's workspace (reset is not called after the final run).
+            if self._run_dir:
+                shutil.rmtree(self._run_dir, ignore_errors=True)
+            self._run_dir = ""
             self._started = False
 
     # ----- internals -------------------------------------------------------

@@ -95,10 +95,38 @@ async def test_configure_target_not_applicable_on_non_dtap_target() -> None:
         await DtapTask(task_config=tc).configure_target(NonDtapTarget())
 
 
+async def test_configure_target_not_applicable_on_partial_dtap_target() -> None:
+    """A target exposing only the old 3-slot gate subset but missing a slot
+    configure_target writes (SYSTEM_PROMPT etc.) is skipped cleanly via NotApplicable,
+    not crashed on a later set_config -- the gate must cover the FULL write-set."""
+    from conftest import _Slot
+
+    class PartialDtapTarget:
+        @property
+        def config_specs(self) -> list[_Slot]:
+            return [_Slot(cfg.ACTIVE_MCP_SERVERS), _Slot(cfg.TASK_DIR), _Slot(cfg.USER_PROMPT)]
+
+        def set_config(self, name: str, value: str) -> None:
+            raise AssertionError("set_config must not be reached for an incompatible target")
+
+    tc = make_task_config()
+    with pytest.raises(NotApplicable):
+        await DtapTask(task_config=tc).configure_target(PartialDtapTarget())
+
+
 def test_required_slots_constant() -> None:
-    # Guard the NotApplicable contract: these three slots define a DTAP target.
+    # The gate must equal the FULL set configure_target writes, so an incompatible
+    # target is skipped via NotApplicable rather than crashing on a later set_config.
     assert REQUIRED_CONFIG_SLOTS == frozenset(
-        {cfg.ACTIVE_MCP_SERVERS, cfg.TASK_DIR, cfg.USER_PROMPT}
+        {
+            cfg.ACTIVE_MCP_SERVERS,
+            cfg.ENV_INJECTION_CONFIG,
+            cfg.SYSTEM_PROMPT,
+            cfg.USER_PROMPT,
+            cfg.TASK_DIR,
+            cfg.AVAILABLE_INJECTIONS,
+            cfg.THREAT_MODEL,
+        }
     )
 
 

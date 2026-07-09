@@ -43,9 +43,19 @@ from superred.core.types.goal import Goal
 from superred.core.types.trajectory import Trajectory
 
 #: The DTAP config slots a target must expose for a DTAP task to run against it.
-#: A target missing any of these is not a DTAP agent target -> NotApplicable.
+#: A target missing any of these is not a DTAP agent target -> NotApplicable. This
+#: is the FULL set configure_target writes, so an incompatible target is skipped
+#: cleanly rather than passing the gate and then crashing on a later set_config.
 REQUIRED_CONFIG_SLOTS: frozenset[str] = frozenset(
-    {cfg.ACTIVE_MCP_SERVERS, cfg.TASK_DIR, cfg.USER_PROMPT}
+    {
+        cfg.ACTIVE_MCP_SERVERS,
+        cfg.ENV_INJECTION_CONFIG,
+        cfg.SYSTEM_PROMPT,
+        cfg.USER_PROMPT,
+        cfg.TASK_DIR,
+        cfg.AVAILABLE_INJECTIONS,
+        cfg.THREAT_MODEL,
+    }
 )
 
 
