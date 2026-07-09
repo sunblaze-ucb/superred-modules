@@ -87,7 +87,6 @@ def test_static_observables():
     assert names == {
         "model_identity",
         "detailed_system_specification",
-        "tool_catalog_listing",
         "active_environments",
         "max_turns",
     }

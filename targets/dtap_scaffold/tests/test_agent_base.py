@@ -242,12 +242,12 @@ def test_observable_contents():
     assert set(obs) == {
         "model_identity",
         "detailed_system_specification",
-        "tool_catalog_listing",
         "active_environments",
         "max_turns",
     }
     assert obs["model_identity"] == "openai/gpt-4o-2024-05-13"
-    assert obs["tool_catalog_listing"] == {"servers": ["travel-suite"]}
+    # the active-server list lives ONLY under active_environments (system-spec tag),
+    # not under a tool_catalogue-tagged observable
     assert obs["active_environments"] == {
         "servers": ["travel-suite"],
         "injection_servers": ["travel-injection"],

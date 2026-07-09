@@ -60,7 +60,6 @@ from dtap_scaffold.observables import (
     DETAILED_SYSTEM_SPECIFICATION_OBS,
     MAX_TURNS_OBS,
     MODEL_IDENTITY_OBS,
-    TOOL_CATALOG_LISTING_OBS,
     TOOL_CATALOGUE_OBS,
     agent_message_observable,
     native_tool_observable,
@@ -258,10 +257,6 @@ class DtapAgentTarget(Target):
             ObservableValue(
                 observable=DETAILED_SYSTEM_SPECIFICATION_OBS,
                 content=self._detailed_spec(),
-            ),
-            ObservableValue(
-                observable=TOOL_CATALOG_LISTING_OBS,
-                content={"servers": list(self._active_servers)},
             ),
             ObservableValue(
                 observable=ACTIVE_ENVIRONMENTS_OBS,

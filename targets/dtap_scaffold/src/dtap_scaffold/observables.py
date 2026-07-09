@@ -47,18 +47,6 @@ DETAILED_SYSTEM_SPECIFICATION_OBS: Observable = Observable(
     observable_type="text",
 )
 
-TOOL_CATALOG_LISTING_OBS: Observable = Observable(
-    name="tool_catalog_listing",
-    security_domain=TOOL_CATALOGUE_TAG,
-    description=(
-        "JSON snapshot of the active MCP server names for this task "
-        '(``{"servers": [...]}``), available pre-run. The full per-tool catalogue '
-        "(names/descriptions/schemas) is not resolved until the env boots, so it is "
-        "emitted live at the start of run() as ``tool_catalogue`` (see below)."
-    ),
-    observable_type="json",
-)
-
 TOOL_CATALOGUE_OBS: Observable = Observable(
     name="tool_catalogue",
     security_domain=TOOL_CATALOGUE_TAG,
@@ -89,11 +77,17 @@ MAX_TURNS_OBS: Observable = Observable(
 STATIC_OBSERVABLE_SPECS: tuple[Observable, ...] = (
     MODEL_IDENTITY_OBS,
     DETAILED_SYSTEM_SPECIFICATION_OBS,
-    TOOL_CATALOG_LISTING_OBS,
     ACTIVE_ENVIRONMENTS_OBS,
     MAX_TURNS_OBS,
 )
-"""The static observables every DTAP target exposes (content filled per task)."""
+"""The static observables every DTAP target exposes (content filled per task).
+
+The active-server list has a single home here -- ``active_environments`` (under
+``detailed_system_specification`` -- knowing which envs are active is system-spec
+intel). It is deliberately NOT surfaced under the tool-catalogue boundary: the
+tool-catalogue tag is served by the live ``tool_catalogue`` observable (the actual
+per-tool catalogue), so a tool-catalogue-scoped optimizer does not learn the
+server list, which belongs to the system-spec boundary."""
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +121,6 @@ def native_tool_observable(index: int) -> Observable:
 __all__ = [
     "MODEL_IDENTITY_OBS",
     "DETAILED_SYSTEM_SPECIFICATION_OBS",
-    "TOOL_CATALOG_LISTING_OBS",
     "TOOL_CATALOGUE_OBS",
     "ACTIVE_ENVIRONMENTS_OBS",
     "MAX_TURNS_OBS",
