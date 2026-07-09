@@ -323,6 +323,28 @@ async def test_setup_env_carries_project_name(patched, tmp_path):
     assert "TRAVELENV_PROJECT_NAME" in setup_calls[0]["env"]
 
 
+async def test_setup_failure_surfaces_stdout_when_stderr_empty(patched, tmp_path, monkeypatch):
+    # A seeder that fails with its message on STDOUT and an EMPTY stderr (e.g. crm's
+    # `curl -s` reset against a not-yet-ready service) must still produce a
+    # diagnosable error, not an opaque "setup.sh failed: ".
+    task = tmp_path / "task"
+    task.mkdir()
+    (task / "setup.sh").write_text("#!/bin/sh\necho boom\n")
+
+    async def _exec_fail(cmd, *, cwd=None, env=None, timeout=None):
+        return (1, "curl: (7) Failed to connect to slack API", "")  # stdout has it, stderr empty
+
+    monkeypatch.setattr(compose, "_exec", _exec_fail)
+    stack = lc.DockerEnvStack(
+        active_servers=("travel-suite",),
+        injection_config=None,
+        task_dir=str(task),
+        state_root=str(tmp_path / "state"),
+    )
+    with pytest.raises(RuntimeError, match="Failed to connect to slack API"):
+        await stack.up()
+
+
 async def test_spawned_server_env_carries_project_name(patched, tmp_path):
     # The exec-based DTAP servers (terminal/research/...) read <ENV>_PROJECT_NAME;
     # every spawned server must see it, set to the env's per-instance compose project.

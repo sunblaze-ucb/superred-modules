@@ -303,14 +303,18 @@ class DockerEnvStack:
         # SILENTLY skip seeding ("[WARN] ..._PROJECT_NAME not set, skipping seed",
         # rc=0) and the task would run against an unseeded env. Export them here too.
         run_env.update(self._project_name_overrides())
-        rc, _, err = await compose._exec(
+        rc, out, err = await compose._exec(
             ["bash", str(setup)],
             cwd=str(self._task_dir),
             env=run_env,
             timeout=SETUP_TIMEOUT,
         )
         if rc != 0:
-            raise RuntimeError(f"setup.sh failed ({self._task_dir}): {err.strip()}")
+            # Include BOTH streams: some seeders (e.g. crm's `curl -s` reset) write
+            # their failure to stdout, or fail silently, leaving stderr empty; a
+            # stderr-only message would be an undiagnosable "setup.sh failed: ".
+            detail = "\n".join(s for s in (err.strip(), out.strip()) if s) or f"exit code {rc}"
+            raise RuntimeError(f"setup.sh failed ({self._task_dir}): {detail}")
 
     async def _start_mcp_servers(self) -> None:
         for server in self._active_servers:
