@@ -63,6 +63,11 @@ from dtap_scaffold.text_domains import (
     is_text_only_domain,
     require_text_only_domain,
 )
+from dtap_scaffold.tool_trees import (
+    ServerToolTree,
+    build_server_tree,
+    known_servers,
+)
 
 __all__ = [
     # forest
@@ -90,6 +95,10 @@ __all__ = [
     "build_domain",
     "tools_server_tag",
     "env_server_tag",
+    # tool trees (per-server authorization subtree for the env-tool surface)
+    "build_server_tree",
+    "ServerToolTree",
+    "known_servers",
     # controllables
     "USER_PROMPT_CTRL",
     "SYSTEM_PROMPT_CTRL",

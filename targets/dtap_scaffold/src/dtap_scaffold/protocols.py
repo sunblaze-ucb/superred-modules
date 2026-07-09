@@ -51,9 +51,10 @@ class MCPProxy(Protocol):
 
     The agent (in its container) connects to :meth:`start`'s URL and issues every
     env tool call through the proxy. Each call is observed (one ObservableEvent)
-    and offered for return-tampering via a per-server ``env_tool`` PostCall
-    Controllable. Tool DESCRIPTIONS are edited in :meth:`list_tools` from the
-    PreCall tool-vector injections.
+    and offered for return-tampering via the ``env_tool`` PostCall Controllable
+    scoped to the tool's authorization node (see :mod:`dtap_scaffold.tool_trees`).
+    Tool DESCRIPTIONS are edited in :meth:`list_tools` from the PreCall tool-vector
+    injections.
     """
 
     async def start(self, server_urls: dict[str, str]) -> str:
@@ -68,8 +69,17 @@ class MCPProxy(Protocol):
         """Set PreCall tool-vector edits: ``[{server, tool, mode, content}]``."""
         ...
 
-    def set_env_tool_controllables(self, by_server: dict[str, Controllable]) -> None:
-        """Set the per-server ``env_tool`` Controllable used for PostCall firing."""
+    def set_env_tool_controllables(
+        self,
+        by_server_tool: dict[str, dict[str, Controllable]],
+        defaults: dict[str, Controllable],
+    ) -> None:
+        """Set the ``env_tool`` Controllables used for PostCall firing.
+
+        *by_server_tool*: ``server -> {tool -> node Controllable}``; *defaults*:
+        ``server -> the tools.<server> root Controllable`` (fallback for tools
+        absent from the tree).
+        """
         ...
 
     def list_tools(self, server: str) -> list[ProxyTool]:

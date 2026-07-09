@@ -22,9 +22,11 @@ Plus four superred-afforded surfaces DTAP does not itself enumerate as vectors:
 
 - ``system_prompt``                                    (SYSTEM_PROMPT, PreCall; overrides
                                                         the agent's system message)
-- ``env_tool:<server>``                                (tools.<server>, PostCall, one per
-                                                        active env server; replaces what a
-                                                        tool on that server returns)
+- ``env_tool:<server>.<node>``                         (tools.<server>.<node>, PostCall, one
+                                                        per authorization node per active env
+                                                        server; replaces what a tool at that
+                                                        node returns. ``env_tool:<server>`` is
+                                                        the root/fallback surface)
 - ``filesystem``                                       (host_filesystem, PreCall; the
                                                         attacker places/edits/deletes files
                                                         on the target machine before the run)
@@ -161,24 +163,34 @@ note)."""
 # ---------------------------------------------------------------------------
 
 
-def env_tool_output_controllable(server: str, security_domain: SecurityDomainTag) -> Controllable:
-    """Per-MCP-SERVER return-tampering controllable (the proxy content surface).
+def env_tool_output_controllable(
+    server: str, node_key: str, security_domain: SecurityDomainTag
+) -> Controllable:
+    """Per-authorization-NODE return-tampering controllable (the proxy content surface).
 
-    One per active env server (enumerable pre-run from ``active_mcp_servers``,
-    before any container starts). Fired as a ``ControllablePostCallEvent`` each
-    time a tool on *server* returns: the event's ``request`` carries
-    ``{tool, params}`` and its ``answer`` carries the genuine return; a
-    ``ControllableInjection`` replaces what the agent sees. *security_domain* is
-    the (cached) ``tools.<server>`` leaf -- the SAME instance must be reused in
-    the domain, the controllable, and the event (identity-based scope checks).
+    A server's return-tamper surface is split by its authorization tree (see
+    :mod:`dtap_scaffold.tool_trees`): one controllable per node, plus a root
+    ``env_tool:<server>`` (``node_key=""``) that both governs the whole-server
+    grant and is the fallback for tools absent from the tree. Enumerable pre-run
+    from ``active_mcp_servers`` (before any container starts). Fired as a
+    ``ControllablePostCallEvent`` each time a tool at this node returns: the
+    event's ``request`` carries ``{tool, params}`` and its ``answer`` the genuine
+    return; a ``ControllableInjection`` replaces what the agent sees.
+    *security_domain* is the (cached) ``tools.<server>[.<node_key>]`` tag -- the
+    SAME instance reused in the domain, the controllable, and the event
+    (identity-based scope checks).
     """
+    name = f"env_tool:{server}.{node_key}" if node_key else f"env_tool:{server}"
+    where = (
+        f"a {server} MCP tool in its '{node_key}' node" if node_key else f"any {server} MCP tool"
+    )
     return Controllable(
-        name=f"env_tool:{server}",
+        name=name,
         security_domain=security_domain,
         description=(
-            f"Replace the value any {server} MCP tool returns to the agent "
-            "(indirect prompt injection). PostCall, once per tool call; the event's "
-            "request carries {tool, params} and its answer the genuine return."
+            f"Replace the value {where} returns to the agent (indirect prompt "
+            "injection). PostCall, once per tool call; the event's request carries "
+            "{tool, params} and its answer the genuine return."
         ),
         value_type="text",
     )

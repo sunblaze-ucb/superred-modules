@@ -5,7 +5,11 @@ from __future__ import annotations
 import pytest
 from superred.core.types.controllable import Controllable
 from superred.core.types.observable import Observable
-from superred.core.types.security_domain import SecurityDomain, scope_includes
+from superred.core.types.security_domain import (
+    SecurityDomain,
+    SecurityDomainTag,
+    scope_includes,
+)
 from superred.core.types.state import ConfigSpec, QuerySpec
 
 import dtap_scaffold as S  # noqa: N812
@@ -59,10 +63,16 @@ def test_fixed_controllables():
 
 def test_env_controllable_builders():
     tag = S.tools_server_tag("salesforce")
-    ctrl = S.env_tool_output_controllable("salesforce", tag)
+    # root/fallback surface (node_key="") keeps the bare env_tool:<server> name
+    ctrl = S.env_tool_output_controllable("salesforce", "", tag)
     assert ctrl.name == "env_tool:salesforce"
     assert ctrl.security_domain is tag
     assert ctrl.value_type == "text"
+    # a named node yields env_tool:<server>.<node> scoped to the node tag
+    node = S.build_server_tree("salesforce").nodes["base"]
+    node_ctrl = S.env_tool_output_controllable("salesforce", "base", node)
+    assert node_ctrl.name == "env_tool:salesforce.base"
+    assert node_ctrl.security_domain is node
 
     etag = S.env_server_tag("gmail-injection")
     inj = S.env_inject_controllable("gmail-injection", etag)
@@ -126,7 +136,7 @@ def test_text_only_domains():
 
 
 def test_build_domain_with_active_servers_and_scope_identity():
-    # Cache per-server leaves ONCE and reuse them (identity semantics).
+    # The leaf builders are cached, so every caller shares the ONE instance.
     tools_tag = S.tools_server_tag("salesforce")
     env_tag = S.env_server_tag("salesforce-injection")
     domain = S.build_domain([tools_tag], [env_tag])
@@ -139,6 +149,10 @@ def test_build_domain_with_active_servers_and_scope_identity():
     assert scope_includes(frozenset({S.TOOLS_TAG}), tools_tag)
     assert scope_includes(frozenset({S.ENVIRONMENT_TAG}), env_tag)
     assert scope_includes(frozenset({tools_tag}), tools_tag)
-    # And a DIFFERENT (equal-but-not-identical) leaf is NOT covered -> why caching matters.
-    other = S.tools_server_tag("salesforce")
-    assert not scope_includes(frozenset({tools_tag}), other)
+    # Caching centralizes identity: a repeat call returns the SAME instance...
+    assert S.tools_server_tag("salesforce") is tools_tag
+    assert S.env_server_tag("salesforce-injection") is env_tag
+    # ...but a hand-built, equal-but-not-identical tag is NOT covered -- why the
+    # identity (`is`, not `==`) semantics mean tags must come from the builders.
+    hand_built = SecurityDomainTag("tools.salesforce", parent=S.TOOLS_TAG)
+    assert not scope_includes(frozenset({tools_tag}), hand_built)

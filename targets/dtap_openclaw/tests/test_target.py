@@ -69,7 +69,8 @@ class FakeProxy:
         self.started = self.stopped = 0
         self._emit = self._send = None
         self._edits: list = []
-        self._env_tool_ctrls: dict = {}
+        self._env_tool_by_tool: dict = {}
+        self._env_tool_defaults: dict = {}
 
     async def start(self, server_urls):  # noqa: ANN001
         self.started += 1
@@ -81,8 +82,9 @@ class FakeProxy:
     def set_tool_description_edits(self, edits):  # noqa: ANN001
         self._edits = edits
 
-    def set_env_tool_controllables(self, by_server):  # noqa: ANN001
-        self._env_tool_ctrls = by_server
+    def set_env_tool_controllables(self, by_server_tool, defaults):  # noqa: ANN001
+        self._env_tool_by_tool = by_server_tool
+        self._env_tool_defaults = defaults
 
     def list_tools(self, server):  # noqa: ANN001
         return []
@@ -91,7 +93,7 @@ class FakeProxy:
         return {"travel-suite": [{"name": "t", "description": "d", "inputSchema": {}}]}
 
     async def handle_tool_call(self, server, tool, params):  # noqa: ANN001
-        ctrl = self._env_tool_ctrls[server]
+        ctrl = self._env_tool_by_tool.get(server, {}).get(tool) or self._env_tool_defaults[server]
         resp = await self._send(
             ControllablePostCallEvent(
                 controllable=ctrl,

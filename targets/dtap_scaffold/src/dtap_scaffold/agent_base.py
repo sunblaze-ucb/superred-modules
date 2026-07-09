@@ -53,7 +53,7 @@ from dtap_scaffold.controllables import (
     env_inject_controllable,
     env_tool_output_controllable,
 )
-from dtap_scaffold.forest import build_domain, env_server_tag, tools_server_tag
+from dtap_scaffold.forest import build_domain, env_server_tag
 from dtap_scaffold.observables import (
     ACTIVE_ENVIRONMENTS_OBS,
     DETAILED_SYSTEM_SPECIFICATION_OBS,
@@ -65,6 +65,7 @@ from dtap_scaffold.observables import (
     native_tool_observable,
 )
 from dtap_scaffold.protocols import EnvInjector, EnvStack, MCPProxy
+from dtap_scaffold.tool_trees import ServerToolTree, build_server_tree
 from dtap_scaffold.types import (
     AgentLaunchSpec,
     EnvHandle,
@@ -136,9 +137,17 @@ class DtapAgentTarget(Target):
         self._max_turns: int = max_turns
         self._native_tools_policy: str = "enabled"
 
-        # Cached per-server tags (identity-stable; reused in domain/controllables/events).
-        self._tool_tags: dict[str, Any] = {}
+        # Cached per-server authorization trees + tags (identity-stable; reused in
+        # domain/controllables/events). Each active server's tools.<server> tag is
+        # the root of a single-parent tree of tools.<server>.<node> tags.
+        self._tool_trees: dict[str, ServerToolTree] = {}
         self._env_tags: dict[str, Any] = {}
+        # env_tool controllables, built once per config: per-node (identity-stable),
+        # the per-server root/fallback, and the tool -> node-controllable map the
+        # proxy resolves each call through.
+        self._env_tool_node_ctrls: dict[str, dict[str, Controllable]] = {}
+        self._env_tool_defaults: dict[str, Controllable] = {}
+        self._env_tool_by_tool: dict[str, dict[str, Controllable]] = {}
 
         # Live collaborators (created lazily on first run).
         self._env_stack: EnvStack | None = None
@@ -172,7 +181,24 @@ class DtapAgentTarget(Target):
         if name == C.ACTIVE_MCP_SERVERS:
             servers = tuple(json.loads(value))
             self._active_servers = servers
-            self._tool_tags = {s: tools_server_tag(s) for s in servers}
+            self._tool_trees = {s: build_server_tree(s) for s in servers}
+            # Materialize the env_tool controllables once (identity-stable tags):
+            # one per authorization node, a root/fallback per server, and the
+            # tool -> node-controllable map the proxy resolves each call through.
+            self._env_tool_node_ctrls = {}
+            self._env_tool_defaults = {}
+            self._env_tool_by_tool = {}
+            for s in servers:
+                tree = self._tool_trees[s]
+                node_ctrls = {
+                    key: env_tool_output_controllable(s, key, tag)
+                    for key, tag in tree.nodes.items()
+                }
+                self._env_tool_node_ctrls[s] = node_ctrls
+                self._env_tool_defaults[s] = env_tool_output_controllable(s, "", tree.root)
+                self._env_tool_by_tool[s] = {
+                    tool: node_ctrls[key] for tool, key in tree.tool_to_key.items()
+                }
         elif name == C.ENV_INJECTION_CONFIG:
             cfg = json.loads(value) if value else {}
             self._env_injection_config = dict(cfg)
@@ -212,11 +238,16 @@ class DtapAgentTarget(Target):
 
     @property
     def security_domain(self) -> SecurityDomain:
-        return build_domain(self._tool_tags.values(), self._env_tags.values())
+        tool_tags = [tag for tree in self._tool_trees.values() for tag in tree.all_tags]
+        return build_domain(tool_tags, self._env_tags.values())
 
     def get_controllables(self) -> list[Controllable]:
         ctrls = list(FIXED_CONTROLLABLES)
-        ctrls += [env_tool_output_controllable(s, self._tool_tags[s]) for s in self._active_servers]
+        for s in self._active_servers:
+            # per-authorization-node return-tamper surfaces, then the server
+            # root/fallback (the whole-server grant; fires for unmapped tools)
+            ctrls += list(self._env_tool_node_ctrls[s].values())
+            ctrls.append(self._env_tool_defaults[s])
         ctrls += [env_inject_controllable(s, self._env_tags[s]) for s in self._injection_servers]
         return ctrls
 
@@ -284,9 +315,7 @@ class DtapAgentTarget(Target):
         # Wire the proxy for this run (env-tool observe + PostCall return tampering).
         self._proxy.bind(emit, send_event)
         self._proxy.set_tool_description_edits(edits)
-        self._proxy.set_env_tool_controllables(
-            {s: env_tool_output_controllable(s, self._tool_tags[s]) for s in self._active_servers}
-        )
+        self._proxy.set_env_tool_controllables(self._env_tool_by_tool, self._env_tool_defaults)
 
         spec = AgentLaunchSpec(
             model=self._model,

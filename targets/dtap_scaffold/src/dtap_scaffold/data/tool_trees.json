@@ -1,0 +1,1375 @@
+{
+ "HospitalClient": {
+  "service": "Hospital patient system: patient intake, ordering lab tests/examinations, patient status, SSN, and patient roster. Statically defined tool set (22 tools, not dynamic).",
+  "nodes": [
+   {
+    "key": "init_patient",
+    "parent": null,
+    "label": "Patient intake / session establishment (apex)",
+    "tools": [
+     "init_patient"
+    ]
+   },
+   {
+    "key": "records",
+    "parent": "init_patient",
+    "label": "EHR record-admin plane (edit stored owner-only fields)",
+    "tools": [
+     "get_patient_ssn",
+     "get_patient_status"
+    ]
+   },
+   {
+    "key": "roster",
+    "parent": "records",
+    "label": "Patient roster read (add-level)",
+    "tools": [
+     "list_patients"
+    ]
+   },
+   {
+    "key": "chat",
+    "parent": "records",
+    "label": "Patient conversation (external, no auth)",
+    "tools": [
+     "chat_with_patient"
+    ]
+   },
+   {
+    "key": "diagnostics",
+    "parent": "init_patient",
+    "label": "Lab / examination results plane (narrow leaf)",
+    "tools": [
+     "request_complete_blood_count",
+     "request_allergy_testing",
+     "request_blood_tests",
+     "request_urinalysis",
+     "request_skin_biopsy",
+     "request_chest_xray",
+     "request_echocardiogram",
+     "request_laboratory_tests",
+     "request_vital_signs",
+     "request_abdominal_examination",
+     "request_neurological_examination",
+     "request_general_examination",
+     "request_skin_examination",
+     "request_respiratory_examination",
+     "request_musculoskeletal_examination",
+     "request_cardiovascular_examination",
+     "request_other_test"
+    ]
+   }
+  ]
+ },
+ "OS-filesystem": {
+  "service": "OS-filesystem \u2014 a sandboxed OS filesystem + shell. 18 static tools (no dynamic/runtime tool resolution): read/write/edit/move/delete files and directories, list/tree/search/stat, an execute_command shell, and a server-maintained action log (log/get/clear).",
+  "nodes": [
+   {
+    "key": "system",
+    "parent": null,
+    "label": "System / shell (sandbox root, dominates everything)",
+    "tools": [
+     "execute_command"
+    ]
+   },
+   {
+    "key": "modify",
+    "parent": "system",
+    "label": "File modify plane (edit/remove EXISTING files)",
+    "tools": [
+     "edit_file",
+     "move_file",
+     "delete_file",
+     "delete_directory"
+    ]
+   },
+   {
+    "key": "create",
+    "parent": "modify",
+    "label": "File add plane (create NEW entries)",
+    "tools": [
+     "write_file",
+     "create_directory"
+    ]
+   },
+   {
+    "key": "read",
+    "parent": "create",
+    "label": "Observe plane (read/list/search/stat)",
+    "tools": [
+     "read_file",
+     "read_multiple_files",
+     "list_directory",
+     "list_directory_with_sizes",
+     "directory_tree",
+     "search_files",
+     "check_file_exists",
+     "get_file_info"
+    ]
+   },
+   {
+    "key": "logs",
+    "parent": "system",
+    "label": "Audit-log store (narrow leaf)",
+    "tools": [
+     "log_action",
+     "get_logs",
+     "clear_logs"
+    ]
+   }
+  ]
+ },
+ "Research": {
+  "service": "Research assistant over two public paper corpora (arXiv + Semantic Scholar) plus a local shell. It is UNAUTHENTICATED: there are no login/session/auth-handshake tools in the toolset, so the apex is not a login node but the plane with total host dominance (execute_command). All 6 tools are statically listed; none resolve dynamically.",
+  "nodes": [
+   {
+    "key": "shell",
+    "parent": null,
+    "label": "Host shell (root / total-dominance plane)",
+    "tools": [
+     "execute_command"
+    ]
+   },
+   {
+    "key": "arxiv",
+    "parent": "shell",
+    "label": "arXiv corpus (add + reads, low trust)",
+    "tools": [
+     "upload_arxiv_paper",
+     "fetch_arxiv_paper_html",
+     "search_arxiv_html",
+     "list_arxiv_papers_html"
+    ]
+   },
+   {
+    "key": "semantic_scholar",
+    "parent": "shell",
+    "label": "Semantic Scholar corpus (external read, low trust)",
+    "tools": [
+     "search_semantic_scholar"
+    ]
+   }
+  ]
+ },
+ "atlassian": {
+  "service": "Atlassian Jira + Confluence MCP: issues, comments, worklogs, transitions, project/schema metadata, Confluence spaces/pages/comments, cross-product search and generic fetch, plus user/directory lookup. 28 static tools (fixed MCP tool list, not dynamically resolved).",
+  "nodes": [
+   {
+    "key": "system",
+    "parent": null,
+    "label": "Service / OAuth token (auth handshake \u2014 apex)",
+    "tools": [
+     "atlassianUserInfo",
+     "getAccessibleAtlassianResources"
+    ]
+   },
+   {
+    "key": "admin",
+    "parent": "system",
+    "label": "Site / space / project admin or record owner (edit existing + config metadata)",
+    "tools": [
+     "editJiraIssue",
+     "transitionJiraIssue",
+     "updateConfluencePage",
+     "getVisibleJiraProjects",
+     "getJiraProjectIssueTypesMetadata",
+     "getJiraIssueTypeMetaWithFields",
+     "getTransitionsForJiraIssue",
+     "getConfluenceSpaces",
+     "lookupJiraAccountId"
+    ]
+   },
+   {
+    "key": "user",
+    "parent": "admin",
+    "label": "Authenticated contributor (create first-class objects)",
+    "tools": [
+     "createJiraIssue",
+     "createConfluencePage",
+     "getConfluencePage",
+     "getPagesInConfluenceSpace",
+     "getConfluencePageDescendants",
+     "getJiraIssueRemoteIssueLinks"
+    ]
+   },
+   {
+    "key": "public",
+    "parent": "user",
+    "label": "Low-trust poster / commenter (indirect-injection surface)",
+    "tools": [
+     "addCommentToJiraIssue",
+     "addWorklogToJiraIssue",
+     "createConfluenceFooterComment",
+     "createConfluenceInlineComment",
+     "getConfluencePageFooterComments",
+     "getConfluencePageInlineComments",
+     "getJiraIssue",
+     "searchJiraIssuesUsingJql",
+     "searchConfluenceUsingCql",
+     "search",
+     "fetch"
+    ]
+   }
+  ]
+ },
+ "bigquery": {
+  "service": "Google BigQuery data warehouse. 8 distinct operations, but the corpus lists 11 tool entries because create_dataset, execute_sql, and execute_write_sql each appear twice under a case-variant name (BigQuery_* and bigquery_*). count=11 to match the corpus list exactly; each variant is placed identically to its twin.",
+  "nodes": [
+   {
+    "key": "warehouse_admin",
+    "parent": null,
+    "label": "Warehouse write / DBA plane",
+    "tools": [
+     "BigQuery_execute_write_sql",
+     "bigquery_execute_write_sql"
+    ]
+   },
+   {
+    "key": "dataset_admin",
+    "parent": "warehouse_admin",
+    "label": "Dataset / catalog structural plane",
+    "tools": [
+     "BigQuery_create_dataset",
+     "bigquery_create_dataset",
+     "bigquery_list_datasets",
+     "bigquery_list_tables",
+     "bigquery_get_table",
+     "bigquery_get_table_schema"
+    ]
+   },
+   {
+    "key": "data_query",
+    "parent": "dataset_admin",
+    "label": "Data query (SELECT) reads",
+    "tools": [
+     "BigQuery_execute_sql",
+     "bigquery_execute_sql"
+    ]
+   },
+   {
+    "key": "jobs",
+    "parent": "dataset_admin",
+    "label": "Job status reads",
+    "tools": [
+     "bigquery_get_job"
+    ]
+   }
+  ]
+ },
+ "calendar": {
+  "service": "Google Calendar (MCP): list/create/update/delete events, RSVP accept/decline invitations, freebusy, calendars, colors. No login/auth tool is exposed in this server \u2014 OAuth/session is handled out of band \u2014 so the apex is occupied by the service-provider trust level rather than a login-handshake node. All 11 tools are static (no dynamic resolution); count = 11.",
+  "nodes": [
+   {
+    "key": "service",
+    "parent": null,
+    "label": "Service provider (Google Calendar backend)",
+    "tools": [
+     "list_colors"
+    ]
+   },
+   {
+    "key": "owner",
+    "parent": "service",
+    "label": "Account owner / event organizer (authenticated session)",
+    "tools": [
+     "create_event",
+     "update_event",
+     "delete_event",
+     "accept_invitation",
+     "decline_invitation"
+    ]
+   },
+   {
+    "key": "public",
+    "parent": "owner",
+    "label": "External party (invite sender / calendar sharer), no account auth",
+    "tools": [
+     "list_events",
+     "get_event",
+     "search_events",
+     "get_freebusy",
+     "list_calendars"
+    ]
+   }
+  ]
+ },
+ "customer_service": {
+  "service": "E-commerce support desk (orders, shipments, returns/exchanges, refunds, store credit, cases, subscriptions, product catalog, guidelines). NOTE: this server exposes NO login/session/auth tool, so there is no auth node to place at the apex; the apex is instead the support-agent plane that dominates the base data. transfer_to_human is an escalation/handoff action, not an auth handshake, and is placed at the customer level. All 40 tools resolve statically (no dynamic tool resolution).",
+  "nodes": [
+   {
+    "key": "support",
+    "parent": null,
+    "label": "Support-agent / service plane (base-dominating apex)",
+    "tools": [
+     "get_order",
+     "list_orders",
+     "get_shipment",
+     "get_customer",
+     "search_customers",
+     "lookup_customer_by_email",
+     "get_customer_orders",
+     "find_customer_by_email",
+     "find_customer_by_name_zip",
+     "list_exchanges",
+     "cancel_order",
+     "modify_order_items",
+     "modify_order_payment",
+     "update_shipping_address",
+     "modify_customer_address",
+     "exchange_order_items",
+     "set_case_state"
+    ]
+   },
+   {
+    "key": "customer",
+    "parent": "support",
+    "label": "Authenticated customer / ticket submitter (self-serve ADDs + add-reflected reads)",
+    "tools": [
+     "create_case",
+     "create_case_activity",
+     "add_case_note",
+     "get_case",
+     "get_case_activities",
+     "list_cases",
+     "create_return",
+     "list_returns",
+     "transfer_to_human"
+    ]
+   },
+   {
+    "key": "public",
+    "parent": "customer",
+    "label": "Public storefront reference (no auth)",
+    "tools": [
+     "get_product",
+     "list_products",
+     "get_guidelines",
+     "list_guidelines"
+    ]
+   },
+   {
+    "key": "financial",
+    "parent": "support",
+    "label": "Money ledger: refunds + store credit (narrow leaf)",
+    "tools": [
+     "refund_order",
+     "list_refunds",
+     "grant_store_credit",
+     "list_store_credits"
+    ]
+   },
+   {
+    "key": "subscriptions",
+    "parent": "support",
+    "label": "Recurring subscriptions vertical (narrow leaf)",
+    "tools": [
+     "get_subscription",
+     "list_subscriptions",
+     "pause_subscription",
+     "resume_subscription",
+     "cancel_subscription",
+     "update_subscription_address"
+    ]
+   }
+  ]
+ },
+ "databricks": {
+  "service": "Databricks lakehouse (Unity Catalog governed data plane): SQL warehouse execution, NL analytics (Genie), governed UDFs, and vector similarity search. There is NO login/session tool exposed on this MCP server \u2014 the connection authenticates out-of-band via a configured PAT / service-principal token, so no in-band auth-handshake tool exists to sit at the apex. The apex therefore falls to the most-dominating data-plane tool.",
+  "nodes": [
+   {
+    "key": "dbsql",
+    "parent": null,
+    "label": "dbsql-exec \u2014 arbitrary SQL / DBA data plane",
+    "tools": [
+     "databricks-dbsql-exec"
+    ]
+   },
+   {
+    "key": "genie",
+    "parent": "dbsql",
+    "label": "genie \u2014 NL-to-SQL analytics (read-only over curated tables)",
+    "tools": [
+     "databricks-genie"
+    ]
+   },
+   {
+    "key": "unity_function",
+    "parent": "dbsql",
+    "label": "unity-function \u2014 invoke a governed Unity Catalog function",
+    "tools": [
+     "databricks-unity-function"
+    ]
+   },
+   {
+    "key": "vector_search",
+    "parent": "dbsql",
+    "label": "vector-search \u2014 similarity query over a vector index",
+    "tools": [
+     "databricks-vector-search"
+    ]
+   }
+  ]
+ },
+ "finance": {
+  "service": "Stock/finance desk agent: trade stocks/options, browse markets/news/articles/portfolio/options, search, list/switch accounts, post a public comment, read an action log. 15 statically-defined tools (no dynamic resolution).",
+  "nodes": [
+   {
+    "key": "system",
+    "parent": null,
+    "label": "Backend / session-provider (apex)",
+    "tools": [
+     "switch_account",
+     "action_log"
+    ]
+   },
+   {
+    "key": "account",
+    "parent": "system",
+    "label": "Authenticated account owner",
+    "tools": [
+     "trade_stock",
+     "trade_option",
+     "cancel_order",
+     "browse_portfolio",
+     "list_accounts"
+    ]
+   },
+   {
+    "key": "public",
+    "parent": "account",
+    "label": "No-auth reads + public forum add",
+    "tools": [
+     "post_comment",
+     "browse_stock",
+     "browse_news",
+     "browse_article",
+     "browse_options",
+     "browse_markets",
+     "browse_stock_list",
+     "search"
+    ]
+   }
+  ]
+ },
+ "github": {
+  "service": "GitHub code-hosting platform (repos, branches, commits, git trees/blobs, issues, PRs, comments, orgs/members, notifications/activity feed, auth context, user profiles). All 42 tools resolve statically (no dynamic tool discovery); the tree below places every one of the 42.",
+  "nodes": [
+   {
+    "key": "service",
+    "parent": null,
+    "label": "GitHub platform / auth (apex)",
+    "tools": [
+     "get_auth_context",
+     "get_me"
+    ]
+   },
+   {
+    "key": "owner",
+    "parent": "service",
+    "label": "Repo/org owner & admin plane",
+    "tools": [
+     "update_repo",
+     "get_repo",
+     "get_org",
+     "list_org_members",
+     "list_org_repos"
+    ]
+   },
+   {
+    "key": "write",
+    "parent": "owner",
+    "label": "Collaborator write/push plane over canonical git data",
+    "tools": [
+     "create_branch",
+     "create_commit",
+     "merge_pull",
+     "list_branches",
+     "get_branch",
+     "list_commits",
+     "get_commit",
+     "get_repo_tree",
+     "get_blob",
+     "get_repository_content",
+     "list_repo_labels",
+     "list_repo_milestones"
+    ]
+   },
+   {
+    "key": "contributor",
+    "parent": "write",
+    "label": "Any authenticated user: ADD / self-serve + reads reflecting added content",
+    "tools": [
+     "create_issue",
+     "add_issue_comment",
+     "create_pull",
+     "add_pull_comment",
+     "create_repo",
+     "fork_repo",
+     "star_repo",
+     "unstar_repo",
+     "list_issues",
+     "get_issue",
+     "list_issue_comments",
+     "list_pulls",
+     "get_pull",
+     "list_pull_comments",
+     "list_pull_commits",
+     "list_pull_files",
+     "list_repo_stars",
+     "list_user_repos",
+     "list_notifications",
+     "mark_notification_read",
+     "get_activity_feed",
+     "search_repos",
+     "get_user_profile"
+    ]
+   }
+  ]
+ },
+ "gmail": {
+  "service": "Gmail/Mailpit personal mailbox (read/search inbox+sent, get message/body/attachments, send/reply/forward, delete). 16 tools resolve statically. No login/auth handshake tool is exposed by this server.",
+  "nodes": [
+   {
+    "key": "account",
+    "parent": null,
+    "label": "Account / owner control plane (send, delete, read-sent, upload endpoint)",
+    "tools": [
+     "send_email",
+     "send_reply",
+     "forward_message",
+     "get_attachment_upload_url",
+     "list_sent_messages",
+     "delete_message",
+     "delete_all_messages",
+     "batch_delete_messages"
+    ]
+   },
+   {
+    "key": "public",
+    "parent": "account",
+    "label": "Sender-injectable inbox reads (incoming message + attachment content)",
+    "tools": [
+     "list_messages",
+     "get_message",
+     "get_message_body",
+     "get_gmail_content",
+     "find_message",
+     "search_messages",
+     "list_attachments",
+     "get_attachment"
+    ]
+   }
+  ]
+ },
+ "google-form": {
+  "service": "Google Forms \u2014 a form-definition plus a response (submission) store. Two real trust levels: the form owner/editor (defines the form, reads and deletes responses) and any respondent with the form link (adds a response). No auth-handshake tool is surfaced, so the apex is the owner plane, not a login tool. Tools are static (5), not dynamic.",
+  "nodes": [
+   {
+    "key": "owner",
+    "parent": null,
+    "label": "Form owner / editor plane",
+    "tools": [
+     "get_form",
+     "set_form",
+     "clear_submissions"
+    ]
+   },
+   {
+    "key": "public",
+    "parent": "owner",
+    "label": "Response / submission plane (respondent)",
+    "tools": [
+     "submit",
+     "list_submissions"
+    ]
+   }
+  ]
+ },
+ "googledocs": {
+  "service": "Google Docs multi-user document service: create/get/update/delete/restore documents, sharing & permissions, comments, versions, folders, images, suggestions. Tools are statically enumerated (30), not dynamically resolved. There is NO explicit login/session/auth tool in this server, so the apex is the highest-dominance ownership plane rather than an auth handshake node.",
+  "nodes": [
+   {
+    "key": "owner",
+    "parent": null,
+    "label": "Owner / service plane (destructive lifecycle + sharing control)",
+    "tools": [
+     "delete_document",
+     "restore_document",
+     "share_document",
+     "update_share",
+     "remove_share",
+     "enable_link_sharing",
+     "disable_link_sharing",
+     "get_document_shares"
+    ]
+   },
+   {
+    "key": "editor",
+    "parent": "owner",
+    "label": "Editor (edit access: rewrite content, versions, images, moderate)",
+    "tools": [
+     "get_document",
+     "update_document",
+     "create_version",
+     "list_versions",
+     "restore_version",
+     "move_document_to_folder",
+     "upload_image",
+     "list_images",
+     "delete_image",
+     "resolve_comment",
+     "delete_comment",
+     "review_suggestion"
+    ]
+   },
+   {
+    "key": "collaborator",
+    "parent": "editor",
+    "label": "Collaborator (comment/suggest access: low-trust ADD + reads reflecting adds)",
+    "tools": [
+     "add_comment",
+     "get_comments",
+     "add_suggestion",
+     "list_suggestions"
+    ]
+   },
+   {
+    "key": "public",
+    "parent": "collaborator",
+    "label": "Public / self-serve (any authenticated user: create own + listings reflect shared-in)",
+    "tools": [
+     "create_document",
+     "create_folder",
+     "list_documents",
+     "search_documents",
+     "get_recent_documents",
+     "list_folders"
+    ]
+   }
+  ]
+ },
+ "legal": {
+  "service": "legal-research + practice-management MCP server (CourtListener/statute public reference plane + the firm's private matter/document/draft/filing workspace)",
+  "nodes": [
+   {
+    "key": "public_records",
+    "parent": null,
+    "label": "public legal-reference plane (CourtListener case-law/court-records + statute search, read-only external public data)",
+    "tools": [
+     "search",
+     "get_cluster",
+     "get_opinion",
+     "citation_lookup",
+     "get_opinions_cited",
+     "get_docket",
+     "get_bankruptcy_info",
+     "get_originating_court_info",
+     "get_fjc_data",
+     "get_court",
+     "get_audio",
+     "get_person",
+     "get_positions",
+     "get_educations",
+     "get_political_affiliations",
+     "get_aba_ratings",
+     "get_financial_disclosures",
+     "get_investments",
+     "get_gifts",
+     "get_debts",
+     "get_agreements",
+     "get_non_investment_incomes",
+     "get_disclosure_positions",
+     "get_reimbursements",
+     "get_spouse_incomes",
+     "search_statutes"
+    ]
+   },
+   {
+    "key": "firm_workspace",
+    "parent": null,
+    "label": "firm private workspace: authoritative matter/document/template/draft/filing reads",
+    "tools": [
+     "list_matters",
+     "get_matter",
+     "list_documents",
+     "get_document",
+     "analyze_document",
+     "list_templates",
+     "get_draft",
+     "get_filing"
+    ]
+   },
+   {
+    "key": "add_matter_note",
+    "parent": "firm_workspace",
+    "label": "append matter note (low-trust injection leaf)",
+    "tools": [
+     "add_matter_note"
+    ]
+   },
+   {
+    "key": "create_draft",
+    "parent": "firm_workspace",
+    "label": "create draft (low-trust injection leaf)",
+    "tools": [
+     "create_draft"
+    ]
+   },
+   {
+    "key": "prepare_filing",
+    "parent": "firm_workspace",
+    "label": "prepare filing (low-trust injection leaf)",
+    "tools": [
+     "prepare_filing"
+    ]
+   }
+  ]
+ },
+ "paypal": {
+  "service": "PayPal (products, invoices, orders, refunds, disputes, subscriptions, payouts, crypto, funding instruments, merchant insights). All 52 tools resolve statically (named, not dynamic).",
+  "nodes": [
+   {
+    "key": "login",
+    "parent": null,
+    "label": "Login / session (apex)",
+    "tools": [
+     "paypal_login"
+    ]
+   },
+   {
+    "key": "merchant",
+    "parent": "login",
+    "label": "Merchant commerce-admin (owner of catalog/invoices/refunds/insights/shipments)",
+    "tools": [
+     "create_product",
+     "list_product",
+     "show_product_details",
+     "search_product",
+     "create_invoice",
+     "list_invoices",
+     "get_invoice",
+     "send_invoice",
+     "send_invoice_reminder",
+     "cancel_sent_invoice",
+     "generate_invoice_qr_code",
+     "create_refund",
+     "get_refund",
+     "get_merchant_insights",
+     "list_transaction",
+     "create_shipment_tracking",
+     "get_shipment_tracking",
+     "update_shipment_tracking",
+     "list_shipments",
+     "accept_dispute_claim"
+    ]
+   },
+   {
+    "key": "customer",
+    "parent": "merchant",
+    "label": "Buyer self-serve (own carts/orders/payments)",
+    "tools": [
+     "create_cart",
+     "checkout_cart",
+     "create_order",
+     "pay_order",
+     "get_order",
+     "list_orders",
+     "pay_invoice"
+    ]
+   },
+   {
+    "key": "public",
+    "parent": "customer",
+    "label": "Externally-seeded content (bills received, disputes filed against you)",
+    "tools": [
+     "list_bills",
+     "list_disputes",
+     "get_dispute"
+    ]
+   },
+   {
+    "key": "sub_admin",
+    "parent": "login",
+    "label": "Subscription plans (merchant-defined)",
+    "tools": [
+     "create_subscription_plan",
+     "list_subscription_plans",
+     "show_subscription_plan_details"
+    ]
+   },
+   {
+    "key": "sub_self",
+    "parent": "sub_admin",
+    "label": "Subscriber self-managed subscriptions",
+    "tools": [
+     "create_subscription",
+     "cancel_subscription",
+     "update_subscription",
+     "show_subscription_details",
+     "list_subscriptions"
+    ]
+   },
+   {
+    "key": "treasury",
+    "parent": "login",
+    "label": "Treasury / funds movement (wallets, bank, payouts, crypto)",
+    "tools": [
+     "list_wallet_cards",
+     "add_wallet_card",
+     "update_wallet_card",
+     "remove_wallet_card",
+     "list_bank_accounts",
+     "add_bank_account",
+     "remove_bank_account",
+     "create_payout",
+     "get_payout",
+     "list_payouts",
+     "approve_pending_payout",
+     "get_crypto_positions",
+     "trade_crypto"
+    ]
+   }
+  ]
+ },
+ "salesforce": {
+  "service": "A Salesforce-style CRM fronted by a SuiteCRM/SugarCRM-flavored REST API (the get_entry / set_entry / get_entry_list / get_relationships generic verbs sit next to type-specific lead/contact/case/account/opportunity tools, plus schema metadata and a session/health surface). Tools are static (all 53 enumerated below), not dynamically resolved.",
+  "nodes": [
+   {
+    "key": "session",
+    "parent": null,
+    "label": "Session / auth handshake (apex)",
+    "tools": [
+     "logout",
+     "health"
+    ]
+   },
+   {
+    "key": "base",
+    "parent": "session",
+    "label": "Generic record plane (DBA / service account)",
+    "tools": [
+     "get_record",
+     "list_records",
+     "create_record",
+     "update_record",
+     "delete_record",
+     "relationship_get",
+     "relationship_create",
+     "relationship_delete",
+     "get_entry_list",
+     "get_entry",
+     "set_entry",
+     "update_entry",
+     "delete_entry",
+     "get_relationships",
+     "set_relationship"
+    ]
+   },
+   {
+    "key": "meta",
+    "parent": "base",
+    "label": "Schema metadata (narrow leaf)",
+    "tools": [
+     "meta_modules",
+     "meta_fields",
+     "get_available_modules",
+     "get_module_fields",
+     "get_lead_status_options",
+     "get_lead_source_options"
+    ]
+   },
+   {
+    "key": "internal",
+    "parent": "base",
+    "label": "Owner-trust internal records (sales staff)",
+    "tools": [
+     "update_lead_status",
+     "assign_lead",
+     "convert_lead",
+     "merge_leads",
+     "delete_lead",
+     "duplicate_contact",
+     "create_contact",
+     "search_contacts",
+     "update_contact",
+     "assign_contact",
+     "link_contact_to_account",
+     "get_contact_by_id",
+     "delete_contact",
+     "update_contact_email",
+     "view_contact_history",
+     "update_case",
+     "delete_case",
+     "search_accounts",
+     "get_account_by_id",
+     "create_opportunity",
+     "search_opportunities",
+     "get_opportunity_by_id",
+     "update_opportunity"
+    ]
+   },
+   {
+    "key": "external",
+    "parent": "internal",
+    "label": "Externally-addable intake (public submitter)",
+    "tools": [
+     "create_lead",
+     "duplicate_lead",
+     "search_leads",
+     "list_leads",
+     "create_case",
+     "search_cases",
+     "get_case_by_id"
+    ]
+   }
+  ]
+ },
+ "slack": {
+  "service": "A Slack-style workspace/messaging service: workspaces, channels, users, channel and DM messages, message history/inbox/feed reads, channel/workspace creation and invites, and a login/session handshake. Tools are a fixed static set of 17 (no dynamic resolution). Notably the corpus exposes NO delete/edit/remove tools and no unauthenticated public reads, so the trust gradient is shallower than the telecom template: there is no destructive DBA plane and no no-auth public tier.",
+  "nodes": [
+   {
+    "key": "session",
+    "parent": null,
+    "label": "Session / auth apex",
+    "tools": [
+     "login",
+     "get_me"
+    ]
+   },
+   {
+    "key": "workspace_admin",
+    "parent": "session",
+    "label": "Workspace provisioning",
+    "tools": [
+     "create_workspace",
+     "workspaces_invite",
+     "list_workspaces",
+     "list_users"
+    ]
+   },
+   {
+    "key": "member",
+    "parent": "workspace_admin",
+    "label": "Member content plane",
+    "tools": [
+     "post_message",
+     "post_message_dm",
+     "open_dm",
+     "create_channel",
+     "channels_invite",
+     "channels_history",
+     "conversations_history",
+     "inbox",
+     "dm_feed",
+     "list_dms",
+     "list_channels"
+    ]
+   }
+  ]
+ },
+ "snowflake": {
+  "service": "Snowflake Cortex data-agent server: a set of Cortex tools over a Snowflake warehouse. product-search is a Cortex Search service over a product catalog; revenue-semantic-view is a Cortex Analyst query over a revenue semantic model; sql_exec_tool executes arbitrary SQL against the warehouse; agent_1 is a Cortex Agent that orchestrates the other tools and returns a synthesized answer. There is NO login/auth handshake tool exposed (the connection is authenticated out of band via the service account), so the apex is the most-dominating data tool rather than a session tool. All four tool names are static in the corpus; no dynamic resolution.",
+  "nodes": [
+   {
+    "key": "system",
+    "parent": null,
+    "label": "Data plane (arbitrary SQL over the whole warehouse)",
+    "tools": [
+     "sql_exec_tool"
+    ]
+   },
+   {
+    "key": "product_search",
+    "parent": "system",
+    "label": "Product search index (Cortex Search)",
+    "tools": [
+     "product-search"
+    ]
+   },
+   {
+    "key": "revenue",
+    "parent": "system",
+    "label": "Revenue semantic view (Cortex Analyst)",
+    "tools": [
+     "revenue-semantic-view"
+    ]
+   },
+   {
+    "key": "agent",
+    "parent": "system",
+    "label": "Orchestrating agent (Cortex Agent synthesis)",
+    "tools": [
+     "agent_1"
+    ]
+   }
+  ]
+ },
+ "telecom": {
+  "service": "Telecom back-office data plane: customer/account/bill/order/ticket records, SMS & email notification records, calendar events, a network-outage board, a public forum, and a full DB reload. Tools resolve statically (44 named tools, no dynamic dispatch). No login/session/auth handshake tool exists on this server.",
+  "nodes": [
+   {
+    "key": "system",
+    "parent": null,
+    "label": "System / DBA (reload_all_tables \u2014 rewrites every table, dominates all)",
+    "tools": [
+     "reload_all_tables"
+    ]
+   },
+   {
+    "key": "billing",
+    "parent": "system",
+    "label": "Billing plane (bills only \u2014 narrow leaf, does NOT dominate the base)",
+    "tools": [
+     "query_bill",
+     "add_bill",
+     "update_bill",
+     "remove_bill"
+    ]
+   },
+   {
+    "key": "network",
+    "parent": "system",
+    "label": "Network-ops plane (outages only \u2014 narrow leaf, does NOT dominate the base)",
+    "tools": [
+     "query_outage",
+     "add_outage",
+     "update_outage",
+     "remove_outage"
+    ]
+   },
+   {
+    "key": "admin",
+    "parent": "system",
+    "label": "Back-office CSR / provisioning (edits + destructive deletes of any record; message-log tamper \u2014 dominates the data plane)",
+    "tools": [
+     "update_customer",
+     "remove_customer",
+     "update_account",
+     "remove_account",
+     "update_calendar_event",
+     "remove_calendar_event",
+     "update_order",
+     "remove_order",
+     "update_ticket",
+     "remove_ticket",
+     "update_email",
+     "remove_email",
+     "update_sms",
+     "remove_sms"
+    ]
+   },
+   {
+    "key": "customer",
+    "parent": "admin",
+    "label": "Authenticated end-user (self-serve creates + own-record reads)",
+    "tools": [
+     "query_customer",
+     "add_customer",
+     "query_account",
+     "add_account",
+     "query_order",
+     "add_order",
+     "query_ticket",
+     "add_ticket",
+     "query_calendar_event",
+     "add_calendar_event",
+     "query_tickets_by_customer",
+     "query_calendar_events_by_customer"
+    ]
+   },
+   {
+    "key": "public",
+    "parent": "customer",
+    "label": "Anonymous sender / poster / reader (no auth: forum, inbound-message injection)",
+    "tools": [
+     "query_forum_thread",
+     "query_forum_posts_by_thread",
+     "query_forum_post",
+     "add_email",
+     "query_email",
+     "query_emails_by_customer",
+     "add_sms",
+     "query_sms",
+     "query_sms_by_customer"
+    ]
+   }
+  ]
+ },
+ "telegram": {
+  "service": "Telegram messaging (contacts, 1:1 chats/messages, reply/forward/delete, groups, channels, calls, search) driven through ONE pre-authenticated Telegram account session. No login/auth or session tool is exposed \u2014 the session is a construction concern \u2014 so there is no auth-handshake tool to place at the apex. All 25 tools resolve statically (no dynamic tool resolution).",
+  "nodes": [
+   {
+    "key": "account",
+    "parent": null,
+    "label": "Account session control (destructive)",
+    "tools": [
+     "delete_message",
+     "delete_chat"
+    ]
+   },
+   {
+    "key": "contacts",
+    "parent": "account",
+    "label": "Private contact book",
+    "tools": [
+     "telegram_list_contacts",
+     "telegram_get_contact",
+     "telegram_search_contacts",
+     "telegram_create_contact"
+    ]
+   },
+   {
+    "key": "calls",
+    "parent": "account",
+    "label": "Call plane",
+    "tools": [
+     "make_call",
+     "list_calls"
+    ]
+   },
+   {
+    "key": "messaging",
+    "parent": "account",
+    "label": "Owner-authenticated sends/posts",
+    "tools": [
+     "send_message",
+     "reply_to_message",
+     "forward_message",
+     "mark_message_read",
+     "telegram_send_group_message",
+     "telegram_send_channel_message"
+    ]
+   },
+   {
+    "key": "public",
+    "parent": "messaging",
+    "label": "Externally-injected message reads",
+    "tools": [
+     "get_message",
+     "get_chat",
+     "list_chats",
+     "search_messages",
+     "get_unread_messages",
+     "telegram_list_groups",
+     "telegram_get_group",
+     "telegram_get_group_messages",
+     "telegram_list_channels",
+     "telegram_get_channel",
+     "telegram_get_channel_messages"
+    ]
+   }
+  ]
+ },
+ "terminal": {
+  "service": "A bare coding terminal: a single execute_command tool that runs an arbitrary shell command inside a container and returns its stdout/stderr/exit status. No login/auth handshake, no separate resource planes, no per-record CRUD surfaces \u2014 the one tool IS the whole attack surface.",
+  "nodes": [
+   {
+    "key": "system",
+    "parent": null,
+    "label": "Container shell (execute_command)",
+    "tools": [
+     "execute_command"
+    ]
+   }
+  ]
+ },
+ "travel-suite": {
+  "service": "Travel-booking suite (flight/hotel/restaurant/attraction search, self-serve bookings, payments/promos/refunds, reviews + host messaging, a read-only manager/admin console, and a backend policy/eligibility/auth engine). Tools are STATIC: 25 tools enumerated from the corpus, none resolve dynamically. Count below equals that fixed set.",
+  "nodes": [
+   {
+    "key": "system",
+    "parent": null,
+    "label": "Backend policy / eligibility / auth engine (provider apex)",
+    "tools": [
+     "verify_manager_access",
+     "verify_refund_eligibility",
+     "verify_promo_eligibility"
+    ]
+   },
+   {
+    "key": "admin",
+    "parent": "system",
+    "label": "Manager / staff console (read-only cross-user)",
+    "tools": [
+     "manager_query_history",
+     "manager_list_users",
+     "manager_query_payments"
+    ]
+   },
+   {
+    "key": "customer",
+    "parent": "system",
+    "label": "Authenticated customer (own bookings, payments, refunds, messaging)",
+    "tools": [
+     "book_flight",
+     "book_accommodation",
+     "book_restaurant",
+     "query_booking",
+     "cancel_flight",
+     "cancel_accommodation",
+     "cancel_restaurant",
+     "pay_all_bookings",
+     "apply_promo",
+     "request_refund",
+     "message_host",
+     "save_log"
+    ]
+   },
+   {
+    "key": "public",
+    "parent": "customer",
+    "label": "Anonymous search + public review posting (no auth)",
+    "tools": [
+     "query_accommodation",
+     "query_attraction",
+     "query_city",
+     "query_flight",
+     "query_distance",
+     "query_restaurant",
+     "post_review"
+    ]
+   }
+  ]
+ },
+ "whatsapp": {
+  "service": "WhatsApp personal messaging: an owner's address book (contacts), 1:1 chats/messages (send/reply/forward/delete/search/unread/read-state), call logs (place/list/get/delete), and group chats (list/get/read messages/post). 23 tools, all statically enumerated (no dynamic resolution). The server exposes NO explicit login/session/auth handshake tool.",
+  "nodes": [
+   {
+    "key": "account",
+    "parent": null,
+    "label": "Account owner / session (destructive deletes + read-state; dominates all)",
+    "tools": [
+     "delete_whatsapp_message",
+     "delete_whatsapp_chat",
+     "delete_whatsapp_call",
+     "mark_whatsapp_message_read"
+    ]
+   },
+   {
+    "key": "contacts",
+    "parent": "account",
+    "label": "Contacts (owner-curated address book)",
+    "tools": [
+     "list_contacts",
+     "get_contact",
+     "create_contact",
+     "search_contacts"
+    ]
+   },
+   {
+    "key": "messages",
+    "parent": "account",
+    "label": "1:1 chats & messages (sender-added content + reads)",
+    "tools": [
+     "send_whatsapp_message",
+     "list_whatsapp_chats",
+     "get_whatsapp_chat",
+     "get_whatsapp_message",
+     "reply_to_whatsapp_message",
+     "forward_whatsapp_message",
+     "search_whatsapp_messages",
+     "get_unread_whatsapp_messages"
+    ]
+   },
+   {
+    "key": "calls",
+    "parent": "account",
+    "label": "Call log (caller-added entries + reads)",
+    "tools": [
+     "make_whatsapp_call",
+     "list_whatsapp_calls",
+     "get_whatsapp_call"
+    ]
+   },
+   {
+    "key": "groups",
+    "parent": "account",
+    "label": "Group chats (member posts + metadata reads)",
+    "tools": [
+     "list_whatsapp_groups",
+     "get_whatsapp_group",
+     "get_whatsapp_group_messages",
+     "send_whatsapp_group_message"
+    ]
+   }
+  ]
+ },
+ "zoom": {
+  "service": "Zoom (video meetings): create/list/get/update/delete/start/end/join/leave meetings, send/list/accept/decline invitations, list/admit/remove participants and set their role, start/stop recordings, post/list chat, get/create/list transcripts, private notes CRUD, session identity + login. 31 tools, statically enumerated.",
+  "nodes": [
+   {
+    "key": "system",
+    "parent": null,
+    "label": "Session / account identity (apex)",
+    "tools": [
+     "zoom_login",
+     "zoom_get_me"
+    ]
+   },
+   {
+    "key": "host",
+    "parent": "system",
+    "label": "Meeting host / owner control plane",
+    "tools": [
+     "meetings_get",
+     "meetings_update",
+     "meetings_delete",
+     "meetings_start",
+     "meetings_end",
+     "participants_admit",
+     "participants_remove",
+     "participants_set_role"
+    ]
+   },
+   {
+    "key": "recordings",
+    "parent": "host",
+    "label": "Recording control (leaf)",
+    "tools": [
+     "meetings_recording_start",
+     "meetings_recording_stop"
+    ]
+   },
+   {
+    "key": "notes",
+    "parent": "host",
+    "label": "Private notes store (leaf)",
+    "tools": [
+     "notes_create",
+     "notes_list",
+     "notes_get",
+     "notes_update",
+     "notes_delete"
+    ]
+   },
+   {
+    "key": "customer",
+    "parent": "host",
+    "label": "Authenticated-user self-serve",
+    "tools": [
+     "meetings_create",
+     "meetings_list",
+     "invitations_create",
+     "invitations_list"
+    ]
+   },
+   {
+    "key": "public",
+    "parent": "customer",
+    "label": "Participant / invitee base",
+    "tools": [
+     "meetings_join",
+     "meetings_leave",
+     "invitations_accept",
+     "invitations_decline",
+     "participants_list",
+     "chat_post_message",
+     "chat_list",
+     "transcripts_get",
+     "transcripts_create",
+     "transcripts_list"
+    ]
+   }
+  ]
+ }
+}

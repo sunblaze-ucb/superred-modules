@@ -199,3 +199,53 @@ is exactly what DTAP would run.
 - **F.5 Filesystem ops are confined to the workspace.** `_apply_host_files` rejects
   any path that would escape `workspace/` (a `..` traversal is skipped), so the
   surface stays scoped to the machine-as-the-agent-sees-it.
+
+## G. Per-server tool-return authorization trees (superred-afforded scoping)
+
+DTAP treats every environment as one undifferentiated MCP server, and the
+tamper-return surface was initially one `tools.<server>` tag per server. But a
+real service's tools do not share one trust boundary: a public read, a
+customer-authenticated booking, and a manager-only endpoint are corruptible by
+different actors. superred therefore splits each `tools.<server>` tag into a
+single-parent AUTHORIZATION TREE and scopes each tool's return-tamper event to
+its node. This is a superred measurement affordance (finer threat models), NOT a
+DTAP fidelity claim: the tools, their returns, and the judges are unchanged, and
+scoping the whole server (`{tools.<server>}`) reproduces the original behavior.
+
+- **G.1 Placement is by control-of-return, not by caller.** A tool sits at the
+  node whose trust boundary an attacker must compromise to CONTROL WHAT THE TOOL
+  RETURNS (the value that re-enters the agent's context), which is the
+  least-privileged actor who can corrupt that return -- deliberately NOT "who is
+  authorized to call it". A public read is corruptible by whoever controls the
+  upstream public source; an append surface (add a note/review/draft) whose
+  content a later read reflects back is corruptible by any low-privilege
+  contributor, so it is a leaf UNDER the authoritative-read node it feeds, not a
+  peer. Reads of an authoritative stored record are corruptible only by editing
+  that record (the owning service), so they sit high.
+
+- **G.2 Single-parent tree; the server root is the apex.** Tags form
+  `tools.<server>` -> `tools.<server>.<node>` with each node having exactly one
+  parent (the dominating node, or the server root for a top plane). `includes`
+  grants a node plus its descendants, so a more-privileged (ancestor) node grants
+  the lower-trust surfaces it dominates, siblings are isolated, and the server
+  root grants everything. Where a service has no single dominating tool (e.g.
+  `legal`: a public case-law plane and a private firm plane that cannot corrupt
+  each other), the two planes are peers directly under `tools.<server>`, which is
+  then a pure whole-server grant holding no tool of its own.
+
+- **G.3 The trees are DATA, derived per service.** They live in
+  `data/tool_trees.json` (one entry per server) and are built into cached
+  `SecurityDomainTag`s by `tool_trees.build_server_tree`. Refining a single tool's
+  placement is a one-line data edit, no code change. The shipped trees are a
+  best-effort derivation from each service's real authorization structure and a
+  handful of per-tool placements remain debatable (documented inline where
+  relevant); because they are data, they can be corrected without touching the
+  scaffold.
+
+- **G.4 Unmapped tools fall back to the server root.** A tool not present in its
+  server's tree -- a version-drifted tool name, or a dynamically-registered server
+  whose live tool list is not fully enumerated ahead of time (e.g. `legal`
+  resolves its tools at boot) -- resolves to the `tools.<server>` root tag: the
+  conservative whole-server grant. So drift never silently under-scopes a tool
+  (it errs toward the broadest tag), and the mechanism is robust to live tool-list
+  changes.

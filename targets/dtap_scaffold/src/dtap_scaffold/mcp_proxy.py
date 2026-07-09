@@ -11,8 +11,9 @@ superred Controller can:
    as upstream ``MCPProxyServer._apply_injection`` does it.
 2. **observe and tamper with every tool RETURN** -- the superred content surface
    and DTAP's indirect-injection chokepoint. :meth:`handle_tool_call` forwards the
-   call to the genuine backend, fires a single per-server ``env_tool``
-   :class:`~superred.core.types.events.ControllablePostCallEvent` carrying the
+   call to the genuine backend, fires a single ``env_tool`` PostCall
+   :class:`~superred.core.types.events.ControllablePostCallEvent` (scoped to the
+   tool's authorization node -- see :mod:`dtap_scaffold.tool_trees`) carrying the
    genuine return, and -- if the optimizer answers with a
    :class:`~superred.core.types.events.ControllableInjection` -- returns the
    attacker's value to the agent instead (return tampering). It emits nothing else:
@@ -94,7 +95,11 @@ class HostMCPProxy:
         self._emit: EmitFn | None = None
         self._send_event: SendEventFn | None = None
         self._tool_desc_edits: list[dict[str, Any]] = []
-        self._env_tool_controllables: dict[str, Controllable] = {}
+        # Per (server, tool) -> the node Controllable governing that tool's return,
+        # plus a per-server default (the tools.<server> root Controllable) used for
+        # tools absent from the tree (version drift / dynamic servers).
+        self._env_tool_by_tool: dict[str, dict[str, Controllable]] = {}
+        self._env_tool_defaults: dict[str, Controllable] = {}
 
         # The bound aiohttp app (only populated on the real start() path).
         self._host: str = "0.0.0.0"
@@ -112,9 +117,21 @@ class HostMCPProxy:
         """Set PreCall tool-vector edits: ``[{server, tool, mode, content}]``."""
         self._tool_desc_edits = list(edits)
 
-    def set_env_tool_controllables(self, by_server: dict[str, Controllable]) -> None:
-        """Set the per-server ``env_tool`` Controllable used for PostCall firing."""
-        self._env_tool_controllables = dict(by_server)
+    def set_env_tool_controllables(
+        self,
+        by_server_tool: dict[str, dict[str, Controllable]],
+        defaults: dict[str, Controllable],
+    ) -> None:
+        """Set the ``env_tool`` Controllables used for PostCall firing.
+
+        *by_server_tool* maps ``server -> {tool -> node Controllable}`` (each tool
+        placed at its authorization node); *defaults* maps ``server -> the
+        tools.<server> root Controllable``, fired for any tool absent from the
+        tree (version drift, dynamically-registered servers) -- the conservative
+        whole-server grant.
+        """
+        self._env_tool_by_tool = {s: dict(m) for s, m in by_server_tool.items()}
+        self._env_tool_defaults = dict(defaults)
 
     # ----- MCPProxy: the listing (pure) ------------------------------------
 
@@ -186,7 +203,11 @@ class HostMCPProxy:
         params = dict(params) if params else {}
         genuine_text, genuine_error = await self._forward(server, tool, params)
 
-        controllable = self._env_tool_controllables.get(server)
+        # Resolve the tool to its authorization-node Controllable; fall back to the
+        # server's root Controllable for a tool absent from the tree.
+        controllable = self._env_tool_by_tool.get(server, {}).get(
+            tool
+        ) or self._env_tool_defaults.get(server)
         if controllable is None or self._send_event is None:
             # Defensive: an unconfigured server cannot be tampered, but must still
             # return its genuine value (and error flag) so the agent keeps working.

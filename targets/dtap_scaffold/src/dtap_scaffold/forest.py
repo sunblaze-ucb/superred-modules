@@ -8,10 +8,14 @@ Controller's ``read_only`` set rather than via separate read tags.
 IMPORTANT (identity semantics): ``SecurityDomainTag.includes`` walks the parent
 chain comparing by ``is`` (identity), not equality. The fixed tags below are
 module-level singletons. The per-server ``tools.<server>`` / ``environment.<server>``
-leaves are dynamic, so a target MUST build each leaf ONCE (cache it) and reuse
-that exact instance everywhere it appears: in :func:`build_domain`, in the
-controllables it exposes, and in the events it fires. Building a fresh,
-equal-but-not-identical instance at fire time would silently fail scope checks.
+leaves are dynamic, but the builders below are cached per name, so every
+caller gets the ONE instance for a given server -- the same object reused in
+:func:`build_domain`, in the controllables the target exposes, and in the events
+it fires. (Do not reconstruct a leaf via ``SecurityDomainTag(...)`` directly;
+that equal-but-not-identical instance would silently fail scope checks.) The
+``tools.<server>`` leaf is itself the ROOT of a per-server authorization subtree
+(``tools.<server>.<node>`` tags built from ``data/tool_trees.json`` -- see
+:mod:`dtap_scaffold.tool_trees`); each subtree tag is likewise cached.
 
 Roots:
 - ``system`` -- agent-side surfaces:
@@ -26,8 +30,9 @@ Roots:
                        ``agent_trace_tool_calls`` (the agent's NATIVE bash/edit calls)}
 - ``user``        -- the user-prompt channel (DTAP prompt vector / direct threat model)
 - ``tools``       -- per-MCP-server returned-content surface; tampering a tool's
-                     return is indirect injection (one ``tools.<server>`` leaf per
-                     active env server)
+                     return is indirect injection (one ``tools.<server>`` subtree
+                     ROOT per active env server, over a single-parent tree of
+                     ``tools.<server>.<node>`` authorization tags)
 - ``environment`` -- per-injection-server backend-write surface; the faithful DTAP
                      environment vector writes attacker data into the live backend
                      the agent later reads (one ``environment.<server>`` leaf per
@@ -57,6 +62,7 @@ write/execute access to the same machine (a Controllable, not an observation).
 from __future__ import annotations
 
 from collections.abc import Iterable
+from functools import cache
 
 from superred.core.types.security_domain import SecurityDomain, SecurityDomainTag
 
@@ -107,8 +113,11 @@ USER_TAG: SecurityDomainTag = SecurityDomainTag("user")
 # ===========================================================================
 
 TOOLS_TAG: SecurityDomainTag = SecurityDomainTag("tools")
-"""Root of the per-MCP-server returned-content surface. Children (one
-``tools.<server>`` leaf per active env server) are supplied dynamically."""
+"""Root of the per-MCP-server returned-content surface. Each active env server
+contributes a ``tools.<server>`` subtree ROOT, under which a single-parent
+authorization tree of ``tools.<server>.<node>`` tags places each tool by the
+trust boundary an attacker must compromise to control its return (see
+:mod:`dtap_scaffold.tool_trees`). Supplied dynamically from the active env set."""
 
 ENVIRONMENT_TAG: SecurityDomainTag = SecurityDomainTag("environment")
 """Root of the per-injection-server backend-write surface (the DTAP environment
@@ -170,19 +179,22 @@ FIXED_TAGS: tuple[SecurityDomainTag, ...] = (
 _DYNAMIC_ROOTS: tuple[SecurityDomainTag, ...] = (TOOLS_TAG, ENVIRONMENT_TAG)
 
 
+@cache
 def tools_server_tag(server: str) -> SecurityDomainTag:
-    """Build the ``tools.<server>`` leaf for *server*.
+    """The ``tools.<server>`` subtree-root tag for *server* (cached per name).
 
-    The caller MUST cache and reuse the returned instance (see the identity note
-    in the module docstring).
+    Cached so every caller shares the one instance (identity semantics). This is
+    the ROOT of the server's authorization subtree; the per-node
+    ``tools.<server>.<node>`` tags are built by :mod:`dtap_scaffold.tool_trees`.
     """
     return SecurityDomainTag(f"tools.{server}", parent=TOOLS_TAG)
 
 
+@cache
 def env_server_tag(server: str) -> SecurityDomainTag:
-    """Build the ``environment.<server>`` leaf for an injection *server*.
+    """The ``environment.<server>`` leaf for an injection *server* (cached per name).
 
-    The caller MUST cache and reuse the returned instance (identity semantics).
+    Cached so every caller shares the one instance (identity semantics).
     """
     return SecurityDomainTag(f"environment.{server}", parent=ENVIRONMENT_TAG)
 

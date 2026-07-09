@@ -61,8 +61,10 @@ def _recorder(injections: dict[str, str]):
 def _proxy_with_forward(genuine: str = "GENUINE", is_error: bool = False):
     """A proxy whose ``_forward`` returns ``(genuine, is_error)`` and fronts one env server."""
     proxy = HostMCPProxy()
-    ctrl = env_tool_output_controllable("travel-suite", tools_server_tag("travel-suite"))
-    proxy.set_env_tool_controllables({"travel-suite": ctrl})
+    # search_flights is not in travel-suite's tree, so it resolves to the server
+    # root/fallback controllable (env_tool:travel-suite) -- the whole-server grant.
+    ctrl = env_tool_output_controllable("travel-suite", "", tools_server_tag("travel-suite"))
+    proxy.set_env_tool_controllables({}, {"travel-suite": ctrl})
 
     async def fake_forward(server, tool, params):
         return genuine, is_error
@@ -174,6 +176,45 @@ async def test_handle_tool_call_injection_returns_tampered():
     assert observables == []
 
 
+async def test_handle_tool_call_resolves_tool_to_its_node_controllable():
+    """A tool fires the Controllable of its authorization NODE; a tool absent from
+    the tree falls back to the server root Controllable (the whole-server grant)."""
+    from dtap_scaffold.tool_trees import build_server_tree
+
+    proxy = HostMCPProxy()
+    tree = build_server_tree("travel-suite")
+
+    async def fake_forward(server, tool, params):
+        return "GENUINE", False
+
+    proxy._forward = fake_forward  # type: ignore[method-assign]
+
+    pub_ctrl = env_tool_output_controllable("travel-suite", "public", tree.nodes["public"])
+    admin_ctrl = env_tool_output_controllable("travel-suite", "admin", tree.nodes["admin"])
+    root_ctrl = env_tool_output_controllable("travel-suite", "", tree.root)
+    proxy.set_env_tool_controllables(
+        {"travel-suite": {"query_flight": pub_ctrl, "manager_query_history": admin_ctrl}},
+        {"travel-suite": root_ctrl},
+    )
+    emit, send_event, events, _ = _recorder(injections={})
+    proxy.bind(emit, send_event)
+
+    await proxy.handle_tool_call("travel-suite", "query_flight", {})  # public node
+    await proxy.handle_tool_call("travel-suite", "manager_query_history", {})  # admin node
+    await proxy.handle_tool_call("travel-suite", "unmapped_tool", {})  # -> root fallback
+
+    fired = [e.controllable.name for e in events if isinstance(e, ControllablePostCallEvent)]
+    assert fired == [
+        "env_tool:travel-suite.public",
+        "env_tool:travel-suite.admin",
+        "env_tool:travel-suite",  # fallback to the server root
+    ]
+    # each fired event carries its node's tag as security_domain (identity-stable)
+    posts = [e for e in events if isinstance(e, ControllablePostCallEvent)]
+    assert posts[0].security_domain is tree.nodes["public"]
+    assert posts[2].security_domain is tree.root
+
+
 async def test_handle_tool_call_decline_preserves_backend_error():
     # A genuine backend error flag survives a declined (non-injected) call.
     proxy, _ = _proxy_with_forward("BACKEND_ERR", is_error=True)
@@ -236,11 +277,14 @@ def test_setters_store_defensive_copies():
     edits.append({"server": "z"})  # mutate caller's list afterwards
     assert len(proxy._tool_desc_edits) == 1  # stored copy is unaffected
 
-    ctrl = env_tool_output_controllable("s", tools_server_tag("s"))
-    by_server = {"s": ctrl}
-    proxy.set_env_tool_controllables(by_server)
-    by_server.clear()
-    assert proxy._env_tool_controllables["s"] is ctrl
+    ctrl = env_tool_output_controllable("s", "", tools_server_tag("s"))
+    by_server_tool = {"s": {"t": ctrl}}
+    defaults = {"s": ctrl}
+    proxy.set_env_tool_controllables(by_server_tool, defaults)
+    by_server_tool.clear()
+    defaults.clear()
+    assert proxy._env_tool_by_tool["s"]["t"] is ctrl
+    assert proxy._env_tool_defaults["s"] is ctrl
 
 
 def test_extract_mcp_result_flattens_text_and_falls_back():
@@ -375,7 +419,7 @@ async def test_start_serves_http_round_trip():
     proxy._fetch_tools = fake_fetch  # type: ignore[method-assign]
     proxy._forward = fake_forward  # type: ignore[method-assign]
     proxy.set_env_tool_controllables(
-        {"s": env_tool_output_controllable("s", tools_server_tag("s"))}
+        {}, {"s": env_tool_output_controllable("s", "", tools_server_tag("s"))}
     )
     emit, send_event, *_ = _recorder(injections={})
     proxy.bind(emit, send_event)

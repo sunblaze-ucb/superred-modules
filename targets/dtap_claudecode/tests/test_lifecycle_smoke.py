@@ -66,7 +66,8 @@ class FakeProxy:
     def __init__(self):
         self.started = self.stopped = 0
         self._emit = self._send = None
-        self._env_tool_ctrls = {}
+        self._env_tool_by_tool = {}
+        self._env_tool_defaults = {}
 
     async def start(self, server_urls):
         self.started += 1
@@ -78,8 +79,9 @@ class FakeProxy:
     def set_tool_description_edits(self, edits):
         self._edits = edits
 
-    def set_env_tool_controllables(self, by_server):
-        self._env_tool_ctrls = by_server
+    def set_env_tool_controllables(self, by_server_tool, defaults):
+        self._env_tool_by_tool = by_server_tool
+        self._env_tool_defaults = defaults
 
     def list_tools(self, server):
         return []
@@ -88,7 +90,7 @@ class FakeProxy:
         return {"travel-suite": [{"name": "t", "description": "d", "inputSchema": {}}]}
 
     async def handle_tool_call(self, server, tool, params):
-        ctrl = self._env_tool_ctrls[server]
+        ctrl = self._env_tool_by_tool.get(server, {}).get(tool) or self._env_tool_defaults[server]
         resp = await self._send(
             ControllablePostCallEvent(
                 controllable=ctrl,
@@ -244,7 +246,7 @@ def test_surfaces_configure():
     assert {"system", "user", "tools", "environment"} <= roots
     names = {c.name for c in t.get_controllables()}
     assert "env_tool:travel-suite" in names and "env_inject:travel-injection" in names
-    tool_tag = t._tool_tags["travel-suite"]
+    tool_tag = t._tool_trees["travel-suite"].root
     assert scope_includes(frozenset({TOOLS_TAG}), tool_tag)
 
 

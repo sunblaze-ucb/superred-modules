@@ -69,7 +69,8 @@ class FakeProxy:
         self.started = self.stopped = 0
         self._emit = self._send = None
         self._edits: list = []
-        self._env_tool_ctrls: dict = {}
+        self._env_tool_by_tool: dict = {}
+        self._env_tool_defaults: dict = {}
 
     async def start(self, server_urls):
         self.started += 1
@@ -81,8 +82,9 @@ class FakeProxy:
     def set_tool_description_edits(self, edits):
         self._edits = edits
 
-    def set_env_tool_controllables(self, by_server):
-        self._env_tool_ctrls = by_server
+    def set_env_tool_controllables(self, by_server_tool, defaults):
+        self._env_tool_by_tool = by_server_tool
+        self._env_tool_defaults = defaults
 
     def list_tools(self, server):
         return []
@@ -99,8 +101,9 @@ class FakeProxy:
         }
 
     async def handle_tool_call(self, server, tool, params):
-        # The proxy chokepoint: fire the per-server env_tool PostCall (return tampering).
-        ctrl = self._env_tool_ctrls[server]
+        # The proxy chokepoint: resolve the tool to its node Controllable (fallback
+        # to the server root), fire the env_tool PostCall (return tampering).
+        ctrl = self._env_tool_by_tool.get(server, {}).get(tool) or self._env_tool_defaults[server]
         resp = await self._send(
             ControllablePostCallEvent(
                 controllable=ctrl,
@@ -218,8 +221,8 @@ def test_config_surfaces():
     assert {"user_prompt", "system_prompt", "skill"} <= names
     # the host trust boundary: filesystem + code_execution controllables exist
     assert {"filesystem", "code_execution"} <= names
-    # tools.travel-suite leaf is covered by the tools root (identity via cached tag)
-    tool_tag = t._tool_tags["travel-suite"]
+    # tools.travel-suite subtree root is covered by the tools root (identity via cached tag)
+    tool_tag = t._tool_trees["travel-suite"].root
     assert scope_includes(frozenset({S.TOOLS_TAG}), tool_tag)
     # host root subsumes both host capabilities (parent grants children)
     assert scope_includes(frozenset({S.HOST_TAG}), S.HOST_FILESYSTEM_TAG)
@@ -228,6 +231,40 @@ def test_config_surfaces():
     assert not scope_includes(frozenset({S.HOST_FILESYSTEM_TAG}), S.HOST_CODE_EXECUTION_TAG)
     obs = {o.observable.name for o in t.get_observables()}
     assert "model_identity" in obs and "active_environments" in obs
+
+
+def test_env_tool_controllables_are_per_authorization_node():
+    """set_config splits the env-tool surface into per-node Controllables and maps
+    each tool to its node's Controllable (root fallback for unmapped tools)."""
+    from dtap_scaffold.tool_trees import build_server_tree
+
+    t = _configured()
+    names = {c.name for c in t.get_controllables()}
+    # travel-suite exposes a Controllable per node plus the root/fallback surface
+    assert {
+        "env_tool:travel-suite",  # root / whole-server grant + fallback
+        "env_tool:travel-suite.public",
+        "env_tool:travel-suite.customer",
+        "env_tool:travel-suite.admin",
+    } <= names
+    # each node Controllable is scoped to its node tag; a public tool's tamper is
+    # granted by {customer} (ancestor) and {tools.travel-suite} (root) but NOT by a
+    # sibling like {admin} -- the whole point of the split.
+    tree = build_server_tree("travel-suite")
+    pub, cust, admin, root = (
+        tree.nodes["public"],
+        tree.nodes["customer"],
+        tree.nodes["admin"],
+        tree.root,
+    )
+    assert scope_includes(frozenset({cust}), pub)
+    assert scope_includes(frozenset({root}), pub)
+    assert not scope_includes(frozenset({admin}), pub)
+    # the tool -> node Controllable map the target hands the proxy is correct
+    by_tool = t._env_tool_by_tool["travel-suite"]
+    assert by_tool["query_flight"].security_domain is pub  # a public read
+    assert by_tool["book_flight"].security_domain is cust  # a customer booking
+    assert "manager_query_history" in by_tool  # an admin tool is mapped too
 
 
 async def test_passthrough_baseline():
