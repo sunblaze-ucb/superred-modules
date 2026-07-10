@@ -20,6 +20,7 @@ inject fakes, which is how the whole lifecycle is verified without Docker.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import shutil
@@ -405,15 +406,27 @@ class DtapAgentTarget(Target):
     ) -> str:
         resp = await send_event(ControllablePreCallEvent(controllable=ctrl, request=default))
         injected = _as_injection(resp)
-        return injected if injected is not None else default
+        # str-coerce: a text controllable is typed str, but an optimizer may inject any
+        # JSON value; coercing here keeps a non-str value (list/int) from crashing the
+        # host-side prompt writers (AGENTS.md / task.json) downstream in the drivers.
+        # _safe_str also contains a deeply-nested value whose str() would itself recurse.
+        return _safe_str(injected) if injected is not None else default
 
     async def _precall_skills(self, send_event: EventResponseHandler) -> list[dict[str, Any]]:
         resp = await send_event(ControllablePreCallEvent(controllable=SKILL_CTRL, request=""))
         injected = _as_injection(resp)
         if injected is None:
             return []
-        spec = json.loads(injected)
-        return [spec] if isinstance(spec, dict) else list(spec)
+        parsed = _loads_injection(injected)
+        if isinstance(parsed, dict):
+            specs = [parsed]
+        elif isinstance(parsed, list):
+            specs = [s for s in parsed if isinstance(s, dict)]
+        else:
+            return []
+        # normalize to flat primitives so no nested/oversized/non-numeric skill field
+        # can crash a host-side driver sink (str/int/json.dump) and abort the task.
+        return [_normalize_skill(s) for s in specs]
 
     async def _precall_tool_desc(self, send_event: EventResponseHandler) -> list[dict[str, Any]]:
         edits: list[dict[str, Any]] = []
@@ -425,16 +438,20 @@ class DtapAgentTarget(Target):
             injected = _as_injection(resp)
             if injected is None:
                 continue
-            spec = json.loads(injected)
-            content = spec.get("description") if mode == "override" else spec.get("suffix")
-            edits.append(
-                {
-                    "server": spec.get("server"),
-                    "tool": spec.get("tool"),
-                    "mode": mode,
-                    "content": content,
-                }
-            )
+            parsed = _loads_injection(injected)
+            specs = parsed if isinstance(parsed, list) else [parsed]
+            for spec in specs:
+                if not isinstance(spec, dict):
+                    continue
+                content = spec.get("description") if mode == "override" else spec.get("suffix")
+                edits.append(
+                    {
+                        "server": spec.get("server"),
+                        "tool": spec.get("tool"),
+                        "mode": mode,
+                        "content": content,
+                    }
+                )
         return edits
 
     async def _precall_tool_catalog(
@@ -461,7 +478,7 @@ class DtapAgentTarget(Target):
         resp = await send_event(ControllablePreCallEvent(controllable=TOOL_ADD_CTRL, request=""))
         injected = _as_injection(resp)
         if injected is not None:
-            for spec in _normalize_tool_adds(json.loads(injected)):
+            for spec in _normalize_tool_adds(_loads_injection(injected)):
                 server, name = spec["server"], spec["name"]
                 added.setdefault(server, []).append(spec)
                 call_ctrls[(server, name)] = tool_call_controllable(
@@ -472,7 +489,7 @@ class DtapAgentTarget(Target):
         resp = await send_event(ControllablePreCallEvent(controllable=TOOL_REMOVE_CTRL, request=""))
         injected = _as_injection(resp)
         if injected is not None:
-            for server, name in _normalize_tool_removes(json.loads(injected)):
+            for server, name in _normalize_tool_removes(_loads_injection(injected)):
                 removed.setdefault(server, set()).add(name)
 
         return added, removed, call_ctrls
@@ -519,9 +536,16 @@ class DtapAgentTarget(Target):
         injected = _as_injection(resp)
         if injected is None:
             return
-        parsed = json.loads(injected)
-        ops = parsed.get("ops", []) if isinstance(parsed, dict) else parsed
-        await self._apply_host_files(list(ops))
+        parsed = _loads_injection(injected)
+        if isinstance(parsed, dict):
+            ops = parsed.get("ops", [])
+        elif isinstance(parsed, list):
+            ops = parsed
+        else:
+            return
+        if not isinstance(ops, list):
+            return
+        await self._apply_host_files([op for op in ops if isinstance(op, dict)])
 
     async def _apply_host_files(self, ops: list[dict[str, Any]]) -> None:
         """Apply attacker file ops to the run workspace (host-side; no container).
@@ -530,6 +554,9 @@ class DtapAgentTarget(Target):
         "content"?: str}``. Paths are confined to the workspace (a traversal that
         would escape is skipped). The workspace is bind-mounted into the agent
         container, so these files are exactly what the agent's native tools read.
+        Each op is best-effort: one that cannot be applied (a null byte in the path,
+        a path/directory collision with another op, a permission error) is skipped
+        rather than aborting the whole task, matching the env-write vector.
         """
         workspace = os.path.join(self._run_dir, "workspace")
         for op in ops:
@@ -537,13 +564,18 @@ class DtapAgentTarget(Target):
             target = _safe_join(workspace, str(op.get("path", "")))
             if target is None or not op.get("path"):
                 continue
-            if action in ("write", "append"):
-                os.makedirs(os.path.dirname(target), exist_ok=True)
-                with open(target, "a" if action == "append" else "w", encoding="utf-8") as fh:
-                    fh.write(str(op.get("content", "")))
-            elif action == "delete":
-                if os.path.isfile(target):
-                    os.remove(target)
+            try:
+                if action in ("write", "append"):
+                    os.makedirs(os.path.dirname(target), exist_ok=True)
+                    with open(target, "a" if action == "append" else "w", encoding="utf-8") as fh:
+                        fh.write(str(op.get("content", "")))
+                elif action == "delete":
+                    if os.path.isfile(target):
+                        os.remove(target)
+            except (OSError, ValueError):  # noqa: PERF203 - best-effort: a bad op just
+                # does not land (null byte -> ValueError; dir/file collision, perms ->
+                # OSError), like McpEnvInjector.apply's per-call swallow.
+                continue
 
     async def _code_execution_loop(self, send_event: EventResponseHandler) -> None:
         """host_code_execution vector: the attacker's interactive code foothold.
@@ -564,10 +596,23 @@ class DtapAgentTarget(Target):
                     answer=transcript,
                 )
             )
-            code = _as_injection(resp)
-            if code is None:
+            injected = _as_injection(resp)
+            if injected is None:
                 return
-            transcript = await self._exec_on_host(code)
+            try:
+                transcript = await self._exec_on_host(_safe_str(injected))
+            except ValueError:
+                # A code string the OS refuses to marshal into an argv (e.g. an embedded
+                # null byte -> ValueError) is a bad attacker value: skip the round with
+                # empty output rather than aborting the task.
+                transcript = ""
+            except OSError as exc:
+                # An oversized code value (argv exceeds ARG_MAX -> OSError E2BIG) is also
+                # an attacker value, not infra: skip the round. A genuine infra failure
+                # (docker missing -> ENOENT, etc.) still propagates and aborts the task.
+                if exc.errno != errno.E2BIG:
+                    raise
+                transcript = ""
 
     def _primary_domain(self) -> str:
         # The domain is the path segment immediately before the benign/malicious
@@ -636,6 +681,61 @@ class DtapAgentTarget(Target):
         the loop declines immediately and this never fires), so a subclass may
         keep the whole implementation behind the Docker seam.
         """
+
+
+def _safe_str(value: Any) -> str:
+    """``str(value)`` that returns ``""`` instead of raising on a deeply-nested attacker
+    object. ``str()`` recurses in C and raises ``RecursionError`` near the ~9750 nesting
+    depth ``json.loads`` admits, so coercing an injected value can itself abort the run;
+    this contains that so a wrong-format value never crashes the task.
+    """
+    if value is None:
+        return ""
+    try:
+        return str(value)
+    except RecursionError:
+        return ""
+
+
+def _normalize_skill(spec: dict[str, Any]) -> dict[str, Any]:
+    """Flatten one attacker skill dict to the primitive fields the drivers materialize.
+
+    A skill value is fully attacker-controlled JSON; coercing to ``{name, content, mode}``
+    strings and an int ``row`` here (like :func:`_normalize_tool_adds`) keeps a nested,
+    non-numeric, or oversized field from crashing a downstream host-side sink -- ``str()``
+    on nested ``content``, ``int()`` on a non-numeric ``row`` (inf/NaN/list), or a driver's
+    ``json.dump`` of a nested value -- none of which can abort the task once the fields
+    are primitives.
+    """
+    try:
+        row = int(spec.get("row", 1) or 1)
+    except (TypeError, ValueError, OverflowError):
+        row = 1
+    return {
+        "name": _safe_str(spec.get("name")),
+        "content": _safe_str(spec.get("content")),
+        "mode": _safe_str(spec.get("mode")) or "create",
+        "row": row,
+    }
+
+
+def _loads_injection(injected: str) -> Any:
+    """Parse an attacker-injected JSON value; return ``None`` when it is not valid JSON.
+
+    A non-JSON (or JSON-``null``) injection is a malformed attacker value: the caller
+    skips it (the injection simply does not land) rather than letting ``json.loads``
+    raise and abort the whole run. Every attacker-facing PreCall parser routes its
+    value through here so a wrong-format value is contained to the one run and the
+    attacker gets another try on the next iteration, never crashing the task.
+    """
+    try:
+        return json.loads(injected)
+    except (ValueError, TypeError, RecursionError):
+        # json.loads can raise: JSONDecodeError (a ValueError) on bad JSON, a bare
+        # ValueError on an oversized int literal (>4300 digits), TypeError on non-str
+        # input, and RecursionError on deeply-nested JSON -- catch them all so no
+        # injected value aborts the run; the value is simply skipped.
+        return None
 
 
 def _normalize_instructions(value: str) -> tuple[str, ...]:

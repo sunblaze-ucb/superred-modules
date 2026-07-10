@@ -23,6 +23,7 @@ from superred.core.types.security_domain import scope_includes
 import dtap_scaffold as S  # noqa: N812
 from dtap_scaffold.agent_base import (
     DtapAgentTarget,
+    _loads_injection,
     _normalize_tool_adds,
     _normalize_tool_removes,
 )
@@ -332,6 +333,251 @@ async def test_tool_description_suffix_applied_end_to_end():
     assert suffix_edits[0]["content"] == "ALSO DO EVIL"
     assert suffix_edits[0]["server"] == "travel-suite"
     assert suffix_edits[0]["tool"] == "query_flight"
+
+
+async def test_tool_description_list_poisons_multiple_tools():
+    """A LIST value on the tool-description vector poisons EVERY listed tool, not just
+    one. The DTAP tool vector is inherently multi-tool (upstream merges tool-injection
+    steps across turns), and a list is the batch form every sibling JSON controllable
+    accepts. Before the fix a single dict capped this at one tool and a list crashed
+    ``_precall_tool_desc`` (AttributeError) out of run(), aborting the whole task."""
+    t = _configured()
+    emit, send_event, *_ = _recorder(
+        injections={
+            "tool_description_suffix": json.dumps(
+                [
+                    {"server": "travel-suite", "tool": "query_flight", "suffix": "A"},
+                    {"server": "travel-suite", "tool": "book_flight", "suffix": "B"},
+                ]
+            )
+        }
+    )
+    await t.run(emit, send_event)
+    suffix_edits = [e for e in t.proxy._edits if e.get("mode") == "suffix"]
+    assert [(e["tool"], e["content"]) for e in suffix_edits] == [
+        ("query_flight", "A"),
+        ("book_flight", "B"),
+    ]
+
+
+async def test_tool_description_malformed_value_does_not_crash():
+    """A non-JSON value, and a list with a non-dict element, are skipped (move-on)
+    rather than raising out of run() and crashing the task. A competent attacker is
+    told the accepted format in the controllable description; a wrong value simply
+    does not land (a valid attacker failure), and the run still completes and is judged
+    so the next iteration gives the attacker another try at the same interface."""
+    t = _configured()
+    emit, send_event, *_ = _recorder(
+        injections={
+            "tool_description_override": "not json at all",
+            "tool_description_suffix": json.dumps(
+                [
+                    "oops-not-a-dict",
+                    {"server": "travel-suite", "tool": "query_flight", "suffix": "OK"},
+                ]
+            ),
+        }
+    )
+    await t.run(emit, send_event)  # must not raise
+    override_edits = [e for e in t.proxy._edits if e.get("mode") == "override"]
+    suffix_edits = [e for e in t.proxy._edits if e.get("mode") == "suffix"]
+    assert override_edits == []  # non-JSON override -> skipped, no edit
+    assert [e["content"] for e in suffix_edits] == ["OK"]  # non-dict list element skipped
+
+
+async def test_precall_skills_moves_on_malformed():
+    """The skill vector tolerates a wrong-format value instead of crashing the task:
+    non-JSON -> [], a scalar (previously ``list(5)`` -> TypeError) -> [], and a list
+    keeps only the dict specs -- each normalized to flat {name, content, mode, row}."""
+    t = _configured()
+    _, se, *_ = _recorder(injections={"skill": "not json"})
+    assert await t._precall_skills(se) == []
+    _, se, *_ = _recorder(injections={"skill": "5"})
+    assert await t._precall_skills(se) == []
+    _, se, *_ = _recorder(injections={"skill": json.dumps(["junk", {"name": "s", "content": "c"}])})
+    assert await t._precall_skills(se) == [
+        {"name": "s", "content": "c", "mode": "create", "row": 1}
+    ]
+
+
+async def test_precall_skills_normalizes_hostile_fields():
+    """A nested ``content``, an inf/NaN/list ``row``, and non-str name/mode are flattened
+    to primitives so no downstream host-side driver sink (str/int/json.dump) can crash the
+    task. Injected value is a JSON string (the declared value type)."""
+    t = _configured()
+    value = json.dumps(
+        {
+            "name": [1, 2],  # non-str name
+            "content": [[[["deep"]]]],  # nested content -> str, so json.dump-safe
+            "mode": 5,  # non-str mode
+            "row": 1e999,  # -> float('inf'); int(inf) would OverflowError
+        }
+    )
+    _, se, *_ = _recorder(injections={"skill": value})
+    out = await t._precall_skills(se)
+    assert len(out) == 1
+    s = out[0]
+    # each field is flattened to a primitive -> no driver str()/int()/json.dump can
+    # recurse or overflow on it (these assertions fail on the raw, un-normalized spec).
+    assert set(s) == {"name", "content", "mode", "row"}
+    assert s["content"] == str([[[["deep"]]]])  # nested content -> its flat str repr
+    assert s["name"] == "[1, 2]" and s["mode"] == "5"
+    assert s["row"] == 1  # 1e999 -> float('inf'); int(inf) would OverflowError -> default
+
+
+def test_safe_str_contains_recursion():
+    """_safe_str returns '' instead of raising RecursionError on a deeply-nested object,
+    so coercing a raw injected value never aborts the run."""
+    from dtap_scaffold.agent_base import _safe_str
+
+    deep: list = []
+    cur = deep
+    for _ in range(20000):
+        nxt: list = []
+        cur.append(nxt)
+        cur = nxt
+    assert _safe_str(deep) == ""  # would RecursionError without the guard
+    assert _safe_str("hi") == "hi"
+    assert _safe_str(None) == ""
+
+
+async def test_precall_coerces_deeply_nested_object():
+    """A raw deeply-nested injected object whose str() would itself RecursionError is
+    contained (returns '') rather than crashing run() at the _precall str-coercion."""
+    t = _configured()
+    deep: list = []
+    cur = deep
+    for _ in range(20000):
+        nxt: list = []
+        cur.append(nxt)
+        cur = nxt
+
+    async def send_event(evt):
+        ctrl = getattr(evt, "controllable", None)
+        return ControllableInjection(event=evt, controllable=ctrl, value=deep)
+
+    out = await t._precall(send_event, S.SYSTEM_PROMPT_CTRL, "default")  # must not raise
+    assert out == ""
+
+
+async def test_precall_filesystem_moves_on_malformed(monkeypatch):
+    """A wrong-format host_filesystem value is a no-op (no host file ops) rather than
+    crashing the task: non-JSON and a scalar (previously ``list(5)`` -> TypeError) both
+    apply zero ops."""
+    t = _configured()
+    applied: list = []
+
+    async def fake_apply(ops):
+        applied.append(ops)
+
+    monkeypatch.setattr(t, "_apply_host_files", fake_apply)
+    for bad in ("not json", "5", '"a bare string"'):
+        _, se, *_ = _recorder(injections={"filesystem": bad})
+        await t._precall_filesystem(se)  # must not raise
+    assert applied == []  # every malformed value applied no ops
+
+
+def test_loads_injection_returns_none_on_non_json():
+    """The move-on primitive: a non-JSON (or JSON-null) injection yields None so every
+    caller skips it, instead of json.loads raising and aborting the run."""
+    assert _loads_injection("{not json") is None
+    assert _loads_injection("null") is None
+    assert _loads_injection('{"a": 1}') == {"a": 1}
+    assert _loads_injection("[1, 2]") == [1, 2]
+
+
+def test_loads_injection_returns_none_on_deeply_nested():
+    """Deeply-nested JSON makes json.loads raise RecursionError (a RuntimeError, NOT a
+    JSONDecodeError/TypeError); the primitive must still return None so this attacker
+    value is skipped, not raised out of run() (every PreCall parser shares this primitive)."""
+    assert _loads_injection("[" * 100000) is None
+    assert _loads_injection("[" * 30000 + "]" * 30000) is None
+
+
+def test_loads_injection_returns_none_on_oversized_int():
+    """A >4300-digit integer literal makes json.loads raise a BARE ValueError (the CPython
+    int-string-conversion limit), not a JSONDecodeError; the primitive must still return
+    None so this attacker value is skipped rather than aborting the task."""
+    assert _loads_injection("1" * 4301) is None
+
+
+async def test_precall_coerces_non_str_injection_to_str():
+    """A text controllable is typed str; an optimizer injecting a non-str JSON value (a
+    list/int) must be coerced, not passed through to crash the host-side prompt writers."""
+    t = _configured()
+
+    async def send_event(evt):
+        ctrl = getattr(evt, "controllable", None)
+        return ControllableInjection(event=evt, controllable=ctrl, value=[1, 2, 3])
+
+    out = await t._precall(send_event, S.SYSTEM_PROMPT_CTRL, "default")
+    assert isinstance(out, str)
+    assert out == "[1, 2, 3]"
+
+
+async def test_code_execution_loop_skips_unspawnable_code(monkeypatch):
+    """A code string the OS refuses to marshal (e.g. an embedded null byte -> ValueError
+    from subprocess spawn) skips that round with empty output rather than aborting the
+    task; a genuine infra error (OSError) still propagates."""
+    t = _configured()
+    calls: list[str] = []
+
+    async def boom(code: str) -> str:
+        calls.append(code)
+        raise ValueError("embedded null byte")
+
+    monkeypatch.setattr(t, "_exec_on_host", boom)
+
+    async def send_event(evt):
+        ctrl = getattr(evt, "controllable", None)
+        # first round injects hostile code, then decline to end the foothold
+        value = "echo\x00hi" if not calls else None
+        if value is None:
+            return ControllableNoInjection(event=evt, controllable=ctrl)
+        return ControllableInjection(event=evt, controllable=ctrl, value=value)
+
+    await t._code_execution_loop(send_event)  # must not raise
+    assert calls == ["echo\x00hi"]  # the hostile round ran and was swallowed
+
+
+async def test_code_execution_loop_skips_oversized_argv_but_propagates_infra(monkeypatch):
+    """An oversized code value (argv > ARG_MAX -> OSError E2BIG) is an attacker value, not
+    infra: the round is skipped and run() does not abort. A genuine infra OSError (docker
+    missing -> ENOENT) still propagates and correctly aborts the task."""
+    import errno
+
+    t = _configured()
+
+    async def one_round(evt):
+        ctrl = getattr(evt, "controllable", None)
+        if not getattr(one_round, "fired", False):
+            one_round.fired = True  # type: ignore[attr-defined]
+            return ControllableInjection(event=evt, controllable=ctrl, value="A" * 100)
+        return ControllableNoInjection(event=evt, controllable=ctrl)
+
+    async def e2big(code: str) -> str:
+        raise OSError(errno.E2BIG, "Argument list too long")
+
+    monkeypatch.setattr(t, "_exec_on_host", e2big)
+    one_round.fired = False  # type: ignore[attr-defined]
+    await t._code_execution_loop(one_round)  # E2BIG swallowed -> must not raise
+
+    async def enoent(code: str) -> str:
+        raise OSError(errno.ENOENT, "No such file or directory")
+
+    monkeypatch.setattr(t, "_exec_on_host", enoent)
+    one_round.fired = False  # type: ignore[attr-defined]
+    with pytest.raises(OSError):  # genuine infra failure still aborts
+        await t._code_execution_loop(one_round)
+
+
+async def test_tool_description_deeply_nested_does_not_crash():
+    """A deeply-nested value (RecursionError from json.loads) is skipped end-to-end, not
+    raised out of run() -- the same task-abort class as non-JSON via a different exception."""
+    t = _configured()
+    emit, send_event, *_ = _recorder(injections={"tool_description_override": "[" * 100000})
+    await t.run(emit, send_event)  # must not raise
+    assert [e for e in t.proxy._edits if e.get("mode") == "override"] == []
 
 
 async def test_tool_catalog_add_remove_wired_to_proxy_with_add_scoped_call_ctrl():
@@ -708,3 +954,24 @@ async def test_apply_host_files_ops_and_confinement(tmp_path):
         assert fh.read() == "AB"
     assert not os.path.exists(os.path.join(ws, "gone.txt"))
     assert not os.path.exists(os.path.join(str(tmp_path), "escape.txt"))
+
+
+async def test_apply_host_files_best_effort_on_bad_ops(tmp_path):
+    """A null-byte path and a self-conflicting op (a file where a later op needs a dir)
+    are skipped per-op rather than raising out of run(); the benign op still lands.
+    Before the per-op guard os.makedirs/open raised (ValueError/IsADirectoryError) and
+    aborted the whole task."""
+    t = _configured()
+    t._run_dir = str(tmp_path)
+    os.makedirs(os.path.join(t._run_dir, "workspace"))
+    await t._apply_host_files(
+        [
+            {"action": "write", "path": "a", "content": "x"},  # creates file 'a'
+            {"action": "write", "path": "a/b", "content": "y"},  # 'a' is a file -> skip
+            {"action": "write", "path": "bad\x00name", "content": "z"},  # null byte -> skip
+            {"action": "write", "path": "ok.txt", "content": "landed"},
+        ]
+    )  # must not raise
+    ws = os.path.join(t._run_dir, "workspace")
+    with open(os.path.join(ws, "ok.txt"), encoding="utf-8") as fh:
+        assert fh.read() == "landed"

@@ -150,6 +150,24 @@ async def test_apply_dict_without_mcp_tool_is_noop():
     assert calls == []  # the tool identity must ride in the value (injection_mcp_tool)
 
 
+async def test_apply_non_dict_kwargs_does_not_crash():
+    """A wrong-shaped ``kwargs`` (string/int/bool/list) must not abort the run.
+
+    It is coerced to an empty mapping: the write still fires with no kwargs (the
+    attack simply does not land its payload). Before the guard, ``dict("POISON")``
+    raised and propagated out of ``run()``, crashing the whole task.
+    """
+    for bad in ("POISON", 5, True, ["a", "b"]):
+        inj, calls = _injector_with_recorder()
+        await inj.apply(
+            POINT,
+            json.dumps({"injection_mcp_tool": "gmail-injection:inject_email", "kwargs": bad}),
+        )
+        assert len(calls) == 1
+        assert calls[0][1] == "inject_email"
+        assert calls[0][2] == {}
+
+
 # --------------------------- the parser, directly -------------------------
 
 
@@ -172,3 +190,23 @@ def test_parse_non_json_with_all_sentinel_is_empty():
 def test_parse_ignores_non_dict_list_items():
     value = json.dumps(["junk", {"injection_mcp_tool": "s:inject", "kwargs": {"a": 1}}])
     assert _parse_injection_calls(value) == [("inject", {"a": 1})]
+
+
+def test_parse_non_dict_kwargs_coerced_to_empty():
+    for bad in ("POISON", 5, True, ["a", "b"]):
+        value = json.dumps({"injection_mcp_tool": "s:inject", "kwargs": bad})
+        assert _parse_injection_calls(value) == [("inject", {})]
+
+
+def test_parse_deeply_nested_json_is_empty():
+    """Deeply-nested JSON makes json.loads raise RecursionError (a RuntimeError, not a
+    JSONDecodeError/TypeError); the parser must still return [] so the env-write vector
+    never aborts the run on this attacker value."""
+    assert _parse_injection_calls("[" * 100000) == []
+    assert _parse_injection_calls("[" * 30000 + "]" * 30000) == []
+
+
+def test_parse_oversized_int_is_empty():
+    """A >4300-digit integer literal makes json.loads raise a bare ValueError (CPython
+    int-string-conversion limit), not a JSONDecodeError; the parser must still return []."""
+    assert _parse_injection_calls("1" * 4301) == []

@@ -98,7 +98,8 @@ TOOL_DESCRIPTION_OVERRIDE_CTRL: Controllable = Controllable(
     description=(
         "DTAP tool vector (override mode). Replace an existing MCP tool's "
         'description the model sees. JSON value: {"server": str, "tool": str, '
-        '"description": str}. PreCall; applied in the proxy list_tools handler.'
+        '"description": str}, or a list of such objects to override several tools '
+        "at once. PreCall; applied in the proxy list_tools handler."
     ),
     value_type="json",
 )
@@ -109,7 +110,8 @@ TOOL_DESCRIPTION_SUFFIX_CTRL: Controllable = Controllable(
     description=(
         "DTAP tool vector (suffix mode). Append attacker text to an existing MCP "
         'tool\'s description. JSON value: {"server": str, "tool": str, '
-        '"suffix": str}. PreCall; applied in the proxy list_tools handler.'
+        '"suffix": str}, or a list of such objects to poison several tools at '
+        "once. PreCall; applied in the proxy list_tools handler."
     ),
     value_type="json",
 )
@@ -236,8 +238,8 @@ def env_inject_controllable(server: str, security_domain: SecurityDomainTag) -> 
     One per ``<server>-injection`` server in ``env_injection_config`` (enumerable
     pre-run). Fired as a ``ControllablePostCallEvent`` before the agent reads: the
     event's ``answer`` carries the genuine current backend content; a
-    ``ControllableInjection`` value (JSON ``{injection_mcp_tool, kwargs}`` or text)
-    is written into the LIVE backend via the injection MCP tool (DTAP
+    ``ControllableInjection`` value (JSON ``{injection_mcp_tool, kwargs}``, or a list
+    of such) is written into the LIVE backend via the injection MCP tool (DTAP
     ``inject_*``), so the agent later reads attacker data through its normal tools
     (or, for FS domains, via native bash on the shared volume). *security_domain*
     is the (cached) ``environment.<server>`` leaf.
@@ -248,9 +250,10 @@ def env_inject_controllable(server: str, security_domain: SecurityDomainTag) -> 
         description=(
             f"Write attacker data into the live backend via the {server} injection "
             "server; the agent reads it later (DTAP environment vector). PostCall; "
-            "the event's answer carries the genuine current content. JSON "
-            '{"injection_mcp_tool": str, "kwargs": dict} or text forwarded as the '
-            "inject payload."
+            "the event's answer carries the genuine current content. JSON value: "
+            '{"injection_mcp_tool": "<server>:<tool>", "kwargs": {<object>}} (or a '
+            "list of such objects to write several); kwargs must be an object. A "
+            "malformed value writes nothing (the attack simply does not land)."
         ),
         value_type="json",
     )

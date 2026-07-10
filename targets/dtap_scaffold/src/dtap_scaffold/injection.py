@@ -87,12 +87,16 @@ def _parse_injection_calls(value: str) -> list[tuple[str, dict[str, Any]]]:
     ``{"injection_mcp_tool": "<server>:<tool>", "kwargs": {...}}`` -> the tool name is
     the part after the colon. A JSON list of such objects produces several calls. A
     malformed value (non-JSON, a non-dict, or a dict without ``injection_mcp_tool``)
-    yields no call, so it never aborts the run -- matching upstream
+    yields no call, and a non-dict ``kwargs`` is coerced to an empty mapping, so a
+    wrong-shaped value never aborts the run -- matching upstream
     ``get_env_injections_from_attack`` (the tool identity always rides in the value).
     """
     try:
         parsed: Any = json.loads(value)
-    except (json.JSONDecodeError, TypeError):
+    except (ValueError, TypeError, RecursionError):
+        # json.loads raises JSONDecodeError (a ValueError) on bad JSON, a bare ValueError
+        # on an oversized int literal (>4300 digits), TypeError on non-str input, and
+        # RecursionError on deeply-nested JSON -- catch them all so no value aborts the run.
         return []
 
     specs = parsed if isinstance(parsed, list) else [parsed]
@@ -103,7 +107,9 @@ def _parse_injection_calls(value: str) -> list[tuple[str, dict[str, Any]]]:
         injection_mcp_tool = spec.get("injection_mcp_tool")
         if injection_mcp_tool:
             tool = str(injection_mcp_tool).split(":", 1)[-1]
-            calls.append((tool, dict(spec.get("kwargs") or {})))
+            raw_kwargs = spec.get("kwargs")
+            kwargs = raw_kwargs if isinstance(raw_kwargs, dict) else {}
+            calls.append((tool, kwargs))
     return calls
 
 
