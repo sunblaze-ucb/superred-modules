@@ -159,7 +159,17 @@ def convert(output_dir: str) -> TrajectoryArtifact:
                                 }
                             )
                             turn_final_text = text
-                    # thinking / unknown blocks are not surfaced (upstream parity)
+                    elif btype == "thinking":
+                        # The agent's chain-of-thought: surfaced as an agent_trace
+                        # message observable (highly attack-relevant -- it reveals
+                        # whether the agent noticed/absorbed injected content), so an
+                        # attacker with agent_trace_messages scope can read it. It is
+                        # deliberately NOT add_step()'d, so the judge-facing
+                        # trajectory_json stays upstream-faithful (no reasoning steps).
+                        thinking = block.get("thinking", "")
+                        if thinking:
+                            messages.append({"role": "thinking", "text": thinking})
+                    # unknown blocks are not surfaced (upstream parity)
 
             elif mtype == "user":
                 for block in msg.get("content") or []:
