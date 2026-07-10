@@ -56,7 +56,6 @@ REQUIRED_CONFIG_SLOTS: frozenset[str] = frozenset(
         cfg.AVAILABLE_INJECTIONS,
         cfg.ADDITIONAL_INFORMATION,
         cfg.SERVER_ENV_OVERRIDES,
-        cfg.TOOL_BLACKLIST,
         cfg.THREAT_MODEL,
     }
 )
@@ -132,9 +131,6 @@ class DtapTask(Task[Target]):
         target.set_config(cfg.AVAILABLE_INJECTIONS, json.dumps(tc.available_injections))
         target.set_config(cfg.ADDITIONAL_INFORMATION, tc.additional_information)
         target.set_config(cfg.SERVER_ENV_OVERRIDES, json.dumps(tc.server_env_overrides))
-        target.set_config(
-            cfg.TOOL_BLACKLIST, json.dumps({s: list(v) for s, v in tc.tool_blacklist.items()})
-        )
         target.set_config(cfg.THREAT_MODEL, tc.threat_model or "")
 
     async def evaluate(self, _trajectory: Trajectory, target: Target) -> EvaluationResult:

@@ -137,8 +137,11 @@ def _server_env(
             continue
         env[key] = reset.render_template(str(value), render_values)
     env.update(extra)
+    # Upstream mcp_helpers applies only TRUTHY task env overrides (`if env_val`); an
+    # empty override does not shadow a lower tier.
     for key, value in (task_overrides or {}).items():
-        env[str(key)] = str(value)
+        if value:
+            env[str(key)] = str(value)
     return env
 
 

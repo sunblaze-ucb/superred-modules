@@ -107,11 +107,6 @@ class HostMCPProxy:
         self._added_tools: dict[str, list[dict[str, Any]]] = {}
         self._removed_tools: dict[str, set[str]] = {}
         self._tool_call_ctrls: dict[tuple[str, str], Controllable] = {}
-        # Per-task config tool_blacklist (server -> {tool names}): tools the TASK
-        # hides from the agent for this run (not an attacker edit). Dropped from the
-        # agent listing AND the tool_catalogue observable (genuinely out of the task's
-        # tool space), distinct from the attacker's _removed_tools.
-        self._config_blacklist: dict[str, set[str]] = {}
 
         # The bound aiohttp app (only populated on the real start() path).
         self._host: str = "0.0.0.0"
@@ -152,16 +147,6 @@ class HostMCPProxy:
         self._removed_tools = {s: set(names) for s, names in removed.items()}
         self._tool_call_ctrls = dict(call_ctrls)
 
-    def set_config_tool_blacklist(self, by_server: dict[str, list[str]]) -> None:
-        """Set the per-task config ``tool_blacklist`` (``{server: [tool, ...]}``).
-
-        These tools are hidden from the agent (dropped from :meth:`list_tools`) AND
-        from the :meth:`tool_catalogue` observable -- the task removed them from its
-        tool space, so neither the agent nor the optimizer should see them. Distinct
-        from the attacker's ``tool_remove`` (which leaves the genuine catalogue intact).
-        """
-        self._config_blacklist = {s: set(names) for s, names in by_server.items()}
-
     def set_env_tool_controllables(
         self,
         by_server_tool: dict[str, dict[str, Controllable]],
@@ -186,11 +171,10 @@ class HostMCPProxy:
         genuine tools, and attacker-added fake tools appended."""
         out: list[ProxyTool] = []
         removed = self._removed_tools.get(server, set())
-        blacklisted = self._config_blacklist.get(server, set())
         for tool in self._raw_tools.get(server, []):
             name = tool.get("name", "")
-            if name in removed or name in blacklisted:
-                continue  # attacker-removed, or config-blacklisted for this task
+            if name in removed:
+                continue  # attacker dropped it from the catalogue the agent reads
             description = self._apply_edits(server, name, tool.get("description") or "")
             out.append(ProxyTool(server=server, tool=name, description=description))
         for added in self._added_tools.get(server, []):
@@ -219,7 +203,6 @@ class HostMCPProxy:
                     "inputSchema": tool.get("inputSchema") or {},
                 }
                 for tool in tools
-                if tool.get("name", "") not in self._config_blacklist.get(server, set())
             ]
             for server, tools in self._raw_tools.items()
         }

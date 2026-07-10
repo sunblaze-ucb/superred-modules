@@ -83,10 +83,12 @@ def test_parse_additional_information_defaults_empty(tmp_path) -> None:
     assert tc.additional_information == ""
 
 
-def test_parse_captures_per_server_env_vars_and_tool_blacklist(tmp_path) -> None:
-    """Regression (gap #2): per-server env_vars (acting identity + per-task creds) and
-    tool_blacklist from Agent.mcp_servers are parsed into TaskConfig, keyed by server
-    name; only non-empty entries are kept, and a disabled server contributes nothing."""
+def test_parse_captures_per_server_env_vars_dropping_falsy(tmp_path) -> None:
+    """Regression (gap #2): per-server env_vars (acting identity + per-task creds) are
+    parsed into TaskConfig keyed by server name, mirroring upstream mcp_helpers which
+    keeps only TRUTHY values; a disabled server and an all-falsy server contribute
+    nothing. tool_blacklist is deliberately NOT parsed -- upstream SDK 0.2.12 never
+    consumes it, so enforcing it would diverge from the unattacked run."""
     task_dir = tmp_path / "finance" / "malicious" / "direct" / "senior_exploitation" / "1"
     task_dir.mkdir(parents=True)
     cfg = {
@@ -95,11 +97,16 @@ def test_parse_captures_per_server_env_vars_and_tool_blacklist(tmp_path) -> None
                 {
                     "name": "finance",
                     "enabled": True,
-                    "env_vars": {"USER_ACCESS_TOKEN": "alice-token", "FINANCE_ACCOUNTS_JSON": "{}"},
-                    "tool_blacklist": ["delete_account"],
+                    "env_vars": {"USER_ACCESS_TOKEN": "alice-token", "EMPTY_TOKEN": ""},
+                    "tool_blacklist": ["delete_account"],  # present in data -> must be IGNORED
                 },
-                {"name": "gmail", "enabled": True},  # no env_vars/blacklist -> not present
+                {"name": "gmail", "enabled": True},  # no env_vars -> absent
                 {"name": "paypal", "enabled": False, "env_vars": {"X": "y"}},  # disabled -> skipped
+                {
+                    "name": "slack",
+                    "enabled": True,
+                    "env_vars": {"EMPTY": ""},
+                },  # all-falsy -> absent
             ]
         },
         "Attack": {"malicious_goal": "g", "threat_model": "direct"},
@@ -107,11 +114,11 @@ def test_parse_captures_per_server_env_vars_and_tool_blacklist(tmp_path) -> None
     (task_dir / "config.yaml").write_text(yaml.safe_dump(cfg))
 
     tc = parse_task_config(task_dir / "config.yaml", root=tmp_path)
-    assert tc.servers == ("finance", "gmail")  # enabled only
-    assert tc.server_env_overrides == {
-        "finance": {"USER_ACCESS_TOKEN": "alice-token", "FINANCE_ACCOUNTS_JSON": "{}"}
-    }
-    assert tc.tool_blacklist == {"finance": ("delete_account",)}
+    assert tc.servers == ("finance", "gmail", "slack")  # enabled only
+    # truthy env_vars kept; the empty value dropped (upstream task_env_overrides parity)
+    assert tc.server_env_overrides == {"finance": {"USER_ACCESS_TOKEN": "alice-token"}}
+    # tool_blacklist is not a TaskConfig field: the dataset ignores it like upstream
+    assert not hasattr(tc, "tool_blacklist")
 
 
 def test_hash_task_benign_pins_first_task_instruction(tmp_path) -> None:

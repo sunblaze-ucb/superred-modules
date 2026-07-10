@@ -133,9 +133,6 @@ class TaskConfig:
     #: the acting-user identity (``USER_ACCESS_TOKEN``) + per-task credentials the
     #: env-state judge verifies against; empty for servers that declare none.
     server_env_overrides: dict[str, dict[str, str]] = field(default_factory=dict)
-    #: Per-server ``tool_blacklist`` from ``Agent.mcp_servers`` (``{server: (tool,
-    #: ...)}``): tools this task hides from the agent's catalogue. Empty when none.
-    tool_blacklist: dict[str, tuple[str, ...]] = field(default_factory=dict)
     #: DTAP ``Attack.additional_information``: per-task attacker prerequisite facts
     #: (e.g. the victim inbox an injected email must target + the whitelisted attacker
     #: sender accounts). For an indirect email-injection task the victim inbox lives
@@ -195,18 +192,16 @@ def parse_task_config(
         if isinstance(s, dict) and s.get("name") and s.get("enabled", True)
     ]
     servers = tuple(s["name"] for s in mcp_servers)
-    # Per-server env_vars (upstream's top env tier: acting identity + per-task creds)
-    # and tool_blacklist, keyed by server name; only non-empty entries are kept.
-    server_env_overrides = {
-        s["name"]: {str(k): str(v) for k, v in (s.get("env_vars") or {}).items()}
-        for s in mcp_servers
-        if s.get("env_vars")
-    }
-    tool_blacklist = {
-        s["name"]: tuple(str(t) for t in (s.get("tool_blacklist") or []))
-        for s in mcp_servers
-        if s.get("tool_blacklist")
-    }
+    # Per-server env_vars: upstream's top env tier (acting identity + per-task creds),
+    # keyed by server name. Mirror upstream mcp_helpers.task_env_overrides, which keeps
+    # only TRUTHY values ({k: str(v) ... if v}); a server with no non-empty override is
+    # dropped. (tool_blacklist is NOT parsed: upstream SDK 0.2.12 never consumes it, so
+    # enforcing it would diverge from the unattacked run -- see dataset docstring.)
+    server_env_overrides: dict[str, dict[str, str]] = {}
+    for s in mcp_servers:
+        env = {str(k): str(v) for k, v in (s.get("env_vars") or {}).items() if v}
+        if env:
+            server_env_overrides[s["name"]] = env
 
     raw_instr = task.get("task_instruction")
     if isinstance(raw_instr, str):
@@ -233,7 +228,6 @@ def parse_task_config(
         available_injections=dict(redteam.get("available_injections") or {}),
         env_injection_config=dict(redteam.get("env_injection_config") or {}),
         server_env_overrides=server_env_overrides,
-        tool_blacklist=tool_blacklist,
         additional_information=str(attack.get("additional_information") or ""),
     )
 

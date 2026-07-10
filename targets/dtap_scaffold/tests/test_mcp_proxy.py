@@ -186,34 +186,6 @@ def test_tool_catalogue_ignores_add_remove_stays_genuine():
     assert names == {"keep", "drop"}  # genuine catalogue unchanged: no 'fake', 'drop' still present
 
 
-def test_config_tool_blacklist_hides_from_agent_and_catalogue():
-    """Regression (gap #2): a per-task config tool_blacklist hides tools from BOTH the
-    agent listing (list_tools) and the optimizer's tool_catalogue observable -- the
-    task removed them from its tool space, unlike the attacker's tool_remove which
-    leaves the genuine catalogue intact."""
-    proxy = HostMCPProxy()
-    proxy._raw_tools = {
-        "s": [
-            {"name": "keep", "description": "d", "inputSchema": {}},
-            {"name": "hidden", "description": "d2", "inputSchema": {}},
-        ]
-    }
-    proxy.set_config_tool_blacklist({"s": ["hidden"]})
-    assert {t.tool for t in proxy.list_tools("s")} == {"keep"}  # agent view
-    assert {t["name"] for t in proxy.tool_catalogue()["s"]} == {"keep"}  # optimizer view
-
-
-async def test_config_blacklisted_tool_absent_from_tools_list_rpc():
-    """The blacklist flows through tools/list over the union too."""
-    proxy = HostMCPProxy()
-    proxy._raw_tools = {
-        "s": [{"name": "keep", "description": "d"}, {"name": "hidden", "description": "d2"}]
-    }
-    proxy.set_config_tool_blacklist({"s": ["hidden"]})
-    resp = await proxy._dispatch_rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, None)
-    assert {t["name"] for t in resp["result"]["tools"]} == {"keep"}
-
-
 # --------------------------- handle_tool_call: the chokepoint -------------
 
 

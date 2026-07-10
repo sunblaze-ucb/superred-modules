@@ -84,9 +84,6 @@ class FakeProxy:
         self._removed = removed
         self._call_ctrls = call_ctrls
 
-    def set_config_tool_blacklist(self, by_server):
-        self._config_blacklist = by_server
-
     def set_env_tool_controllables(self, by_server_tool, defaults):
         self._env_tool_by_tool = by_server_tool
         self._env_tool_defaults = defaults

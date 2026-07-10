@@ -71,7 +71,6 @@ async def test_configure_target_sets_dtap_slots() -> None:
         threat_model="direct",
         additional_information="Victim inbox: alex.chen@corp.example",
         server_env_overrides={"travel-suite": {"USER_ACCESS_TOKEN": "alice-token"}},
-        tool_blacklist={"travel-suite": ("delete_booking",)},
     )
     target = FakeDtapTarget()
     await DtapTask(task_config=tc).configure_target(target)
@@ -86,7 +85,6 @@ async def test_configure_target_sets_dtap_slots() -> None:
     assert json.loads(target.config[cfg.SERVER_ENV_OVERRIDES]) == {
         "travel-suite": {"USER_ACCESS_TOKEN": "alice-token"}
     }
-    assert json.loads(target.config[cfg.TOOL_BLACKLIST]) == {"travel-suite": ["delete_booking"]}
     assert target.config[cfg.THREAT_MODEL] == "direct"
 
 
@@ -135,7 +133,6 @@ def test_required_slots_constant() -> None:
             cfg.AVAILABLE_INJECTIONS,
             cfg.ADDITIONAL_INFORMATION,
             cfg.SERVER_ENV_OVERRIDES,
-            cfg.TOOL_BLACKLIST,
             cfg.THREAT_MODEL,
         }
     )
