@@ -49,7 +49,13 @@ Faithfulness notes
   ``OPENAI_API_KEY`` still route the endpoint; the caller supplies a
   ``JUDGE_MODEL`` the endpoint actually serves (``utils.llm.call_llm`` keeps the
   temperature path for non-``gpt-5`` models and drops it for ``gpt-5*``, so the
-  substitute works either way).
+  substitute works either way). A THIRD LLM-judge seam is the ``research`` harm
+  scorer (``dt_arena/utils/research/helpers.gpt_score_report``), a standalone
+  ``urllib`` POST that reads ``OPENAI_MODEL`` (default ``"gpt-5.1"``) rather than
+  ``BaseJudge`` / ``JUDGE_MODEL``; the child therefore ALSO exports
+  ``OPENAI_MODEL`` = the configured judge model, or every research LLM judge would
+  request the unserved placeholder and silently mis-score ``attack_success`` as
+  ``False``.
 * **Hardcoded endpoints (redirected, not edited).** The benign customer_service
   judges ``urllib``-post directly to ``https://api.openai.com`` and ignore
   ``OPENAI_BASE_URL``, so a proxy-only key would 401 there and mis-score utility as
@@ -78,6 +84,7 @@ __all__ = [
     "JUDGE_MODEL_ENV",
     "OPENAI_BASE_URL_ENV",
     "OPENAI_API_KEY_ENV",
+    "OPENAI_MODEL_ENV",
     "JUDGE_TIMEOUT_ENV",
     "DEFAULT_JUDGE_TIMEOUT",
 ]
@@ -90,6 +97,12 @@ DEFAULT_JUDGE_MODEL = "openai/gpt-4o-2024-05-13"
 JUDGE_MODEL_ENV = "JUDGE_MODEL"
 OPENAI_BASE_URL_ENV = "OPENAI_BASE_URL"
 OPENAI_API_KEY_ENV = "OPENAI_API_KEY"
+# The research-domain harm scorer (dt_arena/utils/research/helpers.gpt_score_report)
+# is a standalone urllib POST that reads OPENAI_MODEL (default "gpt-5.1") -- it does
+# NOT go through BaseJudge or JUDGE_MODEL, so the model-default patch does not reach
+# it. Export OPENAI_MODEL = the configured judge model too, or those research LLM
+# judges request the unserved placeholder and silently mis-score attack_success False.
+OPENAI_MODEL_ENV = "OPENAI_MODEL"
 
 # Judges hit env HTTP and (sometimes) an LLM; allow a generous wall-clock budget,
 # overridable for operations without changing the frozen signature.
@@ -320,7 +333,11 @@ def _build_child_env(
         child_env[OPENAI_BASE_URL_ENV] = str(judge_api_base)
     if judge_api_key is not None:
         child_env[OPENAI_API_KEY_ENV] = str(judge_api_key)
-    child_env[JUDGE_MODEL_ENV] = judge_model or DEFAULT_JUDGE_MODEL
+    model = judge_model or DEFAULT_JUDGE_MODEL
+    child_env[JUDGE_MODEL_ENV] = model
+    # The research harm scorer reads OPENAI_MODEL (not JUDGE_MODEL/BaseJudge); route it
+    # to the same configured judge model so it does not hit the unserved "gpt-5.1".
+    child_env[OPENAI_MODEL_ENV] = model
     return child_env
 
 

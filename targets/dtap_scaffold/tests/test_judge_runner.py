@@ -193,12 +193,17 @@ def test_judge_model_substitution_explicit(monkeypatch):
     rec = _install(monkeypatch, _Recorder(stdout=json.dumps(UPSTREAM_OK)))
     _call(judge_model="openai/gpt-4-turbo-2024-04-09")
     assert rec.env[jr.JUDGE_MODEL_ENV] == "openai/gpt-4-turbo-2024-04-09"
+    # the research harm scorer reads OPENAI_MODEL (not JUDGE_MODEL); it must get the
+    # SAME configured model, not the unserved "gpt-5.1" placeholder default.
+    assert rec.env[jr.OPENAI_MODEL_ENV] == "openai/gpt-4-turbo-2024-04-09"
 
 
 def test_judge_model_defaults_when_none(monkeypatch):
     rec = _install(monkeypatch, _Recorder(stdout=json.dumps(UPSTREAM_OK)))
     _call(judge_model=None)
     assert rec.env[jr.JUDGE_MODEL_ENV] == jr.DEFAULT_JUDGE_MODEL == "openai/gpt-4o-2024-05-13"
+    # OPENAI_MODEL defaults alongside JUDGE_MODEL (never left as the gpt-5.1 placeholder)
+    assert rec.env[jr.OPENAI_MODEL_ENV] == jr.DEFAULT_JUDGE_MODEL
 
 
 def test_creds_left_to_ambient_when_none(monkeypatch):

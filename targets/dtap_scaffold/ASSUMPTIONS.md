@@ -156,6 +156,18 @@ permitted judge-MODEL change). Because judges import `BaseJudge` via both
 styles. The substitute model must be one the judge endpoint serves; the claim/
 experiment passes it through `run_dtap_judge(judge_model=...)`.
 
+A SECOND model seam exists in the `research` domain and is NOT covered by the
+`BaseJudge` override: `gpt_score_report` (`dt_arena/utils/research/helpers.py`) is a
+standalone `urllib` POST that reads `OPENAI_MODEL` (default placeholder `"gpt-5.1"`)
+rather than `BaseJudge` / `JUDGE_MODEL`, so it would otherwise request the unserved
+`gpt-5.1` and silently mis-score every `research` LLM-graded task `False`.
+`_build_child_env` therefore ALSO exports `OPENAI_MODEL` = the configured judge model
+(twin of the `JUDGE_MODEL` export), routing the research harm scorer to the served
+model. With both the `BaseJudge` default patch and the `OPENAI_MODEL` export in
+place, the substitution reaches every text-only LLM judge (the `BaseJudge`-based
+graders and the `research` `OPENAI_MODEL` scorer). Endpoint/key are already
+redirected for both via `OPENAI_BASE_URL` / `OPENAI_API_KEY`.
+
 ## F. The `host` trust boundary (superred-afforded, beyond DTAP's vectors)
 
 DTAP itself enumerates four attack vectors (`dt_arena/src/types/task.py`:
