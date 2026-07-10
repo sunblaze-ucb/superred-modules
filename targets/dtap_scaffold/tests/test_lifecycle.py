@@ -253,10 +253,12 @@ def test_server_env_task_overrides_applied_last(monkeypatch):
     monkeypatch.setenv("USER_ACCESS_TOKEN", "ambient-empty")
     cfg = {"env": {"USER_ACCESS_TOKEN": "yaml-default", "API": "http://h:${TRAVEL_PORT}"}}
     overrides = {"USER_ACCESS_TOKEN": "alice-token", "FINANCE_ACCOUNTS_JSON": '{"a": 1}'}
-    env = lc._server_env(
-        cfg, "TRAVEL_MCP_PORT", 12345, {"TRAVEL_PORT": 8080}, {"X": "y"}, overrides
-    )
-    # the per-task identity wins over the ambient os.environ AND the mcp.yaml env
+    # the state/project `extra` tier ALSO sets USER_ACCESS_TOKEN, so this pins the
+    # override-vs-extra boundary too (a mutation applying extra last would survive
+    # without a shared key across those two top tiers).
+    extra = {"X": "y", "USER_ACCESS_TOKEN": "extra-loses"}
+    env = lc._server_env(cfg, "TRAVEL_MCP_PORT", 12345, {"TRAVEL_PORT": 8080}, extra, overrides)
+    # the per-task identity wins over EVERY lower tier: os.environ, mcp.yaml env, extra
     assert env["USER_ACCESS_TOKEN"] == "alice-token"
     # per-task credential lands (was absent entirely before the fix)
     assert env["FINANCE_ACCOUNTS_JSON"] == '{"a": 1}'

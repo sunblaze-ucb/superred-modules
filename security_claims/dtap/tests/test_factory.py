@@ -6,6 +6,7 @@ import sys
 import types
 
 import pytest
+import yaml
 from conftest import dataset_root, requires_dataset
 from superred.core.controller import TargetFactory
 
@@ -21,6 +22,98 @@ from security_claim_dtap.factory import (
     dtap_risk_claim,
 )
 from security_claim_dtap.task import DtapTask
+
+# ---------------------------------------------------------------------------
+# Enumeration + filters + roll-ups (OFFLINE, on a synthetic dataset tree)
+# ---------------------------------------------------------------------------
+
+
+def _mk(root, domain: str, rel_after_domain: str, cfg: dict) -> None:
+    """Write a synthetic per-task config.yaml at <root>/<domain>/<rel_after_domain>/."""
+    task_dir = root / domain / rel_after_domain
+    task_dir.mkdir(parents=True)
+    (task_dir / "config.yaml").write_text(yaml.safe_dump(cfg))
+
+
+def _synthetic_tree(root) -> None:
+    _mk(root, "crm", "benign/1", {"Task": {"task_instruction": "do the benign job"}})
+    _mk(
+        root,
+        "crm",
+        "malicious/direct/data-exfiltration/1",
+        {
+            "Attack": {
+                "malicious_goal": "steal",
+                "threat_model": "direct",
+                "risk_category": "data-exfiltration",
+            }
+        },
+    )
+    _mk(
+        root,
+        "crm",
+        "malicious/indirect/dangerous-actions/1",
+        {
+            "Attack": {
+                "malicious_goal": "sabotage",
+                "threat_model": "indirect",
+                "risk_category": "dangerous-actions",
+            }
+        },
+    )
+    _mk(
+        root,
+        "finance",
+        "malicious/direct/data-exfiltration/1",
+        {
+            "Attack": {
+                "malicious_goal": "drain",
+                "threat_model": "direct",
+                "risk_category": "data-exfiltration",
+            }
+        },
+    )
+
+
+def test_factory_offline_enumeration_filters_and_rollups(tmp_path) -> None:
+    """Every filter axis + all five roll-ups + combined chaining, offline: the factory
+    API is otherwise only exercised on the author's dataset (all @requires_dataset)."""
+    _synthetic_tree(tmp_path)
+    r = str(tmp_path)
+    assert len(list(dtap_claim(dataset_root=r))) == 4  # all tasks
+    assert len(list(dtap_domain_claim("crm", dataset_root=r))) == 3  # crm benign + 2 malicious
+    assert len(list(dtap_direct_claim(dataset_root=r))) == 2  # crm-direct + finance-direct
+    assert len(list(dtap_indirect_claim(dataset_root=r))) == 1  # crm-indirect
+    assert len(list(dtap_benign_claim(dataset_root=r))) == 1  # crm-benign
+    assert len(list(dtap_risk_claim("data-exfiltration", dataset_root=r))) == 2  # both direct
+    # dtap_combined_claim chains sub-claims (benign 1 + direct 2 = 3)
+    combined = dtap_combined_claim(
+        [dtap_benign_claim(dataset_root=r), dtap_direct_claim(dataset_root=r)]
+    )
+    assert len(list(combined)) == 3
+    assert all(isinstance(t, DtapTask) for t in dtap_claim(dataset_root=r))
+
+
+def test_factory_offline_empty_filter_raises(tmp_path) -> None:
+    _synthetic_tree(tmp_path)
+    with pytest.raises(ValueError, match="no tasks"):
+        dtap_claim(dataset_root=str(tmp_path), domains=["legal"])  # no legal tasks -> empty
+
+
+def test_factory_offline_threads_judge_config(tmp_path) -> None:
+    """judge_model/api_base/api_key reach every enumerated DtapTask."""
+    _synthetic_tree(tmp_path)
+    tasks = list(
+        dtap_claim(
+            dataset_root=str(tmp_path), judge_model="jm", judge_api_base="jb", judge_api_key="jk"
+        )
+    )
+    assert tasks
+    assert all(
+        t._judge_model == "jm" and t._judge_api_base == "jb" and t._judge_api_key == "jk"
+        for t in tasks
+    )
+
 
 # ---------------------------------------------------------------------------
 # Enumeration + filters (dataset-dependent)

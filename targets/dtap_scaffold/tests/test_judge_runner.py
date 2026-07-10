@@ -413,6 +413,74 @@ def test_child_installs_judge_model_override():
     )
 
 
+def test_child_judge_model_override_behavioral(monkeypatch):
+    """BEHAVIOURAL check of the single most faithfulness-critical judge mutation (the
+    source-only test above cannot catch a broken patch): with JUDGE_MODEL set, a
+    default-constructed BaseJudge (no explicit model) picks up JUDGE_MODEL instead of
+    the unserved "gpt-5.4" placeholder, an EXPLICITLY-modeled judge is left untouched,
+    and both import styles are unified via sys.modules["judge"]."""
+    import sys
+    import types as _types
+
+    # Fake the whole dt_arena.src.types.judge chain in sys.modules so the override's
+    # `import dt_arena.src.types.judge` resolves to a FAKE BaseJudge (no mutation of
+    # the real SDK class). monkeypatch restores the real modules on teardown.
+    dt_arena = _types.ModuleType("dt_arena")
+    dt_src = _types.ModuleType("dt_arena.src")
+    dt_types = _types.ModuleType("dt_arena.src.types")
+    fake = _types.ModuleType("dt_arena.src.types.judge")
+
+    class BaseJudge:
+        def __init__(self, domain, judge_model="gpt-5.4"):
+            self.domain = domain
+            self.judge_model = judge_model
+
+    fake.BaseJudge = BaseJudge  # type: ignore[attr-defined]
+    dt_arena.src = dt_src  # type: ignore[attr-defined]
+    dt_src.types = dt_types  # type: ignore[attr-defined]
+    dt_types.judge = fake  # type: ignore[attr-defined]
+    for name, mod in [
+        ("dt_arena", dt_arena),
+        ("dt_arena.src", dt_src),
+        ("dt_arena.src.types", dt_types),
+        ("dt_arena.src.types.judge", fake),
+        ("judge", fake),  # tracked -> removed on teardown
+    ]:
+        monkeypatch.setitem(sys.modules, name, mod)
+    monkeypatch.setenv("JUDGE_MODEL", "openai/gpt-4o-2024-05-13")
+
+    ns: dict = {}
+    exec(jr._CHILD_SOURCE, ns)  # defines the child functions without running _main
+    ns["_install_judge_model_override"]()
+
+    # default (placeholder) model -> substituted to JUDGE_MODEL
+    assert fake.BaseJudge(domain="code").judge_model == "openai/gpt-4o-2024-05-13"
+    # an explicit model is NOT overridden (only the gpt-5.4 default is)
+    assert fake.BaseJudge(domain="code", judge_model="explicit").judge_model == "explicit"
+    # both import styles resolve to the one patched module
+    assert sys.modules["judge"] is fake
+
+
+def test_child_judge_model_override_noop_without_env(monkeypatch):
+    """No JUDGE_MODEL -> the override is a no-op (leaves BaseJudge untouched)."""
+    import sys
+    import types as _types
+
+    fake = _types.ModuleType("dt_arena.src.types.judge")
+
+    class BaseJudge:
+        def __init__(self, domain, judge_model="gpt-5.4"):
+            self.judge_model = judge_model
+
+    fake.BaseJudge = BaseJudge  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "dt_arena.src.types.judge", fake)
+    monkeypatch.delenv("JUDGE_MODEL", raising=False)
+    ns: dict = {}
+    exec(jr._CHILD_SOURCE, ns)
+    ns["_install_judge_model_override"]()
+    assert fake.BaseJudge(domain="code").judge_model == "gpt-5.4"  # unchanged
+
+
 @pytest.mark.faithfulness
 def test_child_calls_run_judge_with_faithful_kwargs():
     src = jr._CHILD_SOURCE
