@@ -28,6 +28,11 @@ class EnvHandle:
     injection_server_urls: dict[str, str]
     ports: dict[str, int]
     network: str | None = None
+    project_names: dict[str, str] = field(default_factory=dict)
+    """``{<ENV>_PROJECT_NAME: compose-project}`` for every active env. Exec-based
+    verifiable judges (terminal/research/os-filesystem/...) resolve their container
+    from these env vars, so the OOB judge subprocess needs them alongside ``ports``
+    (HTTP-port judges use ``ports`` instead). Empty for a fake/non-Docker stack."""
 
 
 @dataclass(frozen=True)

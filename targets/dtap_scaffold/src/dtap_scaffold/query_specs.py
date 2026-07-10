@@ -15,6 +15,7 @@ FINAL_RESPONSE = "final_response"
 AGENT_RESPONSES = "agent_responses"
 TRAJECTORY_JSON = "trajectory_json"
 ENV_PORTS = "env_ports"
+ENV_PROJECT_NAMES = "env_project_names"
 TASK_DIR = "task_dir"
 
 QUERY_SPECS: tuple[QuerySpec, ...] = (
@@ -45,6 +46,15 @@ QUERY_SPECS: tuple[QuerySpec, ...] = (
         ),
     ),
     QuerySpec(
+        name=ENV_PROJECT_NAMES,
+        description=(
+            "JSON map of this instance's per-env compose project names (e.g. "
+            '{"TERMINAL_PROJECT_NAME": "dtap_ab12_terminal"}) so the OOB judge '
+            "subprocess can resolve exec-based judges' containers (code/research/"
+            "os-filesystem); HTTP-port judges use env_ports instead."
+        ),
+    ),
+    QuerySpec(
         name=TASK_DIR,
         description="Echo of the DTAP task dir, so the claim can call run_judge(task_dir, ...).",
     ),
@@ -57,6 +67,7 @@ __all__ = [
     "AGENT_RESPONSES",
     "TRAJECTORY_JSON",
     "ENV_PORTS",
+    "ENV_PROJECT_NAMES",
     "TASK_DIR",
     "QUERY_SPECS",
 ]

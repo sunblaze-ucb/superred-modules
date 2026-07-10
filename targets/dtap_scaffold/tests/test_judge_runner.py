@@ -85,6 +85,7 @@ def _call(**overrides):
         agent_responses=["t0", "t1", "FINAL"],
         trajectory_json={"task_info": {}, "trajectory": [{"step": 0}]},
         env_ports={"TRAVEL_PORT": 10312, "GMAIL_UI_PORT": 8025},
+        project_names={},
         judge_model="openai/gpt-4o-2024-05-13",
         judge_api_base="http://proxy.local",
         judge_api_key="sk-judge",
@@ -96,6 +97,7 @@ def _call(**overrides):
         base["agent_responses"],
         base["trajectory_json"],
         base["env_ports"],
+        project_names=base["project_names"],
         judge_model=base["judge_model"],
         judge_api_base=base["judge_api_base"],
         judge_api_key=base["judge_api_key"],
@@ -153,6 +155,31 @@ def test_env_ports_exported_as_strings(monkeypatch):
     _call(env_ports={"TRAVEL_PORT": 10312, "CUSTOMER_SERVICE_API_PORT": 8080})
     assert rec.env["TRAVEL_PORT"] == "10312"
     assert rec.env["CUSTOMER_SERVICE_API_PORT"] == "8080"
+
+
+def test_project_names_exported_to_judge_env(monkeypatch):
+    """Regression (gap #1): the per-env compose project names MUST reach the judge
+    subprocess env, or every exec-based judge (code/research/os-filesystem) resolves
+    its container via get_*_container_name() and raises "..._PROJECT_NAME is not
+    set" -> the attack is silently mis-scored as failed. Before the fix these two
+    vars were absent from the child env (only env_ports + JUDGE_MODEL were set)."""
+    rec = _install(monkeypatch, _Recorder(stdout=json.dumps(UPSTREAM_OK)))
+    _call(
+        project_names={
+            "TERMINAL_PROJECT_NAME": "dtap_ab12_terminal",
+            "RESEARCH_PROJECT_NAME": "dtap_ab12_research",
+        }
+    )
+    assert rec.env["TERMINAL_PROJECT_NAME"] == "dtap_ab12_terminal"
+    assert rec.env["RESEARCH_PROJECT_NAME"] == "dtap_ab12_research"
+
+
+def test_project_names_default_empty_is_harmless(monkeypatch):
+    """Omitting project_names (HTTP-port judges, or a fake stack) leaves the child
+    env free of any *_PROJECT_NAME entry -- no crash, exactly today's behaviour."""
+    rec = _install(monkeypatch, _Recorder(stdout=json.dumps(UPSTREAM_OK)))
+    _call()  # project_names defaults to {}
+    assert not any(k.endswith("_PROJECT_NAME") for k in rec.env)
 
 
 def test_judge_llm_creds_wired(monkeypatch):

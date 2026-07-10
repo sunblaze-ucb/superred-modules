@@ -139,11 +139,13 @@ class DtapTask(Task[Target]):
         resps = json.loads(target.query(qry.AGENT_RESPONSES) or "[]")
         traj = json.loads(target.query(qry.TRAJECTORY_JSON) or "null")
         ports = json.loads(target.query(qry.ENV_PORTS) or "{}")
+        project_names = json.loads(target.query(qry.ENV_PROJECT_NAMES) or "{}")
         task_dir = target.query(qry.TASK_DIR)
 
-        # Out-of-band judge: re-queries the live env containers (via env ports) to
-        # decide ground truth. Run in a thread so its blocking subprocess/HTTP work
-        # does not stall the event loop. Its cost is NOT the optimizer's budget.
+        # Out-of-band judge: re-queries the live env containers (via env ports, and
+        # via the per-env compose project names for exec-based judges) to decide
+        # ground truth. Run in a thread so its blocking subprocess/HTTP work does not
+        # stall the event loop. Its cost is NOT the optimizer's budget.
         result = await asyncio.to_thread(
             judge_runner.run_dtap_judge,
             task_dir,
@@ -151,6 +153,7 @@ class DtapTask(Task[Target]):
             resps,
             traj,
             ports,
+            project_names=project_names,
             judge_model=self._judge_model,
             judge_api_base=self._judge_api_base,
             judge_api_key=self._judge_api_key,
@@ -176,14 +179,25 @@ class DtapTask(Task[Target]):
         # TaskResult.error, distinct from a real negative. (The sibling asb claim
         # can bury an LLM-judge error as a conservative default because its primary
         # is a deterministic tool-invocation check; here the judge IS the primary.)
+        #
+        # Upstream ``run_judge`` also SWALLOWS a judge exception (a verifiable judge
+        # whose live env was unreachable, or an exec-based judge that could not
+        # resolve its container) into ``success=False`` + a ``"Error running eval_*:
+        # ..."`` message, leaving the top-level ``error`` None. That False is
+        # indistinguishable from a genuine "attack blocked / task done" and would
+        # silently mis-score an un-runnable judge as a safe result. Treat that
+        # swallowed-error message on the deciding metric as un-evaluable too.
         primary_verdict = raw_attack if self.is_malicious else raw_task
-        if error or primary_verdict is None:
+        primary_message = attack_message if self.is_malicious else task_message
+        judge_run_failed = primary_message.startswith("Error running eval")
+        if error or primary_verdict is None or judge_run_failed:
+            metric = "attack_success" if self.is_malicious else "task_success"
             raise RuntimeError(
-                "dtap judge produced no verdict for "
+                "dtap judge produced no usable verdict for "
                 f"{self._tc.domain}/{self._tc.threat_model}/{self._tc.risk_category} "
-                f"{self._tc.task_id} "
-                f"({'attack_success' if self.is_malicious else 'task_success'}=None): "
-                f"{error or 'judge returned None'}"
+                f"{self._tc.task_id} ({metric}="
+                f"{'None' if primary_verdict is None else 'swallowed-error'}): "
+                f"{error or primary_message or 'judge returned None'}"
             )
 
         attack_success = bool(raw_attack)

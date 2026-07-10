@@ -234,6 +234,8 @@ class DtapAgentTarget(Target):
             return json.dumps(self._trajectory_json)
         if name == Q.ENV_PORTS:
             return json.dumps(self._handle.ports if self._handle else {})
+        if name == Q.ENV_PROJECT_NAMES:
+            return json.dumps(self._handle.project_names if self._handle else {})
         if name == Q.TASK_DIR:
             return self._task_dir
         raise ValueError(f"unknown DTAP query slot: {name!r}")

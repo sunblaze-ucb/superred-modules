@@ -125,6 +125,7 @@ def test_specs():
         "agent_responses",
         "trajectory_json",
         "env_ports",
+        "env_project_names",
         "task_dir",
     }
     assert all(isinstance(q, QuerySpec) for q in S.QUERY_SPECS)

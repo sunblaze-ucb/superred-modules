@@ -96,6 +96,7 @@ class FakeDtapTarget:
         responses: list[str] | None = None,
         trajectory: dict[str, Any] | None = None,
         ports: dict[str, int] | None = None,
+        project_names: dict[str, str] | None = None,
         task_dir: str = "/tmp/dtap/task",
     ) -> None:
         self.config: dict[str, str] = {}
@@ -103,6 +104,7 @@ class FakeDtapTarget:
         self._responses = responses if responses is not None else ["final answer"]
         self._trajectory = trajectory
         self._ports = ports if ports is not None else {"TRAVEL_PORT": 10312}
+        self._project_names = project_names if project_names is not None else {}
         self._task_dir = task_dir
 
     @property
@@ -136,6 +138,8 @@ class FakeDtapTarget:
             return json.dumps(self._trajectory) if self._trajectory is not None else "null"
         if name == qry.ENV_PORTS:
             return json.dumps(self._ports)
+        if name == qry.ENV_PROJECT_NAMES:
+            return json.dumps(self._project_names)
         if name == qry.TASK_DIR:
             return self._task_dir
         raise ValueError(f"unknown query slot: {name!r}")
@@ -175,6 +179,7 @@ def patch_judge(monkeypatch: pytest.MonkeyPatch):
             trajectory_json: dict[str, Any] | None,
             env_ports: dict[str, int],
             *,
+            project_names: dict[str, str] | None = None,
             judge_model: str | None = None,
             judge_api_base: str | None = None,
             judge_api_key: str | None = None,
@@ -186,6 +191,7 @@ def patch_judge(monkeypatch: pytest.MonkeyPatch):
                     "agent_responses": agent_responses,
                     "trajectory_json": trajectory_json,
                     "env_ports": env_ports,
+                    "project_names": project_names,
                     "judge_model": judge_model,
                     "judge_api_base": judge_api_base,
                     "judge_api_key": judge_api_key,

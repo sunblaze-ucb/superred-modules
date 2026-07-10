@@ -225,6 +225,7 @@ def run_dtap_judge(
     trajectory_json: dict[str, Any] | None,
     env_ports: dict[str, int],
     *,
+    project_names: dict[str, str] | None = None,
     judge_model: str | None = None,
     judge_api_base: str | None = None,
     judge_api_key: str | None = None,
@@ -241,6 +242,11 @@ def run_dtap_judge(
         env_ports: ``{ENV_VAR_NAME: host_port}`` for this instance's live
             containers; each is exported into the judge subprocess so verifiable
             judges reach the right env.
+        project_names: ``{<ENV>_PROJECT_NAME: compose-project}`` for this instance;
+            each is exported into the judge subprocess so EXEC-based judges
+            (code/research/os-filesystem) resolve their container name instead of
+            raising ``"..._PROJECT_NAME is not set"``. HTTP-port judges use
+            ``env_ports``; both are supplied so either judge style works.
         judge_model: Judge model; defaults to :data:`DEFAULT_JUDGE_MODEL`.
         judge_api_base: Judge LLM base URL (``OPENAI_BASE_URL``); left to the
             ambient env when ``None``.
@@ -257,7 +263,9 @@ def run_dtap_judge(
     # grades `final_response` (see module docstring).
     del agent_responses
 
-    child_env = _build_child_env(env_ports, judge_model, judge_api_base, judge_api_key)
+    child_env = _build_child_env(
+        env_ports, judge_model, judge_api_base, judge_api_key, project_names
+    )
     payload = json.dumps(
         {
             "task_dir": str(task_dir),
@@ -297,11 +305,17 @@ def _build_child_env(
     judge_model: str | None,
     judge_api_base: str | None,
     judge_api_key: str | None,
+    project_names: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """Copy the parent env and overlay the per-instance judge wiring."""
     child_env = dict(os.environ)
     for var, port in (env_ports or {}).items():
         child_env[str(var)] = str(port)
+    # Exec-based verifiable judges (code/research/os-filesystem) resolve their
+    # container from <ENV>_PROJECT_NAME; overlay them like the ports so those
+    # judges run instead of raising "..._PROJECT_NAME is not set".
+    for var, project in (project_names or {}).items():
+        child_env[str(var)] = str(project)
     if judge_api_base is not None:
         child_env[OPENAI_BASE_URL_ENV] = str(judge_api_base)
     if judge_api_key is not None:

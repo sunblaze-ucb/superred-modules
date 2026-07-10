@@ -221,6 +221,10 @@ class DockerEnvStack:
             injection_server_urls=dict(self._inj_urls),
             ports=dict(self._container_ports),
             network=None,
+            # The exec-based verifiable judges resolve their container from
+            # <ENV>_PROJECT_NAME; surface them so the OOB judge subprocess gets them
+            # (the same vars this stack feeds setup.sh + the MCP-server subprocs).
+            project_names=self._project_name_overrides(),
         )
         self._up_done = True
         return self._handle
