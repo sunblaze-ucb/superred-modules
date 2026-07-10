@@ -1,17 +1,17 @@
-"""Per-instance state: a host state dir, named state volumes, and the shared FS mount.
+"""Per-instance host state: an isolated state directory + the env vars that let the
+vendored compose / ``setup.sh`` mount the shared workspace.
 
 Each DTAP instance gets an isolated host state directory
-``${DTAP_STATE_ROOT or tempdir}/dtap/{iid}/`` and a per-environment named volume
-``dtap_{iid}_{env}_state`` so parallel instances never share mutable backend
-state.
+``${DTAP_STATE_ROOT or tempdir}/dtap/{iid}/`` with a ``workspace`` subdir, so
+parallel instances never share mutable backend state.
 
-The three filesystem domains -- ``os-filesystem``, ``code``, ``research`` -- have
-a twist: the agent's NATIVE bash tool, the env MCP server's file tools, and the
-out-of-band judge all touch the SAME files. They must therefore agree on the
-bytes on disk. :meth:`InstanceState.shared_fs_mount` produces a host-bind mount
-spec (host ``workspace`` dir -> a fixed container path) that the env container,
-the agent container, and the judge all mount at the identical path. The container
-path is :data:`SHARED_FS_CONTAINER_PATH` (override with ``$DTAP_SHARED_FS_PATH``).
+For the filesystem domains (``os-filesystem`` / ``code`` / ``research``) the agent's
+native bash tool, the env MCP server's file tools, and the OOB judge must agree on
+the bytes on disk. That sharing is driven by :meth:`InstanceState.env_overrides`,
+which exports the host workspace path (``DTAP_HOST_WORKSPACE``) and the in-container
+mount path (``DTAP_WORKSPACE``, default :data:`SHARED_FS_CONTAINER_PATH`, override
+with ``$DTAP_SHARED_FS_PATH``) to the vendored compose + setup scripts -- they do
+the actual bind mount. No mount spec is produced here.
 """
 
 from __future__ import annotations
@@ -22,25 +22,13 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-# DTAP domains whose backend IS a filesystem the agent also touches via bash.
-FS_SHARED_DOMAINS: frozenset[str] = frozenset({"os-filesystem", "code", "research"})
-
-# The container path every collaborator mounts the shared workspace at.
+# The container path the vendored compose/setup mount the shared workspace at.
 SHARED_FS_CONTAINER_PATH: str = os.getenv("DTAP_SHARED_FS_PATH", "/workspace")
-
-
-def is_fs_shared_domain(domain: str | None) -> bool:
-    """Whether *domain* needs the shared host-bind workspace mount."""
-    return domain in FS_SHARED_DOMAINS
 
 
 def sanitize_name(name: str) -> str:
     """Lowercase + collapse to ``[a-z0-9_-]`` for Docker volume/project names."""
     return re.sub(r"[^a-z0-9_-]", "_", name.lower())
-
-
-# Backwards-friendly internal alias.
-_sanitize = sanitize_name
 
 
 def _state_base(state_root: str | os.PathLike[str] | None) -> Path:
@@ -55,18 +43,6 @@ class InstanceState:
     iid: str
     state_dir: Path
     workspace_dir: Path
-
-    def volume_name(self, env: str) -> str:
-        """Named Docker volume for *env*'s mutable state: ``dtap_{iid}_{env}_state``."""
-        return f"dtap_{self.iid}_{_sanitize(env)}_state"
-
-    def shared_fs_mount(self, *, container_path: str = SHARED_FS_CONTAINER_PATH) -> dict[str, str]:
-        """Host-bind mount spec sharing the workspace at the identical container path."""
-        return {
-            "type": "bind",
-            "source": str(self.workspace_dir),
-            "target": container_path,
-        }
 
     def env_overrides(self, *, container_path: str = SHARED_FS_CONTAINER_PATH) -> dict[str, str]:
         """Env vars exported to ``setup.sh`` / compose so they can mount the workspace.
@@ -94,10 +70,8 @@ def make_instance_state(
 
 
 __all__ = [
-    "FS_SHARED_DOMAINS",
     "SHARED_FS_CONTAINER_PATH",
     "InstanceState",
-    "is_fs_shared_domain",
     "make_instance_state",
     "sanitize_name",
 ]

@@ -130,10 +130,16 @@ class ClaudeCodeDtapTarget(DtapAgentTarget):
             json.dump(task, fh)
 
         cmd = self._docker_command(spec, instance_dir)
+        # The provider token rides the subprocess ENV (docker reads it by name via the
+        # name-only `-e ANTHROPIC_AUTH_TOKEN` in the argv), never the argv itself.
+        run_env = dict(os.environ)
+        if spec.api_key:
+            run_env["ANTHROPIC_AUTH_TOKEN"] = spec.api_key
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            env=run_env,
         )
         await proc.communicate()
         return instance_dir
@@ -204,7 +210,10 @@ class ClaudeCodeDtapTarget(DtapAgentTarget):
         if spec.api_base:
             cmd += ["-e", f"ANTHROPIC_BASE_URL={spec.api_base}"]
         if spec.api_key:
-            cmd += ["-e", f"ANTHROPIC_AUTH_TOKEN={spec.api_key}"]
+            # Name-only -e: docker inherits the token VALUE from this process's env
+            # (set at launch, see _run_episode), keeping the secret OFF the argv so it
+            # is not exposed in `ps`/`/proc/<pid>/cmdline` to other local users.
+            cmd += ["-e", "ANTHROPIC_AUTH_TOKEN"]
         if spec.model:
             cmd += ["-e", f"ANTHROPIC_MODEL={spec.model}"]
         cmd += ["-e", f"DTAP_TASK_FILE={CONTAINER_MOUNT}/{TASK_FILENAME}"]

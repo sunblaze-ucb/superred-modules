@@ -290,10 +290,13 @@ here for auditability:
   tool (`tool_add`) or drop a tool from the listing the agent reads (`tool_remove`).
   A fake tool has no backend: when the agent calls it, the proxy fires a per-call
   PostCall tagged at `tool_catalogue_add`, so the same attacker that added it
-  supplies the return (static `fake_return` fallback). `tool_remove` affects only
-  the LISTING the agent reads (a normal agent never calls a tool absent from its
-  listing); it is not a call-time block. These are additive and firing them is a
-  choice -- the passthrough baseline registers nothing and drops nothing.
+  supplies the return (static `fake_return` fallback). An added tool whose name
+  collides with a non-removed genuine tool REPLACES it in the listing (the fake is
+  shown once, and `handle_tool_call` prefers the fake, so listing and call agree).
+  `tool_remove` affects only the LISTING the agent reads (a normal agent never calls
+  a tool absent from its listing); it is not a call-time block. These are additive
+  and firing them is a choice -- the passthrough baseline registers nothing and
+  drops nothing.
 
 - **H.3 Not enforced: config `tool_blacklist`.** The per-server `tool_blacklist`
   in `Agent.mcp_servers` is deliberately NOT honoured: upstream SDK 0.2.12 parses

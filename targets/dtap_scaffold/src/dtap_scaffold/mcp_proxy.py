@@ -168,16 +168,21 @@ class HostMCPProxy:
     def list_tools(self, server: str) -> list[ProxyTool]:
         """Tools for *server* as the AGENT should see them, with the PreCall
         catalogue edits applied: removed tools dropped, description edits applied to
-        genuine tools, and attacker-added fake tools appended."""
+        genuine tools, and attacker-added fake tools appended. An added tool whose
+        name collides with a non-removed genuine tool REPLACES it (the added one is
+        listed once, no duplicate; handle_tool_call likewise prefers the fake, so the
+        listing and the call agree)."""
         out: list[ProxyTool] = []
         removed = self._removed_tools.get(server, set())
+        added_list = self._added_tools.get(server, [])
+        added_names = {str(a.get("name", "")) for a in added_list}
         for tool in self._raw_tools.get(server, []):
             name = tool.get("name", "")
-            if name in removed:
-                continue  # attacker dropped it from the catalogue the agent reads
+            if name in removed or name in added_names:
+                continue  # attacker-removed, or shadowed by a same-named added tool
             description = self._apply_edits(server, name, tool.get("description") or "")
             out.append(ProxyTool(server=server, tool=name, description=description))
-        for added in self._added_tools.get(server, []):
+        for added in added_list:
             out.append(
                 ProxyTool(
                     server=server,

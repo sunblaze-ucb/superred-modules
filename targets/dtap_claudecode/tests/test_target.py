@@ -105,7 +105,10 @@ def test_docker_command_wiring():
     i = cmd.index("--add-host")
     assert cmd[i + 1] == "host.docker.internal:host-gateway"
     assert "-e" in cmd and "ANTHROPIC_BASE_URL=http://proxy" in cmd
-    assert "ANTHROPIC_AUTH_TOKEN=secret" in cmd
+    # the token rides the subprocess env (name-only -e), NEVER the argv/ps output
+    assert "ANTHROPIC_AUTH_TOKEN" in cmd
+    assert not any(c.startswith("ANTHROPIC_AUTH_TOKEN=") for c in cmd)  # value not on argv
+    assert "secret" not in cmd
     assert "ANTHROPIC_MODEL=claude-x" in cmd
     assert f"DTAP_TASK_FILE={CONTAINER_MOUNT}/task.json" in cmd
     assert f"/host/instance:{CONTAINER_MOUNT}" in cmd
