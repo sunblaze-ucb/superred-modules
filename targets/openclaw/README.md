@@ -66,20 +66,17 @@ not env vars.)
    terminal result while forwarding live `chat` (assistant deltas) and
    `session.tool` (tool calls) events. Final text falls back to `chat.history`.
 5. Mid-run, each intercepted tool call fires a `ControllablePostCallEvent`
-   (tool-output injection) through the plugin → injection-server → optimizer
-   bridge; the injected value is spliced into the tool result as it is
-   persisted to the session transcript. The real tool always executes for
-   real. **Verified live against a real gateway (no mocks):** OpenClaw's
-   embedded agent runner drives a same-turn tool-calling continuation (the
-   provider call that immediately follows a `tool_calls` response) from its
-   own in-memory buffer, not the transcript, so that in-flight continuation
-   still sees the real tool output; the injected content is what every
-   *subsequent* prompt submission in the same session (the next turn, a
-   session resume, etc.) loads as history. This is tool-result poisoning
-   that surfaces on a later turn — there is no documented OpenClaw hook that
-   rewrites a tool result before the same tool-calling loop's own next
-   provider call.
-6. Record `last_response` / `tool_calls` / `events` for the evaluator.
+   (live tool-output injection) through the plugin → injection-server →
+   optimizer bridge via `tool_result_middleware`; the injected value is
+   spliced into the in-flight tool result for the same-turn continuation.
+   The real tool always executes for real.
+6. After the run completes, `memory_poison` is emitted once with the full
+   `chat.history`. If the optimizer returns a value, the target RPCs
+   `superred.enqueueMemoryPoison` → plugin queue drained by
+   `before_prompt_build`,
+   which surfaces as prepend/append context on the *next* `target.run()`
+   in the same session (SafeClawBench PSE / poison-then-trigger shape).
+7. Record `last_response` / `tool_calls` / `events` for the evaluator.
 
 ## Capabilities
 
@@ -92,16 +89,13 @@ Controllables (injection points):
 | `file_content` | `external_data` | PostCall, per `read` call | Live same-turn. |
 | `shell_output` | `external_data` | PostCall, per `exec`/`process` call | Live same-turn. |
 | `message_content` | `external_data` | PostCall, per `message` call | Live same-turn. |
-| `web_content_transcript` | `external_data` | PostCall, per `web_fetch`/`web_search` call | Transcript/memory poison (next prompt). |
-| `file_content_transcript` | `external_data` | PostCall, per `read` call | Transcript/memory poison (next prompt). |
-| `shell_output_transcript` | `external_data` | PostCall, per `exec`/`process` call | Transcript/memory poison (next prompt). |
-| `message_content_transcript` | `external_data` | PostCall, per `message` call | Transcript/memory poison (next prompt). |
+| `memory_poison` | `external_data` | PostCall, once after `run()` | Next-turn context via plugin queue + `before_prompt_build`. |
 | `model_system_prompt` | `model` | PreCall, pre-run | Needs the LLM proxy. Same-turn (applied before the run's first model call). |
 | `model_response_injection` | `model` | PreCall, pre-run, applied to every model response | Needs the LLM proxy. **Same-turn** — spliced onto the wire before the agent sees the reply (see Design decisions). |
 
-Live tool controllables (`web_content`, `file_content`, …) and transcript-poison
-controllables (`*_transcript`) are separate threat models — see Design decisions.
-All tool controllables need `enable_tool_injection`.
+Live tool controllables (`web_content`, `file_content`, …) and `memory_poison`
+are separate threat models — see Design decisions.
+All tool controllables (including `memory_poison`) need `enable_tool_injection`.
 
 Observables: `model_identity`, `system_description`, `tool_list`,
 `system_prompt` (static, populated at `initialize()`); `assistant_stream`,
@@ -124,19 +118,22 @@ rather than registered as a tool-output controllable.
 
 ## Design decisions
 
-**Tool-output injection: live same-turn vs transcript poison.** OpenClaw exposes
-two plugin seams (verified in `openclaw/openclaw`):
+**Tool-output injection: live same-turn vs memory poison.** OpenClaw exposes
+two seams (verified in `openclaw/openclaw`):
 
 - **Live same-turn** — `registerAgentToolResultMiddleware` on the embedded
   `tool_result` path (`src/agents/embedded-agent-runner/extensions.ts`). The
   bundled `tokenjuice` plugin uses the same API. Mapped to `web_content`,
-  `file_content`, `shell_output`, `message_content`.
-- **Transcript / memory poisoning (next prompt)** — async `before_tool_call`
-  stashes the optimizer decision; sync `tool_result_persist` splices it into
-  the persisted transcript only (`session-tool-result-guard-wrapper.ts` →
-  `transformToolResultForPersistence`). Mapped to `*_transcript` controllables.
-  Surfaces on the next `target.run()` in the same session — the SafeClawBench
-  PSE / poison-then-trigger shape (`assert_tool_injection_persisted_on_next_run`).
+  `file_content`, `shell_output`, `message_content`. Visible on the same-turn
+  tool-calling continuation (`assert_tool_injection_visible_same_turn`).
+- **Memory / next-turn poisoning** — after `run()` completes, the target emits
+  a single `memory_poison` PostCall with full `chat.history`, then RPCs
+  `superred.enqueueMemoryPoison` → in-process queue drained by
+  `before_prompt_build` (OpenClaw's `enqueueNextTurnInjection` is not
+  late-callable from gateway RPCs after `register()` closes).
+  Surfaces as prepend/append context on the next `target.run()` in the same
+  session — the SafeClawBench PSE / poison-then-trigger shape
+  (`assert_memory_poison_on_next_run`).
 
 For same-turn *model* output (not tool output), use `model_response_injection`.
 
@@ -265,16 +262,14 @@ the injection bridge, ws session helpers, and the reset lifecycle.
 **Live** (`local_gateway`) tests in `test_openclaw_live.py` spawn the real
 `openclaw gateway` CLI (skipped when the CLI is missing) and drive RPCs plus
 a full managed `OpenClawTarget` run against a stub LLM upstream — no API keys
-required. This includes `test_live_tool_injection_round_trip_through_real_plugin`,
-which drives the real Node plugin (not `MockGateway`) through an actual tool call:
-a stub LLM response with an OpenAI-style `tool_calls` payload makes the real
-agent loop invoke the real `read` tool, the real plugin's `before_tool_call`
-hook POSTs to a real `InjectionServer`, and `tool_result_persist` splices the
-injected content into the persisted transcript — verified by asserting a
-*second* `target.run()` in the same session sees the poisoned tool result on
-its next prompt submission (see the run-flow note above on why this doesn't
-show up in the same tool-calling loop's own continuation).
-`test_live_model_response_injection_through_real_proxy` and
+required. This includes `test_live_file_content_same_turn_through_middleware`,
+which drives the real Node plugin (not `MockGateway`) through an actual tool
+call: a stub LLM response with an OpenAI-style `tool_calls` payload makes the
+real agent loop invoke the real `read` tool, and the plugin's
+`tool_result_middleware` POSTs to a real `InjectionServer` so the same-turn
+continuation sees the injected content. `test_live_memory_poison_round_trip`
+covers end-of-run `memory_poison` → next-turn prompt injection on the follow-up
+turn. `test_live_model_response_injection_through_real_proxy` and
 `test_live_reset_and_teardown_against_real_gateway` cover model-response
 injection and reset/teardown against the same real CLI process.
 
@@ -296,12 +291,13 @@ is available, `test_docker_smoke.py` exercises real containers: operator
 scopes over a published port (Ed25519 device identity + pre-seeded pairing),
 injection plugin boot (`openclaw.plugin.json`), RPCs, a stub-LLM agent turn,
 and (`test_docker_tool_injection_round_trip_through_real_plugin`) the same
-real tool-call + plugin-hook round trip as the live suite, but with the
+real tool-call + live middleware round trip as the live suite, but with the
 plugin executing *inside the container* and POSTing back to the host over
 `host.docker.internal`. ``test_docker_openclaw_target_managed_run_with_stub_llm``
-and ``test_docker_openclaw_target_tool_injection_round_trip`` exercise the
-same Docker path through :class:`OpenClawTarget` / ``managed_runtime=\"docker\"``
-(including the host-side LLM proxy wiring), not just
+and ``test_docker_openclaw_target_tool_injection_round_trip`` /
+``test_docker_memory_poison_round_trip`` exercise the same Docker path through
+:class:`OpenClawTarget` / ``managed_runtime=\"docker\"`` (including the
+host-side LLM proxy wiring and next-turn memory poison), not just
 :class:`OpenClawDockerRuntime` directly. With ``GEMINI_API_KEY`` set,
 ``test_docker_openclaw_target_real_gemini_turn`` runs the same Target Docker
 path against real Gemini. ``test_docker_concurrency.py`` exercises
@@ -309,10 +305,10 @@ path against real Gemini. ``test_docker_concurrency.py`` exercises
 
 **Local/Docker parity.** Every stub-LLM gateway scenario in
 ``test_openclaw_live.py`` has a Docker counterpart in ``test_docker_smoke.py``
-via shared helpers in ``test_support/scenarios.py`` (file/shell/web/message
-injection — live same-turn and transcript poison — model response injection,
-reset/teardown, managed Target run, alias round-trips, all-controllables, and
-system-prompt proxy injection). The LAN device-identity remote-connect path
+via shared helpers in ``test_support/scenarios.py`` (file/shell live same-turn
+injection, ``memory_poison`` next-turn injection, model response injection,
+reset/teardown, managed Target run, all-controllables, and system-prompt proxy
+injection). The LAN device-identity remote-connect path
 (``test_live_remote_path_grants_operator_scopes_via_device_identity``) stays
 local-only: ``test_docker_connect_grants_operator_scopes`` covers the same
 auth behaviour in the production container path.

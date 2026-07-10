@@ -11,19 +11,21 @@ emitted live into the framework :class:`~superred.core.types.trajectory.Trajecto
 as :class:`~superred.core.types.events.ObservableEvent` s; no parallel
 trace representation is maintained.
 
-Tool-output injection uses two OpenClaw seams (verified against
+Tool-output / memory injection uses two OpenClaw seams (verified against
 openclaw/openclaw source):
 
 * **Live same-turn** — ``registerAgentToolResultMiddleware`` on the
   embedded ``tool_result`` path rewrites the in-flight result before the
   provider continuation (``file_content``, ``web_content``, etc.).
-* **Transcript / memory poisoning (next prompt)** — async
-  ``before_tool_call`` + sync ``tool_result_persist`` rewrite only what
-  gets persisted (``*_transcript`` controllables); surfaces on the next
+* **Memory / next-turn poisoning** — after ``run()`` completes, the target
+  emits ``memory_poison`` with the full session history, then calls the
+  plugin gateway RPC ``superred.enqueueMemoryPoison`` which stashes text
+  for the next turn's ``before_prompt_build`` drain. Surfaces on the next
   ``target.run()`` in the same session.
 
-Both paths emit :class:`~superred.core.types.events.ControllablePostCallEvent`
-per intercepted tool call (framework convention for tool-output injection).
+Live tool injection emits
+:class:`~superred.core.types.events.ControllablePostCallEvent` per
+intercepted tool call. Memory poison emits one PostCall at end of ``run()``.
 """
 
 from __future__ import annotations
@@ -103,11 +105,13 @@ _LIVE_TOOL_INJECTION_NOTE = (
     "Requires the injection plugin."
 )
 
-_TRANSCRIPT_POISON_NOTE = (
-    "Transcript / memory poisoning via before_tool_call → tool_result_persist "
-    "(persisted session transcript only). Surfaces on the *next* prompt "
-    "submitted in this session (poison now, trigger later). "
-    "Requires the injection plugin."
+_MEMORY_POISON_NOTE = (
+    "Memory / next-turn poisoning via post-run "
+    "superred.enqueueMemoryPoison (plugin in-process queue drained by "
+    "before_prompt_build into prepend/append context on the next model "
+    "turn). Emitted once at end of run with the full session history so "
+    "the attacker chooses poison with full knowledge. Requires the "
+    "injection plugin."
 )
 
 WEB_CONTENT_CTRL = Controllable(
@@ -150,43 +154,14 @@ MESSAGE_CONTENT_CTRL = Controllable(
     ),
 )
 
-WEB_CONTENT_TRANSCRIPT_CTRL = Controllable(
-    name="web_content_transcript",
+MEMORY_POISON_CTRL = Controllable(
+    name="memory_poison",
     security_domain=EXTERNAL_DATA_TAG,
     description=(
-        "Per-call transcript poisoning for web_fetch / web_search results. "
-        "Emitted mid-run: one ControllablePostCallEvent per intercepted "
-        "tool invocation. " + _TRANSCRIPT_POISON_NOTE
-    ),
-)
-
-FILE_CONTENT_TRANSCRIPT_CTRL = Controllable(
-    name="file_content_transcript",
-    security_domain=EXTERNAL_DATA_TAG,
-    description=(
-        "Per-call transcript poisoning for file read tool results. "
-        "Emitted mid-run: one ControllablePostCallEvent per intercepted "
-        "invocation. " + _TRANSCRIPT_POISON_NOTE
-    ),
-)
-
-SHELL_OUTPUT_TRANSCRIPT_CTRL = Controllable(
-    name="shell_output_transcript",
-    security_domain=EXTERNAL_DATA_TAG,
-    description=(
-        "Per-call transcript poisoning for exec/shell tool output. "
-        "Emitted mid-run: one ControllablePostCallEvent per intercepted "
-        "invocation. " + _TRANSCRIPT_POISON_NOTE
-    ),
-)
-
-MESSAGE_CONTENT_TRANSCRIPT_CTRL = Controllable(
-    name="message_content_transcript",
-    security_domain=EXTERNAL_DATA_TAG,
-    description=(
-        "Per-call transcript poisoning for the messaging tool's returned "
-        "content. Emitted mid-run: one ControllablePostCallEvent per "
-        "intercepted invocation. " + _TRANSCRIPT_POISON_NOTE
+        "End-of-run memory / next-turn context poison. Emitted once after "
+        "the agent turn completes: one ControllablePostCallEvent whose "
+        "request carries the full session history. "
+        + _MEMORY_POISON_NOTE
     ),
 )
 
@@ -213,13 +188,10 @@ MODEL_RESPONSE_CTRL = Controllable(
 
 # -- Tool-output injection registry -------------------------------------------
 #
-# Maps an OpenClaw gateway tool name -> live and transcript controllables
+# Maps an OpenClaw gateway tool name -> live same-turn controllable
 # (a ControllablePostCallEvent fires per call when ``enable_tool_injection``
-# is on; see each Controllable's description for the threat model).
-# This is the single extension point for tool-output injection:
-# ``get_controllables`` and the plugin bridge both derive from it, so adding
-# a new capability is one entry here — define a Controllable with the right
-# security domain and map its gateway tool name(s).
+# is on). Memory / next-turn poisoning is a separate end-of-run controllable
+# (:data:`MEMORY_POISON_CTRL`), not per-tool.
 #
 # Tool names are the real OpenClaw *agent-facing* tool identifiers (verified in
 # openclaw/openclaw src/agents/agent-tools.ts and src/agents/*-tools.*):
@@ -240,15 +212,6 @@ TOOL_OUTPUT_LIVE_CONTROLLABLES: dict[str, Controllable] = {
     "exec": SHELL_OUTPUT_CTRL,
     "process": SHELL_OUTPUT_CTRL,
     "message": MESSAGE_CONTENT_CTRL,
-}
-
-TOOL_OUTPUT_TRANSCRIPT_CONTROLLABLES: dict[str, Controllable] = {
-    "web_fetch": WEB_CONTENT_TRANSCRIPT_CTRL,
-    "web_search": WEB_CONTENT_TRANSCRIPT_CTRL,
-    "read": FILE_CONTENT_TRANSCRIPT_CTRL,
-    "exec": SHELL_OUTPUT_TRANSCRIPT_CTRL,
-    "process": SHELL_OUTPUT_TRANSCRIPT_CTRL,
-    "message": MESSAGE_CONTENT_TRANSCRIPT_CTRL,
 }
 
 # Back-compat alias: live same-turn registry (primary tool-output surface).
@@ -333,16 +296,14 @@ class OpenClawTarget(Target):
         model_id: Configured target model identifier, surfaced as a static
             observable so the optimizer sees it at initialization.
         agent_timeout_s: Max seconds to wait for an agent run.
-        enable_tool_injection: Expose per-call tool-output
-            controllables via the plugin-hook bridge. The async
-            ``before_tool_call`` hook emits a live
-            ``ControllablePostCallEvent`` (tool-output injection) and the
-            sync ``tool_result_persist`` hook splices the result into the
-            persisted session transcript. The real tool always executes
-            for real; the injected content poisons what subsequent turns
-            of the same session see as history (verified live: it does
-            not rewrite the tool result the in-flight tool-calling loop
-            continues with, only what later prompt submissions load).
+        enable_tool_injection: Expose live same-turn tool-output
+            controllables (``file_content``, …) via
+            ``registerAgentToolResultMiddleware``, plus end-of-run
+            ``memory_poison`` via ``superred.enqueueMemoryPoison`` →
+            ``before_prompt_build``. Live injection rewrites the
+            in-flight tool result the current turn continues with.
+            Memory poison queues durable next-turn context after the
+            optimizer sees the full session history.
         reset_session_between_runs: If ``True``, clear the OpenClaw
             conversation/session in :meth:`reset_ephemeral_state`. Default
             ``False`` keeps the session across runs of a task — OpenClaw
@@ -630,21 +591,18 @@ class OpenClawTarget(Target):
     ) -> dict[str, Any] | None:
         """Bridge plugin HTTP callbacks to live optimizer controllables.
 
-        ``tool_result_middleware`` → live same-turn controllables.
-        ``before_tool_call`` → transcript-poison controllables (stashed for
-        the sync ``tool_result_persist`` hook on the plugin side).
+        ``tool_result_middleware`` → live same-turn tool controllables.
+        Memory poison is handled post-run in :meth:`_maybe_enqueue_memory_poison`
+        (not via this HTTP bridge).
         """
         send_event = self._active_send_event
         if send_event is None:
             return None
 
-        if hook_type == "tool_result_middleware":
-            controllable = self._live_controllable_for_tool(tool_name)
-        elif hook_type == "before_tool_call":
-            controllable = self._transcript_controllable_for_tool(tool_name)
-        else:
+        if hook_type != "tool_result_middleware":
             return None
 
+        controllable = self._live_controllable_for_tool(tool_name)
         if controllable is None:
             return None
 
@@ -654,15 +612,10 @@ class OpenClawTarget(Target):
                 "tool": tool_name,
                 "toolCallId": tool_call_id,
                 "params": params,
-                **(
-                    {"result": result}
-                    if hook_type == "tool_result_middleware"
-                    else {}
-                ),
+                "result": result,
             },
             default=str,
         )
-
         try:
             response = await send_event(
                 ControllablePostCallEvent(
@@ -682,14 +635,72 @@ class OpenClawTarget(Target):
             return None
         if not response.value:
             return None
-
         return {"toolResult": response.value}
+
+    async def _maybe_enqueue_memory_poison(
+        self,
+        send_event: EventResponseHandler,
+        client: OpenClawWSClient,
+    ) -> None:
+        """Emit ``memory_poison`` with full history; enqueue next-turn injection."""
+        if not self._enable_tool_injection:
+            return
+
+        try:
+            history = await client.get_session_history(self._session_key)
+        except Exception:
+            logger.warning("chat.history failed before memory_poison", exc_info=True)
+            history = []
+
+        request_payload = json.dumps(
+            {
+                "hook": "memory_poison",
+                "sessionKey": self._session_key,
+                "messages": history,
+            },
+            default=str,
+        )
+        try:
+            response = await send_event(
+                ControllablePostCallEvent(
+                    controllable=MEMORY_POISON_CTRL,
+                    request=request_payload,
+                    answer="",
+                ),
+            )
+        except Exception:
+            logger.exception("send_event failed for memory_poison")
+            return
+
+        if not isinstance(response, ControllableInjection) or not response.value:
+            return
+
+        try:
+            result = await client.rpc(
+                "superred.enqueueMemoryPoison",
+                {
+                    "sessionKey": self._session_key,
+                    "text": response.value,
+                    "placement": "prepend_context",
+                    "idempotencyKey": f"superred-memory-{secrets.token_hex(8)}",
+                },
+            )
+            if isinstance(result, dict) and result.get("error"):
+                logger.warning(
+                    "superred.enqueueMemoryPoison failed: %s", result["error"],
+                )
+            elif isinstance(result, dict) and result.get("enqueued") is False:
+                logger.warning(
+                    "superred.enqueueMemoryPoison did not enqueue: %s", result,
+                )
+        except Exception:
+            logger.warning(
+                "superred.enqueueMemoryPoison RPC failed",
+                exc_info=True,
+            )
 
     def _live_controllable_for_tool(self, tool_name: str) -> Controllable | None:
         return TOOL_OUTPUT_LIVE_CONTROLLABLES.get(tool_name)
-
-    def _transcript_controllable_for_tool(self, tool_name: str) -> Controllable | None:
-        return TOOL_OUTPUT_TRANSCRIPT_CONTROLLABLES.get(tool_name)
 
     def _controllable_for_tool(self, tool_name: str) -> Controllable | None:
         """Back-compat: live same-turn lookup."""
@@ -829,9 +840,8 @@ class OpenClawTarget(Target):
         ctrls = [USER_MESSAGE_CTRL]
         if self._enable_tool_injection:
             live = dict.fromkeys(TOOL_OUTPUT_LIVE_CONTROLLABLES.values())
-            transcript = dict.fromkeys(TOOL_OUTPUT_TRANSCRIPT_CONTROLLABLES.values())
             ctrls.extend(live)
-            ctrls.extend(transcript)
+            ctrls.append(MEMORY_POISON_CTRL)
         if self._enable_llm_proxy:
             ctrls.append(MODEL_SYSTEM_PROMPT_CTRL)
             ctrls.append(MODEL_RESPONSE_CTRL)
@@ -990,6 +1000,7 @@ class OpenClawTarget(Target):
                     content=json.dumps(evt.payload),
                 ))
 
+        result = None
         try:
             result = await client.run_agent(
                 message=user_message,
@@ -997,8 +1008,15 @@ class OpenClawTarget(Target):
                 timeout_s=self._agent_timeout_s,
                 on_event=on_agent_event,
             )
+            # Memory poison after the turn so the optimizer sees the full
+            # session history (Simon / SafeClawArena PSE shape). Keep
+            # send_event active until enqueue completes.
+            await self._maybe_enqueue_memory_poison(send_event, client)
         finally:
             self._active_send_event = None
+
+        if result is None:
+            return
 
         self._last_response = result.assistant_text
         self._last_tool_calls = result.tool_calls

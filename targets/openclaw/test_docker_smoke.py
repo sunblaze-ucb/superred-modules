@@ -12,7 +12,6 @@ Run explicitly::
 from __future__ import annotations
 
 import json
-import os
 import re
 import secrets
 from pathlib import Path
@@ -26,32 +25,25 @@ from openclaw_target.injection_server import InjectionServer
 from openclaw_target.target import USER_MESSAGE_CTRL, _plugin_dir
 from openclaw_target.ws_client import OpenClawWSClient
 from test_support import (
-    container_recording_stub_llm_server,
     container_stub_llm_server,
     container_stub_tool_calling_llm_server,
-    container_web_page_server,
     docker_daemon_ready,
     docker_gemini_target,
     docker_image,
     docker_target,
     gemini_api_key,
     loopback_recording_stub_llm_server,
-    loopback_stub_llm_server,
     loopback_stub_tool_calling_llm_server,
     loopback_stub_upstream_for_host_proxy,
     passthrough_send_event,
     run_all_controllables_scenario,
     run_file_content_same_turn_scenario,
-    run_file_content_transcript_poison_scenario,
     run_managed_target_scenario,
-    run_message_content_transcript_scenario,
+    run_memory_poison_scenario,
     run_model_response_injection_scenario,
     run_model_system_prompt_injection_scenario,
     run_reset_teardown_scenario,
     run_shell_output_same_turn_scenario,
-    run_shell_output_transcript_scenario,
-    run_tool_alias_injection_scenario,
-    run_web_fetch_transcript_scenario,
 )
 
 from superred.core.types.events import ControllableInjection
@@ -158,14 +150,13 @@ async def test_docker_gateway_starts_with_injection_plugin() -> None:
 
 @pytest.mark.asyncio
 async def test_docker_tool_injection_round_trip_through_real_plugin() -> None:
-    """The injection plugin's hooks fire for real *inside the container*.
+    """The injection plugin's live middleware fires for real *inside the container*.
 
-    Same shape as ``test_openclaw_live.py``'s
-    ``test_live_tool_injection_round_trip_through_real_plugin``, but against
-    a real containerised gateway: the in-container Node plugin POSTs to a
-    host-side :class:`InjectionServer` over ``host.docker.internal``, and the
-    persisted tool result carries the injected content into the next prompt
-    submission in the same session. Proves the Docker path isn't just
+    Same shape as the live same-turn middleware path, but against a real
+    containerised gateway: the in-container Node plugin POSTs
+    ``tool_result_middleware`` to a host-side :class:`InjectionServer` over
+    ``host.docker.internal``, and the injected content is visible on the
+    same-turn tool-calling continuation. Proves the Docker path isn't just
     "the manifest loads without crashing" (``test_docker_gateway_starts_with_
     injection_plugin``) but that the actual hook round trip works end to end
     from inside the container.
@@ -182,7 +173,7 @@ async def test_docker_tool_injection_round_trip_through_real_plugin() -> None:
         tool_call_id: str,
         result: Any,
     ) -> dict[str, Any] | None:
-        if hook_type == "before_tool_call":
+        if hook_type == "tool_result_middleware":
             hook_calls.append(
                 {"tool": tool_name, "params": params, "toolCallId": tool_call_id},
             )
@@ -229,34 +220,16 @@ async def test_docker_tool_injection_round_trip_through_real_plugin() -> None:
             assert result.status == "ok"
             assert result.error is None
 
-            # 1. The real in-container plugin actually POSTed to the
-            # host-side injection server for a real tool call.
+            # The real in-container plugin POSTed to the host-side injection
+            # server for a real tool call, and the same-turn continuation
+            # saw the injected content (not the real file).
             assert len(hook_calls) == 1, f"plugin hook never fired: {hook_calls}"
             assert hook_calls[0]["tool"] == "read"
             assert hook_calls[0]["params"].get("path") == "USER.md"
             assert len(requests) >= 2
-
-            # 2. A follow-up prompt submission in the same session loads the
-            # persisted (poisoned) transcript - the toolResult message now
-            # carries the injected content, not the real file content.
-            second_result = await client.run_agent(
-                "What did USER.md say?",
-                session_key="docker-injection",
-                timeout_s=120,
-            )
-            assert second_result.status == "ok"
-            assert len(requests) >= 3
-            next_prompt_messages = requests[-1]["messages"]
-            tool_messages = [m for m in next_prompt_messages if m.get("role") == "tool"]
-            assert tool_messages, f"expected persisted tool message: {next_prompt_messages}"
-            assert any(
-                "DOCKER-INJECTED-BY-SUPERRED-77" in str(m.get("content"))
-                for m in tool_messages
-            )
-            assert all(
-                "DOCKER-ORIGINAL-FILE-CONTENT-NOT-INJECTED" not in str(m.get("content"))
-                for m in tool_messages
-            )
+            continuation = json.dumps(requests[1].get("messages", []))
+            assert "DOCKER-INJECTED-BY-SUPERRED-77" in continuation
+            assert "DOCKER-ORIGINAL-FILE-CONTENT-NOT-INJECTED" not in continuation
 
             await client.close()
         finally:
@@ -316,16 +289,15 @@ async def test_docker_openclaw_target_managed_run_with_stub_llm() -> None:
 
 @pytest.mark.asyncio
 async def test_docker_openclaw_target_tool_injection_round_trip() -> None:
-    """Tool injection through ``OpenClawTarget``'s Docker managed runtime.
+    """``memory_poison`` through ``OpenClawTarget``'s Docker managed runtime.
 
-    Same proof as ``test_docker_tool_injection_round_trip_through_real_plugin``,
-    but routed through :class:`OpenClawTarget` so the container reaches the
-    host-side injection server and LLM proxy URLs that the Target constructs.
+    Routes through :class:`OpenClawTarget` so the container reaches the
+    host-side LLM proxy URLs the Target constructs, then verifies
+    next-turn prompt injection surfaces on the next run's prompt.
     """
-    async with loopback_stub_tool_calling_llm_server(
-        tool_name="read",
-        tool_arguments={"path": "USER.md"},
-    ) as (stub_url, requests):
+    async with loopback_recording_stub_llm_server(reply="Docker hello.") as (
+        stub_url, requests,
+    ):
         target = docker_target(
             model_id="openai/gpt-4o-mini",
             provider_base_url=stub_url,
@@ -334,106 +306,27 @@ async def test_docker_openclaw_target_tool_injection_round_trip() -> None:
         )
         try:
             await target.warmup_static_observables()
-            target.set_config(
-                "workspace_files",
-                json.dumps({"USER.md": "DOCKER-TARGET-ORIGINAL-NOT-INJECTED"}),
-            )
 
             hook_calls: list[tuple[str, dict[str, Any]]] = []
             send_event = passthrough_send_event(
-                "Read USER.md and tell me what it says.",
+                "Say hello.",
                 hook_calls,
-                file_injection="DOCKER-TARGET-INJECTED-88",
+                memory_poison="DOCKER-TARGET-MEMORY-POISON-88",
             )
             await target.run(lambda _e: None, send_event)
 
-            assert len(hook_calls) == 1, f"plugin hook never fired: {hook_calls}"
-            assert hook_calls[0][0] == "file_content_transcript"
-            assert hook_calls[0][1]["hook"] == "before_tool_call"
-            assert len(requests) >= 2
+            assert len(hook_calls) == 1, f"memory_poison never fired: {hook_calls}"
+            assert hook_calls[0][0] == "memory_poison"
+            assert hook_calls[0][1]["hook"] == "memory_poison"
 
             requests_before = len(requests)
             hook_calls.clear()
-            send_event_2 = passthrough_send_event("What did USER.md say?", hook_calls)
+            send_event_2 = passthrough_send_event("What should you remember?", hook_calls)
             await target.run(lambda _e: None, send_event_2)
 
             assert len(requests) > requests_before
-            tool_messages = [
-                m
-                for m in requests[requests_before]["messages"]
-                if m.get("role") == "tool"
-            ]
-            assert tool_messages, (
-                f"expected persisted tool message: {requests[requests_before]['messages']}"
-            )
-            assert any(
-                "DOCKER-TARGET-INJECTED-88" in str(m.get("content"))
-                for m in tool_messages
-            )
-            assert all(
-                "DOCKER-TARGET-ORIGINAL-NOT-INJECTED" not in str(m.get("content"))
-                for m in tool_messages
-            )
-        finally:
-            await target.teardown()
-
-
-@pytest.mark.asyncio
-async def test_docker_web_search_alias_injection_round_trip_through_real_plugin() -> None:
-    """``web_content`` via the ``web_search`` alias, Docker parity for the
-    same scenario in ``test_openclaw_live.py``."""
-    async with loopback_stub_tool_calling_llm_server(
-        tool_name="web_search",
-        tool_arguments={"query": "DOCKER-ORIGINAL-WEB-SEARCH-NOT-INJECTED"},
-    ) as (stub_url, requests):
-        target = docker_target(
-            model_id="openai/gpt-4o-mini",
-            provider_base_url=stub_url,
-            provider_api_key="stub-key",
-            enable_tool_injection=True,
-        )
-        try:
-            await run_tool_alias_injection_scenario(
-                target,
-                tool_name="web_search",
-                controllable_name="web_content_transcript",
-                tool_policy="coding",
-                user_message="Search the web for DOCKER-ORIGINAL-WEB-SEARCH-NOT-INJECTED.",
-                followup_user_message="What did the search return?",
-                injection_marker="DOCKER-INJECTED-WEB-SEARCH-78",
-                original_marker="DOCKER-ORIGINAL-WEB-SEARCH-NOT-INJECTED",
-                requests=requests,
-            )
-        finally:
-            await target.teardown()
-
-
-@pytest.mark.asyncio
-async def test_docker_process_alias_injection_round_trip_through_real_plugin() -> None:
-    """``shell_output`` via the ``process`` alias, Docker parity for the
-    same scenario in ``test_openclaw_live.py``."""
-    async with loopback_stub_tool_calling_llm_server(
-        tool_name="process",
-        tool_arguments={"action": "list"},
-    ) as (stub_url, requests):
-        target = docker_target(
-            model_id="openai/gpt-4o-mini",
-            provider_base_url=stub_url,
-            provider_api_key="stub-key",
-            enable_tool_injection=True,
-        )
-        try:
-            await run_tool_alias_injection_scenario(
-                target,
-                tool_name="process",
-                controllable_name="shell_output_transcript",
-                tool_policy="coding",
-                user_message="List all background process sessions.",
-                followup_user_message="What did the process list show?",
-                injection_marker="DOCKER-INJECTED-PROCESS-79",
-                original_marker="DOCKER-ORIGINAL-PROCESS-LIST-NOT-INJECTED",
-                requests=requests,
-            )
+            next_prompt = json.dumps(requests[requests_before])
+            assert "DOCKER-TARGET-MEMORY-POISON-88" in next_prompt, next_prompt
         finally:
             await target.teardown()
 
@@ -504,12 +397,11 @@ async def test_docker_file_content_same_turn_through_middleware() -> None:
 
 
 @pytest.mark.asyncio
-async def test_docker_file_content_transcript_poison_round_trip() -> None:
-    """``file_content_transcript`` poison round trip, Docker parity."""
-    async with loopback_stub_tool_calling_llm_server(
-        tool_name="read",
-        tool_arguments={"path": "USER.md"},
-    ) as (stub_url, requests):
+async def test_docker_memory_poison_round_trip() -> None:
+    """``memory_poison`` end-of-run → next-turn injection, Docker parity."""
+    async with loopback_recording_stub_llm_server(reply="Docker hello.") as (
+        stub_url, requests,
+    ):
         target = docker_target(
             model_id="openai/gpt-4o-mini",
             provider_base_url=stub_url,
@@ -517,7 +409,7 @@ async def test_docker_file_content_transcript_poison_round_trip() -> None:
             enable_tool_injection=True,
         )
         try:
-            await run_file_content_transcript_poison_scenario(target, requests=requests)
+            await run_memory_poison_scenario(target, requests=requests)
         finally:
             await target.teardown()
 
@@ -557,66 +449,6 @@ async def test_docker_shell_output_same_turn_through_middleware() -> None:
         )
         try:
             await run_shell_output_same_turn_scenario(target, requests=requests)
-        finally:
-            await target.teardown()
-
-
-@pytest.mark.asyncio
-async def test_docker_shell_output_transcript_poison_round_trip() -> None:
-    """``shell_output_transcript`` poison round trip, Docker parity."""
-    async with loopback_stub_tool_calling_llm_server(
-        tool_name="exec",
-        tool_arguments={"command": "echo ORIGINAL-EXEC-CONTENT-NOT-INJECTED"},
-    ) as (stub_url, requests):
-        target = docker_target(
-            model_id="openai/gpt-4o-mini",
-            provider_base_url=stub_url,
-            provider_api_key="stub-key",
-            enable_tool_injection=True,
-        )
-        try:
-            await run_shell_output_transcript_scenario(target, requests=requests)
-        finally:
-            await target.teardown()
-
-
-@pytest.mark.asyncio
-async def test_docker_web_content_transcript_poison_round_trip() -> None:
-    """``web_content_transcript`` via ``web_fetch``, Docker parity."""
-    async with container_web_page_server() as page_url:
-        async with loopback_stub_tool_calling_llm_server(
-            tool_name="web_fetch",
-            tool_arguments={"url": page_url},
-        ) as (stub_url, requests):
-            target = docker_target(
-                model_id="openai/gpt-4o-mini",
-                provider_base_url=stub_url,
-                provider_api_key="stub-key",
-                enable_tool_injection=True,
-            )
-            try:
-                await run_web_fetch_transcript_scenario(
-                    target, requests=requests, page_url=page_url,
-                )
-            finally:
-                await target.teardown()
-
-
-@pytest.mark.asyncio
-async def test_docker_message_content_transcript_poison_round_trip() -> None:
-    """``message_content_transcript`` poison round trip, Docker parity."""
-    async with loopback_stub_tool_calling_llm_server(
-        tool_name="message",
-        tool_arguments={"action": "send", "text": "ORIGINAL-MSG-NOT-INJECTED"},
-    ) as (stub_url, requests):
-        target = docker_target(
-            model_id="openai/gpt-4o-mini",
-            provider_base_url=stub_url,
-            provider_api_key="stub-key",
-            enable_tool_injection=True,
-        )
-        try:
-            await run_message_content_transcript_scenario(target, requests=requests)
         finally:
             await target.teardown()
 

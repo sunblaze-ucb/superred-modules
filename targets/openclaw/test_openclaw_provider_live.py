@@ -204,7 +204,7 @@ async def test_provider_gemini_streaming_through_real_proxy() -> None:
 
 @pytest.mark.asyncio
 async def test_provider_gemini_tool_injection_plugin_hook_fires() -> None:
-    """Real Gemini chooses a tool; real plugin hook fires on ``before_tool_call``."""
+    """Real Gemini chooses a tool; real plugin hook fires on ``tool_result_middleware``."""
     target = gemini_target(enable_tool_injection=True)
     try:
         await target.warmup_static_observables()

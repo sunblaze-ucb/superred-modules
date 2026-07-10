@@ -14,10 +14,8 @@ Run explicitly::
 
 from __future__ import annotations
 
-import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
 
 import pytest
 
@@ -34,17 +32,12 @@ from test_support import (
     openclaw_cli_ready,
     run_all_controllables_scenario,
     run_file_content_same_turn_scenario,
-    run_file_content_transcript_poison_scenario,
     run_managed_target_scenario,
-    run_message_content_transcript_scenario,
+    run_memory_poison_scenario,
     run_model_response_injection_scenario,
     run_model_system_prompt_injection_scenario,
     run_reset_teardown_scenario,
     run_shell_output_same_turn_scenario,
-    run_shell_output_transcript_scenario,
-    run_tool_alias_injection_scenario,
-    run_web_fetch_transcript_scenario,
-    local_web_page_server,
 )
 
 pytestmark = [
@@ -214,12 +207,9 @@ async def test_live_file_content_same_turn_through_middleware() -> None:
 
 
 @pytest.mark.asyncio
-async def test_live_file_content_transcript_poison_round_trip() -> None:
-    """``file_content_transcript`` poisons the persisted transcript for the next run."""
-    async with loopback_stub_tool_calling_llm_server(
-        tool_name="read",
-        tool_arguments={"path": "USER.md"},
-    ) as (stub_url, requests):
+async def test_live_memory_poison_round_trip() -> None:
+    """``memory_poison`` enqueues next-turn context after the run."""
+    async with loopback_recording_stub_llm_server(reply="Hello.") as (stub_url, requests):
         target = OpenClawTarget(
             managed=True,
             model_id="openai/gpt-4o-mini",
@@ -228,7 +218,7 @@ async def test_live_file_content_transcript_poison_round_trip() -> None:
             enable_tool_injection=True,
         )
         try:
-            await run_file_content_transcript_poison_scenario(target, requests=requests)
+            await run_memory_poison_scenario(target, requests=requests)
         finally:
             await target.teardown()
 
@@ -291,136 +281,13 @@ async def test_live_shell_output_same_turn_through_middleware() -> None:
 
 
 @pytest.mark.asyncio
-async def test_live_shell_output_transcript_poison_round_trip() -> None:
-    """``shell_output_transcript`` poisons the persisted exec result."""
-    async with loopback_stub_tool_calling_llm_server(
-        tool_name="exec",
-        tool_arguments={"command": "echo ORIGINAL-EXEC-CONTENT-NOT-INJECTED"},
-    ) as (stub_url, requests):
-        target = OpenClawTarget(
-            managed=True,
-            model_id="openai/gpt-4o-mini",
-            provider_base_url=stub_url,
-            provider_api_key="sk-stub",
-            enable_tool_injection=True,
-        )
-        try:
-            await run_shell_output_transcript_scenario(target, requests=requests)
-        finally:
-            await target.teardown()
-
-
-@pytest.mark.asyncio
-async def test_live_web_content_transcript_poison_round_trip() -> None:
-    """``web_content_transcript`` poisons persisted ``web_fetch`` output."""
-    async with local_web_page_server() as page_url:
-        async with loopback_stub_tool_calling_llm_server(
-            tool_name="web_fetch",
-            tool_arguments={"url": page_url},
-        ) as (stub_url, requests):
-            target = OpenClawTarget(
-                managed=True,
-                model_id="openai/gpt-4o-mini",
-                provider_base_url=stub_url,
-                provider_api_key="sk-stub",
-                enable_tool_injection=True,
-            )
-            try:
-                await run_web_fetch_transcript_scenario(
-                    target, requests=requests, page_url=page_url,
-                )
-            finally:
-                await target.teardown()
-
-
-@pytest.mark.asyncio
-async def test_live_message_content_transcript_poison_round_trip() -> None:
-    """``message_content_transcript`` poisons persisted ``message`` output."""
-    async with loopback_stub_tool_calling_llm_server(
-        tool_name="message",
-        tool_arguments={"action": "send", "text": "ORIGINAL-MSG-NOT-INJECTED"},
-    ) as (stub_url, requests):
-        target = OpenClawTarget(
-            managed=True,
-            model_id="openai/gpt-4o-mini",
-            provider_base_url=stub_url,
-            provider_api_key="sk-stub",
-            enable_tool_injection=True,
-        )
-        try:
-            await run_message_content_transcript_scenario(target, requests=requests)
-        finally:
-            await target.teardown()
-
-
-@pytest.mark.asyncio
-async def test_live_web_search_alias_injection_round_trip_through_real_plugin() -> None:
-    """``web_content`` via the ``web_search`` tool alias (not ``web_fetch``)."""
-    async with loopback_stub_tool_calling_llm_server(
-        tool_name="web_search",
-        tool_arguments={"query": "ORIGINAL-WEB-SEARCH-NOT-INJECTED"},
-    ) as (stub_url, requests):
-        target = OpenClawTarget(
-            managed=True,
-            model_id="openai/gpt-4o-mini",
-            provider_base_url=stub_url,
-            provider_api_key="sk-stub",
-            enable_tool_injection=True,
-        )
-        try:
-            await run_tool_alias_injection_scenario(
-                target,
-                tool_name="web_search",
-                controllable_name="web_content_transcript",
-                tool_policy="coding",
-                user_message="Search the web for ORIGINAL-WEB-SEARCH-NOT-INJECTED.",
-                followup_user_message="What did the search return?",
-                injection_marker="INJECTED-WEB-SEARCH-78",
-                original_marker="ORIGINAL-WEB-SEARCH-NOT-INJECTED",
-                requests=requests,
-            )
-        finally:
-            await target.teardown()
-
-
-@pytest.mark.asyncio
-async def test_live_process_alias_injection_round_trip_through_real_plugin() -> None:
-    """``shell_output`` via the ``process`` tool alias (session management)."""
-    async with loopback_stub_tool_calling_llm_server(
-        tool_name="process",
-        tool_arguments={"action": "list"},
-    ) as (stub_url, requests):
-        target = OpenClawTarget(
-            managed=True,
-            model_id="openai/gpt-4o-mini",
-            provider_base_url=stub_url,
-            provider_api_key="sk-stub",
-            enable_tool_injection=True,
-        )
-        try:
-            await run_tool_alias_injection_scenario(
-                target,
-                tool_name="process",
-                controllable_name="shell_output_transcript",
-                tool_policy="coding",
-                user_message="List all background process sessions.",
-                followup_user_message="What did the process list show?",
-                injection_marker="INJECTED-PROCESS-79",
-                original_marker="ORIGINAL-PROCESS-LIST-NOT-INJECTED",
-                requests=requests,
-            )
-        finally:
-            await target.teardown()
-
-
-@pytest.mark.asyncio
 async def test_live_all_controllables_in_one_session() -> None:
     """One session exercising every controllable path against a real gateway.
 
     Pre-run: ``system_prompt_append`` config, ``model_system_prompt``,
     ``model_response_injection``, ``user_message``. Mid-run: ``file_content``
-    on a real ``read`` tool call. Verifies proxy splice, plugin hook, and
-    persisted tool-result poisoning on a follow-up turn — all in one session.
+    on a real ``read`` tool call. End-of-run: ``memory_poison`` verified on
+    the follow-up turn — all in one session.
     """
     async with loopback_stub_tool_calling_llm_server(
         tool_name="read",
