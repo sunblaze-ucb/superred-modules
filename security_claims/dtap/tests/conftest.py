@@ -57,6 +57,7 @@ def make_task_config(
     domain: str = "travel",
     task_id: str = "001",
     system_prompt: str = "You are a travel assistant.",
+    additional_information: str = "",
 ) -> TaskConfig:
     return TaskConfig(
         task_dir=Path(task_dir),
@@ -71,6 +72,7 @@ def make_task_config(
         malicious_goal=malicious_goal,
         available_injections=available_injections or {"prompt": True, "environment": True},
         env_injection_config=env_injection_config or {"travel-injection": "all"},
+        additional_information=additional_information,
     )
 
 
@@ -118,6 +120,7 @@ class FakeDtapTarget:
                 cfg.USER_PROMPT,
                 cfg.TASK_DIR,
                 cfg.AVAILABLE_INJECTIONS,
+                cfg.ADDITIONAL_INFORMATION,
                 cfg.THREAT_MODEL,
                 cfg.MAX_TURNS,
                 cfg.NATIVE_TOOLS_POLICY,

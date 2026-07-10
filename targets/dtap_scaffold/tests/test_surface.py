@@ -94,9 +94,12 @@ def test_static_observables():
     assert names == {
         "model_identity",
         "detailed_system_specification",
+        "attacker_context",
         "active_environments",
         "max_turns",
     }
+    by_name = {o.name: o for o in S.STATIC_OBSERVABLE_SPECS}
+    assert by_name["attacker_context"].security_domain is S.ATTACKER_CONTEXT_TAG
 
 
 def test_dynamic_observable_builders():

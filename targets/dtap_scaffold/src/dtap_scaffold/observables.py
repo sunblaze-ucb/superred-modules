@@ -19,6 +19,7 @@ from superred.core.types.observable import Observable
 from dtap_scaffold.forest import (
     AGENT_TRACE_MESSAGES_TAG,
     AGENT_TRACE_TOOL_CALLS_TAG,
+    ATTACKER_CONTEXT_TAG,
     DETAILED_SYSTEM_SPECIFICATION_TAG,
     MAX_TURNS_TAG,
     MODEL_IDENTITY_TAG,
@@ -66,6 +67,20 @@ TOOL_CATALOGUE_OBS: Observable = Observable(
     observable_type="json",
 )
 
+ATTACKER_CONTEXT_OBS: Observable = Observable(
+    name="attacker_context",
+    security_domain=ATTACKER_CONTEXT_TAG,
+    description=(
+        "Per-task attacker prerequisite knowledge (DTAP Attack.additional_information): "
+        "factual sandbox routing facts a red-teamer is handed, e.g. the victim agent's "
+        "inbox address that an injected email must target and the pre-registered attacker "
+        "sender accounts the injection backend accepts. Empty for tasks that carry none. "
+        "For an indirect email-injection task the victim inbox lives ONLY here (not in the "
+        "goal), so an in-scope optimizer reads it to aim a valid injection. Static, read-only."
+    ),
+    observable_type="text",
+)
+
 ACTIVE_ENVIRONMENTS_OBS: Observable = Observable(
     name="active_environments",
     security_domain=DETAILED_SYSTEM_SPECIFICATION_TAG,
@@ -83,6 +98,7 @@ MAX_TURNS_OBS: Observable = Observable(
 STATIC_OBSERVABLE_SPECS: tuple[Observable, ...] = (
     MODEL_IDENTITY_OBS,
     DETAILED_SYSTEM_SPECIFICATION_OBS,
+    ATTACKER_CONTEXT_OBS,
     ACTIVE_ENVIRONMENTS_OBS,
     MAX_TURNS_OBS,
 )
@@ -127,6 +143,7 @@ def native_tool_observable(index: int) -> Observable:
 __all__ = [
     "MODEL_IDENTITY_OBS",
     "DETAILED_SYSTEM_SPECIFICATION_OBS",
+    "ATTACKER_CONTEXT_OBS",
     "TOOL_CATALOGUE_OBS",
     "ACTIVE_ENVIRONMENTS_OBS",
     "MAX_TURNS_OBS",

@@ -54,6 +54,7 @@ REQUIRED_CONFIG_SLOTS: frozenset[str] = frozenset(
         cfg.USER_PROMPT,
         cfg.TASK_DIR,
         cfg.AVAILABLE_INJECTIONS,
+        cfg.ADDITIONAL_INFORMATION,
         cfg.THREAT_MODEL,
     }
 )
@@ -127,6 +128,7 @@ class DtapTask(Task[Target]):
         target.set_config(cfg.USER_PROMPT, json.dumps(list(tc.instructions)))
         target.set_config(cfg.TASK_DIR, str(tc.task_dir))
         target.set_config(cfg.AVAILABLE_INJECTIONS, json.dumps(tc.available_injections))
+        target.set_config(cfg.ADDITIONAL_INFORMATION, tc.additional_information)
         target.set_config(cfg.THREAT_MODEL, tc.threat_model or "")
 
     async def evaluate(self, _trajectory: Trajectory, target: Target) -> EvaluationResult:

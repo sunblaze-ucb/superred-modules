@@ -69,6 +69,7 @@ async def test_configure_target_sets_dtap_slots() -> None:
         instructions=("turn one", "turn two"),
         task_dir="/data/travel/malicious/direct/data-exfiltration/001",
         threat_model="direct",
+        additional_information="Victim inbox: alex.chen@corp.example",
     )
     target = FakeDtapTarget()
     await DtapTask(task_config=tc).configure_target(target)
@@ -79,6 +80,7 @@ async def test_configure_target_sets_dtap_slots() -> None:
     assert target.config[cfg.USER_PROMPT] == json.dumps(["turn one", "turn two"])
     assert target.config[cfg.TASK_DIR] == "/data/travel/malicious/direct/data-exfiltration/001"
     assert target.config[cfg.AVAILABLE_INJECTIONS] == json.dumps({"prompt": True, "tool": True})
+    assert target.config[cfg.ADDITIONAL_INFORMATION] == "Victim inbox: alex.chen@corp.example"
     assert target.config[cfg.THREAT_MODEL] == "direct"
 
 
@@ -125,6 +127,7 @@ def test_required_slots_constant() -> None:
             cfg.USER_PROMPT,
             cfg.TASK_DIR,
             cfg.AVAILABLE_INJECTIONS,
+            cfg.ADDITIONAL_INFORMATION,
             cfg.THREAT_MODEL,
         }
     )

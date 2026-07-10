@@ -60,6 +60,7 @@ from dtap_scaffold.controllables import (
 from dtap_scaffold.forest import TOOL_CATALOGUE_ADD_TAG, build_domain, env_server_tag
 from dtap_scaffold.observables import (
     ACTIVE_ENVIRONMENTS_OBS,
+    ATTACKER_CONTEXT_OBS,
     DETAILED_SYSTEM_SPECIFICATION_OBS,
     MAX_TURNS_OBS,
     MODEL_IDENTITY_OBS,
@@ -136,6 +137,7 @@ class DtapAgentTarget(Target):
         self._system_prompt: str = ""
         self._user_instructions: tuple[str, ...] = ()
         self._task_dir: str = ""
+        self._additional_information: str = ""
         self._available_injections: dict[str, Any] = {}
         self._threat_model: str = ""
         self._max_turns: int = max_turns
@@ -216,6 +218,8 @@ class DtapAgentTarget(Target):
             self._task_dir = value
         elif name == C.AVAILABLE_INJECTIONS:
             self._available_injections = json.loads(value) if value else {}
+        elif name == C.ADDITIONAL_INFORMATION:
+            self._additional_information = value or ""
         elif name == C.THREAT_MODEL:
             self._threat_model = value
         elif name == C.MAX_TURNS:
@@ -263,6 +267,10 @@ class DtapAgentTarget(Target):
             ObservableValue(
                 observable=DETAILED_SYSTEM_SPECIFICATION_OBS,
                 content=DETAILED_SYSTEM_SPECIFICATION,
+            ),
+            ObservableValue(
+                observable=ATTACKER_CONTEXT_OBS,
+                content=self._additional_information,
             ),
             ObservableValue(
                 observable=ACTIVE_ENVIRONMENTS_OBS,

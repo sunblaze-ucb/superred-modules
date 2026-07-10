@@ -12,6 +12,7 @@ from __future__ import annotations
 from superred.core.types.state import ConfigSpec
 
 from dtap_scaffold.forest import (
+    ATTACKER_CONTEXT_TAG,
     DETAILED_SYSTEM_SPECIFICATION_TAG,
     ENVIRONMENT_TAG,
     MAX_TURNS_TAG,
@@ -28,6 +29,7 @@ SYSTEM_PROMPT = "system_prompt"
 USER_PROMPT = "user_prompt"
 TASK_DIR = "task_dir"
 AVAILABLE_INJECTIONS = "available_injections"
+ADDITIONAL_INFORMATION = "additional_information"
 THREAT_MODEL = "threat_model"
 MAX_TURNS = "max_turns"
 NATIVE_TOOLS_POLICY = "native_tools_policy"
@@ -80,6 +82,15 @@ CONFIG_SPECS: tuple[ConfigSpec, ...] = (
         ),
     ),
     ConfigSpec(
+        name=ADDITIONAL_INFORMATION,
+        security_domain=ATTACKER_CONTEXT_TAG,
+        description=(
+            "DTAP Attack.additional_information: per-task attacker prerequisite facts "
+            "(victim inbox + whitelisted attacker sender accounts) surfaced as the "
+            "attacker_context observable. Empty when the task carries none."
+        ),
+    ),
+    ConfigSpec(
         name=THREAT_MODEL,
         security_domain=DETAILED_SYSTEM_SPECIFICATION_TAG,
         description='DTAP threat model: "direct" or "indirect" (metadata).',
@@ -109,6 +120,7 @@ __all__ = [
     "USER_PROMPT",
     "TASK_DIR",
     "AVAILABLE_INJECTIONS",
+    "ADDITIONAL_INFORMATION",
     "THREAT_MODEL",
     "MAX_TURNS",
     "NATIVE_TOOLS_POLICY",

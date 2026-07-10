@@ -89,6 +89,13 @@ MODEL_IDENTITY_TAG: SecurityDomainTag = SecurityDomainTag("model_identity", pare
 DETAILED_SYSTEM_SPECIFICATION_TAG: SecurityDomainTag = SecurityDomainTag(
     "detailed_system_specification", parent=SYSTEM_TAG
 )
+ATTACKER_CONTEXT_TAG: SecurityDomainTag = SecurityDomainTag("attacker_context", parent=SYSTEM_TAG)
+"""Per-task attacker prerequisite knowledge (DTAP ``Attack.additional_information``):
+the factual sandbox routing facts a red-teamer is handed, e.g. the victim agent's
+inbox address and the whitelisted attacker sender accounts an ``inject_email`` needs.
+Distinct from :data:`DETAILED_SYSTEM_SPECIFICATION_TAG` (the static how-it-works
+brief): this is per-task ground-truth an in-scope optimizer reads to aim an attack,
+so it is scoped separately (an experiment can grant it independently)."""
 MAX_TURNS_TAG: SecurityDomainTag = SecurityDomainTag("max_turns", parent=SYSTEM_TAG)
 
 AGENT_TRACE_TAG: SecurityDomainTag = SecurityDomainTag("agent_trace", parent=SYSTEM_TAG)
@@ -163,6 +170,7 @@ FIXED_TAGS: tuple[SecurityDomainTag, ...] = (
     TOOL_CATALOGUE_REMOVE_TAG,
     MODEL_IDENTITY_TAG,
     DETAILED_SYSTEM_SPECIFICATION_TAG,
+    ATTACKER_CONTEXT_TAG,
     MAX_TURNS_TAG,
     AGENT_TRACE_TAG,
     AGENT_TRACE_MESSAGES_TAG,
@@ -246,6 +254,7 @@ __all__ = [
     "TOOL_CATALOGUE_REMOVE_TAG",
     "MODEL_IDENTITY_TAG",
     "DETAILED_SYSTEM_SPECIFICATION_TAG",
+    "ATTACKER_CONTEXT_TAG",
     "MAX_TURNS_TAG",
     "AGENT_TRACE_TAG",
     "AGENT_TRACE_MESSAGES_TAG",

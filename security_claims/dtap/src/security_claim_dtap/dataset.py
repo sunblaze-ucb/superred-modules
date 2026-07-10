@@ -128,6 +128,11 @@ class TaskConfig:
     malicious_goal: str | None
     available_injections: dict[str, Any] = field(default_factory=dict)
     env_injection_config: dict[str, Any] = field(default_factory=dict)
+    #: DTAP ``Attack.additional_information``: per-task attacker prerequisite facts
+    #: (e.g. the victim inbox an injected email must target + the whitelisted attacker
+    #: sender accounts). For an indirect email-injection task the victim inbox lives
+    #: ONLY here, so the claim surfaces it to an in-scope optimizer. Empty when absent.
+    additional_information: str = ""
 
 
 def _path_facts(config_path: Path, root: Path) -> tuple[str, str, str | None, str | None, str]:
@@ -206,6 +211,7 @@ def parse_task_config(
         malicious_goal=attack.get("malicious_goal"),
         available_injections=dict(redteam.get("available_injections") or {}),
         env_injection_config=dict(redteam.get("env_injection_config") or {}),
+        additional_information=str(attack.get("additional_information") or ""),
     )
 
 
