@@ -30,6 +30,8 @@ USER_PROMPT = "user_prompt"
 TASK_DIR = "task_dir"
 AVAILABLE_INJECTIONS = "available_injections"
 ADDITIONAL_INFORMATION = "additional_information"
+SERVER_ENV_OVERRIDES = "server_env_overrides"
+TOOL_BLACKLIST = "tool_blacklist"
 THREAT_MODEL = "threat_model"
 MAX_TURNS = "max_turns"
 NATIVE_TOOLS_POLICY = "native_tools_policy"
@@ -91,6 +93,25 @@ CONFIG_SPECS: tuple[ConfigSpec, ...] = (
         ),
     ),
     ConfigSpec(
+        name=SERVER_ENV_OVERRIDES,
+        security_domain=ENVIRONMENT_TAG,
+        description=(
+            "JSON {server: {VAR: value}} of per-task Agent.mcp_servers env_vars: "
+            "upstream's highest-priority env tier, merged LAST into each MCP env "
+            "server's process env. Sets the acting-user identity (USER_ACCESS_TOKEN) "
+            "and per-task credentials the env-state judge verifies against."
+        ),
+    ),
+    ConfigSpec(
+        name=TOOL_BLACKLIST,
+        security_domain=TOOL_CATALOGUE_TAG,
+        description=(
+            "JSON {server: [tool, ...]} of per-task Agent.mcp_servers tool_blacklist: "
+            "tools hidden from the agent's catalogue for this task (dropped from the "
+            "proxy listing and the tool_catalogue observable)."
+        ),
+    ),
+    ConfigSpec(
         name=THREAT_MODEL,
         security_domain=DETAILED_SYSTEM_SPECIFICATION_TAG,
         description='DTAP threat model: "direct" or "indirect" (metadata).',
@@ -121,6 +142,8 @@ __all__ = [
     "TASK_DIR",
     "AVAILABLE_INJECTIONS",
     "ADDITIONAL_INFORMATION",
+    "SERVER_ENV_OVERRIDES",
+    "TOOL_BLACKLIST",
     "THREAT_MODEL",
     "MAX_TURNS",
     "NATIVE_TOOLS_POLICY",

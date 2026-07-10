@@ -95,6 +95,9 @@ class FakeProxy:
         self._removed = removed
         self._call_ctrls = call_ctrls
 
+    def set_config_tool_blacklist(self, by_server):
+        self._config_blacklist = by_server
+
     def set_env_tool_controllables(self, by_server_tool, defaults):
         self._env_tool_by_tool = by_server_tool
         self._env_tool_defaults = defaults
@@ -436,6 +439,22 @@ async def test_tool_catalog_declined_leaves_genuine_catalogue():
     assert t.proxy._added == {}
     assert t.proxy._removed == {}
     assert t.proxy._call_ctrls == {}
+
+
+async def test_server_env_overrides_stored_and_tool_blacklist_wired_to_proxy():
+    """Regression (gap #2): the per-task env_vars are stored on the target (fed to the
+    DockerEnvStack via _make_env_stack) and the per-task tool_blacklist reaches the
+    proxy in run() (so it hides those tools from the agent + the catalogue observable)."""
+    t = _configured()
+    t.set_config(
+        "server_env_overrides", json.dumps({"travel-suite": {"USER_ACCESS_TOKEN": "alice"}})
+    )
+    t.set_config("tool_blacklist", json.dumps({"travel-suite": ["delete_booking"]}))
+    # stored for the env stack (the real _make_env_stack threads it into DockerEnvStack)
+    assert t._server_env_overrides == {"travel-suite": {"USER_ACCESS_TOKEN": "alice"}}
+    emit, send_event, *_ = _recorder(injections={})
+    await t.run(emit, send_event)
+    assert t.proxy._config_blacklist == {"travel-suite": ["delete_booking"]}
 
 
 async def test_reset_and_teardown_reclaim_the_run_workspace(tmp_path):

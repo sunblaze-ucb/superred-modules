@@ -120,8 +120,15 @@ def _server_env(
     listen: int,
     container_ports: dict[str, int],
     extra: dict[str, str],
+    task_overrides: dict[str, str] | None = None,
 ) -> dict[str, str]:
-    """Build an MCP server's process env: own listen port + rendered ``${VAR}`` ports."""
+    """Build an MCP server's process env: own listen port + rendered ``${VAR}`` ports.
+
+    Precedence low->high: ``os.environ`` < the server's ``mcp.yaml`` ``env`` (rendered
+    ports) < ``extra`` (state / project names) < ``task_overrides``. The per-task
+    ``task_overrides`` (config.yaml ``env_vars``) is applied LAST, matching upstream
+    ``mcp_helpers.task_env_overrides`` (the top env tier: acting identity + creds).
+    """
     env = dict(os.environ)
     render_values: dict[str, int] = {**container_ports, port_key: listen}
     env[port_key] = str(listen)
@@ -130,6 +137,8 @@ def _server_env(
             continue
         env[key] = reset.render_template(str(value), render_values)
     env.update(extra)
+    for key, value in (task_overrides or {}).items():
+        env[str(key)] = str(value)
     return env
 
 
@@ -157,6 +166,7 @@ class DockerEnvStack:
         task_dir: str | os.PathLike[str] | None,
         state_root: str | os.PathLike[str] | None = None,
         *,
+        server_env_overrides: dict[str, dict[str, str]] | None = None,
         config_dir: str | os.PathLike[str] | None = None,
         host: str = "127.0.0.1",
     ) -> None:
@@ -164,6 +174,9 @@ class DockerEnvStack:
         self._injection_config = dict(injection_config or {})
         self._task_dir = Path(task_dir) if task_dir else None
         self._state_root = state_root
+        # Per-task, per-server env_vars (config.yaml Agent.mcp_servers), merged LAST
+        # into each server's process env -- upstream's top env tier (acting identity).
+        self._server_env_overrides = {s: dict(v) for s, v in (server_env_overrides or {}).items()}
         self._host = host
         # The env registry is loaded lazily (in up()/require_text_only via the
         # _registry property), so a target can be CONSTRUCTED and inspected
@@ -363,7 +376,16 @@ class DockerEnvStack:
         listen = self._leaser.lease(f"{prefix}.{name.lower()}")
         extra = dict(self._state.env_overrides()) if self._state is not None else {}
         extra.update(self._project_name_overrides())  # <ENV>_PROJECT_NAME for exec-based servers
-        env = _server_env(cfg, port_key, listen, self._container_ports, extra)
+        # Per-task env_vars for THIS server (keyed by server name; injection servers
+        # carry none) are the top tier -- applied last inside _server_env.
+        env = _server_env(
+            cfg,
+            port_key,
+            listen,
+            self._container_ports,
+            extra,
+            self._server_env_overrides.get(name, {}),
+        )
         cmd = _expand_command(cfg, env)
         cwd = base_dir / Path(cfg["path"]).parent
         log_path = str(self._logs_dir() / f"{prefix}_{state_mod.sanitize_name(name)}.log")

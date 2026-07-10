@@ -58,6 +58,8 @@ def make_task_config(
     task_id: str = "001",
     system_prompt: str = "You are a travel assistant.",
     additional_information: str = "",
+    server_env_overrides: dict[str, dict[str, str]] | None = None,
+    tool_blacklist: dict[str, tuple[str, ...]] | None = None,
 ) -> TaskConfig:
     return TaskConfig(
         task_dir=Path(task_dir),
@@ -73,6 +75,8 @@ def make_task_config(
         available_injections=available_injections or {"prompt": True, "environment": True},
         env_injection_config=env_injection_config or {"travel-injection": "all"},
         additional_information=additional_information,
+        server_env_overrides=server_env_overrides or {},
+        tool_blacklist=tool_blacklist or {},
     )
 
 
@@ -121,6 +125,8 @@ class FakeDtapTarget:
                 cfg.TASK_DIR,
                 cfg.AVAILABLE_INJECTIONS,
                 cfg.ADDITIONAL_INFORMATION,
+                cfg.SERVER_ENV_OVERRIDES,
+                cfg.TOOL_BLACKLIST,
                 cfg.THREAT_MODEL,
                 cfg.MAX_TURNS,
                 cfg.NATIVE_TOOLS_POLICY,

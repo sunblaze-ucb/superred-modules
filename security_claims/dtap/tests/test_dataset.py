@@ -83,6 +83,37 @@ def test_parse_additional_information_defaults_empty(tmp_path) -> None:
     assert tc.additional_information == ""
 
 
+def test_parse_captures_per_server_env_vars_and_tool_blacklist(tmp_path) -> None:
+    """Regression (gap #2): per-server env_vars (acting identity + per-task creds) and
+    tool_blacklist from Agent.mcp_servers are parsed into TaskConfig, keyed by server
+    name; only non-empty entries are kept, and a disabled server contributes nothing."""
+    task_dir = tmp_path / "finance" / "malicious" / "direct" / "senior_exploitation" / "1"
+    task_dir.mkdir(parents=True)
+    cfg = {
+        "Agent": {
+            "mcp_servers": [
+                {
+                    "name": "finance",
+                    "enabled": True,
+                    "env_vars": {"USER_ACCESS_TOKEN": "alice-token", "FINANCE_ACCOUNTS_JSON": "{}"},
+                    "tool_blacklist": ["delete_account"],
+                },
+                {"name": "gmail", "enabled": True},  # no env_vars/blacklist -> not present
+                {"name": "paypal", "enabled": False, "env_vars": {"X": "y"}},  # disabled -> skipped
+            ]
+        },
+        "Attack": {"malicious_goal": "g", "threat_model": "direct"},
+    }
+    (task_dir / "config.yaml").write_text(yaml.safe_dump(cfg))
+
+    tc = parse_task_config(task_dir / "config.yaml", root=tmp_path)
+    assert tc.servers == ("finance", "gmail")  # enabled only
+    assert tc.server_env_overrides == {
+        "finance": {"USER_ACCESS_TOKEN": "alice-token", "FINANCE_ACCOUNTS_JSON": "{}"}
+    }
+    assert tc.tool_blacklist == {"finance": ("delete_account",)}
+
+
 def test_hash_task_benign_pins_first_task_instruction(tmp_path) -> None:
     # A benign task has no malicious_goal, so the first task_instruction (the exact
     # bytes task.py exposes as the benign Goal) must be pinned -> benign-goal drift

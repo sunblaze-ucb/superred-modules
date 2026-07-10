@@ -85,6 +85,11 @@ class MCPProxy(Protocol):
         """
         ...
 
+    def set_config_tool_blacklist(self, by_server: dict[str, list[str]]) -> None:
+        """Set the per-task config ``tool_blacklist`` (``{server: [tool, ...]}``):
+        tools hidden from both the agent listing and the tool_catalogue observable."""
+        ...
+
     def set_env_tool_controllables(
         self,
         by_server_tool: dict[str, dict[str, Controllable]],

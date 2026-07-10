@@ -147,8 +147,7 @@ def _is_tool_use_turn(message: Any) -> bool:
     if type(message).__name__ != "AssistantMessage":
         return False
     return any(
-        type(block).__name__ == "ToolUseBlock"
-        for block in getattr(message, "content", []) or []
+        type(block).__name__ == "ToolUseBlock" for block in getattr(message, "content", []) or []
     )
 
 

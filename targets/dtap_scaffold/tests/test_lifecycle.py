@@ -245,6 +245,33 @@ def test_server_env_inherits_parent_environment(monkeypatch):
     assert env["X"] == "y"  # extra overrides win
 
 
+def test_server_env_task_overrides_applied_last(monkeypatch):
+    """Regression (gap #2): the per-task config.yaml env_vars (USER_ACCESS_TOKEN +
+    per-task creds) are upstream's HIGHEST-priority tier -- they must land in the MCP
+    server env AND win over every lower tier (os.environ, mcp.yaml env, ports, the
+    state/project extra). Before the fix they were dropped entirely."""
+    monkeypatch.setenv("USER_ACCESS_TOKEN", "ambient-empty")
+    cfg = {"env": {"USER_ACCESS_TOKEN": "yaml-default", "API": "http://h:${TRAVEL_PORT}"}}
+    overrides = {"USER_ACCESS_TOKEN": "alice-token", "FINANCE_ACCOUNTS_JSON": '{"a": 1}'}
+    env = lc._server_env(
+        cfg, "TRAVEL_MCP_PORT", 12345, {"TRAVEL_PORT": 8080}, {"X": "y"}, overrides
+    )
+    # the per-task identity wins over the ambient os.environ AND the mcp.yaml env
+    assert env["USER_ACCESS_TOKEN"] == "alice-token"
+    # per-task credential lands (was absent entirely before the fix)
+    assert env["FINANCE_ACCOUNTS_JSON"] == '{"a": 1}'
+    # lower tiers still present + unshadowed
+    assert env["X"] == "y"
+    assert env["API"] == "http://h:8080"
+
+
+def test_server_env_no_task_overrides_is_unchanged(monkeypatch):
+    """Omitting task_overrides leaves the env exactly as the lower tiers built it."""
+    cfg = {"env": {"K": "v"}}
+    env = lc._server_env(cfg, "P", 1, {}, {"X": "y"})
+    assert env["K"] == "v" and env["X"] == "y"
+
+
 def test_expand_command_expands_braced_and_bare_vars():
     cfg = {"command": ["run", "--port", "${PORT}", "-h", "$HOST"]}
     out = lc._expand_command(cfg, {"PORT": "7000", "HOST": "localhost"})
@@ -353,6 +380,30 @@ async def test_spawned_server_env_carries_project_name(patched, tmp_path):
     spawned_env = patched["spawned"][0]["env"]
     assert "TRAVELENV_PROJECT_NAME" in spawned_env
     assert spawned_env["TRAVELENV_PROJECT_NAME"].endswith("_travelenv")
+
+
+async def test_up_handle_exposes_project_names(patched, tmp_path):
+    """Regression (gap #1, stack level): EnvHandle.project_names is populated so the
+    target can surface it (ENV_PROJECT_NAMES) to the OOB judge subprocess."""
+    handle = await _stack(tmp_path).up()
+    assert "TRAVELENV_PROJECT_NAME" in handle.project_names
+    assert handle.project_names["TRAVELENV_PROJECT_NAME"].endswith("_travelenv")
+
+
+async def test_spawned_server_env_carries_per_task_env_vars(patched, tmp_path):
+    """Regression (gap #2): per-task, per-server env_vars reach the spawned MCP server
+    process (keyed by server name), so its acting identity/creds match the seeded
+    state the judge verifies. Before the fix they were dropped entirely."""
+    stack = lc.DockerEnvStack(
+        active_servers=("travel-suite",),
+        injection_config=None,
+        task_dir=None,
+        state_root=str(tmp_path / "state"),
+        server_env_overrides={"travel-suite": {"USER_ACCESS_TOKEN": "alice-token"}},
+    )
+    await stack.up()
+    spawned_env = patched["spawned"][0]["env"]
+    assert spawned_env["USER_ACCESS_TOKEN"] == "alice-token"
 
 
 async def test_up_is_idempotent(patched, tmp_path):

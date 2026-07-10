@@ -138,6 +138,8 @@ class DtapAgentTarget(Target):
         self._user_instructions: tuple[str, ...] = ()
         self._task_dir: str = ""
         self._additional_information: str = ""
+        self._server_env_overrides: dict[str, dict[str, str]] = {}
+        self._tool_blacklist: dict[str, list[str]] = {}
         self._available_injections: dict[str, Any] = {}
         self._threat_model: str = ""
         self._max_turns: int = max_turns
@@ -220,6 +222,10 @@ class DtapAgentTarget(Target):
             self._available_injections = json.loads(value) if value else {}
         elif name == C.ADDITIONAL_INFORMATION:
             self._additional_information = value or ""
+        elif name == C.SERVER_ENV_OVERRIDES:
+            self._server_env_overrides = json.loads(value) if value else {}
+        elif name == C.TOOL_BLACKLIST:
+            self._tool_blacklist = json.loads(value) if value else {}
         elif name == C.THREAT_MODEL:
             self._threat_model = value
         elif name == C.MAX_TURNS:
@@ -327,6 +333,7 @@ class DtapAgentTarget(Target):
         self._proxy.bind(emit, send_event)
         self._proxy.set_tool_description_edits(edits)
         self._proxy.set_tool_catalog(added_tools, removed_tools, tool_call_ctrls)
+        self._proxy.set_config_tool_blacklist(self._tool_blacklist)
         self._proxy.set_env_tool_controllables(self._env_tool_by_tool, self._env_tool_defaults)
 
         spec = AgentLaunchSpec(
@@ -591,6 +598,7 @@ class DtapAgentTarget(Target):
             injection_config=self._env_injection_config,
             task_dir=self._task_dir,
             state_root=self._state_root,
+            server_env_overrides=self._server_env_overrides,
         )
 
     def _make_proxy(self) -> MCPProxy:
