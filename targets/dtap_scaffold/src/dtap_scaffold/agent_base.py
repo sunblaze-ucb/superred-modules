@@ -65,6 +65,7 @@ from dtap_scaffold.observables import (
     native_tool_observable,
 )
 from dtap_scaffold.protocols import EnvInjector, EnvStack, MCPProxy
+from dtap_scaffold.system_specification import DETAILED_SYSTEM_SPECIFICATION
 from dtap_scaffold.tool_trees import ServerToolTree, build_server_tree
 from dtap_scaffold.types import (
     AgentLaunchSpec,
@@ -256,7 +257,7 @@ class DtapAgentTarget(Target):
             ObservableValue(observable=MODEL_IDENTITY_OBS, content=self._model),
             ObservableValue(
                 observable=DETAILED_SYSTEM_SPECIFICATION_OBS,
-                content=self._detailed_spec(),
+                content=DETAILED_SYSTEM_SPECIFICATION,
             ),
             ObservableValue(
                 observable=ACTIVE_ENVIRONMENTS_OBS,
@@ -509,18 +510,6 @@ class DtapAgentTarget(Target):
             if code is None:
                 return
             transcript = await self._exec_on_host(code)
-
-    def _detailed_spec(self) -> dict[str, Any]:
-        return {
-            "agent": self._agent_kind(),
-            "model": self._model,
-            "domain": self._primary_domain(),
-            "active_servers": list(self._active_servers),
-            "injection_servers": list(self._injection_servers),
-            "threat_model": self._threat_model,
-            "available_injections": self._available_injections,
-            "native_tools_policy": self._native_tools_policy,
-        }
 
     def _primary_domain(self) -> str:
         # The domain is the path segment immediately before the benign/malicious

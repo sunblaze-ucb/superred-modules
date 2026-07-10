@@ -253,10 +253,15 @@ def test_observable_contents():
         "injection_servers": ["travel-injection"],
     }
     assert obs["max_turns"] == str(t._max_turns)
+    # detailed_system_specification is a STATIC leaked-design brief (markdown), not a
+    # per-run dict: it describes HOW the target works, and must NOT restate per-run
+    # values that have their own observables (the model id, the active server list).
     spec = obs["detailed_system_specification"]
-    assert isinstance(spec, dict)
-    assert spec["model"] == "openai/gpt-4o-2024-05-13"
-    assert spec["active_servers"] == ["travel-suite"]
+    assert isinstance(spec, str)
+    assert "Detailed System Specification" in spec
+    assert "MCP proxy" in spec and "handle_tool_call" in spec  # architecture + wiring
+    assert "openai/gpt-4o-2024-05-13" not in spec  # model has its own observable
+    assert "travel-suite" not in spec  # active servers have their own observable
 
 
 def test_all_config_and_query_slots_roundtrip_and_reject_unknown():

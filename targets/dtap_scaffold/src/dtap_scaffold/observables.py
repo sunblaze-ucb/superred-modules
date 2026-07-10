@@ -40,9 +40,15 @@ DETAILED_SYSTEM_SPECIFICATION_OBS: Observable = Observable(
     name="detailed_system_specification",
     security_domain=DETAILED_SYSTEM_SPECIFICATION_TAG,
     description=(
-        "A free-text design brief of this DTAP target: the agent runtime, the "
-        "active environments, and how the run is wired. A leaked-documentation "
-        "intelligence surface (read-only)."
+        "A leaked, free-text design and threat-intelligence brief on this DTAP "
+        "target: its purpose, the Dockerized-agent + MCP-proxy + env-stack "
+        "architecture, the run/injection control flow, and the injection wiring "
+        "(with code), each at abstract / specific / examples depth. Static "
+        "intelligence an attacker reads to understand how the target works and "
+        "operates and craft stronger attacks; read-only, never a controllable. The "
+        "model, the active environments, and the per-tool catalogue are NOT restated "
+        "here (they have their own observables); this describes HOW those surfaces "
+        "work, not their per-run values."
     ),
     observable_type="text",
 )
