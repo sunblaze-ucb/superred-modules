@@ -257,9 +257,11 @@ def run_dtap_judge(
             judges reach the right env.
         project_names: ``{<ENV>_PROJECT_NAME: compose-project}`` for this instance;
             each is exported into the judge subprocess so EXEC-based judges
-            (code/research/os-filesystem) resolve their container name instead of
-            raising ``"..._PROJECT_NAME is not set"``. HTTP-port judges use
-            ``env_ports``; both are supplied so either judge style works.
+            (code, research) resolve their container name instead of raising
+            ``"..._PROJECT_NAME is not set"``. HTTP-port judges (os-filesystem,
+            travel, ...) use ``env_ports``; both are supplied so either style works.
+            (os-filesystem's SERVER/seeder consume ``<ENV>_PROJECT_NAME`` via
+            setup.sh, but its JUDGE resolves the env over HTTP -- see ASSUMPTIONS A.)
         judge_model: Judge model; defaults to :data:`DEFAULT_JUDGE_MODEL`.
         judge_api_base: Judge LLM base URL (``OPENAI_BASE_URL``); left to the
             ambient env when ``None``.
@@ -324,7 +326,7 @@ def _build_child_env(
     child_env = dict(os.environ)
     for var, port in (env_ports or {}).items():
         child_env[str(var)] = str(port)
-    # Exec-based verifiable judges (code/research/os-filesystem) resolve their
+    # Exec-based verifiable judges (code, research) resolve their
     # container from <ENV>_PROJECT_NAME; overlay them like the ports so those
     # judges run instead of raising "..._PROJECT_NAME is not set".
     for var, project in (project_names or {}).items():

@@ -40,7 +40,12 @@ Deviations specific to those hooks are below.
   `text`/`tool_use`/`tool_result`/`thinking`) reproduce
   `ClaudeSDKTraceProcessor`. The serializers use class-name duck typing rather
   than `isinstance` against the SDK types, so they are import-safe and unit-tested
-  on the host without the SDK; the field names and shapes are identical.
+  on the host without the SDK; the field names and shapes are identical, with one
+  deliberate trim: the `ResultMessage` serializer keeps `subtype` / `result` /
+  `is_error` / `total_cost_usd` and omits upstream's `cost_usd` / `duration_ms` /
+  `duration_api_ms`, because the converter consumes only `result` (the final text)
+  and none of the timing/cost fields -- so the omission is invisible to
+  trajectory-facing behaviour and the judge.
 - **A.3 Trajectory conversion mirrors `ClaudeSDKTrajectoryConverter`.** The
   DTAP-schema `trajectory_json` (`task_info` / `traj_info` / `trajectory`, with
   `user` / `agent` / `tool` steps, `send_message_to_user` for text blocks, and the

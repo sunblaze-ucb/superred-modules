@@ -55,8 +55,10 @@ select = ["E", "F", "I", "N", "W", "UP"]
 strict = true
 python_version = "3.13"
 
-# dtap_scaffold ships no py.typed marker yet; yaml has no inline types; the two
-# concrete target packages are lazy-imported (not a hard dependency of this claim).
+# dtap_scaffold + the two concrete target packages are lazy-imported (not hard deps
+# of this claim, so not installed for its type-check); yaml/huggingface_hub have no
+# inline types. (dtap_scaffold DOES ship py.typed; it is listed only because it is
+# not a declared dependency here.)
 [[tool.mypy.overrides]]
 module = [
     "dtap_scaffold.*",

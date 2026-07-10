@@ -264,3 +264,39 @@ scoping the whole server (`{tools.<server>}`) reproduces the original behavior.
   conservative whole-server grant. So drift never silently under-scopes a tool
   (it errs toward the broadest tag), and the mechanism is robust to live tool-list
   changes.
+
+## H. Superred-afforded catalogue surfaces beyond DTAP's four vectors
+
+DTAP enumerates four injection vectors (prompt, tool-description, skill,
+environment). The port exposes three additional attacker-facing surfaces that DTAP
+does not itself enumerate; each is additive (a passthrough optimizer that declines
+everything reproduces the unattacked upstream run) and superred-invented, recorded
+here for auditability:
+
+- **H.1 `attacker_context` observable (`ATTACKER_CONTEXT_TAG`, under `system`).**
+  DTAP's `Attack.additional_information` (per-task ground-truth an upstream
+  red-teamer is handed: the victim inbox an injected email must target, the
+  whitelisted attacker sender accounts) is surfaced as a static, read-only
+  Observable so an in-scope optimizer can read those routing facts. It is scoped on
+  its OWN tag (not `detailed_system_specification`) so an experiment can grant the
+  per-task briefing separately from the static design brief. It is NOT folded into
+  the `Goal` (the `malicious_goal` stays byte-identical; golden-hash preserved), and
+  it is read-only -- never a Controllable. Empty for tasks that carry no
+  `additional_information` (238 crm malicious configs carry it, 149 indirect).
+
+- **H.2 Tool-catalogue ADD / REMOVE (`TOOL_CATALOGUE_ADD_TAG` /
+  `TOOL_CATALOGUE_REMOVE_TAG`, under `tool_catalogue`).** Alongside DTAP's
+  tool-DESCRIPTION edit vector, the port lets an in-scope attacker register a fake
+  tool (`tool_add`) or drop a tool from the listing the agent reads (`tool_remove`).
+  A fake tool has no backend: when the agent calls it, the proxy fires a per-call
+  PostCall tagged at `tool_catalogue_add`, so the same attacker that added it
+  supplies the return (static `fake_return` fallback). `tool_remove` affects only
+  the LISTING the agent reads (a normal agent never calls a tool absent from its
+  listing); it is not a call-time block. These are additive and firing them is a
+  choice -- the passthrough baseline registers nothing and drops nothing.
+
+- **H.3 Not enforced: config `tool_blacklist`.** The per-server `tool_blacklist`
+  in `Agent.mcp_servers` is deliberately NOT honoured: upstream SDK 0.2.12 parses
+  but never consumes it (no `.py` references; `MCPServerConfig` has no such field),
+  so enforcing it would shrink the agent's tool surface versus the unattacked
+  upstream run. The port therefore ignores it, exactly as upstream does.

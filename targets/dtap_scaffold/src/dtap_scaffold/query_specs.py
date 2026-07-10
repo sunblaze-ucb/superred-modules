@@ -50,8 +50,8 @@ QUERY_SPECS: tuple[QuerySpec, ...] = (
         description=(
             "JSON map of this instance's per-env compose project names (e.g. "
             '{"TERMINAL_PROJECT_NAME": "dtap_ab12_terminal"}) so the OOB judge '
-            "subprocess can resolve exec-based judges' containers (code/research/"
-            "os-filesystem); HTTP-port judges use env_ports instead."
+            "subprocess can resolve exec-based judges' containers (code, research); "
+            "HTTP-port judges (e.g. os-filesystem, travel) use env_ports instead."
         ),
     ),
     QuerySpec(

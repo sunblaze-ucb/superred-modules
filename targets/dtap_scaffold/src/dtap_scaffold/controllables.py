@@ -136,10 +136,10 @@ TOOL_REMOVE_CTRL: Controllable = Controllable(
     security_domain=TOOL_CATALOGUE_REMOVE_TAG,
     description=(
         "Tool-catalogue REMOVE vector. Drop an existing MCP tool from the "
-        "catalogue the agent reads so it can no longer select or call it (fired "
-        "once, PreCall, applied in the proxy list_tools). JSON value: "
-        '{"server": str, "name": str}, or a list of such (or {"server": str, '
-        '"names": [str, ...]}). Declining removes nothing.'
+        "catalogue the agent READS, so it no longer selects it (fired once, PreCall, "
+        "applied in the proxy list_tools -- a normal agent never calls a tool absent "
+        'from its listing). JSON value: {"server": str, "name": str}, or a list of '
+        'such (or {"server": str, "names": [str, ...]}). Declining removes nothing.'
     ),
     value_type="json",
 )

@@ -69,6 +69,14 @@ re-expressing one per-task config as one `Task`. The scoring predicates
   undecidable verdict as a failure (`eval/task_runner.py:387` tests
   `task_success is False`, not `not task_success`). A benign task's naturally-
   `None` `attack_success` is NOT an error: only the deciding metric is checked.
+  There is a SECOND un-evaluable shape: upstream `run_judge` wraps each
+  `eval_task`/`eval_attack` in its own `try/except` and SWALLOWS an exception into
+  `success=False` + an `"Error running eval_*: ..."` message with the top-level
+  `error` left `None` (`utils/judge_helpers.py`). That `False` is indistinguishable
+  from a genuine "attack blocked" and would silently mis-score. `evaluate`
+  therefore also treats a deciding-metric message beginning with `"Error running
+  eval"` as un-evaluable and raises. (The prefix is the exact SDK-0.2.12 wording;
+  an SDK bump is a guard-review trigger.)
 
 ## C. Transport & scoring shape
 
@@ -83,10 +91,15 @@ re-expressing one per-task config as one `Task`. The scoring predicates
   sub-score (unlike the ASB claim's `memory_found`).
 - **C.3 Target-agnostic discovery.** The `Task` binds to the base
   `superred.core.interfaces.target.Target`, not a concrete DTAP target. It detects
-  DTAP compatibility by config-slot presence
-  (`REQUIRED_CONFIG_SLOTS = {active_mcp_servers, task_dir, user_prompt}`); a target
-  missing those raises `NotApplicable` (the Controller skips it) instead of
-  crashing, so the claim composes with non-DTAP targets without error.
+  DTAP compatibility by config-slot presence: `REQUIRED_CONFIG_SLOTS` is the FULL
+  set `configure_target` writes (currently `active_mcp_servers`,
+  `env_injection_config`, `system_prompt`, `user_prompt`, `task_dir`,
+  `available_injections`, `additional_information`, `server_env_overrides`,
+  `threat_model` -- see `task.py`, authoritative). A target missing any of them
+  raises `NotApplicable` (the Controller skips it) instead of crashing on a later
+  `set_config`, so the claim composes with non-DTAP targets without error. (The
+  gate deliberately equals the write-set, so it grows with it; the dedicated
+  `test_required_slots_constant` pins the exact set.)
 
 ## D. Granularity & scope
 
