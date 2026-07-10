@@ -267,6 +267,14 @@ def test_server_env_task_overrides_applied_last(monkeypatch):
     assert env["API"] == "http://h:8080"
 
 
+def test_server_env_empty_task_override_does_not_shadow_lower_tier():
+    """The apply-side truthy filter, pinned independently of the parse-side one: an
+    EMPTY task override must NOT overwrite a lower tier (upstream mcp_helpers applies
+    only `if env_val`). Deleting the `if value:` guard in _server_env fails this."""
+    env = lc._server_env({"env": {}}, "P", 1, {}, {"K": "kept"}, {"K": ""})
+    assert env["K"] == "kept"  # the empty override did not shadow the state/extra tier
+
+
 def test_server_env_no_task_overrides_is_unchanged(monkeypatch):
     """Omitting task_overrides leaves the env exactly as the lower tiers built it."""
     cfg = {"env": {"K": "v"}}
