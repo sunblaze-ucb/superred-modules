@@ -202,20 +202,27 @@ def _write_skill_md(path: str, skill: dict[str, Any]) -> None:
     never silently dropped -- previously this writer was create-only and clobbered
     append/insert-mode skill injections.
     """
+    # errors="replace" on every write: attacker content may contain a lone UTF-16
+    # surrogate (a valid str, but not utf-8 encodable); replace it rather than let
+    # handle.write raise UnicodeEncodeError host-side and abort the task.
     content = str(skill.get("content", "") or "")
     mode = skill.get("mode", "create")
     if mode == "append" and os.path.exists(path):
-        with open(path, "a", encoding="utf-8") as handle:
+        with open(path, "a", encoding="utf-8", errors="replace") as handle:
             handle.write("\n" + content)
     elif mode == "insert" and os.path.exists(path):
-        row = int(skill.get("row", 1) or 1)
-        lines = open(path, encoding="utf-8").read().splitlines()
+        try:
+            row = int(skill.get("row", 1) or 1)
+        except (TypeError, ValueError, OverflowError):
+            row = 1  # non-numeric / inf attacker row -> default, not a host-side crash
+
+        lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
         idx = max(0, min(len(lines), row - 1))
         lines.insert(idx, content)
-        with open(path, "w", encoding="utf-8") as handle:
+        with open(path, "w", encoding="utf-8", errors="replace") as handle:
             handle.write("\n".join(lines))
     else:  # create / overwrite
-        with open(path, "w", encoding="utf-8") as handle:
+        with open(path, "w", encoding="utf-8", errors="replace") as handle:
             handle.write(content)
 
 
@@ -240,10 +247,19 @@ def write_episode_inputs(
     if spec.skills:
         skills_container = CONTAINER_SKILLS
         for skill in spec.skills:
-            name = str(skill.get("name") or "skill")
+            # Confine the attacker-controlled skill name to a safe basename under the
+            # skills dir (no traversal, no null byte) and skip any skill that still cannot
+            # be materialized, rather than crashing the whole task host-side before Docker.
+            raw = str(skill.get("name") or "skill").replace("\\", "/")
+            name = os.path.basename(raw).replace("\x00", "").strip()
+            if name in ("", ".", ".."):
+                continue
             skill_dir = os.path.join(state_dir, "skills", name)
-            os.makedirs(skill_dir, exist_ok=True)
-            _write_skill_md(os.path.join(skill_dir, "SKILL.md"), skill)
+            try:
+                os.makedirs(skill_dir, exist_ok=True)
+                _write_skill_md(os.path.join(skill_dir, "SKILL.md"), skill)
+            except (OSError, ValueError):
+                continue
 
     config = build_openclaw_config(spec, provider_api=provider_api, skills_dir=skills_container)
     config_host = os.path.join(state_dir, _profile_config_rel(profile))
@@ -252,7 +268,9 @@ def write_episode_inputs(
         json.dump(config, handle, indent=2)
 
     agents_host = os.path.join(workspace_host, "AGENTS.md")
-    with open(agents_host, "w", encoding="utf-8") as handle:
+    # errors="replace": an attacker system_prompt may hold a lone surrogate (utf-8
+    # unencodable); replace it rather than crash the host-side write and abort the task.
+    with open(agents_host, "w", encoding="utf-8", errors="replace") as handle:
         handle.write(build_agents_md(spec))
 
     task_host = os.path.join(state_dir, "task.json")

@@ -204,6 +204,58 @@ def test_write_episode_inputs_skill_insert_mode(tmp_path) -> None:
     assert md == "L1\nX\nL2"
 
 
+def test_write_episode_inputs_skill_malformed_row_does_not_crash(tmp_path) -> None:
+    """A non-numeric attacker skill ``row`` (list/dict) must not crash host-side before
+    Docker: int(row) is defensive (defaults to 1), so the second same-name skill still
+    materializes rather than aborting the whole task with a TypeError."""
+    spec = _spec(
+        skills=(
+            {"name": "s", "content": "L1\nL2", "mode": "create"},
+            {"name": "s", "content": "X", "mode": "insert", "row": [1, 2]},  # non-numeric
+        )
+    )
+    driver.write_episode_inputs(  # must not raise
+        spec, str(tmp_path / "state"), session_id="s", profile="p", thinking="low"
+    )
+    md = (tmp_path / "state" / "skills" / "s" / "SKILL.md").read_text()
+    assert md == "X\nL1\nL2"  # row defaulted to 1 -> inserted at the top
+
+
+def test_write_episode_inputs_skill_name_confined(tmp_path) -> None:
+    """A traversal / absolute / null-byte skill NAME is confined to a basename under
+    skills/ and never escapes state_dir or crashes host-side before Docker (a null-byte
+    name previously made os.makedirs raise ValueError straight out of run())."""
+    spec = _spec(
+        skills=(
+            {"name": "../../etc/evil", "content": "a", "mode": "create"},
+            {"name": "/etc/passwd", "content": "b", "mode": "create"},
+            {"name": "x\x00y", "content": "c", "mode": "create"},
+        )
+    )
+    driver.write_episode_inputs(  # must not raise
+        spec, str(tmp_path / "state"), session_id="s", profile="p", thinking="off"
+    )
+    skills_root = tmp_path / "state" / "skills"
+    assert sorted(p.name for p in skills_root.iterdir()) == ["evil", "passwd", "xy"]
+    assert not (tmp_path / "etc").exists()  # nothing escaped state_dir
+
+
+def test_write_episode_inputs_tolerates_unencodable_text(tmp_path) -> None:
+    """A lone UTF-16 surrogate in the attacker system_prompt / skill content is a valid
+    Python str but not utf-8 encodable; the host-side writes use errors='replace' so they
+    degrade instead of raising UnicodeEncodeError out of run() and aborting the task."""
+    spec = _spec(
+        system_prompt="\ud800EVIL",
+        skills=({"name": "s", "content": "\ud800skill", "mode": "create"},),
+    )
+    driver.write_episode_inputs(  # must not raise
+        spec, str(tmp_path / "state"), session_id="s", profile="p", thinking="off"
+    )
+    # both raw text files were written (surrogate replaced), not crashed
+    assert (tmp_path / "state" / "workspace" / "AGENTS.md").exists()
+    assert (tmp_path / "state" / "skills" / "s" / "SKILL.md").exists()
+
+
 # --- run_openclaw_container (Docker boundary monkeypatched) -----------------
 
 

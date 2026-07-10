@@ -237,6 +237,151 @@ def test_convert_skips_malformed_lines(tmp_path) -> None:
     assert art.agent_responses == ("answer",)
 
 
+def test_convert_tolerates_invalid_utf8(tmp_path) -> None:
+    """A trace truncated mid-multibyte-char must not raise UnicodeDecodeError.
+
+    The whole-episode timeout backstop returns the partial trace on disk BY DESIGN so
+    a state-mutating attack is still judged; a final byte that truncates a UTF-8
+    sequence must degrade gracefully (errors='replace'), not crash the task.
+    """
+    f = tmp_path / "truncated.jsonl"
+    good = json.dumps({"type": "prompt.submitted", "data": {"prompt": "hi"}}).encode() + b"\n"
+    # last bytes truncate a multibyte char (first byte 0xc3 of 'e-acute')
+    f.write_bytes(good + b'{"type":"model.completed","data":{"t":"\xc3')
+    art = traj.convert(str(f), mcp_servers=MCP_SERVERS)  # must not raise
+    assert isinstance(art.final_response, str)
+
+
+# All TRUTHY non-dicts: each would have crashed the pre-fix `data = entry.get("data") or {}`
+# (which coerced only FALSY values), so every param exercises the regression.
+@pytest.mark.parametrize("bad_data", ["a-string", 5, True, [1, 2]])
+def test_parse_entries_tolerates_non_dict_data(bad_data) -> None:
+    """A handled event whose ``data`` is not a dict must not crash (coerced to {}):
+    the event yields nothing usable rather than raising AttributeError out of run()."""
+    entries = [{"type": "prompt.submitted", "data": bad_data}]
+    art = traj.parse_entries(entries, mcp_servers=MCP_SERVERS)  # must not raise
+    assert art.final_response == ""
+
+
+@pytest.mark.parametrize(
+    "entries",
+    [
+        # assistant content that is a truthy non-list (int) -> was TypeError (not iterable)
+        [
+            {
+                "type": "model.completed",
+                "data": {"messagesSnapshot": [{"role": "assistant", "content": 5}]},
+            }
+        ],
+        # toolCall arguments that are a non-dict -> _format_action did arguments.items()
+        [
+            {
+                "type": "model.completed",
+                "data": {
+                    "messagesSnapshot": [
+                        {
+                            "role": "assistant",
+                            "content": [
+                                {
+                                    "type": "toolCall",
+                                    "id": "c1",
+                                    "name": "exec",
+                                    "arguments": "notadict",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            }
+        ],
+        # a non-str prompt -> `prompt not in seen_users` hashed an unhashable list
+        [{"type": "prompt.submitted", "data": {"prompt": ["a", "b"]}}],
+    ],
+)
+def test_parse_entries_tolerates_garbled_leaf_fields(entries) -> None:
+    """Leaf fields (assistant content, toolCall arguments, prompt) of the wrong type must
+    not raise out of parse_entries -- the guards skip them fine-grained."""
+    art = traj.parse_entries(entries, mcp_servers=MCP_SERVERS)  # must not raise
+    assert isinstance(art.final_response, str)
+
+
+def test_convert_tolerates_deeply_nested_line(tmp_path) -> None:
+    """A deeply-nested JSON line makes json.loads raise RecursionError inside _read_entries
+    (which runs BEFORE convert()'s parse guard); it must be skipped, not raise out of convert()."""
+    f = tmp_path / "nested.jsonl"
+    f.write_text(
+        "[" * 100000 + "\n" + json.dumps({"type": "prompt.submitted", "data": {"prompt": "hi"}})
+    )
+    art = traj.convert(str(f), mcp_servers=MCP_SERVERS)  # must not raise
+    assert isinstance(art.final_response, str)
+
+
+def test_convert_tolerates_oversized_int_line(tmp_path) -> None:
+    """A line with a >4300-digit integer makes json.loads raise a bare ValueError (NOT a
+    JSONDecodeError) inside _read_entries, before convert()'s parse guard; it must be
+    skipped, not raise out of convert()."""
+    f = tmp_path / "bigint.jsonl"
+    f.write_text('{"type":"session.ended","data":{"n":' + "1" * 4301 + "}}")
+    art = traj.convert(str(f), mcp_servers=MCP_SERVERS)  # must not raise
+    assert isinstance(art.final_response, str)
+
+
+def test_convert_tolerates_dangling_symlink_and_keeps_real_trace(tmp_path) -> None:
+    """A dangling *.jsonl symlink in the trace tree must not crash convert() (getmtime
+    FileNotFoundError, previously OUTSIDE the backstop); a real trace beside it is still
+    picked -- the broken link is filtered, not merely swallowed to an empty artifact."""
+    import os
+
+    traces = tmp_path / "traces"
+    traces.mkdir()
+    (traces / "real.jsonl").write_text(
+        json.dumps({"type": "prompt.submitted", "data": {"prompt": "hi"}})
+        + "\n"
+        + json.dumps(
+            {
+                "type": "model.completed",
+                "data": {
+                    "messagesSnapshot": [
+                        {"role": "assistant", "content": [{"type": "text", "text": "answer"}]}
+                    ]
+                },
+            }
+        )
+    )
+    os.symlink(str(tmp_path / "nonexistent"), str(traces / "broken.jsonl"))
+    art = traj.convert(str(tmp_path), mcp_servers=MCP_SERVERS)  # must not raise
+    assert art.final_response == "answer"  # the real trace was picked, not lost to empty
+
+
+def test_parse_tool_output_keeps_oversized_int_payload() -> None:
+    """A tool-output payload that is a >4300-digit int (a garbled env-tool return) makes
+    json.loads raise a bare ValueError; it is kept as the raw string, not raised, so one
+    bad output does not sink the whole trajectory via convert()'s backstop."""
+    big = "1" * 4301
+    assert traj._parse_tool_output(big) == big
+
+
+def test_parse_entries_tolerates_garbled_snapshot() -> None:
+    """A non-dict messagesSnapshot element and a null assistant ``content`` must not
+    crash ``_process_snapshot`` (previously AttributeError / TypeError out of run());
+    the well-formed message in the same snapshot still parses."""
+    entries = [
+        {"type": "prompt.submitted", "data": {"prompt": "q"}},
+        {
+            "type": "model.completed",
+            "data": {
+                "messagesSnapshot": [
+                    "not-a-dict-message",
+                    {"role": "assistant", "content": None},
+                    {"role": "assistant", "content": [{"type": "text", "text": "ok"}]},
+                ]
+            },
+        },
+    ]
+    art = traj.parse_entries(entries, mcp_servers=MCP_SERVERS)  # must not raise
+    assert art.final_response == "ok"
+
+
 def test_parse_entries_assistant_texts_fallback() -> None:
     # When a model.completed has no messagesSnapshot, fall back to assistantTexts.
     entries = [

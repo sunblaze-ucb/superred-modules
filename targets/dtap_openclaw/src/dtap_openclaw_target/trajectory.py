@@ -200,7 +200,10 @@ def _parse_tool_output(payload: Any) -> Any:
     if isinstance(payload, str):
         try:
             return json.loads(payload)
-        except json.JSONDecodeError:
+        except (ValueError, RecursionError):
+            # Keep a payload that is not clean JSON as the raw string (bad JSON, an
+            # oversized int -> bare ValueError, or deeply-nested -> RecursionError), so
+            # one garbled tool output does not sink the whole trajectory via the backstop.
             return payload
     return payload
 
@@ -226,6 +229,8 @@ def _process_snapshot(
     """Append steps from one (cumulative) ``messagesSnapshot``; dedup across calls."""
     tool_results: dict[str, dict[str, Any]] = {}
     for msg in messages:
+        if not isinstance(msg, dict):
+            continue
         if msg.get("role") == "toolResult":
             call_id = msg.get("toolCallId")
             if call_id:
@@ -233,6 +238,8 @@ def _process_snapshot(
 
     last_text: str | None = None
     for msg in messages:
+        if not isinstance(msg, dict):
+            continue
         role = msg.get("role")
         if role == "user":
             texts = _extract_texts(msg.get("content", []))
@@ -244,7 +251,8 @@ def _process_snapshot(
             seen_users.add(user_text)
             builder.user(user_text)
         elif role == "assistant":
-            for block in msg.get("content", []):
+            content = msg.get("content")
+            for block in content if isinstance(content, list) else []:
                 if not isinstance(block, dict):
                     continue
                 btype = block.get("type")
@@ -266,7 +274,9 @@ def _process_snapshot(
                     if call_id:
                         seen_tool_ids.add(call_id)
                     tool_name = block.get("name", "unknown")
-                    arguments = block.get("arguments", {}) or {}
+                    arguments = block.get("arguments")
+                    if not isinstance(arguments, dict):
+                        arguments = {}
                     server = resolve_server(tool_name, mcp_servers) or _NATIVE_SERVER
                     builder.agent_action(
                         _format_action(tool_name, arguments),
@@ -319,7 +329,9 @@ def parse_entries(
         if not isinstance(entry, dict):
             continue
         event_type = entry.get("type")
-        data = entry.get("data") or {}
+        data = entry.get("data")
+        if not isinstance(data, dict):
+            data = {}
 
         if event_type == "prompt.submitted":
             if turn_started:
@@ -327,7 +339,7 @@ def parse_entries(
             turn_started = True
             current_turn_text = None
             prompt = data.get("prompt")
-            if prompt and prompt not in seen_users:
+            if isinstance(prompt, str) and prompt and prompt not in seen_users:
                 seen_users.add(prompt)
                 builder.user(prompt)
 
@@ -419,6 +431,9 @@ def _newest_jsonl(root: str) -> str | None:
         for name in files:
             if name.endswith(".jsonl"):
                 candidates.append(os.path.join(dirpath, name))
+    # Drop dangling symlinks (isfile follows the link, False if broken) so a planted
+    # broken *.jsonl neither crashes getmtime nor hides a real trace beside it.
+    candidates = [c for c in candidates if os.path.isfile(c)]
     if not candidates:
         return None
     candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
@@ -427,14 +442,17 @@ def _newest_jsonl(root: str) -> str | None:
 
 def _read_entries(path: str) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
-    with open(path, encoding="utf-8") as handle:
+    with open(path, encoding="utf-8", errors="replace") as handle:
         for line in handle:
             line = line.strip()
             if not line:
                 continue
             try:
                 obj = json.loads(line)
-            except json.JSONDecodeError:
+            except (ValueError, RecursionError):
+                # Skip any unparseable line before convert()'s parse-level guard: bad JSON
+                # (JSONDecodeError, a ValueError), an oversized int literal (bare
+                # ValueError, >4300 digits), or deeply-nested JSON (RecursionError).
                 continue
             if isinstance(obj, dict):
                 entries.append(obj)
@@ -454,10 +472,19 @@ def convert(
     degrades gracefully to an empty artifact (never raises) -- the run still
     produces a (vacuous) result rather than crashing the controller.
     """
-    path = output if os.path.isfile(output) else find_session_log(output)
-    if not path or not os.path.exists(path):
-        return TrajectoryArtifact(trajectory_json=_TrajBuilder(metadata or {}).data)
-    entries = _read_entries(path)
-    if not entries:
-        return TrajectoryArtifact(trajectory_json=_TrajBuilder(metadata or {}).data)
-    return parse_entries(entries, mcp_servers=mcp_servers, metadata=metadata)
+    empty = TrajectoryArtifact(trajectory_json=_TrajBuilder(metadata or {}).data)
+    try:
+        # Locate + read inside the guard too: a dangling symlink (getmtime
+        # FileNotFoundError) or an unreadable file (PermissionError) must also degrade to
+        # the empty artifact, honoring the docstring's "unreadable trace never raises".
+        path = output if os.path.isfile(output) else find_session_log(output)
+        if not path or not os.path.exists(path):
+            return empty
+        entries = _read_entries(path)
+        if not entries:
+            return empty
+        return parse_entries(entries, mcp_servers=mcp_servers, metadata=metadata)
+    except Exception:  # noqa: BLE001 - never raise: a garbled / partial / unreadable
+        # trace degrades to an empty artifact so a state-mutating attack is still judged
+        # on live env state, not lost as a task-error (mirrors upstream agent.py).
+        return empty
