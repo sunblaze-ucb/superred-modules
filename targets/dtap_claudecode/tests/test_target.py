@@ -143,6 +143,26 @@ def test_read_result_error_and_bad_duration(tmp_path):
     assert final == "" and err == "boom" and dur == 0.0
 
 
+def test_read_result_garbled_degrades(tmp_path):
+    """result.json sits on the /dtap bind mount the agent shares; with native tools
+    default-enabled the attacker-influenced agent can plant arbitrary bytes there (and the
+    driver's final overwrite can lose the teardown race), so the reader must tolerate a
+    hostile file. Each shape -- a non-dict top level, invalid UTF-8, an oversized int, and
+    deeply-nested JSON -- degrades to empty outputs rather than raise out of run() and
+    abandon the whole task (each would raise against the pre-hardening reader)."""
+    path = os.path.join(str(tmp_path), RESULT_FILENAME)
+    for raw in (
+        b"[1, 2, 3]",  # non-dict list -> pre-guard data.get() would AttributeError
+        b"42",  # non-dict scalar
+        b"\xff\xfe\x00bad",  # invalid utf-8 -> UnicodeDecodeError (a ValueError)
+        b"1" + b"0" * 4400,  # 4401-digit int -> bare ValueError (int_max_str_digits limit)
+        b"[" * 100000,  # deeply-nested -> RecursionError
+    ):
+        with open(path, "wb") as fh:
+            fh.write(raw)
+        assert _target()._read_result(str(tmp_path)) == ("", None, 0.0)
+
+
 # ----- _run_episode + _extract_trajectory via a faked _docker_run ---------
 
 
