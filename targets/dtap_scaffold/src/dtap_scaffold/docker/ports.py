@@ -25,6 +25,9 @@ from pathlib import Path
 DEFAULT_PORT_START = 8000
 DEFAULT_PORT_END = 20000
 
+# Random probes before falling back to a linear scan of the whole range.
+_MAX_RANDOM_ATTEMPTS = 1000
+
 
 def port_range_from_env() -> tuple[int, int]:
     """Return ``(start, end)`` from ``$DT_PORT_RANGE`` (``"8000-20000"``) or defaults."""
@@ -79,13 +82,11 @@ class PortLeaser:
         port_range: tuple[int, int] | None = None,
         bind_test: Callable[[int], bool] | None = None,
         lock_dir: str | os.PathLike[str] | None = None,
-        max_random_attempts: int = 1000,
     ) -> None:
         self._range = port_range or port_range_from_env()
         self._bind_test = bind_test or is_bindable
         self._lock_dir = Path(lock_dir) if lock_dir is not None else _lock_dir()
         self._lock_dir.mkdir(parents=True, exist_ok=True)
-        self._max_random_attempts = max_random_attempts
         self._leased: dict[int, int] = {}  # port -> open lock fd
         self._mutex = threading.Lock()
 
@@ -153,7 +154,7 @@ class PortLeaser:
         """Lease and return a distinct free port (``name`` is for diagnostics only)."""
         start, end = self._range
         with self._mutex:
-            attempts = min(self._max_random_attempts, max(1, end - start))
+            attempts = min(_MAX_RANDOM_ATTEMPTS, max(1, end - start))
             for _ in range(attempts):
                 port = random.randint(start, end)
                 if self._try_claim(port):

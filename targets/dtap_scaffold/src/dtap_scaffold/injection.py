@@ -60,7 +60,7 @@ class McpEnvInjector:
         url = self._urls.get(point.server)
         if not url:
             return
-        for tool, kwargs in _parse_injection_calls(value, point):
+        for tool, kwargs in _parse_injection_calls(value):
             if not tool:
                 continue
             try:
@@ -80,30 +80,20 @@ class McpEnvInjector:
             return await client.call_tool(tool, kwargs)
 
 
-def _parse_injection_calls(value: str, point: InjectionPoint) -> list[tuple[str, dict[str, Any]]]:
+def _parse_injection_calls(value: str) -> list[tuple[str, dict[str, Any]]]:
     """Parse an ``env_inject`` value into ``[(tool, kwargs), ...]`` calls.
 
-    Primary form (the env_inject controllable's ``value_type`` is JSON):
-    ``{"injection_mcp_tool": "<server>:<tool>", "kwargs": {...}}`` -> the tool name
-    is the part after the colon (``injection_server_urls[point.server]`` supplies
-    the URL). A JSON list of such objects produces several calls.
-
-    Fallbacks (kept so a malformed value never aborts the run):
-      - a JSON object WITHOUT ``injection_mcp_tool`` is treated as the ``kwargs``
-        for ``point.point`` (when that names a concrete inject tool);
-      - a bare non-JSON string is forwarded as ``{"content": value}`` to
-        ``point.point`` (when concrete).
-    The ``"all"`` sentinel for ``point.point`` means "the value carries the tool",
-    so these fallbacks no-op for it -- only the structured form applies.
+    The env_inject controllable's ``value_type`` is JSON:
+    ``{"injection_mcp_tool": "<server>:<tool>", "kwargs": {...}}`` -> the tool name is
+    the part after the colon. A JSON list of such objects produces several calls. A
+    malformed value (non-JSON, a non-dict, or a dict without ``injection_mcp_tool``)
+    yields no call, so it never aborts the run -- matching upstream
+    ``get_env_injections_from_attack`` (the tool identity always rides in the value).
     """
     try:
         parsed: Any = json.loads(value)
     except (json.JSONDecodeError, TypeError):
-        parsed = None
-
-    if parsed is None:
-        tool = _concrete_point_tool(point)
-        return [(tool, {"content": value})] if tool else []
+        return []
 
     specs = parsed if isinstance(parsed, list) else [parsed]
     calls: list[tuple[str, dict[str, Any]]] = []
@@ -113,20 +103,8 @@ def _parse_injection_calls(value: str, point: InjectionPoint) -> list[tuple[str,
         injection_mcp_tool = spec.get("injection_mcp_tool")
         if injection_mcp_tool:
             tool = str(injection_mcp_tool).split(":", 1)[-1]
-            kwargs = spec.get("kwargs") or {}
-            calls.append((tool, dict(kwargs)))
-        else:
-            tool = _concrete_point_tool(point)
-            if tool:
-                calls.append((tool, dict(spec)))
+            calls.append((tool, dict(spec.get("kwargs") or {})))
     return calls
-
-
-def _concrete_point_tool(point: InjectionPoint) -> str | None:
-    """The point's inject tool name, or None when it is the ``"all"`` sentinel/empty."""
-    if point.point and point.point != "all":
-        return point.point
-    return None
 
 
 __all__ = ["McpEnvInjector"]

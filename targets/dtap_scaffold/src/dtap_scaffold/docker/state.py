@@ -44,7 +44,7 @@ class InstanceState:
     state_dir: Path
     workspace_dir: Path
 
-    def env_overrides(self, *, container_path: str = SHARED_FS_CONTAINER_PATH) -> dict[str, str]:
+    def env_overrides(self) -> dict[str, str]:
         """Env vars exported to ``setup.sh`` / compose so they can mount the workspace.
 
         ``DTAP_INSTANCE_ID`` / ``DTAP_STATE_DIR`` / ``DTAP_HOST_WORKSPACE`` /
@@ -55,7 +55,7 @@ class InstanceState:
             "DTAP_INSTANCE_ID": self.iid,
             "DTAP_STATE_DIR": str(self.state_dir),
             "DTAP_HOST_WORKSPACE": str(self.workspace_dir),
-            "DTAP_WORKSPACE": container_path,
+            "DTAP_WORKSPACE": SHARED_FS_CONTAINER_PATH,
         }
 
 

@@ -55,17 +55,14 @@ def known_servers() -> frozenset[str]:
 class ServerToolTree:
     """The built (identity-stable) tag subtree for one MCP server.
 
-    ``root`` is ``tools.<server>``. ``nodes`` maps each node key to its tag,
-    ``labels`` its human label. ``tool_to_tag`` / ``tool_to_key`` map a tool name
-    to its node's tag / key. Tools absent from the tree resolve to ``root`` via
-    :meth:`tag_for_tool` (the whole-server fallback).
+    ``root`` is ``tools.<server>``. ``nodes`` maps each node key to its tag, and
+    ``tool_to_key`` maps a tool name to its node key. Tools absent from the tree
+    resolve to ``root`` via :meth:`tag_for_tool` (the whole-server fallback).
     """
 
     server: str
     root: SecurityDomainTag
     nodes: dict[str, SecurityDomainTag]
-    labels: dict[str, str]
-    tool_to_tag: dict[str, SecurityDomainTag]
     tool_to_key: dict[str, str]
 
     @property
@@ -75,7 +72,7 @@ class ServerToolTree:
 
     def tag_for_tool(self, tool: str) -> SecurityDomainTag:
         """The node tag governing *tool*'s return, or the root tag as a fallback."""
-        return self.tool_to_tag.get(tool, self.root)
+        return self.nodes.get(self.tool_to_key.get(tool, ""), self.root)
 
 
 @cache
@@ -91,11 +88,9 @@ def build_server_tree(server: str) -> ServerToolTree:
     root = tools_server_tag(server)
     spec = _TREES.get(server)
     nodes: dict[str, SecurityDomainTag] = {}
-    labels: dict[str, str] = {}
-    tool_to_tag: dict[str, SecurityDomainTag] = {}
     tool_to_key: dict[str, str] = {}
     if spec is None:
-        return ServerToolTree(server, root, nodes, labels, tool_to_tag, tool_to_key)
+        return ServerToolTree(server, root, nodes, tool_to_key)
 
     remaining: list[dict[str, Any]] = list(spec["nodes"])
     # Resolve parents in passes: a node is placed once its parent is (roots first).
@@ -115,16 +110,14 @@ def build_server_tree(server: str) -> ServerToolTree:
             key = str(node["key"])
             tag = SecurityDomainTag(f"tools.{server}.{key}", parent=parent_tag)
             nodes[key] = tag
-            labels[key] = str(node.get("label", key))
             for tool in node.get("tools", ()):
-                tool_to_tag[str(tool)] = tag
                 tool_to_key[str(tool)] = key
         remaining = still
     if remaining:  # a broken parent chain in the data file; fail loud rather than mis-scope
         bad = ", ".join(str(n.get("key")) for n in remaining)
         raise ValueError(f"tool_trees.json: unresolved parent(s) for {server!r} nodes: {bad}")
 
-    return ServerToolTree(server, root, nodes, labels, tool_to_tag, tool_to_key)
+    return ServerToolTree(server, root, nodes, tool_to_key)
 
 
 __all__ = ["ServerToolTree", "build_server_tree", "known_servers"]

@@ -46,10 +46,11 @@ class ProxyTool:
 
 @dataclass(frozen=True)
 class InjectionPoint:
-    """A DTAP environment-injection point (a ``<server>-injection`` tool)."""
+    """A DTAP environment-injection point: the ``<server>-injection`` server whose
+    ``inject_*`` tools the attacker value drives (the tool + kwargs ride in the value,
+    matching upstream ``get_env_injections_from_attack``)."""
 
     server: str  # the injection server name, e.g. "gmail-injection"
-    point: str  # the inject_* tool, e.g. "inject_email", or "all"
 
 
 @dataclass(frozen=True)

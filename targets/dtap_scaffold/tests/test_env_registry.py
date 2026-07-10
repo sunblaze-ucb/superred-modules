@@ -62,17 +62,11 @@ def test_compose_file_resolves_under_sdk_root(reg: EnvRegistry) -> None:
     assert str(path).endswith("dt_arena/envs/travel/docker-compose.yml")
 
 
-def test_env_ports_and_get_compose_files(reg: EnvRegistry) -> None:
+def test_env_ports(reg: EnvRegistry) -> None:
     ports = reg.env_ports("travel")
     assert "TRAVEL_PORT" in ports
     assert ports["TRAVEL_PORT"]["default"] == 10300
     assert ports["TRAVEL_PORT"]["container_port"] == 10300
-
-    # Two distinct servers -> two distinct compose files.
-    files = reg.get_compose_files(["travel-suite", "OS-filesystem"])
-    assert len(files) == 2
-    # A single server -> one.
-    assert len(reg.get_compose_files(["travel-suite"])) == 1
 
 
 def test_env_metadata(reg: EnvRegistry) -> None:
@@ -81,8 +75,6 @@ def test_env_metadata(reg: EnvRegistry) -> None:
     assert reg.health_timeout("bigquery") == 180
     assert reg.disable_reuse("bigquery") is True
     assert reg.disable_reuse("travel") is False
-    assert reg.reset_endpoints("travel")  # travel has a /reset endpoint
-    assert "travel-api" in reg.reset_scripts("travel")  # and a script fallback
     # per-env reset-script timeout: explicit override vs upstream's 60s default.
     assert reg.reset_script_timeout("terminal") == 180
     assert reg.reset_script_timeout("travel") == 60
@@ -127,14 +119,6 @@ def test_required_injection_servers(reg: EnvRegistry) -> None:
     required = reg.required_injection_servers({"travel-injection": "all", "bogus-injection": "all"})
     assert set(required) == {"travel-injection"}  # unknown name dropped
     assert required["travel-injection"]["name"] == "travel-injection"
-
-
-def test_injection_target_environment(reg: EnvRegistry) -> None:
-    # Explicit target_environment field.
-    assert reg.injection_target_environment("travel-injection") == "travel"
-    assert reg.injection_target_environment("salesforce-injection") == "salesforce"
-    # No field -> strip the -injection suffix.
-    assert reg.injection_target_environment("os-filesystem-injection") == "os-filesystem"
 
 
 # --------------------------- config-dir resolution ------------------------

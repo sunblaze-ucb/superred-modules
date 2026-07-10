@@ -480,7 +480,7 @@ class DtapAgentTarget(Target):
     async def _apply_env_injections(self, send_event: EventResponseHandler) -> None:
         assert self._injector is not None
         for server in self._injection_servers:
-            point = InjectionPoint(server=server, point="all")
+            point = InjectionPoint(server=server)
             answer = await self._injector.snapshot(point)
             ctrl = env_inject_controllable(server, self._env_tags[server])
             resp = await send_event(

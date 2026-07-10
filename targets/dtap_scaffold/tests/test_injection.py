@@ -16,7 +16,7 @@ from dtap_scaffold.injection import McpEnvInjector, _parse_injection_calls
 from dtap_scaffold.protocols import EnvInjector
 from dtap_scaffold.types import InjectionPoint
 
-POINT = InjectionPoint(server="gmail-injection", point="all")
+POINT = InjectionPoint(server="gmail-injection")
 
 
 def _injector_with_recorder(urls: dict[str, str] | None = None):
@@ -85,7 +85,7 @@ async def test_apply_tool_without_colon_uses_whole_name():
 
 async def test_apply_list_of_specs_fans_out():
     inj, calls = _injector_with_recorder({"salesforce-injection": "http://sf/mcp"})
-    point = InjectionPoint(server="salesforce-injection", point="all")
+    point = InjectionPoint(server="salesforce-injection")
     value = json.dumps(
         [
             {
@@ -118,7 +118,7 @@ async def test_apply_missing_kwargs_defaults_to_empty():
 async def test_apply_unknown_server_is_noop():
     inj, calls = _injector_with_recorder({})  # no URLs known
     await inj.apply(
-        InjectionPoint(server="absent", point="all"),
+        InjectionPoint(server="absent"),
         json.dumps({"injection_mcp_tool": "absent:inject", "kwargs": {}}),
     )
     assert calls == []  # nowhere to write -> best-effort no-op
@@ -138,31 +138,16 @@ async def test_apply_swallows_call_errors():
     )
 
 
-async def test_apply_bare_text_with_all_sentinel_is_noop():
+async def test_apply_bare_text_is_noop():
     inj, calls = _injector_with_recorder({"s": "http://x"})
-    await inj.apply(InjectionPoint(server="s", point="all"), "just plain text, not JSON")
-    assert calls == []  # 'all' sentinel cannot route bare text
+    await inj.apply(InjectionPoint(server="s"), "just plain text, not JSON")
+    assert calls == []  # only the structured {injection_mcp_tool, kwargs} form routes
 
 
-async def test_apply_bare_text_with_concrete_point_forwards_content():
+async def test_apply_dict_without_mcp_tool_is_noop():
     inj, calls = _injector_with_recorder({"s": "http://x"})
-    await inj.apply(InjectionPoint(server="s", point="inject_note"), "plain payload")
-    assert calls == [("http://x", "inject_note", {"content": "plain payload"})]
-
-
-async def test_apply_dict_without_mcp_tool_uses_concrete_point():
-    inj, calls = _injector_with_recorder({"s": "http://x"})
-    await inj.apply(
-        InjectionPoint(server="s", point="inject_email"),
-        json.dumps({"to_email": "v@x.y", "body": "B"}),
-    )
-    assert calls == [("http://x", "inject_email", {"to_email": "v@x.y", "body": "B"})]
-
-
-async def test_apply_dict_without_mcp_tool_all_sentinel_is_noop():
-    inj, calls = _injector_with_recorder({"s": "http://x"})
-    await inj.apply(InjectionPoint(server="s", point="all"), json.dumps({"to_email": "v@x.y"}))
-    assert calls == []
+    await inj.apply(InjectionPoint(server="s"), json.dumps({"to_email": "v@x.y"}))
+    assert calls == []  # the tool identity must ride in the value (injection_mcp_tool)
 
 
 # --------------------------- the parser, directly -------------------------
@@ -176,15 +161,14 @@ def test_parse_structured_extracts_tool_after_colon():
                 "kwargs": {"body": "x"},
             }
         ),
-        POINT,
     )
     assert calls == [("inject_email", {"body": "x"})]
 
 
 def test_parse_non_json_with_all_sentinel_is_empty():
-    assert _parse_injection_calls("not json", POINT) == []
+    assert _parse_injection_calls("not json") == []
 
 
 def test_parse_ignores_non_dict_list_items():
     value = json.dumps(["junk", {"injection_mcp_tool": "s:inject", "kwargs": {"a": 1}}])
-    assert _parse_injection_calls(value, POINT) == [("inject", {"a": 1})]
+    assert _parse_injection_calls(value) == [("inject", {"a": 1})]

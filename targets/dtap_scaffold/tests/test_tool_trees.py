@@ -45,9 +45,9 @@ def test_no_tool_belongs_to_two_nodes_within_a_server():
         for tool, key in spec_tree.tool_to_key.items():
             assert tool not in seen or seen[tool] == key
             seen[tool] = key
-        # tool_to_tag and tool_to_key agree
+        # tag_for_tool resolves each tool to its node tag (via tool_to_key + nodes)
         for tool, key in spec_tree.tool_to_key.items():
-            assert spec_tree.tool_to_tag[tool] is spec_tree.nodes[key]
+            assert spec_tree.tag_for_tool(tool) is spec_tree.nodes[key]
 
 
 def test_root_tag_identity_is_stable_and_shared_with_forest():

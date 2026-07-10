@@ -114,7 +114,6 @@ class EnvRegistry:
             s["name"].lower(): s for s in (self._inj.get("servers") or []) if s.get("name")
         }
         self._environments: dict[str, Any] = self._env.get("environments") or {}
-        self.default_max_instances = self._env.get("default_max_instances")
 
     # ----- SDK root + globals ----------------------------------------------
 
@@ -182,15 +181,6 @@ class EnvRegistry:
         """Host-port variable map ``{VAR: {default, container_port}}`` for *env_name*."""
         return dict(self.environment(env_name).get("ports") or {})
 
-    def reset_endpoints(self, env_name: str) -> dict[str, Any]:
-        return dict(self.environment(env_name).get("reset_endpoints") or {})
-
-    def reset_scripts(self, env_name: str) -> dict[str, Any]:
-        return dict(self.environment(env_name).get("reset_scripts") or {})
-
-    def max_instances(self, env_name: str) -> int | None:
-        return self.environment(env_name).get("max_instances", self.default_max_instances)
-
     def disable_reuse(self, env_name: str) -> bool:
         return bool(self.environment(env_name).get("disable_reuse", False))
 
@@ -207,32 +197,11 @@ class EnvRegistry:
             self.environment(env_name).get("reset_script_timeout", _DEFAULT_RESET_SCRIPT_TIMEOUT)
         )
 
-    def get_compose_files(self, active_servers: list[str] | tuple[str, ...]) -> set[Path]:
-        """Set of compose files for the environments backing *active_servers*."""
-        out: set[Path] = set()
-        for env in self.active_environments(active_servers):
-            if env in self._environments and self._environments[env].get("docker_compose"):
-                out.add(self.compose_file(env))
-        return out
-
     # ----- injection_mcp.yaml ----------------------------------------------
 
     def injection_server(self, name: str) -> dict[str, Any] | None:
         """The injection_mcp.yaml entry for *name* (case-insensitive)."""
         return self._inj_by_name.get(name.lower())
-
-    def injection_target_environment(self, name: str) -> str:
-        """Docker environment an injection server writes to.
-
-        Prefers the explicit ``target_environment`` field; otherwise strips the
-        ``-injection`` suffix (e.g. ``os-filesystem-injection`` -> ``os-filesystem``).
-        """
-        cfg = self.injection_server(name)
-        if cfg and cfg.get("target_environment"):
-            return str(cfg["target_environment"])
-        base = name.lower()
-        suffix = "-injection"
-        return base[: -len(suffix)] if base.endswith(suffix) else base
 
     def required_injection_servers(
         self, env_injection_config: dict[str, Any] | None
