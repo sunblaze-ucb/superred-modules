@@ -163,6 +163,21 @@ def test_read_result_garbled_degrades(tmp_path):
         assert _target()._read_result(str(tmp_path)) == ("", None, 0.0)
 
 
+def test_read_result_oversized_duration_degrades(tmp_path):
+    """A hostile result.json can carry a "duration" that is a parse-valid but
+    float-overflowing integer: >~308 digits (float() -> OverflowError) yet under json's
+    4300-digit cap, so it survives json.load AND the isinstance(dict) guard and reaches
+    float(). OverflowError is an ArithmeticError, NOT a ValueError, so the narrow
+    (TypeError, ValueError) catch missed it and it raised out of run() -- abandoning the
+    whole task. The duration must degrade to 0.0 while the other fields survive (this
+    raises OverflowError against the pre-fix reader, so the test is non-vacuous)."""
+    path = os.path.join(str(tmp_path), RESULT_FILENAME)
+    big = "1" + "0" * 399  # 400-digit int: parses, dict-valued, but float() overflows
+    with open(path, "w") as fh:
+        fh.write('{"final_output": "done", "error": null, "duration": ' + big + "}")
+    assert _target()._read_result(str(tmp_path)) == ("done", None, 0.0)
+
+
 # ----- _run_episode + _extract_trajectory via a faked _docker_run ---------
 
 

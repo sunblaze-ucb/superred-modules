@@ -237,6 +237,12 @@ class ClaudeCodeDtapTarget(DtapAgentTarget):
         error = data.get("error")
         try:
             duration = float(data.get("duration", 0.0) or 0.0)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
+            # result.json is on the agent-shared /dtap mount; a hostile duration that
+            # is a parse-valid but float-overflowing int (>~308 digits, still under
+            # json's 4300-digit cap) makes float() raise OverflowError, which is NOT a
+            # ValueError -> catch it too, matching the port's peer numeric coercions
+            # (agent_base _normalize_skill, openclaw driver), so no garbled result
+            # aborts the whole task.
             duration = 0.0
         return final_output, error, duration
