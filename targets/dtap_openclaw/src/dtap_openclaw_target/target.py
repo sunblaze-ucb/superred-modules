@@ -61,7 +61,6 @@ class OpenClawDtapTarget(DtapAgentTarget):
         thinking: str = "off",
         docker_timeout: float = 1000.0,
         network: str | None = None,
-        disabled_native_tools: tuple[str, ...] = _DISABLED_NATIVE_TOOLS,
     ) -> None:
         super().__init__(
             model=model,
@@ -80,7 +79,6 @@ class OpenClawDtapTarget(DtapAgentTarget):
         self._thinking = thinking
         self._docker_timeout = docker_timeout
         self._network = network
-        self._disabled_native_tools = tuple(disabled_native_tools)
 
     # ----- abstract agent hooks -------------------------------------------- #
 
@@ -91,12 +89,12 @@ class OpenClawDtapTarget(DtapAgentTarget):
         """Map the native-tools policy to OpenClaw's ``tools.deny`` list.
 
         ``"enabled"`` (default) denies nothing -- the agent keeps its native
-        ``exec`` / ``fs`` tools. ``"disabled"`` denies the configured native-tool
+        ``exec`` / ``fs`` tools. ``"disabled"`` denies the ``exec`` / ``fs`` native
         families. Any other value is treated as enabled (never crash on an unknown
         policy).
         """
         if policy == "disabled":
-            return list(self._disabled_native_tools)
+            return list(_DISABLED_NATIVE_TOOLS)
         return []
 
     async def _run_episode(self, spec: AgentLaunchSpec) -> EpisodeResult:

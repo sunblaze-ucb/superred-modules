@@ -45,9 +45,6 @@ DATASET_REVISION: str | None = None
 set to a commit SHA once chosen (the golden hashes pin the bytes either way).
 Prefer ``DTAP_DATASET_ROOT`` for fully offline, reproducible runs."""
 
-DTAP_SDK_VERSION: str = "0.2.12"
-"""The pinned decodingtrust-agent-sdk version this port targets."""
-
 
 def resolve_dataset_root(
     domains: list[str] | None = None,
@@ -354,7 +351,6 @@ def load_golden_hashes(path: str | Path | None = None) -> dict[str, str]:
 __all__ = [
     "DATASET_HF_REPO",
     "DATASET_REVISION",
-    "DTAP_SDK_VERSION",
     "resolve_dataset_root",
     "TaskConfig",
     "parse_task_config",

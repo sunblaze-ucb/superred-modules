@@ -214,11 +214,6 @@ def test_native_tool_deny_unknown_policy_treated_as_enabled() -> None:
     assert t._native_tool_deny("garbage") == []
 
 
-def test_native_tool_deny_custom_disabled_set() -> None:
-    t = OpenClawDtapTarget(model="m", disabled_native_tools=("exec",))
-    assert t._native_tool_deny("disabled") == ["exec"]
-
-
 def test_invalid_thinking_level_rejected() -> None:
     with pytest.raises(ValueError, match="invalid thinking level"):
         OpenClawDtapTarget(model="m", thinking="ultra")
