@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -280,6 +281,16 @@ class DockerEnvStack:
         self._leaser.release_all()
         self._server_urls.clear()
         self._inj_urls.clear()
+        # Reclaim this instance's host state + log dirs. up() mkdir'd
+        # ``<state_root>/<iid>/workspace`` (make_instance_state) and
+        # ``dtap_logs_<iid>`` (per-server logs); compose-down --volumes drops the
+        # container state but not these host dirs, so without this each task leaks a
+        # dir tree. Best-effort; the agent's own run workspace is reclaimed separately.
+        if self._state is not None:
+            shutil.rmtree(self._state.state_dir, ignore_errors=True)
+        if self._iid:
+            logs_base = Path(self._state_root) if self._state_root else Path(tempfile.gettempdir())
+            shutil.rmtree(logs_base / f"dtap_logs_{self._iid}", ignore_errors=True)
         self._up_done = False
 
     # ----- up() internals --------------------------------------------------

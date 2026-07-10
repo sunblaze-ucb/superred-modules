@@ -503,11 +503,51 @@ async def test_down_terminates_procs_and_releases_leases(patched, tmp_path):
     await stack.up()
     procs = [*stack._mcp_procs.values(), *stack._inj_procs.values()]
     assert len(procs) == 2
+    # up() mkdir'd the per-instance host state + log dirs; capture them before down().
+    state_dir = stack._state.state_dir
+    logs_dir = Path(stack._state_root) / f"dtap_logs_{stack._iid}"
+    assert state_dir.is_dir() and logs_dir.is_dir()
     await stack.down()
     assert all(p.terminated for p in procs)
     assert patched["compose_down"], "compose_down not called"
     assert stack._mcp_procs == {} and stack._inj_procs == {}
     assert stack._leaser.leased == ()  # all port leases released
+    # down() reclaims the host state + log dirs (no per-task leak)
+    assert not state_dir.exists() and not logs_dir.exists()
+
+
+def test_port_leaser_reclaims_dead_pid_lock(tmp_path):
+    """A lock file left by a crashed instance (dead PID) must be reclaimable, or the
+    port is orphaned forever. _try_claim reads the PID, sees it is not alive, unlinks
+    the stale lock, and re-claims."""
+    leaser = lc.ports_mod.PortLeaser(port_range=(21000, 21000), lock_dir=str(tmp_path))
+    # forge a stale lock for the only port, owned by a definitely-dead PID
+    stale = leaser._lock_path(21000)
+    stale.write_text("2147483646")  # a PID that does not exist
+    port = leaser.lease("x")  # must reclaim the stale lock, not raise "no free port"
+    assert port == 21000
+    assert leaser.leased == (21000,)
+    leaser.release_all()
+
+
+def test_port_leaser_respects_live_pid_lock(tmp_path):
+    """A lock owned by a LIVE process (our own PID) must be respected -- never stolen;
+    the leaser skips that port (and here, with a 1-port range, fails to lease)."""
+    import os as _os
+
+    leaser = lc.ports_mod.PortLeaser(port_range=(21001, 21001), lock_dir=str(tmp_path))
+    leaser._lock_path(21001).write_text(str(_os.getpid()))  # a live PID (this test proc)
+    with pytest.raises(RuntimeError, match="unable to lease"):
+        leaser.lease("x")  # the only port is held by a live pid -> not reclaimed
+
+
+def test_port_leaser_leaves_malformed_lock_intact(tmp_path):
+    """A lock with an unreadable/malformed PID is conservatively left intact (never
+    stolen), so a corrupt lock cannot cause a live instance's port to be reused."""
+    leaser = lc.ports_mod.PortLeaser(port_range=(21002, 21002), lock_dir=str(tmp_path))
+    leaser._lock_path(21002).write_text("not-a-pid")
+    with pytest.raises(RuntimeError, match="unable to lease"):
+        leaser.lease("x")
 
 
 async def test_down_is_safe_when_compose_down_raises(patched, tmp_path, monkeypatch):

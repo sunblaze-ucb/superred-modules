@@ -101,11 +101,52 @@ class PortLeaser:
         try:
             fd = os.open(str(self._lock_path(port)), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
         except FileExistsError:
-            return False
+            # A lock file exists. If the PID it records is dead (a crash/SIGKILL
+            # between lease and release orphans the lock), reclaim it and retry once;
+            # O_EXCL on the retry loses any race to a concurrent claimer safely.
+            if not self._reclaim_stale_lock(port):
+                return False
+            try:
+                fd = os.open(
+                    str(self._lock_path(port)), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644
+                )
+            except OSError:
+                return False
         except OSError:
             return False
         os.write(fd, str(os.getpid()).encode())
         self._leased[port] = fd
+        return True
+
+    def _reclaim_stale_lock(self, port: int) -> bool:
+        """Unlink *port*'s lock file iff the PID it records is not alive.
+
+        Returns True when a stale lock was removed (caller may retry the claim). A
+        lock held by a LIVE pid, or one with an unreadable/malformed pid, is left
+        intact (returns False) so a live instance's port is never stolen. PID reuse
+        can only make this MORE conservative (we skip a free port), never steal one.
+        """
+        path = self._lock_path(port)
+        try:
+            pid = int(path.read_text().strip())
+        except (OSError, ValueError):
+            return False  # unreadable/malformed -> conservatively leave it
+        if pid <= 0:
+            return False
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            pass  # no such process -> stale
+        except OSError:
+            return False  # alive-but-not-ours (PermissionError) or other -> respect it
+        else:
+            return False  # kill(pid, 0) succeeded -> pid is alive -> respect it
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return True  # already cleaned by someone else -> still free to reclaim
+        except OSError:
+            return False
         return True
 
     def lease(self, name: str | None = None) -> int:
