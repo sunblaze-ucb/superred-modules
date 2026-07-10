@@ -441,6 +441,23 @@ def test_safe_str_contains_recursion():
     assert _safe_str(None) == ""
 
 
+def test_safe_str_contains_oversized_int_and_hostile_str():
+    """_safe_str returns '' instead of raising when str() fails for a reason other than
+    recursion: a >4300-digit raw int hits CPython's int_max_str_digits limit (ValueError,
+    the same case _loads_injection contains for JSON), and a raw injected object's __str__
+    may raise anything (the value crosses no serialization boundary). Both are contained."""
+    from dtap_scaffold.agent_base import _safe_str
+
+    assert _safe_str(10**5000) == ""  # would ValueError (>4300 digits) without the guard
+    assert _safe_str([10**5000]) == ""  # nested in a container str() reprs -> same ValueError
+
+    class _HostileStr:
+        def __str__(self) -> str:
+            raise KeyError("boom")
+
+    assert _safe_str(_HostileStr()) == ""  # a raw injected __str__ may raise anything
+
+
 async def test_precall_coerces_deeply_nested_object():
     """A raw deeply-nested injected object whose str() would itself RecursionError is
     contained (returns '') rather than crashing run() at the _precall str-coercion."""
@@ -513,6 +530,21 @@ async def test_precall_coerces_non_str_injection_to_str():
     out = await t._precall(send_event, S.SYSTEM_PROMPT_CTRL, "default")
     assert isinstance(out, str)
     assert out == "[1, 2, 3]"
+
+
+async def test_precall_contains_oversized_int_injection():
+    """A raw >4300-digit int injected to a text controllable makes str() raise ValueError
+    (CPython's int_max_str_digits limit) with no json.loads in front of it; the _precall
+    str-coercion must contain it (returns '') rather than let it abort run(), matching what
+    _loads_injection already does for the JSON controllables."""
+    t = _configured()
+
+    async def send_event(evt):
+        ctrl = getattr(evt, "controllable", None)
+        return ControllableInjection(event=evt, controllable=ctrl, value=10**5000)
+
+    out = await t._precall(send_event, S.SYSTEM_PROMPT_CTRL, "default")  # must not raise
+    assert out == ""
 
 
 async def test_code_execution_loop_skips_unspawnable_code(monkeypatch):

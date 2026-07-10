@@ -684,16 +684,21 @@ class DtapAgentTarget(Target):
 
 
 def _safe_str(value: Any) -> str:
-    """``str(value)`` that returns ``""`` instead of raising on a deeply-nested attacker
-    object. ``str()`` recurses in C and raises ``RecursionError`` near the ~9750 nesting
-    depth ``json.loads`` admits, so coercing an injected value can itself abort the run;
-    this contains that so a wrong-format value never crashes the task.
+    """``str(value)`` that returns ``""`` instead of raising when coercing a hostile
+    attacker value. ``str()`` on a raw injected value can raise: ``RecursionError`` on a
+    deeply-nested object (``str`` recurses in C near the depth ``json.loads`` admits),
+    ``ValueError`` on a raw integer past CPython's ``int_max_str_digits`` limit (a
+    >4300-digit int -- the same oversized-int case :func:`_loads_injection` already
+    contains for JSON values), or anything at all from an attacker-supplied ``__str__``
+    (the value is the raw in-process ``ControllableInjection.value`` and crosses no
+    serialization boundary). Catch every exception so coercing a wrong-format value never
+    aborts the run.
     """
     if value is None:
         return ""
     try:
         return str(value)
-    except RecursionError:
+    except Exception:  # noqa: BLE001 - any failure to stringify an attacker value -> contain it
         return ""
 
 
