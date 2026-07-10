@@ -303,3 +303,34 @@ here for auditability:
   but never consumes it (no `.py` references; `MCPServerConfig` has no such field),
   so enforcing it would shrink the agent's tool surface versus the unattacked
   upstream run. The port therefore ignores it, exactly as upstream does.
+
+## I. Accepted non-substantial residuals (coverage-audit)
+
+Two upstream behaviours the port does not fully reproduce. The coverage audit rated
+both non-substantial; they are recorded here as accepted, bounded residuals (worth
+fixing only if a future experiment makes them relevant):
+
+- **I.1 `disable_reuse` recreate-on-reset (intra-task multi-run only).** Upstream
+  RECREATES a `disable_reuse` env between reuses (its reset scripts are deemed
+  insufficient for these stateful envs; `utils/task_executor._acquire_instances_for_task`).
+  `DockerEnvStack.reset` runs the env's reset scripts and does NOT branch to
+  `down()`+`up()` for a `disable_reuse` env. Bounded: of the six `disable_reuse` envs
+  (`ecommerce`, `custom-website`, `windows`, `macos`, `gitlab`, `bigquery`) only
+  `gitlab`/`bigquery` are in the text-only scope, and the divergence bites ONLY under
+  `max_runs_per_task >= 2` (the optimizer retrying the same task) -- no shipped
+  experiment configures multi-run, and single-run (the default) is already fully
+  faithful (a fresh Target + stack per task recreates from scratch). Section A covers
+  the cross-task pool collapse; this is the intra-task multi-run residual. Fix, if
+  multi-run on gitlab/bigquery is ever run: branch `reset()` to `down()`+`up()` when
+  `self._registry.disable_reuse(env)`.
+
+- **I.2 Environment injections applied once up-front, not per user turn.** Upstream
+  re-applies env injections per turn (`turn_id`-filtered) immediately before each
+  `agent.run(turn_instruction)` (`eval/task_runner.py`); `agent_base._apply_env_injections`
+  applies all env injections ONCE before the single episode. Faithful for the shipped
+  dataset: all 6001 text-only configs have a single-string `task_instruction` (0
+  multi-user-turn tasks), so upstream's per-turn scheduling path never activates. The
+  up-front persistent write is visible to the end-of-run env-state judge, and live
+  per-tool-call PostCall return-tampering still fires on every turn. Fix, if a future
+  dataset ships multi-user-turn tasks with `turn_id`-scheduled env writes: thread a
+  per-turn env-injection callback into the run loop.
