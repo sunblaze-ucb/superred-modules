@@ -294,12 +294,15 @@ class HostMCPProxy:
         """Call the genuine backend tool; return ``(text, is_error)`` (monkeypatch seam).
 
         Production path: connect to ``server``'s real MCP URL with a fastmcp client,
-        flatten the result to text and read its error flag. A proxy-level failure (no
-        backend URL, or an exception reaching the backend) yields ``is_error=True``
-        with the failure as text, matching upstream ``_call_tool`` (which returns
-        ``isError:True`` on such failures and preserves the backend's flag on success).
-        Offline tests replace this method, so neither ``fastmcp`` nor the network is
-        touched.
+        flatten the result to text and read its error flag. A backend that returns an
+        MCP error (``isError:True``) is forwarded VERBATIM (text + flag), matching
+        upstream ``_format_tool_result`` -- this needs ``raise_on_error=False`` because
+        fastmcp's ``call_tool`` defaults to raising on ``isError``, which would
+        otherwise turn every backend error into an ``except``-branch prefixed string
+        and diverge from upstream's verbatim forwarding. The ``except`` branch is
+        reserved for genuine TRANSPORT failures (no backend URL, unreachable server),
+        where upstream also synthesises an ``isError=True`` string. Offline tests
+        replace this method, so neither ``fastmcp`` nor the network is touched.
         """
         url = self._server_urls.get(server)
         if not url:
@@ -312,10 +315,12 @@ class HostMCPProxy:
             # tools-list fetch below deliberately stays at 30s, matching upstream's
             # _fetch_tools_list. On a declined run the genuine return must be identical
             # to upstream, so this timeout must not be shorter than upstream's.
+            # raise_on_error=False: a backend isError result is RETURNED (not raised)
+            # so it flows through _extract_* and is forwarded verbatim, as upstream does.
             async with Client(url, timeout=60.0) as client:
-                result = await client.call_tool(tool, params)
+                result = await client.call_tool(tool, params, raise_on_error=False)
             return _extract_mcp_result(result), _extract_is_error(result)
-        except Exception as exc:  # noqa: BLE001 - upstream returns errors as content
+        except Exception as exc:  # noqa: BLE001 - a transport failure is an error result
             return f"Error calling tool '{tool}' on '{server}': {exc}", True
 
     def _resolve_server(self, tool: str) -> str | None:

@@ -371,6 +371,43 @@ async def test_forward_without_backend_url_returns_error_string():
     assert is_error is True  # a proxy-level failure is an error (upstream parity)
 
 
+async def test_forward_backend_error_is_forwarded_verbatim_not_prefixed(monkeypatch):
+    """Regression (fastmcp raise_on_error): the REAL _forward against a fastmcp backend
+    that returns an MCP error must hand the agent the backend text VERBATIM with
+    is_error=True -- NOT the except-branch 'Error calling tool ... on ...' prefix.
+    fastmcp's call_tool defaults raise_on_error=True; without raise_on_error=False the
+    error would be raised and prefixed, diverging from upstream verbatim forwarding.
+    In-memory (no network/Docker); skipped where fastmcp is absent (the [sdk] extra)."""
+    pytest.importorskip("fastmcp")
+    from fastmcp import Client, FastMCP
+    from fastmcp.exceptions import ToolError
+
+    backend = FastMCP("backend")
+
+    @backend.tool
+    def flaky(q: str = "") -> str:
+        raise ToolError("USER_NOT_FOUND: no such account 42")
+
+    @backend.tool
+    def good(q: str = "") -> str:
+        return "genuine content"
+
+    # Bind _forward's lazily-imported Client to an in-memory client on our backend,
+    # ignoring the (irrelevant) URL, so the real call_tool path executes offline.
+    monkeypatch.setattr("fastmcp.Client", lambda url, **kw: Client(backend))
+    proxy = HostMCPProxy()
+    proxy._server_urls = {"s": "http://ignored/mcp"}
+
+    err_text, err_flag = await proxy._forward("s", "flaky", {})
+    assert err_flag is True  # backend error flag preserved
+    assert "USER_NOT_FOUND: no such account 42" in err_text  # verbatim
+    assert not err_text.startswith("Error calling tool")  # NOT the except-branch prefix
+
+    ok_text, ok_flag = await proxy._forward("s", "good", {})
+    assert ok_flag is False
+    assert ok_text == "genuine content"  # happy path unchanged
+
+
 def test_resolve_server_maps_tool_to_owner():
     proxy = HostMCPProxy()
     proxy._raw_tools = {"a": [{"name": "t1"}], "b": [{"name": "t2"}]}
