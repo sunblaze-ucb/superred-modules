@@ -225,9 +225,13 @@ class ClaudeCodeDtapTarget(DtapAgentTarget):
         """Read ``result.json``; a missing/garbled file degrades to empty outputs."""
         path = os.path.join(instance_dir, RESULT_FILENAME)
         try:
-            with open(path, encoding="utf-8") as fh:
+            with open(path, encoding="utf-8", errors="replace") as fh:
                 data = json.load(fh)
-        except (OSError, json.JSONDecodeError):
+        except (OSError, ValueError, RecursionError):
+            # OSError (missing/unreadable), ValueError (bad JSON / UnicodeDecodeError /
+            # oversized int), RecursionError (deeply-nested) -> degrade, never abort.
+            return "", None, 0.0
+        if not isinstance(data, dict):
             return "", None, 0.0
         final_output = data.get("final_output") or ""
         error = data.get("error")

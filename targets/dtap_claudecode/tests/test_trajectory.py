@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import os
 
+import pytest
+
 from dtap_claudecode_target.trajectory import (
     TRANSCRIPT_FILENAME,
     _parse_tool_name,
@@ -262,6 +264,75 @@ def test_convert_tolerates_malformed_lines(tmp_path):
         )
     art = convert(str(tmp_path))
     assert art.final_response == "ok"
+
+
+def test_convert_tolerates_invalid_utf8(tmp_path):
+    """A transcript truncated mid-multibyte-char (the Docker timeout backstop returns
+    the partial trace by design) must not raise UnicodeDecodeError out of convert() and
+    turn a state-mutating attack into a task-error. ``_load_records`` caught OSError but
+    not the decode error, so the strict read crashed; errors='replace' fixes it."""
+    path = os.path.join(str(tmp_path), TRANSCRIPT_FILENAME)
+    good = json.dumps({"record": "user_input", "content": "hi"}).encode() + b"\n"
+    # final bytes truncate a multibyte char (first byte 0xc3 of 'e-acute')
+    with open(path, "wb") as fh:
+        fh.write(good + b'{"record":"message","message":{"type":"assistant","content":"\xc3')
+    art = convert(str(tmp_path))  # must not raise
+    assert isinstance(art.final_response, str)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        {"record": "message", "message": [1, 2, 3]},  # non-dict message
+        {"record": "message", "message": "oops"},  # str message
+        {"record": "message", "message": {"type": "assistant", "content": "hi"}},  # str content
+        {"record": "message", "message": {"type": "user", "content": ["x"]}},  # str block
+        {
+            "record": "message",
+            "message": {
+                "type": "assistant",
+                "content": [{"type": "tool_use", "id": "x", "name": "bash", "input": [1, 2]}],
+            },
+        },  # non-dict tool_use input
+        {"record": "trace_start", "trace_id": "t1", "metadata": [1, 2, 3]},  # non-dict metadata
+    ],
+)
+def test_convert_tolerates_garbled_records(tmp_path, line):
+    """A valid-JSON transcript record whose inner message/content/input/metadata is the
+    wrong type must not raise out of convert(): the run-level guard degrades the trace to an
+    empty artifact so a state-mutating attack is judged on env state, not lost as a task-error.
+    Before the guard each of these raised AttributeError straight out of run()."""
+    path = os.path.join(str(tmp_path), TRANSCRIPT_FILENAME)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(line) + "\n")
+    art = convert(str(tmp_path))  # must not raise
+    assert isinstance(art.final_response, str)
+
+
+def test_convert_tolerates_oversized_int_line(tmp_path):
+    """A line with a >4300-digit integer makes json.loads raise a bare ValueError (NOT a
+    JSONDecodeError) inside _load_records, which runs BEFORE convert()'s backstop; it must
+    be skipped, not raise out of convert()."""
+    path = os.path.join(str(tmp_path), TRANSCRIPT_FILENAME)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write('{"record": "user_input", "content": ' + "1" * 4301 + "}\n")
+    art = convert(str(tmp_path))  # must not raise
+    assert isinstance(art.final_response, str)
+
+
+def test_convert_coerces_non_str_assistant_text(tmp_path):
+    """A garbled assistant text block that is not a str is coerced so final_response and
+    messages stay str (the QuerySpec contract), matching the openclaw converter."""
+    line = {
+        "record": "message",
+        "message": {"type": "assistant", "content": [{"type": "text", "text": {"not": "a str"}}]},
+    }
+    path = os.path.join(str(tmp_path), TRANSCRIPT_FILENAME)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(line) + "\n")
+    art = convert(str(tmp_path))
+    assert isinstance(art.final_response, str)
+    assert all(isinstance(m["text"], str) for m in art.messages)
 
 
 def test_parse_tool_name():

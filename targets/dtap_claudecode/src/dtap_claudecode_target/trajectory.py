@@ -47,11 +47,23 @@ __all__ = [
 def convert(output_dir: str) -> TrajectoryArtifact:
     """Parse ``<output_dir>/transcript.jsonl`` into a TrajectoryArtifact.
 
-    Missing/empty transcript -> an empty artifact (defensive: a crashed episode
-    still yields a well-formed, queryable trajectory).
+    Missing / empty / garbled transcript -> an empty artifact (defensive: a crashed or
+    partially-written episode still yields a well-formed, queryable trajectory and NEVER
+    raises out of the converter, so a state-mutating attack is judged on live env state
+    rather than lost as a task-error -- mirrors upstream agent.py and the openclaw sibling).
     """
-    records = _load_records(output_dir)
+    try:
+        # locate+read inside the guard too (parity with the openclaw sibling), so a
+        # read-side failure also degrades rather than escaping the converter.
+        records = _load_records(output_dir)
+        return _records_to_artifact(records)
+    except Exception:  # noqa: BLE001 - never raise: any garbled / version-drifted record
+        # degrades the whole trace to an empty artifact (processing zero records yields
+        # exactly the empty-transcript result), never a task-crash.
+        return _records_to_artifact([])
 
+
+def _records_to_artifact(records: list[dict[str, Any]]) -> TrajectoryArtifact:
     native_tool_calls: list[dict[str, Any]] = []
     messages: list[dict[str, Any]] = []
     steps: list[dict[str, Any]] = []
@@ -148,7 +160,10 @@ def convert(output_dir: str) -> TrajectoryArtifact:
                             }
                         )
                     elif btype == "text":
-                        text = block.get("text", "")
+                        # str-coerce (mirrors the openclaw converter): a garbled trace may
+                        # carry a non-str text block; keep final_response/messages str per
+                        # the QuerySpec contract.
+                        text = str(block.get("text", ""))
                         if text:
                             messages.append({"role": "assistant", "text": text})
                             add_step(
@@ -244,14 +259,17 @@ def _load_records(output_dir: str) -> list[dict[str, Any]]:
     path = os.path.join(output_dir, TRANSCRIPT_FILENAME)
     records: list[dict[str, Any]] = []
     try:
-        with open(path, encoding="utf-8") as fh:
+        with open(path, encoding="utf-8", errors="replace") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
                     continue
                 try:
                     obj = json.loads(line)
-                except json.JSONDecodeError:
+                except (ValueError, RecursionError):
+                    # Skip any unparseable line: bad JSON (JSONDecodeError, a ValueError),
+                    # an oversized int literal (bare ValueError, >4300 digits), or deeply-
+                    # nested JSON (RecursionError). This runs before convert()'s backstop.
                     continue
                 if isinstance(obj, dict):
                     records.append(obj)
