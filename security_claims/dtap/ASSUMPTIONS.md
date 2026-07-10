@@ -13,14 +13,16 @@ re-expressing one per-task config as one `Task`. The scoring predicates
 
 - **A.1** The per-task dataset (`config.yaml` / `setup.sh` / `judge.py` /
   `metadata/`) is **not vendored** in this package (it is large and licensed with
-  the dataset). It is resolved by the frozen scaffold loader
-  (`dtap_scaffold.dataset.resolve_dataset_root`): an explicit `dataset_root`, else
+  the dataset). It is resolved by the claim's dataset loader
+  (`security_claim_dtap.dataset.resolve_dataset_root`): an explicit `dataset_root`, else
   `$DTAP_DATASET_ROOT`, else `./dataset`; with `download=True` the requested
   domains are fetched from HuggingFace (`AI-Secure/DecodingTrust-Agent-Platform`).
 - **A.2** **Text-only scope.** DTAP ships 14 domains; this port covers the 11
-  text-based ones (`dtap_scaffold.text_domains.TEXT_ONLY_DOMAINS`). `browser`,
-  `macos`, and `windows` are vision/GUI driven and out of scope; the scaffold
-  enumerator skips them, so the claim can never construct a task for them.
+  text-based ones (`dtap_scaffold.text_domains.TEXT_ONLY_DOMAINS`, the target's
+  supported-domain capability list). `browser`, `macos`, and `windows` are
+  vision/GUI driven and out of scope; the claim's enumerator
+  (`security_claim_dtap.dataset.iter_task_config_paths`) skips them, so the claim
+  can never construct a task for them.
 - **A.3** **Golden-hash manifest.** `data/golden_hashes.json` pins
   `sha256(Goal bytes + judge.py bytes)` for a deterministic strided sample
   (default 16 `travel` tasks, spanning benign and malicious; see
