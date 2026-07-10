@@ -21,11 +21,14 @@ from dtap_scaffold.controllables import (
     FIXED_CONTROLLABLES,
     SKILL_CTRL,
     SYSTEM_PROMPT_CTRL,
+    TOOL_ADD_CTRL,
     TOOL_DESCRIPTION_OVERRIDE_CTRL,
     TOOL_DESCRIPTION_SUFFIX_CTRL,
+    TOOL_REMOVE_CTRL,
     USER_PROMPT_CTRL,
     env_inject_controllable,
     env_tool_output_controllable,
+    tool_call_controllable,
 )
 from dtap_scaffold.forest import (
     AGENT_TRACE_MESSAGES_TAG,
@@ -107,10 +110,13 @@ __all__ = [
     "SKILL_CTRL",
     "TOOL_DESCRIPTION_OVERRIDE_CTRL",
     "TOOL_DESCRIPTION_SUFFIX_CTRL",
+    "TOOL_ADD_CTRL",
+    "TOOL_REMOVE_CTRL",
     "FILESYSTEM_CTRL",
     "CODE_EXECUTION_CTRL",
     "FIXED_CONTROLLABLES",
     "env_tool_output_controllable",
+    "tool_call_controllable",
     "env_inject_controllable",
     # observables
     "STATIC_OBSERVABLE_SPECS",

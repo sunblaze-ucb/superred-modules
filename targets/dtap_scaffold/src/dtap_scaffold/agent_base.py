@@ -48,13 +48,16 @@ from dtap_scaffold.controllables import (
     FIXED_CONTROLLABLES,
     SKILL_CTRL,
     SYSTEM_PROMPT_CTRL,
+    TOOL_ADD_CTRL,
     TOOL_DESCRIPTION_OVERRIDE_CTRL,
     TOOL_DESCRIPTION_SUFFIX_CTRL,
+    TOOL_REMOVE_CTRL,
     USER_PROMPT_CTRL,
     env_inject_controllable,
     env_tool_output_controllable,
+    tool_call_controllable,
 )
-from dtap_scaffold.forest import build_domain, env_server_tag
+from dtap_scaffold.forest import TOOL_CATALOGUE_ADD_TAG, build_domain, env_server_tag
 from dtap_scaffold.observables import (
     ACTIVE_ENVIRONMENTS_OBS,
     DETAILED_SYSTEM_SPECIFICATION_OBS,
@@ -298,6 +301,7 @@ class DtapAgentTarget(Target):
         ]
         skills = await self._precall_skills(send_event)
         edits = await self._precall_tool_desc(send_event)
+        added_tools, removed_tools, tool_call_ctrls = await self._precall_tool_catalog(send_event)
 
         # host_filesystem vector (PreCall): place/edit/delete files on the machine.
         await self._precall_filesystem(send_event)
@@ -312,6 +316,7 @@ class DtapAgentTarget(Target):
         # Wire the proxy for this run (env-tool observe + PostCall return tampering).
         self._proxy.bind(emit, send_event)
         self._proxy.set_tool_description_edits(edits)
+        self._proxy.set_tool_catalog(added_tools, removed_tools, tool_call_ctrls)
         self._proxy.set_env_tool_controllables(self._env_tool_by_tool, self._env_tool_defaults)
 
         spec = AgentLaunchSpec(
@@ -418,6 +423,46 @@ class DtapAgentTarget(Target):
                 }
             )
         return edits
+
+    async def _precall_tool_catalog(
+        self, send_event: EventResponseHandler
+    ) -> tuple[
+        dict[str, list[dict[str, Any]]],
+        dict[str, set[str]],
+        dict[tuple[str, str], Controllable],
+    ]:
+        """Tool-catalogue vector (PreCall): add fake tools and/or remove real ones.
+
+        Fires TOOL_ADD_CTRL then TOOL_REMOVE_CTRL (once each). An ADD injection
+        registers attacker-defined fake tools that appear in the agent's listing but
+        have no backend; each gets a per-call PostCall Controllable tagged at the ADD
+        capability, so when the agent calls the fake tool the attacker that added it
+        receives the call (in scope, since it held ADD to register the tool) and
+        supplies the return. A REMOVE injection drops tools from the listing the
+        agent reads. Declining either leaves the genuine catalogue (DTAP default).
+
+        Returns ``(added, removed, call_ctrls)`` for :meth:`MCPProxy.set_tool_catalog`.
+        """
+        added: dict[str, list[dict[str, Any]]] = {}
+        call_ctrls: dict[tuple[str, str], Controllable] = {}
+        resp = await send_event(ControllablePreCallEvent(controllable=TOOL_ADD_CTRL, request=""))
+        injected = _as_injection(resp)
+        if injected is not None:
+            for spec in _normalize_tool_adds(json.loads(injected)):
+                server, name = spec["server"], spec["name"]
+                added.setdefault(server, []).append(spec)
+                call_ctrls[(server, name)] = tool_call_controllable(
+                    server, name, TOOL_CATALOGUE_ADD_TAG
+                )
+
+        removed: dict[str, set[str]] = {}
+        resp = await send_event(ControllablePreCallEvent(controllable=TOOL_REMOVE_CTRL, request=""))
+        injected = _as_injection(resp)
+        if injected is not None:
+            for server, name in _normalize_tool_removes(json.loads(injected)):
+                removed.setdefault(server, set()).add(name)
+
+        return added, removed, call_ctrls
 
     async def _apply_env_injections(self, send_event: EventResponseHandler) -> None:
         assert self._injector is not None
@@ -591,6 +636,58 @@ def _normalize_instructions(value: str) -> tuple[str, ...]:
     if isinstance(parsed, list):
         return tuple(str(x) for x in parsed)
     return (str(parsed),)
+
+
+def _one_tool_add(spec: dict[str, Any], group_server: str) -> dict[str, Any]:
+    """One tool_add spec -> a normalized fake-tool dict (server falls back to the group)."""
+    return {
+        "server": str(spec.get("server") or group_server),
+        "name": str(spec.get("name", "")),
+        "description": str(spec.get("description") or ""),
+        "inputSchema": spec.get("inputSchema") or {},
+        "fake_return": str(spec.get("fake_return") or ""),
+    }
+
+
+def _normalize_tool_adds(parsed: Any) -> list[dict[str, Any]]:
+    """A tool_add injection -> a flat list of normalized fake-tool dicts.
+
+    Accepts a single spec ``{server, name, ...}``, a list of specs, or a grouped
+    ``{server, tools: [{name, ...}, ...]}`` (the group's server fills in any inner
+    spec that omits one). Specs missing a server or name are dropped.
+    """
+    out: list[dict[str, Any]] = []
+    items = parsed if isinstance(parsed, list) else [parsed]
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        inner = item.get("tools")
+        if isinstance(inner, list):
+            group_server = str(item.get("server", ""))
+            out += [_one_tool_add(s, group_server) for s in inner if isinstance(s, dict)]
+        else:
+            out.append(_one_tool_add(item, ""))
+    return [t for t in out if t["server"] and t["name"]]
+
+
+def _normalize_tool_removes(parsed: Any) -> list[tuple[str, str]]:
+    """A tool_remove injection -> a list of ``(server, name)`` pairs.
+
+    Accepts a single ``{server, name}``, a list of such, or a grouped
+    ``{server, names: [name, ...]}``. Entries missing a server or name are dropped.
+    """
+    out: list[tuple[str, str]] = []
+    items = parsed if isinstance(parsed, list) else [parsed]
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        names = item.get("names")
+        if isinstance(names, list):
+            server = str(item.get("server", ""))
+            out += [(server, str(n)) for n in names]
+        else:
+            out.append((str(item.get("server", "")), str(item.get("name", ""))))
+    return [(s, n) for s, n in out if s and n]
 
 
 __all__ = ["DtapAgentTarget"]

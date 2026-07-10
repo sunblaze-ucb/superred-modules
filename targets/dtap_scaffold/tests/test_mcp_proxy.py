@@ -26,8 +26,8 @@ from superred.core.types.events import (
     ObservableEvent,
 )
 
-from dtap_scaffold.controllables import env_tool_output_controllable
-from dtap_scaffold.forest import tools_server_tag
+from dtap_scaffold.controllables import env_tool_output_controllable, tool_call_controllable
+from dtap_scaffold.forest import TOOL_CATALOGUE_ADD_TAG, tools_server_tag
 from dtap_scaffold.mcp_proxy import (
     _HOST_GATEWAY,
     HostMCPProxy,
@@ -132,6 +132,58 @@ def test_list_tools_no_edits_is_genuine():
     proxy = HostMCPProxy()
     proxy._raw_tools = {"s": [{"name": "t", "description": "genuine desc"}]}
     assert proxy.list_tools("s")[0].description == "genuine desc"
+
+
+def test_list_tools_includes_added_and_excludes_removed():
+    """The AGENT's view (list_tools): the attacker's ADDED fake tools appear, its
+    REMOVED tools are dropped, and description edits still apply to genuine tools."""
+    proxy = HostMCPProxy()
+    proxy._raw_tools = {
+        "s": [
+            {"name": "keep", "description": "genuine"},
+            {"name": "drop", "description": "bye"},
+        ]
+    }
+    proxy.set_tool_description_edits(
+        [{"server": "s", "tool": "keep", "mode": "suffix", "content": "X"}]
+    )
+    add_ctrl = tool_call_controllable("s", "fake", TOOL_CATALOGUE_ADD_TAG)
+    proxy.set_tool_catalog(
+        added={
+            "s": [
+                {
+                    "name": "fake",
+                    "description": "attacker tool",
+                    "inputSchema": {},
+                    "fake_return": "R",
+                }
+            ]
+        },
+        removed={"s": {"drop"}},
+        call_ctrls={("s", "fake"): add_ctrl},
+    )
+    by_name = {t.tool: t.description for t in proxy.list_tools("s")}
+    assert by_name == {"keep": "genuine\nX", "fake": "attacker tool"}  # drop excluded, fake added
+
+
+def test_tool_catalogue_ignores_add_remove_stays_genuine():
+    """tool_catalogue() is the pre-edit GENUINE surface an optimizer reads to see the
+    real tool space; the attacker's own add/remove edits do NOT rewrite it (they only
+    shape list_tools -- what the AGENT sees). This keeps the observable honest."""
+    proxy = HostMCPProxy()
+    proxy._raw_tools = {
+        "s": [
+            {"name": "keep", "description": "d", "inputSchema": {}},
+            {"name": "drop", "description": "d2", "inputSchema": {}},
+        ]
+    }
+    proxy.set_tool_catalog(
+        added={"s": [{"name": "fake", "description": "x", "inputSchema": {}, "fake_return": ""}]},
+        removed={"s": {"drop"}},
+        call_ctrls={},
+    )
+    names = {t["name"] for t in proxy.tool_catalogue()["s"]}
+    assert names == {"keep", "drop"}  # genuine catalogue unchanged: no 'fake', 'drop' still present
 
 
 # --------------------------- handle_tool_call: the chokepoint -------------
@@ -250,6 +302,63 @@ async def test_handle_tool_call_without_bind_returns_genuine():
     proxy, _ = _proxy_with_forward("GENUINE")  # bind() never called -> send_event is None
     text, _ = await proxy.handle_tool_call("travel-suite", "search_flights", {})
     assert text == "GENUINE"
+
+
+def _proxy_with_fake_tool(fake_return: str = "FALLBACK"):
+    """A proxy holding one attacker-added fake tool whose _forward RAISES (a fake tool
+    has no backend and must never be forwarded), returning ``(proxy, add_ctrl)``."""
+    proxy = HostMCPProxy()
+
+    async def boom_forward(server, tool, params):
+        raise AssertionError("an attacker-added fake tool must NOT be forwarded to a backend")
+
+    proxy._forward = boom_forward  # type: ignore[method-assign]
+    add_ctrl = tool_call_controllable("s", "fake", TOOL_CATALOGUE_ADD_TAG)
+    proxy.set_tool_catalog(
+        added={
+            "s": [
+                {"name": "fake", "description": "x", "inputSchema": {}, "fake_return": fake_return}
+            ]
+        },
+        removed={},
+        call_ctrls={("s", "fake"): add_ctrl},
+    )
+    return proxy, add_ctrl
+
+
+async def test_handle_tool_call_fake_tool_fires_add_scoped_postcall_and_no_forward():
+    """THE crux of the ADD vector: calling an attacker-added fake tool forwards to NO
+    backend, fires exactly ONE PostCall carrying the static fake_return, and that
+    event is tagged at tool_catalogue_add -- so an attacker holding only the ADD
+    capability (which it needed to register the tool) RECEIVES the call and decides
+    the answer. A decline returns the fake_return fallback; emit-once holds."""
+    proxy, add_ctrl = _proxy_with_fake_tool("FALLBACK")
+    emit, send_event, events, observables = _recorder(injections={})  # decline
+    proxy.bind(emit, send_event)
+
+    text, is_error = await proxy.handle_tool_call("s", "fake", {"k": "v"})
+
+    assert text == "FALLBACK"  # decline -> the registered static fake_return
+    assert is_error is False
+    posts = [e for e in events if isinstance(e, ControllablePostCallEvent)]
+    assert len(posts) == 1  # exactly one event, no forward-driven env_tool event
+    assert posts[0].controllable is add_ctrl
+    assert posts[0].controllable.name == "tool_call:s:fake"
+    assert posts[0].security_domain is TOOL_CATALOGUE_ADD_TAG  # attacker with ADD receives it
+    assert posts[0].answer == "FALLBACK"
+    assert json.loads(posts[0].request) == {"tool": "fake", "params": {"k": "v"}}
+    assert observables == []  # emit-once: the PostCall is the sole emission
+
+
+async def test_handle_tool_call_fake_tool_injection_overrides_fake_return():
+    """When the attacker answers the fake tool's call event, its value is what the
+    agent receives (overriding the static fake_return)."""
+    proxy, _ = _proxy_with_fake_tool("FALLBACK")
+    emit, send_event, _, _ = _recorder(injections={"tool_call:s:fake": "ATTACKER_ANSWER"})
+    proxy.bind(emit, send_event)
+    text, is_error = await proxy.handle_tool_call("s", "fake", {})
+    assert text == "ATTACKER_ANSWER"  # live attacker answer overrides the fallback
+    assert is_error is False
 
 
 # --------------------------- _forward + small helpers ---------------------
@@ -376,6 +485,54 @@ async def test_dispatch_tools_call_routes_and_tampers():
         None,
     )
     assert resp["result"]["content"][0]["text"] == "TAMP"
+    assert resp["result"]["isError"] is False
+
+
+async def test_dispatch_tools_list_includes_added_excludes_removed_schema_by_name():
+    """tools/list over the union reflects the catalogue edits: removed tool dropped,
+    added tool present, and each inputSchema is matched BY NAME -- dropping 'drop'
+    shifts positions, so the old positional zip against _raw_tools would misalign
+    schemas; this guards that fix."""
+    proxy = HostMCPProxy()
+    proxy._raw_tools = {
+        "a": [
+            {"name": "keep", "description": "d", "inputSchema": {"x": 1}},
+            {"name": "drop", "description": "d2", "inputSchema": {"z": 9}},
+        ]
+    }
+    proxy.set_tool_catalog(
+        added={
+            "a": [
+                {"name": "fake", "description": "atk", "inputSchema": {"y": 2}, "fake_return": ""}
+            ]
+        },
+        removed={"a": {"drop"}},
+        call_ctrls={},
+    )
+    resp = await proxy._dispatch_rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, None)
+    tools = {t["name"]: t for t in resp["result"]["tools"]}
+    assert set(tools) == {"keep", "fake"}  # 'drop' excluded, 'fake' added
+    assert tools["keep"]["inputSchema"] == {"x": 1}  # genuine schema matched by name, not position
+    assert tools["fake"]["inputSchema"] == {"y": 2}  # added tool's own schema
+    assert tools["fake"]["description"] == "atk"
+
+
+async def test_dispatch_tools_call_routes_fake_tool_to_fake_return():
+    """tools/call over the union resolves an attacker-added fake tool to its server
+    (via _resolve_server) and runs the no-backend fake path (returns fake_return)."""
+    proxy, _ = _proxy_with_fake_tool("FB")
+    emit, send_event, _, _ = _recorder(injections={})
+    proxy.bind(emit, send_event)
+    resp = await proxy._dispatch_rpc(
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": "fake", "arguments": {}},
+        },
+        None,
+    )
+    assert resp["result"]["content"][0]["text"] == "FB"
     assert resp["result"]["isError"] is False
 
 

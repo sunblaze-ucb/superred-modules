@@ -19,8 +19,6 @@ from __future__ import annotations
 from importlib import resources
 
 DETAILED_SYSTEM_SPECIFICATION: str = (
-    resources.files("dtap_scaffold")
-    .joinpath("system_specification.md")
-    .read_text(encoding="utf-8")
+    resources.files("dtap_scaffold").joinpath("system_specification.md").read_text(encoding="utf-8")
 )
 """The leaked system-specification brief (markdown), read once at import time."""

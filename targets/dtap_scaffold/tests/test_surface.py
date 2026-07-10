@@ -44,6 +44,8 @@ def test_fixed_controllables():
         "skill",
         "tool_description_override",
         "tool_description_suffix",
+        "tool_add",
+        "tool_remove",
         "filesystem",
         "code_execution",
     ]
@@ -54,6 +56,11 @@ def test_fixed_controllables():
     assert S.SKILL_CTRL.value_type == "json"
     assert S.TOOL_DESCRIPTION_OVERRIDE_CTRL.security_domain is S.TOOL_CATALOGUE_EDIT_TAG
     assert S.TOOL_DESCRIPTION_SUFFIX_CTRL.security_domain is S.TOOL_CATALOGUE_EDIT_TAG
+    # the tool-catalogue ADD/REMOVE vectors, each at its own capability leaf
+    assert S.TOOL_ADD_CTRL.security_domain is S.TOOL_CATALOGUE_ADD_TAG
+    assert S.TOOL_ADD_CTRL.value_type == "json"
+    assert S.TOOL_REMOVE_CTRL.security_domain is S.TOOL_CATALOGUE_REMOVE_TAG
+    assert S.TOOL_REMOVE_CTRL.value_type == "json"
     # the host trust boundary: filesystem (PreCall) + code_execution (PostCall loop)
     assert S.FILESYSTEM_CTRL.security_domain is S.HOST_FILESYSTEM_TAG
     assert S.FILESYSTEM_CTRL.value_type == "json"

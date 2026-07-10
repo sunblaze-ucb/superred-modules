@@ -79,6 +79,11 @@ class FakeProxy:
     def set_tool_description_edits(self, edits):
         self._edits = edits
 
+    def set_tool_catalog(self, added, removed, call_ctrls):
+        self._added = added
+        self._removed = removed
+        self._call_ctrls = call_ctrls
+
     def set_env_tool_controllables(self, by_server_tool, defaults):
         self._env_tool_by_tool = by_server_tool
         self._env_tool_defaults = defaults

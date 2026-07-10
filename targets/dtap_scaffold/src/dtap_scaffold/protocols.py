@@ -69,6 +69,22 @@ class MCPProxy(Protocol):
         """Set PreCall tool-vector edits: ``[{server, tool, mode, content}]``."""
         ...
 
+    def set_tool_catalog(
+        self,
+        added: dict[str, list[dict[str, Any]]],
+        removed: dict[str, set[str]],
+        call_ctrls: dict[tuple[str, str], Controllable],
+    ) -> None:
+        """Set the PreCall catalogue ADD/REMOVE edits used in :meth:`list_tools`.
+
+        *added*: ``server -> [{name, description, inputSchema, fake_return}]`` fake
+        tools shown in the listing (no backend); *removed*: ``server -> {names}``
+        dropped from the listing; *call_ctrls*: ``(server, tool) -> the fake tool's
+        per-call Controllable`` (tagged at the ADD capability) fired when the agent
+        calls that fake tool.
+        """
+        ...
+
     def set_env_tool_controllables(
         self,
         by_server_tool: dict[str, dict[str, Controllable]],
