@@ -317,6 +317,34 @@ async def test_handle_tool_call_resolves_tool_to_its_node_controllable():
     assert posts[2].security_domain is tree.root
 
 
+async def test_handle_tool_call_injection_at_node_controllable_tampers_that_tools_return():
+    """env_tool value-replacement works at a per-NODE controllable, not only the server root:
+    injecting on ``env_tool:travel-suite.public`` replaces the genuine return the agent sees for a
+    tool mapped to that node. (Root-level tampering is covered by
+    ``test_handle_tool_call_injection_returns_tampered``; node-level firing by the resolution test
+    above; this closes the node-level tampering corner so every env_tool sub-point is proven.)"""
+    from dtap_scaffold.tool_trees import build_server_tree
+
+    proxy = HostMCPProxy()
+    tree = build_server_tree("travel-suite")
+
+    async def fake_forward(server, tool, params):
+        return "GENUINE", False
+
+    proxy._forward = fake_forward  # type: ignore[method-assign]
+    pub_ctrl = env_tool_output_controllable("travel-suite", "public", tree.nodes["public"])
+    root_ctrl = env_tool_output_controllable("travel-suite", "", tree.root)
+    proxy.set_env_tool_controllables(
+        {"travel-suite": {"query_flight": pub_ctrl}}, {"travel-suite": root_ctrl}
+    )
+    emit, send_event, _, _ = _recorder(injections={"env_tool:travel-suite.public": "TAMPERED_NODE"})
+    proxy.bind(emit, send_event)
+
+    text, is_error = await proxy.handle_tool_call("travel-suite", "query_flight", {})
+    assert text == "TAMPERED_NODE"  # the public-node injection replaced the genuine return
+    assert is_error is False
+
+
 async def test_handle_tool_call_decline_preserves_backend_error():
     # A genuine backend error flag survives a declined (non-injected) call.
     proxy, _ = _proxy_with_forward("BACKEND_ERR", is_error=True)

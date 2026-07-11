@@ -5,8 +5,9 @@ corresponding event; the Controller's ``security_domain_filter`` decides, per th
 experiment's scope, whether an optimizer may actually inject. A passthrough
 optimizer (declines everything) leaves every value genuine, reproducing DTAP's
 unattacked run -- the clean baseline. The byte-identical upstream attack payloads
-are NOT defaults here; they live only in the claim's replay-based faithfulness
-test.
+are NOT defaults here; a real attack is whatever the optimizer injects at runtime
+(there is no built-in replay of the upstream ``attack_turns`` through these
+controllables -- the clean baseline carries no attack).
 
 The four DTAP injection vectors map to these controllables:
 

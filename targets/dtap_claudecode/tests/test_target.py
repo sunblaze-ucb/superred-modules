@@ -94,6 +94,19 @@ def test_build_task_payload():
     json.dumps(task)
 
 
+def test_build_task_includes_skills():
+    """The DTAP skill injection vector must reach the container payload: _build_task carries
+    spec.skills into task["skills"], which the in-container driver.materialize_skills consumes.
+    spec.skills itself is set by the agent-agnostic base (_precall_skills) and tested there; this
+    guards the claudecode-specific bridge, whose silent drop a green offline suite would otherwise
+    miss (driver.run_episode is container-only / no-cover)."""
+    t = _target()
+    skills = ({"name": "helper", "content": "SKILL BODY", "mode": "create", "row": 1},)
+    task = t._build_task(_spec(skills=skills), output_dir=CONTAINER_MOUNT, workspace_dir="/w")
+    assert task["skills"] == [dict(skills[0])]  # the injected skill dict reaches the payload
+    json.dumps(task)  # and stays JSON-serializable for the container boundary
+
+
 # ----- _docker_command ----------------------------------------------------
 
 

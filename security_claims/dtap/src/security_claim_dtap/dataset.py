@@ -110,7 +110,8 @@ class TaskConfig:
     user-prompt baseline; empty for direct-threat tasks that have no benign
     cover). ``malicious_goal`` is the byte-identical attacker objective the claim
     turns into the ``Goal``. The byte-identical upstream ``attack_turns`` are NOT
-    parsed here (the clean baseline carries no attack; replay lives in tests).
+    parsed here (the clean baseline carries no attack; a real attack is the
+    optimizer's runtime injection, not a built-in replay of ``attack_turns``).
     """
 
     task_dir: Path
