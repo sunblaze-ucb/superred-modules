@@ -111,8 +111,8 @@ The 2 non-green domains are the macOS caveat above, NOT a port flaw:
   localhost:<GMAIL_AUTH_PORT>` -- diagnosed: the gmail `user-service` container is
   `Up (healthy)` (its internal healthcheck passes), but the Mac host cannot reach
   its host-net port. Same root cause makes the `legal`/`workflow` RESET-endpoint
-  curls fail. All four are gmail/slack-backed and exercise host-localhost HTTP to a
-  `network_mode: host` service. On a Linux Docker host these resolve. (The original
+  curls -- and the `crm` `setup.sh` slack curl -- fail. All five are gmail/slack-backed
+  and exercise host-localhost HTTP to a `network_mode: host` service. On a Linux Docker host these resolve. (The original
   PR always gated the container e2e behind the `docker`/`live` markers and the
   experiments run on Linux, so this is a test-machine caveat, characterized and
   confirmed, not a regression.)
