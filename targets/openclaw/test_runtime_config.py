@@ -330,7 +330,12 @@ def test_get_controllables_includes_new_capabilities() -> None:
     target = OpenClawTarget(enable_tool_injection=True)
     names = {c.name for c in target.get_controllables()}
     assert {"shell_output", "message_content", "web_content", "file_content"} <= names
-    assert "memory_poison" in names
+    assert {
+        "shell_output_transcript",
+        "message_content_transcript",
+        "web_content_transcript",
+        "file_content_transcript",
+    } <= names
 
 
 def test_get_controllables_dedupes() -> None:

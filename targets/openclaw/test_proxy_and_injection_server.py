@@ -35,7 +35,7 @@ async def test_injection_server_rejects_missing_token() -> None:
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 f"http://127.0.0.1:{server.actual_port}/hook",
-                json={"hook": "tool_result_middleware", "toolName": "read"},
+                json={"hook": "before_tool_call", "toolName": "read"},
             ) as resp:
                 assert resp.status == 401
     finally:
@@ -55,7 +55,7 @@ async def test_injection_server_accepts_bearer_token() -> None:
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 f"http://127.0.0.1:{server.actual_port}/hook",
-                json={"hook": "tool_result_middleware", "toolName": "read"},
+                json={"hook": "before_tool_call", "toolName": "read"},
                 headers={"Authorization": "Bearer secret-callback"},
             ) as resp:
                 assert resp.status == 200

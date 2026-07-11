@@ -329,14 +329,17 @@ async def test_openclaw_target_interface_compliance():
     )
     ctrls2 = target2.get_controllables()
     ctrl_names = {c.name for c in ctrls2}
-    # user_message + live tool-output + end-of-run memory_poison.
+    # user_message + the tool-output registry capabilities (web/file/shell/message).
     assert ctrl_names == {
         "user_message",
         "web_content",
         "file_content",
         "shell_output",
         "message_content",
-        "memory_poison",
+        "web_content_transcript",
+        "file_content_transcript",
+        "shell_output_transcript",
+        "message_content_transcript",
     }
 
     # set_config / query round-trip (no connection needed)
@@ -432,9 +435,9 @@ async def test_full_pipeline_with_system_scope():
 async def test_injection_bridge_round_trip():
     """The plugin -> injection server -> optimizer bridge resolves injections.
 
-    Exercises the Python side of the mid-run live injection path end to end
+    Exercises the Python side of the mid-run injection path end to end
     (without Docker/Node): an HTTP POST shaped like the plugin's
-    ``tool_result_middleware`` callback flows through ``InjectionServer`` into
+    ``before_tool_call`` callback flows through ``InjectionServer`` into
     ``_handle_injection_hook``, which dispatches a
     ``ControllablePostCallEvent`` and returns the optimizer's
     ``ControllableInjection`` as the tool-result content to splice in.
@@ -466,11 +469,10 @@ async def test_injection_bridge_round_trip():
             async with session.post(
                 f"{server.url}/hook",
                 json={
-                    "hook": "tool_result_middleware",
+                    "hook": "before_tool_call",
                     "toolName": "web_fetch",
                     "toolCallId": "call-1",
                     "params": {"url": "http://example.com"},
-                    "result": {"content": [{"type": "text", "text": "real"}]},
                 },
             ) as resp:
                 body = await resp.json()
@@ -481,23 +483,10 @@ async def test_injection_bridge_round_trip():
             async with session.post(
                 f"{server.url}/hook",
                 json={
-                    "hook": "tool_result_middleware",
+                    "hook": "before_tool_call",
                     "toolName": "unknown",
                     "toolCallId": "call-2",
                     "params": {},
-                },
-            ) as resp:
-                assert await resp.json() == {}
-
-        # Legacy before_tool_call is ignored (memory_poison is post-run RPC).
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{server.url}/hook",
-                json={
-                    "hook": "before_tool_call",
-                    "toolName": "web_fetch",
-                    "toolCallId": "call-3",
-                    "params": {"url": "http://example.com"},
                 },
             ) as resp:
                 assert await resp.json() == {}
@@ -506,8 +495,8 @@ async def test_injection_bridge_round_trip():
 
 
 @pytest.mark.asyncio
-async def test_tool_result_middleware_hook_injects_tool_result():
-    """``tool_result_middleware`` injections are returned as tool-result content."""
+async def test_before_tool_call_hook_injects_tool_result():
+    """before_tool_call injections are returned as tool-result content."""
     target = OpenClawTarget(
         auth_token="test-token",
         gateway_url="ws://127.0.0.1:0",
@@ -522,11 +511,10 @@ async def test_tool_result_middleware_hook_injects_tool_result():
         )
 
     target._active_send_event = fake_send_event
-
-    # before_tool_call no longer injects (removed transcript path).
-    assert await target._handle_injection_hook(
+    out = await target._handle_injection_hook(
         "before_tool_call", "web_fetch", {"url": "http://benign.test"}, "c1", None,
-    ) is None
+    )
+    assert out == {"toolResult": "ADVERSARIAL PAGE CONTENT"}
 
     assert await target._handle_injection_hook(
         "tool_result_middleware", "unknown", {}, "c1", None,
@@ -544,7 +532,7 @@ async def test_tool_result_middleware_hook_injects_tool_result():
     # No active run -> the hook declines to inject.
     target._active_send_event = None
     assert await target._handle_injection_hook(
-        "tool_result_middleware", "web_fetch", {}, "c1", None,
+        "before_tool_call", "web_fetch", {}, "c1", None,
     ) is None
 
 

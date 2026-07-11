@@ -4,7 +4,7 @@
     "onStartup": true
   },
   "name": "Superred Injection",
-  "description": "Tool-output and memory-poison injection bridge for superred (live tool-result middleware + superred.enqueueMemoryPoison → before_prompt_build).",
+  "description": "Tool-output injection bridge for superred red-teaming (live tool-result middleware + transcript-poison hooks).",
   "contracts": {
     "agentToolResultMiddleware": ["openclaw"]
   },

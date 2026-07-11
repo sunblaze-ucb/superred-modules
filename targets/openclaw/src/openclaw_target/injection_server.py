@@ -25,7 +25,7 @@ InjectionHandler = Callable[
 """(hook_type, tool_name, params, tool_call_id, result) -> payload or None.
 
 Handler may be sync or async. Async handlers are awaited, so the
-plugin's blocking ``tool_result_middleware`` POST receives the response only
+plugin's blocking ``before_tool_call`` POST receives the response only
 after the optimizer-in-the-loop decision has been made.
 """
 
