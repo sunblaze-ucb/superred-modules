@@ -1,0 +1,71 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "security-claim-dtap"
+version = "0.1.0"
+description = "DecodingTrust-Agent (DTAP-BENCH) security claim: one task per DTAP per-task config (benign or malicious, direct/indirect), driving either DTAP agent target through the byte-faithful out-of-band env-state judge. Target-agnostic; hierarchical factories by domain, threat model, and risk category."
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "superred>=0.1.0",
+    "dtap-scaffold>=0.1.0",
+]
+
+[project.optional-dependencies]
+# Auto-download the DTAP per-task dataset (goal enumeration) from HuggingFace;
+# else point $DTAP_DATASET_ROOT at a local checkout. Defining the Goals is the
+# claim's job, so the enumeration + this extra live here (security_claim_dtap.dataset).
+dataset = ["huggingface_hub>=0.20"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=6.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/security_claim_dtap"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "--strict-markers -m 'not docker and not live'"
+testpaths = ["tests"]
+markers = [
+    "docker: requires a Docker daemon + CLI (skipped offline/CI)",
+    "live: requires LLM credentials via the LiteLLM proxy (LITELLM_API_KEY/BASE)",
+    "faithfulness: offline byte-identity / golden-hash checks (no network, needs DTAP_DATASET_ROOT)",
+]
+
+[tool.coverage.report]
+fail_under = 95
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "\\.\\.\\.",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.mypy]
+strict = true
+python_version = "3.13"
+
+# dtap_scaffold + the two concrete target packages are lazy-imported (not hard deps
+# of this claim, so not installed for its type-check); yaml/huggingface_hub have no
+# inline types. (dtap_scaffold DOES ship py.typed; it is listed only because it is
+# not a declared dependency here.)
+[[tool.mypy.overrides]]
+module = [
+    "dtap_scaffold.*",
+    "yaml",
+    "huggingface_hub.*",
+    "dtap_claudecode_target",
+    "dtap_openclaw_target",
+]
+ignore_missing_imports = true
+follow_imports = "skip"

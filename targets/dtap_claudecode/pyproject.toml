@@ -1,0 +1,68 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dtap-claudecode-target"
+version = "0.1.0"
+description = "Claude Code (claude_agent_sdk) DTAP agent target for superred: subclasses dtap_scaffold.DtapAgentTarget and runs the Claude Agent SDK in an isolated Docker container against the DTAP env MCP proxy, normalizing the in-container transcript into the shared TrajectoryArtifact."
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "superred>=0.1.0",
+    "dtap-scaffold>=0.1.0",
+]
+
+# The Claude Agent SDK (claude-agent-sdk) and the @anthropic-ai/claude-code Node
+# CLI it drives are NOT host dependencies: they are installed INSIDE the agent
+# Docker image (see docker/Dockerfile) and imported only by driver.py, which runs
+# in that image. The host package imports without them.
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=6.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dtap_claudecode_target"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "--strict-markers -m 'not docker and not live'"
+testpaths = ["tests"]
+markers = [
+    "docker: requires a Docker daemon + CLI (skipped offline/CI)",
+    "live: requires LLM credentials via the LiteLLM proxy (LITELLM_API_KEY/BASE)",
+    "faithfulness: offline byte-identity / golden checks (no network)",
+]
+
+[tool.coverage.run]
+# driver.py runs INSIDE the agent container (needs claude_agent_sdk + a live
+# Claude Code CLI); its run loop is exercised only by the docker+live e2e test.
+# Its pure helpers (_serialize_message / _build_options) are unit-tested, but the
+# module as a whole cannot be covered offline, so it is omitted here.
+omit = ["*/driver.py"]
+
+[tool.coverage.report]
+fail_under = 90
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "\\.\\.\\.",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["UP046", "UP047"]  # Generic[T] syntax requires Python 3.12+; we support 3.11
+
+[tool.mypy]
+strict = true
+python_version = "3.13"
+
+[[tool.mypy.overrides]]
+module = ["claude_agent_sdk.*"]
+ignore_missing_imports = true

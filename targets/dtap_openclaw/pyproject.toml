@@ -1,0 +1,60 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dtap-openclaw-target"
+version = "0.1.0"
+description = "OpenClaw concrete agent target for the DecodingTrust-Agent (DTAP) superred port: runs the OpenClaw CLI headless inside an isolated Docker container, wired to the shared dtap-scaffold base (forest, controllables, observables, env/MCP/injection lifecycle). Native exec/fs tools enabled (upstream disabled them)."
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "superred>=0.1.0",
+    "dtap-scaffold",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=6.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dtap_openclaw_target"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "--strict-markers -m 'not docker and not live'"
+testpaths = ["tests"]
+markers = [
+    "docker: requires a Docker daemon + CLI and the OpenClaw image (skipped offline)",
+    "live: requires LLM credentials via the LiteLLM proxy (LITELLM_API_KEY/BASE)",
+    "faithfulness: offline byte-identity / golden checks (no network)",
+]
+
+[tool.coverage.run]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+fail_under = 90
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "\\.\\.\\.",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["UP046", "UP047"]  # Generic[T] syntax requires Python 3.12+; we support 3.11
+
+[tool.mypy]
+strict = true
+python_version = "3.13"
+
+[[tool.mypy.overrides]]
+module = ["dtap_scaffold.*"]
+ignore_missing_imports = true
