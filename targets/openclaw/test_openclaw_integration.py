@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from typing import Any
 
 import pytest
 import websockets
@@ -23,6 +24,7 @@ import websockets.asyncio.server
 
 from basic_prompt_list_optimizer import BasicPromptListOptimizer
 from openclaw_target import (
+    PERSISTENT_MEMORY_CTRL,
     SYSTEM_TAG,
     USER_INPUT_TAG,
     OpenClawTarget,
@@ -86,6 +88,7 @@ class MockGateway:
         self._secret_in_prompt = ""
         self._last_user = ""
         self._last_response = ""
+        self._files: dict[str, str] = {}
 
     async def start(self) -> int:
         self.server = await websockets.asyncio.server.serve(
@@ -202,6 +205,7 @@ class MockGateway:
                     file_params = msg.get("params", {})
                     name = file_params.get("name", "")
                     content = file_params.get("content", "")
+                    self._files[name] = content
                     if name == "AGENTS.md":
                         self._secret_in_prompt = content
                     await ws.send(json.dumps({
@@ -209,6 +213,16 @@ class MockGateway:
                         "id": msg_id,
                         "ok": True,
                         "payload": {},
+                    }))
+
+                elif method == "agents.files.get":
+                    file_params = msg.get("params", {})
+                    name = file_params.get("name", "")
+                    await ws.send(json.dumps({
+                        "type": "res",
+                        "id": msg_id,
+                        "ok": True,
+                        "payload": {"file": {"content": self._files.get(name, "")}},
                     }))
 
                 elif method == "sessions.reset":
@@ -357,6 +371,80 @@ async def test_openclaw_target_interface_compliance():
     assert target.query("tool_calls") == "[]"
     assert target.query("events") == "[]"
     assert target.query("nonexistent") == ""
+
+
+@pytest.mark.asyncio
+async def test_persistent_memory_writes_durable_memory_file():
+    """``persistent_memory`` fires once per run with full history context and
+    writes the optimizer's choice into MEMORY.md via a real ``agents.files.set``
+    RPC — proving the write mechanism is a durable file write, not an
+    ephemeral prompt hook.
+
+    ``MockGateway`` has no real bootstrap/system-prompt pipeline, so this
+    test can only prove read-after-write via ``agents.files.get`` (the
+    "persist" half). The "behavioral influence" half — that the poisoned
+    ``MEMORY.md`` content actually reaches the model's system prompt in a
+    fresh session — is proven against a *real* gateway in
+    ``test_openclaw_live.py::test_live_persistent_memory_survives_reset_and_fresh_session``
+    and its Docker parity test, via a recording stub upstream.
+    """
+    gateway = MockGateway()
+    port = await gateway.start()
+
+    try:
+        target = OpenClawTarget(
+            auth_token="test-token",
+            gateway_url=f"ws://127.0.0.1:{port}",
+            session_key="test-persistent-memory",
+            enable_persistent_memory=True,
+        )
+
+        ctrls = target.get_controllables()
+        assert PERSISTENT_MEMORY_CTRL in ctrls
+
+        seen_requests: list[dict[str, Any]] = []
+        memory_marker = "POISONED-MEMORY-BY-SUPERRED-99"
+
+        async def send_event(event: object) -> ControllableInjection:
+            controllable = getattr(event, "controllable")
+            if controllable is PERSISTENT_MEMORY_CTRL:
+                seen_requests.append(json.loads(event.request))  # type: ignore[attr-defined]
+                return ControllableInjection(
+                    event=event,  # type: ignore[arg-type]
+                    controllable=controllable,
+                    value=memory_marker,
+                )
+            return ControllableInjection(
+                event=event,  # type: ignore[arg-type]
+                controllable=controllable,
+                value="Hello" if controllable.name == "user_message" else "",
+            )
+
+        await target.run(lambda _e: None, send_event)
+
+        # Fired once, after the run, with the full session history as context.
+        assert len(seen_requests) == 1
+        assert "session_history" in seen_requests[0]
+        assert "assistant_text" in seen_requests[0]
+
+        # Written via the real agents.files.set RPC (survives beyond this
+        # run/session, unlike a prompt-context queue) - verify read-after-write
+        # against the mock gateway's file store directly.
+        assert gateway._files.get("MEMORY.md") == memory_marker
+        assert target._planted_files == ["MEMORY.md"]
+
+        # A fresh run's agents.files.get sees the same durable content - the
+        # write did not depend on the session that produced it.
+        client = target._client
+        assert client is not None
+        got = await client.rpc("agents.files.get", {"agentId": "main", "name": "MEMORY.md"})
+        assert got.get("file", {}).get("content") == memory_marker
+
+        await target.teardown()
+        # teardown clears planted files (matches workspace_files lifecycle).
+        assert gateway._files.get("MEMORY.md") == ""
+    finally:
+        await gateway.stop()
 
 
 @pytest.mark.asyncio

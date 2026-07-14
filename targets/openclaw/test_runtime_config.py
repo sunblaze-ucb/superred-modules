@@ -21,6 +21,7 @@ from openclaw_target.docker_runtime import DEFAULT_DOCKER_IMAGE, OpenClawDockerR
 from openclaw_target.runtime import OpenClawRuntime
 from openclaw_target.target import (
     MESSAGE_CONTENT_CTRL,
+    PERSISTENT_MEMORY_CTRL,
     SHELL_OUTPUT_CTRL,
     TOOL_OUTPUT_CONTROLLABLES,
     OpenClawTarget,
@@ -343,6 +344,18 @@ def test_get_controllables_dedupes() -> None:
     ctrls = target.get_controllables()
     # exec/process both map to the single SHELL_OUTPUT_CTRL.
     assert sum(1 for c in ctrls if c.name == "shell_output") == 1
+
+
+def test_get_controllables_includes_persistent_memory_when_enabled() -> None:
+    target = OpenClawTarget(enable_persistent_memory=True)
+    names = {c.name for c in target.get_controllables()}
+    assert PERSISTENT_MEMORY_CTRL.name in names
+
+
+def test_get_controllables_omits_persistent_memory_by_default() -> None:
+    target = OpenClawTarget()
+    names = {c.name for c in target.get_controllables()}
+    assert PERSISTENT_MEMORY_CTRL.name not in names
 
 
 def test_docker_mode_uses_host_alias() -> None:

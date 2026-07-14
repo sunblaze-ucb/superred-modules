@@ -17,13 +17,29 @@ openclaw/openclaw source):
 * **Live same-turn** — ``registerAgentToolResultMiddleware`` on the
   embedded ``tool_result`` path rewrites the in-flight result before the
   provider continuation (``file_content``, ``web_content``, etc.).
-* **Transcript / memory poisoning (next prompt)** — async
+* **Transcript poisoning (next prompt, same session)** — async
   ``before_tool_call`` + sync ``tool_result_persist`` rewrite only what
   gets persisted (``*_transcript`` controllables); surfaces on the next
-  ``target.run()`` in the same session.
+  ``target.run()`` in the *same* session.
 
 Both paths emit :class:`~superred.core.types.events.ControllablePostCallEvent`
 per intercepted tool call (framework convention for tool-output injection).
+
+A third, independent seam covers **cross-session memory poisoning**:
+
+* **Durable memory (next session, any session)** — ``persistent_memory``
+  fires once at the end of :meth:`OpenClawTarget.run`, with the full
+  session ``chat.history`` as context, and writes its result via the real
+  ``agents.files.set`` RPC into ``MEMORY.md``. Unlike ``*_transcript``
+  (which only rewrites the session's own JSONL transcript) this is a real
+  file write: it survives ``sessions.reset`` and a fresh session, matching
+  the cross-session persistence dimension used by SafeClawArena
+  (Stateful/Persistent State Exploitation) and CIK-Bench (``mem-long``),
+  as distinct from same-session transcript poisoning (``mem-session`` /
+  ``*_transcript``). This deliberately does *not* use OpenClaw's
+  ``before_prompt_build`` / ``enqueueNextTurnInjection`` seams — those are
+  ephemeral prompt context, not durable state, and ``enqueueNextTurnInjection``
+  is not late-callable from outside plugin ``register()`` in any case.
 """
 
 from __future__ import annotations
@@ -45,7 +61,7 @@ from openclaw_target.constants import (
     TOOL_CATALOG_TAG,
     USER_INPUT_TAG,
 )
-from openclaw_target.ws_client import AgentEvent, OpenClawWSClient
+from openclaw_target.ws_client import AgentEvent, AgentRunResult, OpenClawWSClient
 
 from superred.core.interfaces.target import Target
 from superred.core.types.controllable import Controllable
@@ -190,6 +206,19 @@ MESSAGE_CONTENT_TRANSCRIPT_CTRL = Controllable(
     ),
 )
 
+_PERSISTENT_MEMORY_NOTE = (
+    "Cross-session memory poisoning: fires once per run(), after the agent "
+    "run completes, with the full session chat.history as context (so the "
+    "optimizer has full-trajectory knowledge, not just a single tool call). "
+    "The returned value is written via the real agents.files.set RPC into "
+    "MEMORY.md — a genuine durable file, not a prompt hook. Survives "
+    "sessions.reset and loads as system context in a fresh session/gateway "
+    "restart. Distinct threat model from *_transcript (same-session "
+    "transcript poisoning): this is cross-session memory poisoning, aligned "
+    "with SafeClawArena's persistence dimension and CIK-Bench's `mem-long` "
+    "vector. Requires enable_persistent_memory=True."
+)
+
 MODEL_SYSTEM_PROMPT_CTRL = Controllable(
     name="model_system_prompt",
     security_domain=MODEL_TAG,
@@ -208,6 +237,15 @@ MODEL_RESPONSE_CTRL = Controllable(
         "(simulates a manipulated/compromised model output the agent then acts "
         "on). Resolved pre-run; applied to every model response during the run. "
         "Requires enable_llm_proxy=True."
+    ),
+)
+
+PERSISTENT_MEMORY_CTRL = Controllable(
+    name="persistent_memory",
+    security_domain=EXTERNAL_DATA_TAG,
+    description=(
+        "Content written into the agent's durable MEMORY.md at the end of "
+        "a run, with the full run trajectory as context. " + _PERSISTENT_MEMORY_NOTE
     ),
 )
 
@@ -343,6 +381,14 @@ class OpenClawTarget(Target):
             of the same session see as history (verified live: it does
             not rewrite the tool result the in-flight tool-calling loop
             continues with, only what later prompt submissions load).
+        enable_persistent_memory: Expose the ``persistent_memory``
+            controllable. Once per :meth:`run`, after the agent finishes,
+            emits a ``ControllablePostCallEvent`` carrying the full session
+            ``chat.history``; the returned value is written into
+            ``MEMORY.md`` via the real ``agents.files.set`` RPC — a durable
+            file, not a prompt hook, so it survives ``sessions.reset`` and a
+            fresh session. Independent of ``enable_tool_injection`` (no
+            plugin required; uses the same RPC as ``workspace_files``).
         reset_session_between_runs: If ``True``, clear the OpenClaw
             conversation/session in :meth:`reset_ephemeral_state`. Default
             ``False`` keeps the session across runs of a task — OpenClaw
@@ -389,6 +435,7 @@ class OpenClawTarget(Target):
         model_id: str = "",
         agent_timeout_s: float = DEFAULT_AGENT_TIMEOUT_S,
         enable_tool_injection: bool = False,
+        enable_persistent_memory: bool = False,
         enable_llm_proxy: bool | None = None,
         provider_base_url: str = "",
         provider_api_key: str = "",
@@ -405,6 +452,7 @@ class OpenClawTarget(Target):
         self._agent_timeout_s = agent_timeout_s
         self._reset_session_between_runs = reset_session_between_runs
         self._enable_tool_injection = enable_tool_injection
+        self._enable_persistent_memory = enable_persistent_memory
         # The LLM proxy is on by default whenever a provider is configured
         # (it's the only way to inject model responses, track usage, and
         # enumerate models). It auto-disables when no provider is given.
@@ -832,6 +880,8 @@ class OpenClawTarget(Target):
             transcript = dict.fromkeys(TOOL_OUTPUT_TRANSCRIPT_CONTROLLABLES.values())
             ctrls.extend(live)
             ctrls.extend(transcript)
+        if self._enable_persistent_memory:
+            ctrls.append(PERSISTENT_MEMORY_CTRL)
         if self._enable_llm_proxy:
             ctrls.append(MODEL_SYSTEM_PROMPT_CTRL)
             ctrls.append(MODEL_RESPONSE_CTRL)
@@ -1025,6 +1075,9 @@ class OpenClawTarget(Target):
                     content=rec.response_text,
                 ))
 
+        if self._enable_persistent_memory and result.status == "ok":
+            await self._apply_persistent_memory(client, result, send_event)
+
         if result.error:
             logger.warning("Agent run error: %s", result.error)
 
@@ -1172,3 +1225,84 @@ class OpenClawTarget(Target):
                     filename,
                     exc_info=True,
                 )
+
+    async def _apply_persistent_memory(
+        self,
+        client: OpenClawWSClient,
+        result: AgentRunResult,
+        send_event: EventResponseHandler,
+    ) -> None:
+        """Offer the optimizer one grouped, end-of-run memory-poisoning edit.
+
+        Fires once per :meth:`run`, after the agent finishes, with the full
+        session ``chat.history`` as context — the optimizer sees everything
+        that happened in the run, not just a single tool call, before
+        deciding what (if anything) to persist. Unlike the rejected
+        ``before_prompt_build`` / ``enqueueNextTurnInjection`` approach, the
+        returned value is written via the real ``agents.files.set`` RPC into
+        ``MEMORY.md``: a durable file that survives ``sessions.reset`` and a
+        fresh session, not an ephemeral prompt-context queue.
+        """
+        try:
+            history = await client.get_session_history(self._session_key)
+        except Exception:
+            logger.debug("Could not fetch session history for persistent_memory", exc_info=True)
+            history = []
+
+        current_memory = ""
+        try:
+            got = await client.rpc(
+                "agents.files.get",
+                {"agentId": self._agent_id, "name": "MEMORY.md"},
+            )
+            if isinstance(got, dict) and not got.get("error"):
+                current_memory = got.get("file", {}).get("content", "") or ""
+        except Exception:
+            logger.debug("Could not fetch current MEMORY.md for persistent_memory", exc_info=True)
+
+        request_payload = json.dumps(
+            {
+                "session_history": history,
+                "assistant_text": result.assistant_text,
+                "tool_calls": result.tool_calls,
+            },
+            default=str,
+        )
+
+        try:
+            response = await send_event(
+                ControllablePostCallEvent(
+                    controllable=PERSISTENT_MEMORY_CTRL,
+                    request=request_payload,
+                    answer=current_memory,
+                ),
+            )
+        except Exception:
+            logger.exception("send_event failed while emitting persistent_memory")
+            return
+
+        if not isinstance(response, ControllableInjection) or not response.value:
+            return
+
+        try:
+            write_result = await client.rpc("agents.files.set", {
+                "agentId": self._agent_id,
+                "name": "MEMORY.md",
+                "content": response.value,
+            })
+            if isinstance(write_result, dict) and write_result.get("error"):
+                logger.warning(
+                    "agents.files.set(MEMORY.md) rejected by gateway: %s; "
+                    "persistent memory poisoning will not take effect.",
+                    write_result["error"],
+                )
+                return
+        except Exception:
+            logger.warning(
+                "Could not write MEMORY.md via RPC for persistent_memory",
+                exc_info=True,
+            )
+            return
+
+        if "MEMORY.md" not in self._planted_files:
+            self._planted_files.append("MEMORY.md")

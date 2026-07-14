@@ -47,6 +47,7 @@ from test_support import (
     run_message_content_transcript_scenario,
     run_model_response_injection_scenario,
     run_model_system_prompt_injection_scenario,
+    run_persistent_memory_scenario,
     run_reset_teardown_scenario,
     run_shell_output_same_turn_scenario,
     run_shell_output_transcript_scenario,
@@ -636,6 +637,33 @@ async def test_docker_reset_and_teardown_against_real_gateway() -> None:
         finally:
             if target._runtime is not None:
                 await target.teardown()
+
+
+@pytest.mark.asyncio
+async def test_docker_persistent_memory_survives_reset_and_fresh_session() -> None:
+    """``persistent_memory`` durable MEMORY.md write, Docker parity.
+
+    Same real-gateway persistence proof as the local suite
+    (``sessions.reset`` + a brand-new connection, *and* the poisoned
+    ``MEMORY.md`` actually reaching the model's system prompt in a fresh
+    session), but against a fully containerised gateway - the production
+    isolation path.
+    """
+    # enable_llm_proxy runs the proxy on the *host*, so the stub upstream it
+    # calls must be host-reachable (loopback), not the host.docker.internal
+    # variant used when the container calls a stub directly.
+    async with loopback_recording_stub_llm_server(reply="ok") as (stub_url, requests):
+        target = docker_target(
+            model_id="openai/gpt-4o-mini",
+            provider_base_url=stub_url,
+            provider_api_key="stub-key",
+            enable_persistent_memory=True,
+            enable_llm_proxy=True,
+        )
+        try:
+            await run_persistent_memory_scenario(target, llm_requests=requests)
+        finally:
+            await target.teardown()
 
 
 @pytest.mark.asyncio

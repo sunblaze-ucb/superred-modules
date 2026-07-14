@@ -96,12 +96,15 @@ Controllables (injection points):
 | `file_content_transcript` | `external_data` | PostCall, per `read` call | Transcript/memory poison (next prompt). |
 | `shell_output_transcript` | `external_data` | PostCall, per `exec`/`process` call | Transcript/memory poison (next prompt). |
 | `message_content_transcript` | `external_data` | PostCall, per `message` call | Transcript/memory poison (next prompt). |
+| `persistent_memory` | `external_data` | PostCall, once per run (end-of-run) | Cross-session `MEMORY.md` write via `agents.files.set`. Needs `enable_persistent_memory=True`. |
 | `model_system_prompt` | `model` | PreCall, pre-run | Needs the LLM proxy. Same-turn (applied before the run's first model call). |
 | `model_response_injection` | `model` | PreCall, pre-run, applied to every model response | Needs the LLM proxy. **Same-turn** — spliced onto the wire before the agent sees the reply (see Design decisions). |
 
 Live tool controllables (`web_content`, `file_content`, …) and transcript-poison
 controllables (`*_transcript`) are separate threat models — see Design decisions.
-All tool controllables need `enable_tool_injection`.
+`persistent_memory` is a third, opt-in cross-session threat model (real
+`MEMORY.md` writes, not prompt hooks). All tool controllables need
+`enable_tool_injection`.
 
 Observables: `model_identity`, `system_description`, `tool_list`,
 `system_prompt` (static, populated at `initialize()`); `assistant_stream`,
@@ -135,8 +138,19 @@ two plugin seams (verified in `openclaw/openclaw`):
   stashes the optimizer decision; sync `tool_result_persist` splices it into
   the persisted transcript only (`session-tool-result-guard-wrapper.ts` →
   `transformToolResultForPersistence`). Mapped to `*_transcript` controllables.
-  Surfaces on the next `target.run()` in the same session — the SafeClawBench
-  PSE / poison-then-trigger shape (`assert_tool_injection_persisted_on_next_run`).
+  Surfaces on the next `target.run()` in the same session — poison-then-trigger
+  (`assert_tool_injection_persisted_on_next_run`).
+
+**Cross-session memory poisoning (`persistent_memory`).** Simon's grouped
+end-of-run edit idea maps here: after each successful `run()`, the target
+emits one `ControllablePostCallEvent` with the full session `chat.history`
+(plus current `MEMORY.md` as `answer`). The optimizer's returned value is
+written via the real `agents.files.set` RPC into `MEMORY.md` — a durable
+file that survives `sessions.reset` and loads as system context in a fresh
+session. This is **not** `before_prompt_build` / `enqueueNextTurnInjection`
+(ephemeral prompt context). Distinct from `*_transcript` (same-session JSONL
+tool-row poison). Aligned with SafeClawArena SPE and CIK-Bench `mem-long`.
+Opt in with `enable_persistent_memory=True`.
 
 For same-turn *model* output (not tool output), use `model_response_injection`.
 

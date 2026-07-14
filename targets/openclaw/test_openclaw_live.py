@@ -39,6 +39,7 @@ from test_support import (
     run_message_content_transcript_scenario,
     run_model_response_injection_scenario,
     run_model_system_prompt_injection_scenario,
+    run_persistent_memory_scenario,
     run_reset_teardown_scenario,
     run_shell_output_same_turn_scenario,
     run_shell_output_transcript_scenario,
@@ -457,6 +458,30 @@ async def test_live_reset_and_teardown_against_real_gateway() -> None:
         finally:
             if target._runtime is not None:
                 await target.teardown()
+
+
+@pytest.mark.asyncio
+async def test_live_persistent_memory_survives_reset_and_fresh_session() -> None:
+    """``persistent_memory`` writes a durable MEMORY.md edit against a real
+    gateway - verified to survive ``sessions.reset`` and a brand-new
+    connection, unlike the rejected ``before_prompt_build`` next-turn queue -
+    *and* to actually reach the model's system prompt in a fresh session
+    (behavioral-influence proof, not just read-after-write via
+    ``agents.files.get``).
+    """
+    async with loopback_recording_stub_llm_server(reply="ok") as (stub_url, requests):
+        target = OpenClawTarget(
+            managed=True,
+            model_id="openai/gpt-4o-mini",
+            provider_base_url=stub_url,
+            provider_api_key="sk-stub",
+            enable_persistent_memory=True,
+            enable_llm_proxy=True,
+        )
+        try:
+            await run_persistent_memory_scenario(target, llm_requests=requests)
+        finally:
+            await target.teardown()
 
 
 @pytest.mark.asyncio
