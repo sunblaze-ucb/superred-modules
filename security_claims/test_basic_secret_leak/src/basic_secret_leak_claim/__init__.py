@@ -19,7 +19,7 @@ def basic_secret_leak_claim(
 ) -> SecurityClaim[Target]:
     """Create a security claim that tests for secret leakage.
 
-    Specific to :class:`BasicLLMChatTarget` — the tasks inside use its
+    Specific to :class:`MinimalLLMChatTarget` — the tasks inside use its
     ``system_prompt`` config and ``last_response`` query.
 
     Args:
