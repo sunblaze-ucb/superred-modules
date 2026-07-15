@@ -92,7 +92,9 @@ publisher on PyPI.
 Before a module's first release, make sure it has:
 
 - a `superred-<kind>-<name>` dist name,
-- a `LICENSE` file and `license` / `license-files` in `pyproject.toml`,
+- a `LICENSE` file (MIT, matching the `superred` framework) plus `license = "MIT"`
+  and `license-files = ["LICENSE"]` in `pyproject.toml`,
+- `authors = [{ name = "Simon Sure", email = "info@simonsure.com" }]`,
 - a `README.md` referenced by `readme = "README.md"` (it becomes the PyPI page),
 - attribution for any vendored upstream code or bundled datasets (see
   `security_claims/strongreject/LICENSES/` for the pattern to copy).
