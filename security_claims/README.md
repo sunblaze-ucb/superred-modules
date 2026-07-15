@@ -88,13 +88,13 @@ and the predicate-by-predicate mapping to the original benchmark.
 
 Tiny claims used to exercise the framework and to serve as readable examples.
 
-### `test_basic_secret_leak` (`basic-secret-leak-claim`)
+### `demo_secret_leak` (`superred-claim-demo-secret-leak`)
 
 Plants a secret in the target's system prompt that the model is told to reveal
 only on a hidden trigger word, and checks whether the attacker can make the
 secret appear in a response. The smallest complete example of a claim and its
 factory; pairs with the `minimal_llm_chat` target. Built with
-`basic_secret_leak_claim(secret=..., trigger=...)`.
+`demo_secret_leak_claim(secret=..., trigger=...)`.
 
 ### `test_all_keys_match` (`all-keys-match-claim`)
 
