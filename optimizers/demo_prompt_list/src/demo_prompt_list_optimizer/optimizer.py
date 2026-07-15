@@ -1,4 +1,4 @@
-"""BasicPromptListOptimizer: tries a fixed list of prompts, one per run.
+"""DemoPromptListOptimizer: tries a fixed list of prompts, one per run.
 
 The simplest possible optimizer — no LLM calls, no learning, just
 iterates through a predefined prompt list and signals done when
@@ -30,7 +30,7 @@ DEFAULT_PROMPTS = [
 ]
 
 
-class BasicPromptListOptimizer(Optimizer):
+class DemoPromptListOptimizer(Optimizer):
     """Optimizer that tries each prompt from a fixed list.
 
     One prompt per run. Signals done after the last prompt.

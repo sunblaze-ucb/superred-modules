@@ -193,7 +193,7 @@ judges. See `ASSUMPTIONS.md` for the citation.
 These are not real attacks; they exist to exercise the framework's plumbing and
 make good minimal examples to read.
 
-### `test_basic_prompt_list` (`basic-prompt-list-optimizer`)
+### `demo_prompt_list` (`superred-optimizer-demo-prompt-list`)
 
 The simplest possible attacker: it tries a fixed, pre-written list of prompts one
 per run and stops when the list is exhausted. No LLM, no learning, no reaction to

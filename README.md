@@ -45,7 +45,7 @@ everything else is a real attack, system, or benchmark.
 
 **Optimizers (attackers).** Real attacks: AutoDAN-Turbo, Bijection Learning,
 CodeChameleon, Crescendo, DRA, FITD (Foot-in-the-Door), FlipAttack, GEPA, GOAT,
-GPTFuzzer, Many-Shot, PAIR, TAP. Fixtures: `test_basic_prompt_list`,
+GPTFuzzer, Many-Shot, PAIR, TAP. Fixtures: `demo_prompt_list`,
 `test_hint_following`, `test_llm_prompt_generator`.
 
 **Targets (systems under test).** Real: `chatbot` (any LLM as a chatbot),
