@@ -113,11 +113,7 @@ results it sees).
 See the module's own `README.md` and `ASSUMPTIONS.md` for the exact tool-to-grid
 assignments and how it differs from the original AgentDojo.
 
-## Test fixtures
-
-Small targets used to exercise the framework and to serve as readable examples.
-
-### `test_basic_llm_chat` (`basic-llm-chat-target`): the minimal real target
+### `minimal_llm_chat` (`superred-target-minimal-llm-chat`): the minimal real target
 
 The simplest target that talks to a real LLM: it sends one user message and
 returns the response. One injection point (the user message), one config slot
@@ -126,6 +122,11 @@ returns the response. One injection point (the user message), one config slot
 input" beneath it. The best file to read first when learning to write a target.
 Construct it with `model`, `api_base`, `api_key`; the user-input tag is exported
 as `USER_INPUT_TAG`.
+
+
+## Test fixtures
+
+Small targets used to exercise the framework and to serve as readable examples.
 
 ### `test_filter_test` (`filter-test-target`): a scope-filtering test rig
 

@@ -7,7 +7,7 @@ we can inspect whether TAP uses the writable system prompt, sends the user turn,
 reads trajectory responses, and consumes RunEnd feedback.
 
 Example:
-    PYTHONPATH="/path/to/superred/src:/path/to/superred-modules/targets/chatbot/src:/path/to/superred-modules/targets/test_basic_llm_chat/src:/path/to/superred-modules/security_claims/test_basic_secret_leak/src:/path/to/superred-modules/optimizers/tap/src" \
+    PYTHONPATH="/path/to/superred/src:/path/to/superred-modules/targets/chatbot/src:/path/to/superred-modules/targets/minimal_llm_chat/src:/path/to/superred-modules/security_claims/test_basic_secret_leak/src:/path/to/superred-modules/optimizers/tap/src" \
       python optimizers/tap/smoke/chatbot_writable_sp.py \
       --optimizer-model openai/gpt-4o-mini \
       --target-model openai/gpt-4o-mini \

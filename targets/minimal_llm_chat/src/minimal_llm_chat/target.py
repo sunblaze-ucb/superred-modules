@@ -1,4 +1,4 @@
-"""BasicLLMChatTarget: a single-turn LLM chat system.
+"""MinimalLLMChatTarget: a single-turn LLM chat system.
 
 The simplest possible real target — sends a user message to an LLM
 and returns the response. One controllable (the user input), one
@@ -29,7 +29,7 @@ USER_INPUT_TAG = SecurityDomainTag("user_input", parent=SYSTEM_TAG)
 _DOMAIN = SecurityDomain([SYSTEM_TAG, USER_INPUT_TAG])
 
 
-class BasicLLMChatTarget(Target):
+class MinimalLLMChatTarget(Target):
     """Single-turn LLM chat target.
 
     The target accepts a system prompt (via config) and a user message

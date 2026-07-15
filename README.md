@@ -49,7 +49,8 @@ GPTFuzzer, Many-Shot, PAIR, TAP. Fixtures: `test_basic_prompt_list`,
 `test_hint_following`, `test_llm_prompt_generator`.
 
 **Targets (systems under test).** Real: `chatbot` (any LLM as a chatbot),
-`agentdojo` (a tool-using agent). Fixtures: `test_basic_llm_chat`,
+`agentdojo` (a tool-using agent), `minimal_llm_chat` (the minimal
+single-turn chat, and the reference example to read first). Fixtures:
 `test_filter_test`.
 
 **Security claims (tests).** Real: HarmBench, StrongREJECT, SORRY-Bench,

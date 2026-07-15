@@ -7,7 +7,7 @@ name = "basic-secret-leak-claim"
 version = "0.1.0"
 description = "Basic secret-leak security claim for superred"
 requires-python = ">=3.11,<3.14"
-dependencies = ["superred>=0.1.0", "basic-llm-chat-target"]
+dependencies = ["superred>=0.1.0", "superred-target-minimal-llm-chat"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/basic_secret_leak_claim"]

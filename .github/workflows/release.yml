@@ -1,0 +1,152 @@
+name: Release
+
+# Publishes ONE package from this monorepo to PyPI.
+#
+# To release a package, tag it and push the tag:
+#
+#     git tag superred-target-minimal-llm-chat-v0.1.0
+#     git push origin superred-target-minimal-llm-chat-v0.1.0
+#
+# The tag format is "<pypi-dist-name>-v<version>". This workflow finds the
+# package directory whose pyproject [project].name matches that dist name,
+# verifies the version in that pyproject agrees with the tag, builds ONLY that
+# package, and publishes it with PyPI Trusted Publishing (OIDC, no API tokens).
+#
+# Running the workflow manually (Actions -> Release -> Run workflow) publishes
+# to TestPyPI instead, as a safe rehearsal.
+#
+# One-time per package: register a pending publisher on PyPI. See RELEASING.md.
+
+on:
+  push:
+    tags:
+      - "*-v*"
+  workflow_dispatch:
+    inputs:
+      package:
+        description: "Dist name to rehearse on TestPyPI (e.g. superred-target-minimal-llm-chat)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    outputs:
+      pkg_name: ${{ steps.resolve.outputs.pkg_name }}
+      pkg_dir: ${{ steps.resolve.outputs.pkg_dir }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Resolve which package to release
+        id: resolve
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          INPUT_PKG: ${{ inputs.package }}
+        run: |
+          python - <<'PY'
+          import os, sys, tomllib, pathlib
+
+          tag = os.environ.get("TAG", "")
+          if tag:
+              if "-v" not in tag:
+                  sys.exit(f"::error::Tag {tag!r} is not of the form '<dist-name>-v<version>'")
+              name, want_version = tag.rsplit("-v", 1)
+          else:
+              name, want_version = os.environ["INPUT_PKG"], None
+
+          # Map every dist name in the repo to its directory.
+          found = {}
+          for p in pathlib.Path(".").rglob("pyproject.toml"):
+              if ".git" in p.parts:
+                  continue
+              try:
+                  data = tomllib.loads(p.read_text())
+              except Exception:
+                  continue
+              proj = data.get("project", {})
+              if proj.get("name"):
+                  found[proj["name"]] = (str(p.parent), proj.get("version"))
+
+          if name not in found:
+              sys.exit(
+                  f"::error::No package named {name!r} in this repo. "
+                  f"Known packages: {', '.join(sorted(found))}"
+              )
+
+          pkg_dir, pkg_version = found[name]
+          if want_version is not None and pkg_version != want_version:
+              sys.exit(
+                  f"::error::Tag says version {want_version}, but "
+                  f"{pkg_dir}/pyproject.toml says {pkg_version}. "
+                  f"Bump the version to match, then re-tag."
+              )
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"pkg_name={name}\n")
+              fh.write(f"pkg_dir={pkg_dir}\n")
+              fh.write(f"version={pkg_version}\n")
+          print(f"Releasing {name} {pkg_version} from {pkg_dir}")
+          PY
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build "${{ steps.resolve.outputs.pkg_dir }}" --outdir dist
+
+      - name: Verify metadata renders on PyPI
+        run: python -m twine check dist/*
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/${{ needs.build.outputs.pkg_name }}/
+    permissions:
+      id-token: write # required for Trusted Publishing (OIDC)
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-testpypi:
+    name: Publish to TestPyPI (rehearsal)
+    needs: build
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/${{ needs.build.outputs.pkg_name }}/
+    permissions:
+      id-token: write # required for Trusted Publishing (OIDC)
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
