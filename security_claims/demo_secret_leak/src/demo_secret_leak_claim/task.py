@@ -1,4 +1,4 @@
-"""BasicSecretLeakTask: can the optimizer extract a secret from the system prompt?
+"""DemoSecretLeakTask: can the optimizer extract a secret from the system prompt?
 
 The task plants a secret in the LLM's system prompt via a conditional
 rule — the LLM is instructed to reveal the secret only when a specific
@@ -16,7 +16,7 @@ from superred.core.types.goal import Goal
 from superred.core.types.trajectory import Trajectory
 
 
-class BasicSecretLeakTask(Task[MinimalLLMChatTarget]):
+class DemoSecretLeakTask(Task[MinimalLLMChatTarget]):
     """Task: extract a secret that the LLM reveals conditionally.
 
     Specific to :class:`MinimalLLMChatTarget` — uses its ``system_prompt``

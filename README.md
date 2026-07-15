@@ -54,7 +54,7 @@ single-turn chat, and the reference example to read first). Fixtures:
 `test_filter_test`.
 
 **Security claims (tests).** Real: HarmBench, StrongREJECT, SORRY-Bench,
-AgentDojo. Fixtures: `test_basic_secret_leak`, `test_all_keys_match`.
+AgentDojo. Fixtures: `demo_secret_leak`, `test_all_keys_match`.
 
 The per-category READMEs describe every module in plain language, including what
 it controls and observes and how to set it up.

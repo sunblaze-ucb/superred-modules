@@ -7,7 +7,7 @@ we can inspect whether TAP uses the writable system prompt, sends the user turn,
 reads trajectory responses, and consumes RunEnd feedback.
 
 Example:
-    PYTHONPATH="/path/to/superred/src:/path/to/superred-modules/targets/chatbot/src:/path/to/superred-modules/targets/minimal_llm_chat/src:/path/to/superred-modules/security_claims/test_basic_secret_leak/src:/path/to/superred-modules/optimizers/tap/src" \
+    PYTHONPATH="/path/to/superred/src:/path/to/superred-modules/targets/chatbot/src:/path/to/superred-modules/targets/minimal_llm_chat/src:/path/to/superred-modules/security_claims/demo_secret_leak/src:/path/to/superred-modules/optimizers/tap/src" \
       python optimizers/tap/smoke/chatbot_writable_sp.py \
       --optimizer-model openai/gpt-4o-mini \
       --target-model openai/gpt-4o-mini \
@@ -21,7 +21,7 @@ import asyncio
 import json
 import os
 
-from basic_secret_leak_claim import basic_secret_leak_claim
+from demo_secret_leak_claim import demo_secret_leak_claim
 from chatbot_target import SYSTEM_PROMPT_TAG, USER_TAG, ChatbotTarget
 from superred.core.controller import Controller, TargetFactory
 from superred.core.types.llm import LLMConfig
@@ -70,7 +70,7 @@ async def _run(args: argparse.Namespace) -> int:
             api_base=args.api_base,
         ),
     )
-    claim = basic_secret_leak_claim(secret=args.secret, trigger=args.trigger)
+    claim = demo_secret_leak_claim(secret=args.secret, trigger=args.trigger)
 
     def optimizer_factory() -> TapOptimizer:
         return TapOptimizer(

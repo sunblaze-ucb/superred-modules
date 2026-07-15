@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "superred-claim-demo-secret-leak"
+version = "0.1.0"
+description = "Demo security claim for superred: a synthetic planted-secret scenario with a rigged trigger word. Not a real benchmark."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Simon Sure", email = "info@simonsure.com" },
+]
+keywords = [
+    "superred",
+    "red-teaming",
+    "ai-safety",
+    "security",
+    "llm",
+    "security-claim",
+    "demo",
+]
+dependencies = [
+    "superred>=0.1.0",
+    "superred-target-minimal-llm-chat>=0.1.0",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security",
+]
+
+[project.urls]
+Homepage = "https://superred.simonsure.com"
+Documentation = "https://superred.simonsure.com"
+Repository = "https://github.com/RoldSI/superred-modules"
+Issues = "https://github.com/RoldSI/superred-modules/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/demo_secret_leak_claim"]

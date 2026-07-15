@@ -8,7 +8,7 @@ system prompt when writable, reads trajectory responses, and consumes framework
 feedback.
 
 Example:
-    PYTHONPATH="/path/to/superred/src:/path/to/superred-modules/targets/chatbot/src:/path/to/superred-modules/security_claims/test_basic_secret_leak/src:/path/to/superred-modules/optimizers/dra/src" \
+    PYTHONPATH="/path/to/superred/src:/path/to/superred-modules/targets/chatbot/src:/path/to/superred-modules/security_claims/demo_secret_leak/src:/path/to/superred-modules/optimizers/dra/src" \
       python optimizers/dra/smoke/chatbot_writable_sp.py \
       --target-model openai/gpt-4o-mini \
       --api-key "$OPENAI_API_KEY"
@@ -21,7 +21,7 @@ import asyncio
 import json
 import os
 
-from basic_secret_leak_claim import basic_secret_leak_claim
+from demo_secret_leak_claim import demo_secret_leak_claim
 from chatbot_target import SYSTEM_PROMPT_TAG, USER_TAG, ChatbotTarget
 from dra_optimizer import DraOptimizer
 from superred.core.controller import Controller, TargetFactory
@@ -59,7 +59,7 @@ async def _run(args: argparse.Namespace) -> int:
     if not args.api_key:
         raise SystemExit("Provide --api-key or set OPENAI_API_KEY.")
 
-    claim = basic_secret_leak_claim(secret=args.secret, trigger=args.trigger)
+    claim = demo_secret_leak_claim(secret=args.secret, trigger=args.trigger)
 
     def optimizer_factory() -> DraOptimizer:
         return DraOptimizer(max_attempts=args.max_attempts)
