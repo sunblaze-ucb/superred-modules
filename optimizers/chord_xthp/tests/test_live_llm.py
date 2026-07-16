@@ -59,8 +59,8 @@ def _live_llm() -> LLMClient:
             model=os.environ.get("CHORD_XTHP_LIVE_MODEL", "openai/gpt-4o-mini"),
             api_base=os.environ.get("LITELLM_API_BASE") or os.environ.get("OPENAI_API_BASE") or "",
             api_key=api_key,
-            max_cost=max_cost,
-        )
+        ),
+        cost_cap_usd=max_cost,
     )
 
 

@@ -172,7 +172,6 @@ async def main() -> None:
         model=JUDGE_MODEL,
         api_base=api_base,
         api_key=api_key,
-        max_cost=JUDGE_BUDGET_USD,
     )
     claim = sorry_bench_claim(
         target_model_id=TARGET_MODEL,

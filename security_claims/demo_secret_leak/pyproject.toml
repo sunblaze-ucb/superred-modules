@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "superred-claim-demo-secret-leak"
-version = "0.1.0"
+version = "0.1.1"
 description = "Demo security claim for superred: a synthetic planted-secret scenario with a rigged trigger word. Not a real benchmark."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -23,7 +23,7 @@ keywords = [
     "demo",
 ]
 dependencies = [
-    "superred>=0.1.0",
+    "superred>=0.2.0",
     "superred-target-minimal-llm-chat>=0.1.0",
 ]
 classifiers = [

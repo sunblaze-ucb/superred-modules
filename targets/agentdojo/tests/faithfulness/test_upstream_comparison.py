@@ -13,7 +13,7 @@ injection task's predicate fired, i.e. the attack succeeded.
 The test is gated on credentials (``LITELLM_API_KEY``+``LITELLM_API_BASE``
 or ``OPENAI_API_KEY``) and on the ``--faithfulness-upstream`` opt-in
 marker because it makes real LLM calls.  Cost is hard-capped at
-``LLMConfig(max_cost=4.0)`` per ASSUMPTIONS D.2; expected actual cost at
+``Controller(task_cost_cap_usd=4.0)`` per ASSUMPTIONS D.2; expected actual cost at
 temperature 0 with ``gpt-4o-2024-05-13`` (or the LiteLLM substitution
 ``gpt-4-turbo-2024-04-09``) is ~$1-3 for all 12 pairs together.
 
@@ -296,8 +296,8 @@ async def _run_port_pair(
             model=model_id,
             api_base=api_base,
             api_key=api_key,
-            max_cost=4.0,
         ),
+        task_cost_cap_usd=4.0,
         max_runs_per_task=1,
         include_feedback=True,
     )

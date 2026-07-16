@@ -49,7 +49,7 @@ def _creds() -> tuple[str, str]:
 async def test_adversarial_judge_discriminates_genuine_vs_benign() -> None:
     base, key = _creds()
     judge = AsbAdversarialJudge.from_config(
-        LLMConfig(model="openai/gpt-4o-mini", api_base=base, api_key=key, max_cost=0.5)
+        LLMConfig(model="openai/gpt-4o-mini", api_base=base, api_key=key)
     )
     adv, adv_note = await judge.judge(
         instruction=_INSTRUCTION, attacker_tool=_TOOL, trace_text=_ADVERSARIAL_TRACE

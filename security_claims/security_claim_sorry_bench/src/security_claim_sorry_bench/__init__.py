@@ -14,7 +14,7 @@ Quick start::
         concurrency=8,
     )
     judge_cfg = LLMConfig(model="gpt-4-1106-preview", api_base=BASE,
-                          api_key=KEY, max_cost=10.0)
+                          api_key=KEY)
     claim = sorry_bench_claim(
         target_model_id="gpt-4o-2024-05-13",
         judge_llm_config=judge_cfg,

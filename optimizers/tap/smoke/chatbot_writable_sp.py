@@ -90,8 +90,8 @@ async def _run(args: argparse.Namespace) -> int:
             model=args.optimizer_model,
             api_base=args.api_base or "",
             api_key=args.api_key,
-            max_cost=args.max_cost,
         ),
+        task_cost_cap_usd=args.max_cost,
         max_runs_per_task=args.max_runs,
         include_feedback=True,
     )

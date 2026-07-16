@@ -128,7 +128,7 @@ def _sorry_dataset_available() -> bool:
         sorry_bench_claim(
             target_model_id="openai/gpt-4o-mini",
             judge_llm_config=LLMConfig(
-                model="openai/gpt-4o-mini", api_base=_JB, api_key=_JK, max_cost=None
+                model="openai/gpt-4o-mini", api_base=_JB, api_key=_JK
             ),
             prompts_per_category=1,
         )
