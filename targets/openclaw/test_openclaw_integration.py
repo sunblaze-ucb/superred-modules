@@ -448,6 +448,65 @@ async def test_persistent_memory_writes_durable_memory_file():
 
 
 @pytest.mark.asyncio
+async def test_workspace_files_applied_once_not_reapplied_every_run():
+    """``workspace_files`` (and ``system_prompt_append``) are written once per
+    task, on the first ``run()`` — not re-applied on every subsequent run.
+
+    Regression test: config is set exactly once, in ``configure_target()``,
+    before the multi-run optimizer loop starts. Re-applying it on every
+    ``run()`` would silently overwrite durable state a later run evolved at
+    the same filename (e.g. ``persistent_memory``'s ``MEMORY.md``) back to
+    the task's static baseline.
+    """
+    gateway = MockGateway()
+    port = await gateway.start()
+
+    try:
+        target = OpenClawTarget(
+            auth_token="test-token",
+            gateway_url=f"ws://127.0.0.1:{port}",
+            session_key="test-workspace-files-once",
+        )
+        target.set_config(
+            "workspace_files", json.dumps({"MEMORY.md": "TASK-BASELINE"}),
+        )
+        target.set_config("system_prompt_append", "baseline system prompt")
+
+        async def send_event(event: object) -> ControllableInjection:
+            controllable = getattr(event, "controllable")
+            value = "Hello" if controllable.name == "user_message" else ""
+            return ControllableInjection(
+                event=event,  # type: ignore[arg-type]
+                controllable=controllable,
+                value=value,
+            )
+
+        await target.run(lambda _e: None, send_event)
+        assert gateway._files.get("MEMORY.md") == "TASK-BASELINE"
+        assert gateway._files.get("AGENTS.md") == "baseline system prompt"
+        assert target._planted_files == ["MEMORY.md"]
+
+        # Simulate a later run evolving MEMORY.md at the same filename
+        # (what persistent_memory does via agents.files.set).
+        gateway._files["MEMORY.md"] = "EVOLVED-BY-LATER-RUN"
+        gateway._files["AGENTS.md"] = "evolved system prompt"
+
+        await target.reset_ephemeral_state()
+        await target.run(lambda _e: None, send_event)
+
+        # A second run must NOT re-write either file back to the task's
+        # static baseline - the evolved content must survive.
+        assert gateway._files.get("MEMORY.md") == "EVOLVED-BY-LATER-RUN"
+        assert gateway._files.get("AGENTS.md") == "evolved system prompt"
+        # _planted_files must not accumulate a duplicate entry either.
+        assert target._planted_files == ["MEMORY.md"]
+
+        await target.teardown()
+    finally:
+        await gateway.stop()
+
+
+@pytest.mark.asyncio
 async def test_full_pipeline_prompt_exfiltration():
     """End-to-end: Controller + factory + BasicPromptListOptimizer + PromptExfiltrationClaim."""
     gateway = MockGateway()

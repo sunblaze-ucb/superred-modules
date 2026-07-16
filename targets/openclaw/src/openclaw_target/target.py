@@ -389,11 +389,22 @@ class OpenClawTarget(Target):
             file, not a prompt hook, so it survives ``sessions.reset`` and a
             fresh session. Independent of ``enable_tool_injection`` (no
             plugin required; uses the same RPC as ``workspace_files``).
+            OpenClaw reloads ``MEMORY.md`` into the system prompt on every
+            turn (even within a long-lived, un-reset session), so the write
+            always takes effect — but without ``reset_session_between_runs
+            =True`` the multi-run loop never actually produces a *fresh*
+            session with no other context, so the poisoned content stays
+            redundant with the live transcript and the cross-session
+            "fresh agent trusts old memory" scenario this controllable
+            targets is never exercised across iterations of one task.
         reset_session_between_runs: If ``True``, clear the OpenClaw
             conversation/session in :meth:`reset_ephemeral_state`. Default
             ``False`` keeps the session across runs of a task — OpenClaw
             sessions are durable state, so a fresh conversation would lose
-            intended context and break poison-then-trigger attacks.
+            intended context and break poison-then-trigger attacks. Set
+            ``True`` to exercise ``persistent_memory``'s cross-session
+            behavioral-influence path across runs of the same task (see
+            ``enable_persistent_memory`` above).
         enable_llm_proxy: Intercept model calls via a local LLM proxy.
             ``None`` (default) turns it on whenever ``provider_base_url`` is
             set; pass ``False`` to force it off. When on (managed mode), the
@@ -474,6 +485,16 @@ class OpenClawTarget(Target):
         self._workspace_files: dict[str, str] = {}
         self._tool_policy: str = ""
         self._planted_files: list[str] = []
+        # Per-task apply-once guards: config is set exactly once, from
+        # Task.configure_target(), before the multi-run optimizer loop
+        # starts (never mid-task - verified against every task in this
+        # repo). Applying on every run() would silently overwrite durable
+        # state a later run deliberately evolved (e.g. persistent_memory's
+        # MEMORY.md) back to this task's static baseline. Durable per-task
+        # state, so NOT reset in reset_ephemeral_state() - only a fresh
+        # instance (new task) gets a fresh baseline.
+        self._system_prompt_applied = False
+        self._workspace_files_applied = False
 
         self._last_response: str = ""
         self._last_tool_calls: list[dict[str, object]] = []
@@ -800,12 +821,17 @@ class OpenClawTarget(Target):
                 security_domain=EXTERNAL_DATA_TAG,
                 description=(
                     "JSON dict of {filename: content} to write into the "
-                    "agent workspace before each run. ``agents.files.set`` "
-                    "only accepts the fixed bootstrap/memory filenames in "
+                    "agent workspace once, before the task's first run. "
+                    "``agents.files.set`` only accepts the fixed "
+                    "bootstrap/memory filenames in "
                     f"{sorted(ALLOWED_WORKSPACE_BOOTSTRAP_FILES)} "
                     "(gateway-enforced allowlist, src/gateway/server-methods/"
                     "agents.ts ALLOWED_FILE_NAMES); any other name is "
-                    "rejected by the gateway and silently skipped (logged)."
+                    "rejected by the gateway and silently skipped (logged). "
+                    "Applied once per task (not re-applied on every run), so "
+                    "it seeds a baseline without clobbering durable state a "
+                    "later run evolves at the same filename (e.g. "
+                    "enable_persistent_memory's MEMORY.md)."
                 ),
             ),
             ConfigSpec(
@@ -962,11 +988,18 @@ class OpenClawTarget(Target):
         # Tool restriction (tool_policy) is gateway/agent configuration,
         # applied by the managed runtime at startup — not a per-run RPC.
 
-        if self._system_prompt_append:
+        # Applied once per task (see _system_prompt_applied /
+        # _workspace_files_applied docs in __init__): config is set once in
+        # configure_target(), so re-running this on every run() would clobber
+        # durable state a later run deliberately evolved (e.g.
+        # persistent_memory's MEMORY.md) back to the task's static baseline.
+        if self._system_prompt_append and not self._system_prompt_applied:
             await self._apply_system_prompt(client)
+            self._system_prompt_applied = True
 
-        if self._workspace_files:
+        if self._workspace_files and not self._workspace_files_applied:
             await self._write_workspace_files(client)
+            self._workspace_files_applied = True
 
         # LLM proxy controllable: system prompt injection is pre-run
         # because the system prompt is fixed at the start of the call.
@@ -1095,6 +1128,11 @@ class OpenClawTarget(Target):
         ``TargetFactory`` instance between tasks):
 
         - Planted files / AGENTS.md remain (cleaned up in :meth:`teardown`).
+        - ``_system_prompt_applied`` / ``_workspace_files_applied`` stay set,
+          so a later run does not re-write ``system_prompt_append`` /
+          ``workspace_files`` back over durable state a run in between
+          deliberately evolved at the same filename (e.g.
+          ``persistent_memory``'s ``MEMORY.md``).
         - The OpenClaw conversation/session is kept, since OpenClaw sessions
           are durable; wiping them would lose intended context and break
           poison-then-trigger attacks. Opt into per-run conversation isolation

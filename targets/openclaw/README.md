@@ -152,6 +152,21 @@ session. This is **not** `before_prompt_build` / `enqueueNextTurnInjection`
 tool-row poison). Aligned with SafeClawArena SPE and CIK-Bench `mem-long`.
 Opt in with `enable_persistent_memory=True`.
 
+OpenClaw reloads `MEMORY.md` into the system prompt on *every* turn, even in
+a long-lived session that was never reset (`bootstrap-cache.ts`: "refreshing
+each turn so edits become visible to long-lived agent sessions") — so a
+`persistent_memory` write is never a no-op. But by default
+(`reset_session_between_runs=False`) the multi-run optimizer loop keeps
+talking to the *same* session across a task's runs, so the poisoned
+`MEMORY.md` content is redundant with the live transcript already carrying
+that context forward — the "fresh agent, no other context, trusts old
+memory" scenario `persistent_memory` targets (SafeClawArena SPE / CIK-Bench
+`mem-long`'s behavioral oracle) is only actually exercised *across runs of
+one task* when `reset_session_between_runs=True`. Our own test proves the
+behavioral-influence property using a brand-new session key rather than a
+reset for exactly this reason — a reset/new session is the trigger
+condition, not a requirement for the write to persist.
+
 For same-turn *model* output (not tool output), use `model_response_injection`.
 
 **Model streaming: live relay + append, not buffer-then-forward.** OpenClaw's
@@ -242,7 +257,15 @@ The controller drives `configure_target` → (`run` → `reset_ephemeral_state`)
   **preserved**, per the `Target` contract (durable state is discarded only via
   a fresh `TargetFactory` instance between tasks). This keeps OpenClaw's durable
   session intact and enables poison-then-trigger attacks. Set
-  `reset_session_between_runs=True` to wipe the conversation each run.
+  `reset_session_between_runs=True` to wipe the conversation each run — this
+  is also what lets `persistent_memory` exercise its cross-session scenario
+  across runs of one task (see Design decisions).
+- `system_prompt_append` / `workspace_files` are applied **once per task**,
+  on the first `run()` after `configure_target()` sets them — not
+  re-applied on every run. They are set exactly once (config is not mutable
+  mid-task), so re-applying them every run would silently overwrite durable
+  state a later run deliberately evolves at the same filename (e.g.
+  `persistent_memory`'s `MEMORY.md`) back to the task's static baseline.
 - `teardown` best-effort clears planted files, then stops the proxy, injection
   server, WebSocket client, and managed gateway.
 
