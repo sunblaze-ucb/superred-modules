@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "superred-target-minimal-llm-chat"
-version = "0.1.1"
+version = "0.1.0"
 description = "Minimal single-turn LLM chat target for the superred red-teaming framework"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -22,7 +22,7 @@ keywords = [
     "target",
 ]
 dependencies = [
-    "superred>=0.2.0",
+    "superred>=0.1.0",
     "litellm>=1.0",
 ]
 classifiers = [

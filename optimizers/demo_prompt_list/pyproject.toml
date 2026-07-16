@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "superred-optimizer-demo-prompt-list"
-version = "0.1.1"
+version = "0.1.0"
 description = "Demo optimizer for superred: replays a fixed prompt list, ignores the goal, and does not learn. Not a real attack."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -23,7 +23,7 @@ keywords = [
     "demo",
 ]
 dependencies = [
-    "superred>=0.2.0",
+    "superred>=0.1.0",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
