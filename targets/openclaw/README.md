@@ -59,7 +59,12 @@ not env vars.)
    LLM proxy (if enabled), start the managed gateway (if `managed`), connect,
    cache the tool catalog.
 2. Apply pre-run config: `system_prompt_append` (→ `AGENTS.md`) and
-   `workspace_files` via `agents.files.set`.
+   `workspace_files` via `agents.files.set`. The gateway caps `agents.files.set`
+   to a fixed allowlist of bootstrap/memory filenames (`AGENTS.md`, `SOUL.md`,
+   `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`,
+   `MEMORY.md` — `ALLOWED_WORKSPACE_BOOTSTRAP_FILES`, gateway-enforced,
+   verified live); any other filename in `workspace_files` is rejected and
+   silently skipped (logged as a warning) rather than failing the run.
 3. Optimizer controllables, in order: optional `model_system_prompt`
    (PreCall, proxy only), then `user_message` (PreCall).
 4. Send the message via the **two-stage agent flow**: the `agent` RPC returns
@@ -245,6 +250,8 @@ Key knobs (constructor / factory):
   gateway-side timeout (`{"status": "timeout", ...}`, distinct from an
   `{"error": ...}` payload) is reported as `status="timeout"`, not `"ok"`.
 - `enable_tool_injection` — expose the web/file/shell/message tool-output controllables.
+- `enable_persistent_memory` (default `False`) — expose the `persistent_memory`
+  controllable (see Design decisions).
 - `provider_base_url` / `provider_api_key` — enable + configure the LLM proxy
   (written into `models.providers.*` in `openclaw.json`).
 - `reset_session_between_runs` (default `False`) — opt into per-run
