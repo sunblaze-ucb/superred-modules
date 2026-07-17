@@ -200,7 +200,8 @@ async def _run() -> int:
         target_factory=TargetFactory(create=VictimAgent, concurrency=1),
         security_claim=cast(SecurityClaim[Target], claim),
         scope=frozenset({TOOLS_TAG}),
-        llm_config=LLMConfig(model=MODEL, api_base=API_BASE, api_key=API_KEY, max_cost=2.0),
+        llm_config=LLMConfig(model=MODEL, api_base=API_BASE, api_key=API_KEY),
+        task_cost_cap_usd=2.0,
         max_runs_per_task=8,
         include_feedback=True,
     )

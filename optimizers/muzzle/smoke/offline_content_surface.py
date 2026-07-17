@@ -192,7 +192,8 @@ async def _run() -> int:
         target_factory=TargetFactory(create=OfflineAgentTarget, concurrency=1),
         security_claim=cast(SecurityClaim[Target], claim),
         scope=frozenset({TOOLS_TAG}),
-        llm_config=LLMConfig(model="mock", api_base="http://mock", api_key="mock", max_cost=10.0),
+        llm_config=LLMConfig(model="mock", api_base="http://mock", api_key="mock"),
+        task_cost_cap_usd=10.0,
         max_runs_per_task=6,
         include_feedback=True,
     )

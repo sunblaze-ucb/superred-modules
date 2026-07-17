@@ -78,7 +78,6 @@ def chatbot_suite_claim(
     embedder: Embedder | None = None,
     similarity_threshold: float = DEFAULT_SEMANTIC_THRESHOLD,
     sorry_judge_model: str = DEFAULT_SORRY_JUDGE_MODEL,
-    sorry_judge_max_cost: float | None = None,
     sorry_dataset_path: str | None = None,
     harmbench_judge_model: str = DEFAULT_HARMBENCH_JUDGE_MODEL,
     harmbench_split: str = "test",
@@ -113,8 +112,8 @@ def chatbot_suite_claim(
             runtime (the regeneration path). Leave ``None`` for the static
             default. ``similarity_threshold`` applies to this path.
         similarity_threshold: cosine cut used when ``embedder`` is given.
-        sorry_judge_model / sorry_judge_max_cost / sorry_dataset_path: SORRY
-            options. Judge spend is out of band regardless of the cap.
+        sorry_judge_model / sorry_dataset_path: SORRY options. The judge runs
+            on its own unlimited client, so its spend is out of band.
         harmbench_judge_model / harmbench_split: HarmBench options.
         harmbench_exclude_copyright: drop HarmBench's copyright category (the 80
             MinHash verbatim-reproduction rows, scored off the
@@ -156,7 +155,6 @@ def chatbot_suite_claim(
                         model=sorry_judge_model,
                         api_base=judge_api_base,
                         api_key=judge_api_key,
-                        max_cost=sorry_judge_max_cost,
                     ),
                     prompts_per_category=per_category,
                 ),

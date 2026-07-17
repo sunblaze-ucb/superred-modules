@@ -175,7 +175,8 @@ async def _run() -> int:
         ),
         security_claim=cast(SecurityClaim[Target], claim),
         scope=frozenset({USER_TAG, PROMPT_TAG, TOOL_CATALOGUE_TAG, TOOLS_TAG}),
-        llm_config=LLMConfig(model=ATTACK_MODEL, api_base=API_BASE, api_key=API_KEY, max_cost=0.50),
+        llm_config=LLMConfig(model=ATTACK_MODEL, api_base=API_BASE, api_key=API_KEY),
+        task_cost_cap_usd=0.50,
         max_runs_per_task=6,
         include_feedback=True,
     )

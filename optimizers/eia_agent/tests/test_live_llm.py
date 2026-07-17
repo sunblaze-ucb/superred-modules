@@ -61,8 +61,8 @@ def _live_llm() -> LLMClient:
             or os.environ.get("OPENAI_API_BASE")
             or "",
             api_key=api_key,
-            max_cost=float(os.environ.get("EIA_LIVE_MAX_COST", "0.50")),
-        )
+        ),
+        cost_cap_usd=float(os.environ.get("EIA_LIVE_MAX_COST", "0.50")),
     )
 
 

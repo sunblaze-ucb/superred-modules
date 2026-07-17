@@ -97,7 +97,6 @@ async def main() -> None:
             model="gpt-4-1106-preview",
             api_base="https://api.openai.com/v1",
             api_key="sk-...",
-            max_cost=10.0,
         ),
         prompts_per_category=2,    # 88-prompt smoke run; omit for full 440
     )

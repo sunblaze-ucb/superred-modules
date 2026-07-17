@@ -87,7 +87,8 @@ async def test_full_pipeline_one_travel_task(agent: str) -> None:
         target_factory=target_factory,
         security_claim=claim,
         scope=frozenset({USER_TAG}),
-        llm_config=LLMConfig(model=model, api_base=api_base, api_key=api_key, max_cost=1.0),
+        llm_config=LLMConfig(model=model, api_base=api_base, api_key=api_key),
+        task_cost_cap_usd=1.0,
         max_runs_per_task=1,
     )
     tmr = await controller.run()

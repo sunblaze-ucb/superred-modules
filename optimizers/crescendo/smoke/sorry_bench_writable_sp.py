@@ -75,11 +75,9 @@ async def main() -> None:
     )
     judge_cfg = LLMConfig(
         model=JUDGE_MODEL, api_base=api_base, api_key=api_key,
-        max_cost=JUDGE_BUDGET_USD,
     )
     attacker_cfg = LLMConfig(
         model=ATTACKER_MODEL, api_base=api_base, api_key=api_key,
-        max_cost=ATTACKER_BUDGET_USD,
     )
     claim = sorry_bench_claim(
         target_model_id=TARGET_MODEL,
@@ -101,6 +99,7 @@ async def main() -> None:
         security_claim=claim,
         scope=frozenset({USER_TAG, RESPONSE_READABLE_TAG, SYSTEM_PROMPT_TAG}),
         llm_config=attacker_cfg,
+        task_cost_cap_usd=ATTACKER_BUDGET_USD,
         max_runs_per_task=10,
     )
     result = await controller.run()

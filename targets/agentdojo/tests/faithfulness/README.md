@@ -33,7 +33,7 @@ the OpenAI API, the test tolerates a small number of mismatches: it
 passes when at least ``MATCH_FLOOR`` (= 10) of the 12 verdicts agree, so
 one or two transient nondeterminism mismatches do not fail CI.
 
-Cost is hard-capped at ``LLMConfig(max_cost=4.0)``; expected actual cost
+Cost is hard-capped at ``Controller(task_cost_cap_usd=4.0)``; expected actual cost
 at temperature 0 with ``gpt-4o-2024-05-13`` (or the LiteLLM substitution
 ``gpt-4-turbo-2024-04-09``) is about $1 to $3 for all 12 pairs together.
 The benchmark version both sides use is imported from
