@@ -326,8 +326,20 @@ class OpenClawWSClient:
         # take far longer than a normal RPC. Disable the per-request timeout
         # (timeout=None) and let _collect_run's own ``deadline`` govern it,
         # otherwise the 30s RPC cap would abort every run longer than 30s.
+        #
+        # The gateway also enforces its *own* independent wait deadline
+        # (``agent.wait``'s ``timeoutMs``, default 30_000 when omitted -
+        # verified against ``gateway/server-methods/agent.ts``) and returns
+        # ``{"status": "timeout", ...}`` (no ``"error"`` key) once it elapses
+        # while the run keeps executing server-side. We pass our own
+        # ``timeout_s`` budget as ``timeoutMs`` so the gateway's deadline
+        # matches ours instead of silently truncating every run past 30s.
         wait_task: asyncio.Future[dict[str, Any]] = asyncio.ensure_future(
-            self.rpc("agent.wait", {"runId": run_id}, timeout=None),
+            self.rpc(
+                "agent.wait",
+                {"runId": run_id, "timeoutMs": int(timeout_s * 1000)},
+                timeout=None,
+            ),
         )
         loop = asyncio.get_event_loop()
         deadline = loop.time() + timeout_s
@@ -373,15 +385,35 @@ class OpenClawWSClient:
                 )
                 if isinstance(terminal, dict) and terminal.get("error"):
                     status, error = "error", str(terminal["error"])
+                elif (
+                    isinstance(terminal, dict) and terminal.get("status") == "timeout"
+                ):
+                    # The gateway's own agent.wait deadline elapsed
+                    # (``{"status": "timeout", ...}``, no "error" key) - the
+                    # run may still be executing server-side. Must not be
+                    # reported as "ok": only the "error" key was checked
+                    # before, so this was silently misreported as success.
+                    status = "timeout"
                 else:
                     status = "ok"
             except asyncio.TimeoutError:
                 status = "timeout"
                 wait_task.cancel()
 
-        # Drain any events already delivered after the run resolved.
+        # Drain any events already delivered after the run resolved. Route
+        # through on_event too (not just absorb()) so trailing deltas/tool
+        # calls that land in the queue in the narrow window between the
+        # polling loop's last iteration and wait_task resolving still reach
+        # the live assistant_stream / tool_call observables, not just the
+        # final AgentRunResult.
         while not queue.empty():
-            absorb(self._to_agent_event(queue.get_nowait()))
+            event = self._to_agent_event(queue.get_nowait())
+            if on_event is not None:
+                try:
+                    await on_event(event)
+                except Exception:
+                    logger.exception("on_event callback raised; continuing")
+            absorb(event)
 
         assistant_text = "".join(assistant_parts) or snapshot_text
         if not assistant_text and status == "ok":

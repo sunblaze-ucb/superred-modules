@@ -89,6 +89,12 @@ class MockGateway:
         self._last_user = ""
         self._last_response = ""
         self._files: dict[str, str] = {}
+        # Test hooks for exercising error/timeout paths (default: happy path,
+        # unchanged from prior behavior).
+        self.last_agent_wait_params: dict[str, Any] | None = None
+        self.agent_wait_status: str = "ok"
+        self.tools_catalog_error: bool = False
+        self.sessions_reset_always_fail: bool = False
 
     async def start(self) -> int:
         self.server = await websockets.asyncio.server.serve(
@@ -163,13 +169,14 @@ class MockGateway:
 
                 elif method == "agent.wait":
                     wait_params = msg.get("params", {})
+                    self.last_agent_wait_params = wait_params
                     await ws.send(json.dumps({
                         "type": "res",
                         "id": msg_id,
                         "ok": True,
                         "payload": {
                             "runId": wait_params.get("runId", ""),
-                            "status": "ok",
+                            "status": self.agent_wait_status,
                         },
                     }))
 
@@ -187,6 +194,14 @@ class MockGateway:
                     }))
 
                 elif method == "tools.catalog":
+                    if self.tools_catalog_error:
+                        await ws.send(json.dumps({
+                            "type": "res",
+                            "id": msg_id,
+                            "ok": False,
+                            "error": "tools.catalog unavailable",
+                        }))
+                        continue
                     await ws.send(json.dumps({
                         "type": "res",
                         "id": msg_id,
@@ -228,6 +243,14 @@ class MockGateway:
                 elif method == "sessions.reset":
                     # Real gateway keys sessions by ``key``, not ``sessionKey``.
                     reset_params = msg.get("params", {})
+                    if self.sessions_reset_always_fail:
+                        await ws.send(json.dumps({
+                            "type": "res",
+                            "id": msg_id,
+                            "ok": False,
+                            "error": "simulated sessions.reset failure",
+                        }))
+                        continue
                     if "key" not in reset_params:
                         await ws.send(json.dumps({
                             "type": "res",
@@ -799,6 +822,127 @@ class TestResetEphemeralState:
         # No client attached; should not raise.
         await target.reset_ephemeral_state()
         assert target._last_response == ""
+
+    @pytest.mark.asyncio
+    async def test_reset_session_failure_propagates_not_swallowed(self):
+        """A failed sessions.reset must NOT be caught-and-logged.
+
+        Regression test: reset_ephemeral_state() used to catch the
+        RuntimeError raised by ws_client.reset_session() on a failed RPC and
+        only log a warning, so the controller's run loop would proceed to
+        the next run believing per-run isolation was enforced when the
+        conversation actually still carried forward. Letting it propagate is
+        what lets the controller's existing reset_ephemeral_state() exception
+        handling (superred/core/controller.py) stop the task with
+        stop_reason="error" instead.
+        """
+        target = OpenClawTarget(
+            auth_token="t",
+            gateway_url="ws://127.0.0.1:0",
+            reset_session_between_runs=True,
+        )
+        client = _FakeClient()
+
+        async def failing_reset_session(session_key: str = "superred") -> None:
+            raise RuntimeError("sessions.reset failed: simulated")
+
+        client.reset_session = failing_reset_session  # type: ignore[method-assign]
+        target._client = client  # type: ignore[assignment]
+
+        with pytest.raises(RuntimeError, match="simulated"):
+            await target.reset_ephemeral_state()
+
+
+@pytest.mark.asyncio
+async def test_agent_wait_sends_timeoutms_matching_run_budget():
+    """``agent.wait`` must carry ``timeoutMs`` so the gateway's own wait
+    deadline (30s default when omitted - verified against
+    ``gateway/server-methods/agent.ts``) matches the client's configured
+    ``agent_timeout_s`` budget instead of silently truncating every run
+    longer than 30s.
+    """
+    gateway = MockGateway()
+    port = await gateway.start()
+
+    try:
+        target = OpenClawTarget(
+            auth_token="test-token",
+            gateway_url=f"ws://127.0.0.1:{port}",
+            agent_timeout_s=123,
+        )
+
+        async def send_event(event: object) -> ControllableInjection:
+            controllable = getattr(event, "controllable")
+            value = "Hello" if controllable.name == "user_message" else ""
+            return ControllableInjection(
+                event=event,  # type: ignore[arg-type]
+                controllable=controllable,
+                value=value,
+            )
+
+        await target.run(lambda _e: None, send_event)
+        assert gateway.last_agent_wait_params is not None
+        assert gateway.last_agent_wait_params.get("timeoutMs") == 123_000
+        await target.teardown()
+    finally:
+        await gateway.stop()
+
+
+@pytest.mark.asyncio
+async def test_agent_wait_gateway_timeout_status_is_not_reported_as_ok():
+    """A gateway-side ``agent.wait`` timeout (``{"status": "timeout"}``, no
+    ``"error"`` key) must be classified as a timeout, not silently
+    misreported as success.
+
+    Regression test: the old code only checked ``terminal.get("error")`` and
+    fell through to ``status = "ok"`` for any payload without that key,
+    including an explicit ``{"status": "timeout", ...}`` from the gateway.
+    """
+    gateway = MockGateway()
+    gateway.agent_wait_status = "timeout"
+    port = await gateway.start()
+
+    try:
+        from openclaw_target.ws_client import OpenClawWSClient
+        client = OpenClawWSClient(
+            gateway_url=f"ws://127.0.0.1:{port}",
+            auth_token="test-token",
+        )
+        await client.connect()
+
+        result = await client.run_agent("Hello there!", session_key="test")
+        assert result.status == "timeout"
+
+        await client.close()
+    finally:
+        await gateway.stop()
+
+
+@pytest.mark.asyncio
+async def test_tools_catalog_rpc_error_not_cached_as_catalog():
+    """A failed ``tools.catalog`` RPC (``{"error": ...}``, ``rpc()`` does not
+    raise) must not be cached and surfaced as the tool catalog content.
+
+    Regression test: ``rpc()`` returns an ``{"error": ...}`` dict rather than
+    raising, so the old ``try/except`` around the ``tools.catalog`` call
+    never triggered on an RPC-level error - it fell through to
+    ``json.dumps({"error": ...})`` being cached and served as the
+    ``tool_list`` observable / ``_cached_tool_catalog`` content.
+    """
+    gateway = MockGateway()
+    gateway.tools_catalog_error = True
+    port = await gateway.start()
+
+    try:
+        target = OpenClawTarget(
+            auth_token="test-token",
+            gateway_url=f"ws://127.0.0.1:{port}",
+        )
+        await target.warmup_static_observables()
+        assert target._cached_tool_catalog == "{}"
+        await target.teardown()
+    finally:
+        await gateway.stop()
 
 
 if __name__ == "__main__":

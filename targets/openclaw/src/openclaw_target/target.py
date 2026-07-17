@@ -587,7 +587,15 @@ class OpenClawTarget(Target):
 
         try:
             catalog = await client.rpc("tools.catalog")
-            self._cached_tool_catalog = json.dumps(catalog, indent=2)
+            # rpc() returns an {"error": ...} dict on RPC failure rather than
+            # raising, so a failed call falls through to the happy path
+            # unless checked explicitly - caching that error dict would
+            # surface an error blob as the tool_list observable's content
+            # instead of an empty/missing catalog.
+            if isinstance(catalog, dict) and "error" in catalog:
+                self._cached_tool_catalog = "{}"
+            else:
+                self._cached_tool_catalog = json.dumps(catalog, indent=2)
         except Exception:
             self._cached_tool_catalog = "{}"
 
@@ -1147,17 +1155,17 @@ class OpenClawTarget(Target):
             self._llm_proxy.response_injection = None
 
         if self._reset_session_between_runs and self._client:
-            # Surface a failed reset: a swallowed error here means the
-            # conversation silently persists across runs, which corrupts
-            # per-run isolation (the whole point of opting in).
-            try:
-                await self._client.reset_session(self._session_key)
-            except Exception:
-                logger.warning(
-                    "sessions.reset failed; conversation may persist across "
-                    "runs (per-run isolation not guaranteed)",
-                    exc_info=True,
-                )
+            # Do NOT catch-and-log here: a swallowed error would let the
+            # controller proceed to the next run believing per-run isolation
+            # was enforced, when the conversation actually still carries
+            # forward (silently corrupting per-run isolation - the whole
+            # point of opting into reset_session_between_runs). Letting this
+            # propagate is deliberate: the controller's run loop already
+            # catches reset_ephemeral_state() exceptions and stops the task
+            # with stop_reason="error" (see Controller.run_task), which is
+            # the framework's actual "surface the failure" mechanism -
+            # verified against superred/core/controller.py.
+            await self._client.reset_session(self._session_key)
 
     async def teardown(self) -> None:
         """Close the connection, injection server, proxy, and gateway process.

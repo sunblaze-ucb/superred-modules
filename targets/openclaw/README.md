@@ -42,6 +42,7 @@ Components (`src/openclaw_target/`):
 | `plugin/index.js` | OpenClaw extension (`definePluginEntry`) that consults superred for tool-output injection. |
 | `injection_server.py` | Python HTTP endpoint the plugin POSTs to; bridges into the live optimizer. |
 | `proxy_llm.py` | Optional OpenAI-compatible proxy in front of the provider: records model calls and can inject the system prompt. |
+| `device_identity.py` | Ed25519 operator device identity + pre-seeded pairing, for remote connects (e.g. host → Docker-published port) that the gateway would otherwise treat as unpaired and scope-less. |
 | `constants.py` | Security-domain tags and defaults. |
 
 The managed gateway is configured the way OpenClaw really expects: a per-instance
@@ -237,7 +238,12 @@ External gateway: omit `managed=True`, pass `gateway_url=` and `auth_token=`.
 Key knobs (constructor / factory):
 
 - `managed_runtime` — `"local"` (loopback Node subprocess) or `"docker"`.
-- `agent_timeout_s` (default 600s) — max wall-clock per agent run.
+- `agent_timeout_s` (default 600s) — max wall-clock per agent run. Passed to
+  the gateway as `agent.wait`'s `timeoutMs` too, so the gateway's own wait
+  deadline (30s if omitted — verified against `gateway/server-methods/agent.ts`)
+  matches this budget instead of silently truncating every run past 30s; a
+  gateway-side timeout (`{"status": "timeout", ...}`, distinct from an
+  `{"error": ...}` payload) is reported as `status="timeout"`, not `"ok"`.
 - `enable_tool_injection` — expose the web/file/shell/message tool-output controllables.
 - `provider_base_url` / `provider_api_key` — enable + configure the LLM proxy
   (written into `models.providers.*` in `openclaw.json`).
@@ -259,7 +265,11 @@ The controller drives `configure_target` → (`run` → `reset_ephemeral_state`)
   session intact and enables poison-then-trigger attacks. Set
   `reset_session_between_runs=True` to wipe the conversation each run — this
   is also what lets `persistent_memory` exercise its cross-session scenario
-  across runs of one task (see Design decisions).
+  across runs of one task (see Design decisions). A failed `sessions.reset`
+  RPC under this option is **not** caught-and-logged: it propagates out of
+  `reset_ephemeral_state`, so the controller's run loop stops the task
+  (`stop_reason="error"`) instead of silently continuing with per-run
+  isolation not actually enforced.
 - `system_prompt_append` / `workspace_files` are applied **once per task**,
   on the first `run()` after `configure_target()` sets them — not
   re-applied on every run. They are set exactly once (config is not mutable
@@ -273,7 +283,12 @@ The controller drives `configure_target` → (`run` → `reset_ephemeral_state`)
 
 The connect handshake requests `operator.read|write|admin`. `admin` is required
 for `agents.files.set` (planting the system prompt / workspace files) and
-`sessions.reset`.
+`sessions.reset`. A direct local connection uses the gateway-client backend
+path; a remote connection (e.g. host → Docker-published port) is not, so the
+gateway would otherwise clear device-less scope requests — `device_identity.py`
+generates a per-instance Ed25519 identity and pre-seeds pairing in the
+gateway's state dir so the signed connect challenge still gets the requested
+operator scopes.
 
 ## Testing
 
