@@ -1,4 +1,14 @@
-"""GEPA reflective mutation meta-prompt for agentic target rollouts."""
+"""GEPA reflective mutation meta-prompt for agentic target rollouts.
+
+Attribution: ``META_PROMPT_TEMPLATE`` below is copied verbatim from
+``gepa-ai/gepa`` (``src/gepa/strategies/instruction_proposal.py``,
+``InstructionProposalSignature.default_prompt_template``), MIT License,
+Copyright (c) 2025 Lakshya A Agrawal and the GEPA contributors
+(https://github.com/gepa-ai/gepa) — the same source ``superred-optimizer-gepa``
+reproduces in its own ``prompts.py``. This package keeps its own copy rather
+than importing that package's, so the two must be kept in sync by hand if the
+upstream template ever changes; everything else in this module is original.
+"""
 
 from __future__ import annotations
 
