@@ -156,12 +156,15 @@ def _format_feedback(*, score: float | None, rationale: str) -> str:
 def _extract_fenced_block(text: str) -> str:
     """Extract the new instruction from the LM output.
 
-    Verbatim port of the upstream ``output_extractor`` in
-    ``gepa-ai/gepa`` ``src/gepa/strategies/instruction_proposal.py``:
-    take the content between the *first* opening triple-backtick and
-    the *last* closing triple-backtick, strip an optional language
-    specifier on the first line; tolerate incomplete blocks by trimming
-    a leading or trailing fence.
+    Port of the upstream ``output_extractor`` in ``gepa-ai/gepa``
+    ``src/gepa/strategies/instruction_proposal.py``: take the content
+    between the *first* opening triple-backtick and the *last* closing
+    triple-backtick, strip an optional language specifier on the first
+    line; tolerate incomplete blocks by trimming a leading or trailing
+    fence. See ``ASSUMPTIONS.md`` ("Verbatim Meta-Prompt" section) for
+    the two deliberate divergences from upstream (no-fence-at-all
+    handling, and left-stripped language-tag matching for a lone
+    opening fence preceded by whitespace).
 
     Preserves any internal triple-backticks, which a reflection LM may
     emit when its proposed instruction contains nested fenced examples.

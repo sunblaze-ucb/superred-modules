@@ -65,5 +65,6 @@ example.
 ## License
 
 MIT for this port's code. Prompt templates (attacker ×3, scorer, summarizer)
-are reproduced verbatim from the upstream reference implementation (MIT
-License) — see [ASSUMPTIONS.md](ASSUMPTIONS.md) for exact source files.
+are reproduced verbatim from the upstream reference implementation
+(MIT License, Copyright (c) 2023 Xiaogeng Liu) — see
+[ASSUMPTIONS.md](ASSUMPTIONS.md) for exact source files.

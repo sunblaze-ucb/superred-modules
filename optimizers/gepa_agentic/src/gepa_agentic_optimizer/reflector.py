@@ -120,6 +120,22 @@ def _format_feedback(*, score: float | None, rationale: str) -> str:
 
 
 def _extract_fenced_block(text: str) -> str:
+    """Extract the new instruction from the LM output.
+
+    Same port (and same two deliberate divergences) as
+    ``superred-optimizer-gepa``'s ``reflector._extract_fenced_block``,
+    which mirrors upstream ``gepa-ai/gepa``'s ``output_extractor``
+    (``src/gepa/strategies/instruction_proposal.py``). See that
+    package's ``ASSUMPTIONS.md`` ("Verbatim Meta-Prompt" section) for
+    the full rationale:
+
+    1. No fences at all → return ``""`` (no-op the mutation) instead
+       of upstream's raw-stripped-text fallback.
+    2. Incomplete-block language-tag stripping is matched against the
+       left-stripped text, so a lone opening fence preceded by
+       whitespace still has its language tag removed, instead of
+       upstream's un-stripped-text match which misses that case.
+    """
     if not text or not text.strip():
         return ""
 

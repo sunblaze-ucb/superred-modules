@@ -46,15 +46,30 @@ Appendix B of the paper), including the two required placeholders
 ``output_extractor`` first-open-to-last-close span and incomplete-block
 handling exactly (including stripping the optional language tag on
 the first line and trimming a leading or trailing fence when only
-one is present), with a single deliberate divergence: when the input
-contains no fences at all, we return the empty string so reflection
-can no-op the mutation rather than the upstream behaviour of
-returning the raw stripped text. The divergence is the right call
-for adversarial use — a reflection LM that ignored the fence
-contract should not silently ship its rambling as the next
-candidate. This preserves any internal triple-backticks the
-reflection LM may emit when its proposed instruction itself contains
-nested fenced examples.
+one is present), with two deliberate divergences:
+
+1. When the input contains no fences at all, we return the empty
+   string so reflection can no-op the mutation rather than the
+   upstream behaviour of returning the raw stripped text. The
+   divergence is the right call for adversarial use — a reflection LM
+   that ignored the fence contract should not silently ship its
+   rambling as the next candidate.
+2. In the "incomplete block" branch (only one fence present), upstream
+   re-matches the opening-fence-and-language-tag regex against the
+   *original, unstripped* text, so a response with leading whitespace
+   before the opening fence (e.g. ``"  ```python\nhello"``) fails that
+   match and falls through to returning the whole stripped block
+   *including* the fence and language tag. We instead re-match against
+   the *left-stripped* text, so leading whitespace before a lone
+   opening fence is tolerated and the language tag is still stripped
+   correctly. This only changes behaviour for a corner case upstream
+   itself likely didn't intend (LM output essentially never leads with
+   whitespace before a fence); we keep the more robust extraction
+   rather than reproducing the upstream quirk.
+
+This preserves any internal triple-backticks the reflection LM may
+emit when its proposed instruction itself contains nested fenced
+examples.
 
 ## Adversarial Information-Access Settings
 
