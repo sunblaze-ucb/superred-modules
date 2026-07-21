@@ -119,7 +119,16 @@ during a run). User messages and injection-point tool calls are recorded via
 their controllables and are **not** double-emitted as observables.
 
 Security domains (`constants.py`): `system` ⊃ {`user_input`, `external_data`,
-`internal_context`, `tool_catalog`, `model`}.
+`internal_context`, `tool_catalog`, `model`}. The tag classifies assumed
+*attacker origin*, not delivery location: `external_data` is every
+controllable that models an attacker corrupting a record the agent later
+trusts as fact — same-session (`*_content`, `*_transcript`) or cross-session
+(`persistent_memory`, via `MEMORY.md`) — even though `persistent_memory`'s
+delivery point (loaded into system context) looks like `system_prompt_append`
+/ `system_prompt`. `internal_context` is reserved for the harness's own fixed,
+non-adversarial scenario setup (`system_prompt_append`'s `ConfigSpec`, the
+`system_prompt` `Observable`) — configured once by the evaluator, not an
+attack surface an optimizer searches; no controllable currently uses it.
 
 **Adding capabilities.** Tool-output injection points are declared in the
 `TOOL_OUTPUT_CONTROLLABLES` registry (gateway tool name → `Controllable`).
@@ -127,9 +136,12 @@ Security domains (`constants.py`): `system` ⊃ {`user_input`, `external_data`,
 injection point is a single entry (define a `Controllable` with the right
 security domain and map its real gateway tool name(s)). Mapped tool names are
 the verified OpenClaw identifiers: `web_fetch`/`web_search`, `read`,
-`bash`/`exec`/`process`, `message`. Note: **memory** is an OpenClaw *plugin
-slot* (`plugins.slots.memory`), not a tool, so it is configured via config
-rather than registered as a tool-output controllable.
+`exec`/`process`, `message`. Note: **`bash`** is intentionally *not* mapped —
+it lives in the sessions-SDK / sub-agent surface (`src/agents/sessions/tools/
+bash.ts`) and the ACP command set (`src/acp/commands.ts`), neither of which
+routes through the agent tool-call hook the injection plugin attaches to; and
+**memory** is an OpenClaw *plugin slot* (`plugins.slots.memory`), not a tool.
+Neither is registered as a tool-output controllable.
 
 ## Design decisions
 
@@ -177,7 +189,7 @@ For same-turn *model* output (not tool output), use `model_response_injection`.
 
 **Model streaming: live relay + append, not buffer-then-forward.** OpenClaw's
 real provider client always sends `stream: true`
-(`packages/ai/src/providers/openai-completions.ts`) and expects
+(`src/llm/providers/openai-completions.ts`) and expects
 genuine incremental SSE from a real provider. `LLMProxy` relays each upstream
 delta to the gateway live (not buffered-then-replayed) so the
 `assistant_stream` observable keeps real token-by-token granularity — verified

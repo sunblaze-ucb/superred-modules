@@ -206,6 +206,17 @@ MESSAGE_CONTENT_TRANSCRIPT_CTRL = Controllable(
     ),
 )
 
+# Domain choice: EXTERNAL_DATA_TAG, not INTERNAL_CONTEXT_TAG. The tag here
+# classifies the *assumed attacker origin* of the content, not where it's
+# delivered to. persistent_memory is the durable, cross-session sibling of
+# the *_transcript family (also EXTERNAL_DATA_TAG): both model an attacker
+# who corrupts a record the agent later trusts as its own factual history —
+# *_transcript within one session's persisted transcript, persistent_memory
+# across sessions via MEMORY.md. INTERNAL_CONTEXT_TAG is reserved in this
+# module for the harness's own fixed, non-adversarial setup surface
+# (system_prompt_append's ConfigSpec, the system_prompt Observable) — content
+# the *evaluator* configures once as scenario baseline, not an attack surface
+# an optimizer searches. No controllable currently uses INTERNAL_CONTEXT_TAG.
 _PERSISTENT_MEMORY_NOTE = (
     "Cross-session memory poisoning: fires once per run(), after the agent "
     "run completes, with the full session chat.history as context (so the "
@@ -610,6 +621,25 @@ class OpenClawTarget(Target):
         should ``await target.warmup_static_observables()`` from
         ``configure_target`` when the optimizer needs the catalogue at init
         (in addition to the per-run emission in :meth:`run`).
+
+        Why this is opt-in rather than always-eager: ``Target.set_config`` is
+        synchronous and ``Task.configure_target`` is written against the
+        generic ``Target``/``Task`` contract (``superred.core.interfaces.
+        target``/``task``), which never awaits anything target-specific
+        between construction and :meth:`run` — a task bound to the generic
+        ``Task[Target]`` (see that module's docstring) only ever calls
+        ``target.set_config(...)``, so there is no framework-guaranteed async
+        lifecycle hook before ``run()`` for *every* task, only for tasks that
+        know they're bound to ``OpenClawTarget`` specifically and choose to
+        call this method. Starting the gateway/Docker container unconditionally
+        at construction/configure time would also pay that cost for tasks that
+        never call ``run()`` (e.g. controllers only enumerating
+        ``config_specs``/``get_controllables`` before scheduling). Deferring
+        expensive process/container startup to first ``run()`` (with this
+        method as an explicit early-connect escape hatch) matches the existing
+        convention elsewhere in this repo, e.g. ``asb_target.target.run``
+        builds/starts its process-singleton kernel + scheduler inside ``run``,
+        not ``configure_target`` or ``__init__``.
         """
         await self._ensure_connected()
 
