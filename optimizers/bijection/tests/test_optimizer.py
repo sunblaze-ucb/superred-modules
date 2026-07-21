@@ -230,11 +230,10 @@ class TestModelObservableAutoTune:
         [
             ("anthropic/claude-3-5-sonnet-20241022", "digit", 10),
             ("claude-3.5-sonnet-latest", "digit", 10),
-            ("claude-3-opus-20240229", "digit", 12),
-            ("openai/gpt-4o", "digit", 12),
-            ("openai/gpt-4-turbo", "letter", 8),
-            ("anthropic/claude-3-haiku", "letter", 8),
-            ("anthropic/claude-3-sonnet", "letter", 8),
+            ("claude-3-opus-20240229", "digit", 10),
+            ("anthropic/claude-3-haiku", "letter", 10),
+            ("openai/gpt-4o", "letter", 18),
+            ("openai/gpt-4o-mini", "letter", 18),
         ],
     )
     async def test_known_model_id_auto_tunes_per_table_1(
@@ -262,6 +261,37 @@ class TestModelObservableAutoTune:
         assert opt._fixed_size == _FALLBACK_FIXED_SIZE
 
     @pytest.mark.asyncio
+    async def test_model_not_evaluated_in_paper_falls_back_to_defaults(
+        self,
+    ) -> None:
+        # GPT-4-Turbo and plain "Claude 3 Sonnet" (non-3.5) are real
+        # model names, but the paper's Table 1 never evaluates them —
+        # only Claude 3 Haiku/Opus/3.5-Sonnet and GPT-4o/4o-mini are
+        # reported. We must not fabricate a Table 1 value for them.
+        for model_id in ("openai/gpt-4-turbo", "anthropic/claude-3-sonnet"):
+            opt = await _init_optimizer(
+                bijection_type=None,
+                fixed_size=None,
+                observables=[_model_observable(model_id)],
+            )
+            assert opt._bijection_type == _FALLBACK_BIJECTION_TYPE
+            assert opt._fixed_size == _FALLBACK_FIXED_SIZE
+
+    @pytest.mark.asyncio
+    async def test_gpt_4o_mini_does_not_match_gpt_4o_row(self) -> None:
+        # "gpt-4o" is a substring of "gpt-4o-mini"; the more specific
+        # entry must win rather than falling through to the "gpt-4o"
+        # row (both happen to resolve to the same values today, but
+        # the lookup order is what's being pinned here).
+        opt = await _init_optimizer(
+            bijection_type=None,
+            fixed_size=None,
+            observables=[_model_observable("openai/gpt-4o-mini-2024-07-18")],
+        )
+        assert opt._bijection_type == "letter"
+        assert opt._fixed_size == 18
+
+    @pytest.mark.asyncio
     async def test_explicit_codomain_override_wins_over_observable(self) -> None:
         opt = await _init_optimizer(
             bijection_type="letter",
@@ -277,7 +307,7 @@ class TestModelObservableAutoTune:
         opt = await _init_optimizer(
             bijection_type=None,
             fixed_size=20,
-            observables=[_model_observable("openai/gpt-4-turbo")],
+            observables=[_model_observable("anthropic/claude-3-haiku")],
         )
         # bijection_type still resolved from model observable.
         assert opt._bijection_type == "letter"
@@ -288,7 +318,7 @@ class TestModelObservableAutoTune:
         opt = await _init_optimizer(
             bijection_type="digit",
             fixed_size=14,
-            observables=[_model_observable("openai/gpt-4-turbo")],
+            observables=[_model_observable("anthropic/claude-3-haiku")],
         )
         assert opt._bijection_type == "digit"
         assert opt._fixed_size == 14

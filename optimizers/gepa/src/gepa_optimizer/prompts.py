@@ -19,6 +19,12 @@ Two placeholders are required by the upstream contract:
 Reflection output is expected as the new instruction text inside a
 fenced code block (any or no language tag), matching the upstream
 ``output_extractor``.
+
+Attribution: the meta-prompt template text below (``META_PROMPT_TEMPLATE``)
+is copied verbatim from ``gepa-ai/gepa``, MIT License,
+Copyright (c) 2025 Lakshya A Agrawal and the GEPA contributors
+(https://github.com/gepa-ai/gepa). Everything else in this module — the
+extraction/formatting code around it — is original.
 """
 
 from __future__ import annotations

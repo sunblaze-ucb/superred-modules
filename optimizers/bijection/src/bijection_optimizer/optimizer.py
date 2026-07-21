@@ -76,24 +76,37 @@ _MODEL_OBSERVABLE_NAME = "model"
 _FALLBACK_BIJECTION_TYPE: str = "digit"
 _FALLBACK_FIXED_SIZE: int = 10
 
-# Paper Table 1 per-model optima (Huang et al., ICLR 2025). Each entry
-# is ``(model_id_substring, bijection_type, fixed_size)``; the first
-# substring that appears in the lower-cased ``model`` observable wins.
-# Substrings let us match on the family (e.g. ``"claude-3-5-sonnet"``
-# matches ``"anthropic/claude-3-5-sonnet-20241022"``). Unknown models
-# fall back to ``_FALLBACK_*`` above.
+# Paper Table 1 per-model optima (Huang et al., ICLR 2025), AdvBench-50
+# sub-table. Each entry is ``(model_id_substring, bijection_type,
+# fixed_size)``; the first substring that appears in the lower-cased
+# ``model`` observable wins. Substrings let us match on the family
+# (e.g. ``"claude-3-5-sonnet"`` matches
+# ``"anthropic/claude-3-5-sonnet-20241022"``). Unknown models fall back
+# to ``_FALLBACK_*`` above.
+#
+# Table 1 only reports results for five models — Claude 3 Haiku,
+# Claude 3 Opus, Claude 3.5 Sonnet, GPT-4o-mini, and GPT-4o — so those
+# are the only entries below (dispersion converted to
+# ``fixed_size = 26 - dispersion``):
+#
+#   | Model             | Codomain | Dispersion | fixed_size |
+#   | ----------------- | -------- | ---------- | ---------- |
+#   | Claude 3 Haiku     | letter   | 16         | 10         |
+#   | Claude 3 Opus      | 2-digit  | 16         | 10         |
+#   | Claude 3.5 Sonnet  | 2-digit  | 16         | 10         |
+#   | GPT-4o-mini        | letter   | 8          | 18         |
+#   | GPT-4o             | letter   | 8          | 18         |
+#
+# ``"gpt-4o-mini"`` must precede ``"gpt-4o"`` since the latter is a
+# substring of the former and lookup returns the first match.
 _MODEL_OPTIMAL_DEFAULTS: tuple[tuple[str, str, int], ...] = (
-    # Strongest Anthropic models — paper highlights digit codomain.
     ("claude-3-5-sonnet", "digit", 10),
     ("claude-3.5-sonnet", "digit", 10),
-    ("claude-opus", "digit", 12),
-    ("claude-3-opus", "digit", 12),
-    # Strongest OpenAI models — paper highlights digit codomain.
-    ("gpt-4o", "digit", 12),
-    ("gpt-4-turbo", "letter", 8),
-    # Weaker / older Anthropic models — letter codomain is competitive.
-    ("claude-3-haiku", "letter", 8),
-    ("claude-3-sonnet", "letter", 8),
+    ("claude-3-opus", "digit", 10),
+    ("claude-opus", "digit", 10),
+    ("claude-3-haiku", "letter", 10),
+    ("gpt-4o-mini", "letter", 18),
+    ("gpt-4o", "letter", 18),
 )
 
 
@@ -118,11 +131,11 @@ class BijectionOptimizer(Optimizer):
             ``"digit"`` (each non-fixed letter → unique
             ``num_digits``-digit number). Default ``None`` means
             *auto-tune from the in-scope ``model`` observable* per
-            paper Table 1: digit for stronger models (Sonnet 3.5,
-            Opus, GPT-4o), letter for weaker ones (GPT-4-Turbo,
-            Haiku). Falls back to ``"digit"`` when no recognised
-            ``model`` observable is in scope. Explicit values always
-            win over auto-tune.
+            paper Table 1: digit for Claude 3 Opus / Claude 3.5
+            Sonnet, letter for Claude 3 Haiku / GPT-4o / GPT-4o-mini
+            (the only five models Table 1 reports). Falls back to
+            ``"digit"`` when no recognised ``model`` observable is in
+            scope. Explicit values always win over auto-tune.
         fixed_size: Number of letters that map to themselves. The
             paper's dispersion is ``26 - fixed_size``. Default
             ``None`` means *auto-tune from the in-scope ``model``

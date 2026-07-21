@@ -80,14 +80,13 @@ ever reaches the optimizer. Disabled by default (matches GOAT, GEPA).
   verbatim port of `DigitBijectionLanguage.create_bijective_mapping_digits`.
   Numbers are sampled without replacement from `[10^(n-1), 10^n)` so
   every encoding has exactly `num_digits` digits.
-- **Letter encode/decode**: `permute_string` from upstream
-  (`Bijection.encode` / `Bijection.decode`, letter branch). Both
-  branches lowercase the input unconditionally — upstream's
-  `permute_string` is a single function reused for both directions
-  and lowercases; we mirror that exactly so a downstream judge wrapper
-  feeding raw model output through `Bijection.decode` gets the
-  upstream-equivalent text. Pinned by
-  `test_letter_decode_lowercases_input_matching_upstream`.
+- **Letter encode/decode**: our `Bijection.encode` / `Bijection.decode`
+  (letter branch) both port upstream's `permute_string`. Both branches
+  lowercase the input unconditionally — upstream's `permute_string` is
+  a single function reused for both directions and lowercases; we
+  mirror that exactly so a downstream judge wrapper feeding raw model
+  output through `Bijection.decode` gets the upstream-equivalent text.
+  Pinned by `test_letter_decode_lowercases_input_matching_upstream`.
 - **Digit encode**: verbatim port of `DigitBijectionLanguage._f`.
   Delimiter is inserted before each substituted numeric token, never
   before identity-mapped letters.
@@ -126,8 +125,16 @@ and degrades silently when a surface is absent. Concretely:
   paper's per-target optimum. Mirrors FlipAttack's `victim_llm`-driven
   Pliny-template selection. Resolution priority:
   1. Explicit constructor override (`bijection_type="letter"`, etc.).
-  2. Paper Table 1 lookup against the in-scope `model` observable
-     (`claude-3-5-sonnet` → digit/10, `gpt-4-turbo` → letter/8, …).
+  2. Paper Table 1 lookup (AdvBench-50 sub-table) against the in-scope
+     `model` observable. Table 1 reports exactly five models:
+     `claude-3-5-sonnet` → digit/10 (dispersion 16), `claude-3-opus` →
+     digit/10 (dispersion 16), `claude-3-haiku` → letter/10 (dispersion
+     16), `gpt-4o` → letter/18 (dispersion 8), `gpt-4o-mini` →
+     letter/18 (dispersion 8). Models the paper does not evaluate
+     (e.g. GPT-4-Turbo, plain "Claude 3 Sonnet") are intentionally
+     *not* in the lookup table — fabricating a Table 1 value for a
+     model the paper never tested would misrepresent the paper, so
+     those model ids fall through to the main-table fallback instead.
   3. Paper main-table fallback (`digit`, `fixed_size=10`) when no
      `model` observable is present or it doesn't match a Table 1 row.
   When scope matches the paper's threat model the optimizer lands on
@@ -284,15 +291,18 @@ tests/
 - Construction validation (invalid attempts, shots, codomain,
   fixed_size).
 - **Model-observable auto-tune** (`TestModelObservableAutoTune`):
-  no observable → paper main-table fallback; seven Table 1 model
-  IDs (Claude 3.5 Sonnet, Claude 3.5 Sonnet alias, Claude 3 Opus,
-  GPT-4o, GPT-4-Turbo, Claude 3 Haiku, Claude 3 Sonnet) → expected
-  per-paper codomain / `fixed_size`; unknown model identifier →
-  fallback; explicit `bijection_type` override wins; explicit
+  no observable → paper main-table fallback; six Table 1 model IDs
+  (Claude 3.5 Sonnet, Claude 3.5 Sonnet alias, Claude 3 Opus,
+  Claude 3 Haiku, GPT-4o, GPT-4o-mini — the only models the paper's
+  Table 1 reports) → expected per-paper codomain / `fixed_size`;
+  a model the paper never evaluated (GPT-4-Turbo) → main-table
+  fallback, not a fabricated Table 1 value; unknown model identifier
+  → fallback; explicit `bijection_type` override wins; explicit
   `fixed_size` override wins; both explicit overrides skip the
   observable lookup; empty / whitespace `model` observable treated
   as absent; non-`model` observables (e.g. `system_prompt`) do not
-  affect resolution.
+  affect resolution; `gpt-4o-mini` resolves to its own row rather
+  than the `gpt-4o` row despite the substring overlap.
 - RunStart resets per-run state and prepares a fresh bijection.
 - PreCall: injection on user_message, lock-in to first user
   controllable, single-turn behaviour (one injection per run),
