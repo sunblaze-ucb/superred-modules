@@ -9,10 +9,11 @@ jailbreak optimizer.
 - Paper: Xiaogeng Liu et al., "AutoDAN-Turbo: A Lifelong Agent for
   Strategy Self-Exploration to Jailbreak LLMs," arXiv:2410.05295
   (ICLR 2025 spotlight).
-- Code: `SaFoLab-WISC/AutoDAN-Turbo`
-  (https://github.com/SafoLab-WISC/AutoDAN-Turbo). Specifically:
-  `framework/{attacker,scorer,summarizer,retrival,library}.py` and
-  `pipeline.py::AutoDANTurbo.lifelong_redteaming`.
+- Code: `SaFo-Lab/AutoDAN-Turbo`
+  (https://github.com/SaFo-Lab/AutoDAN-Turbo; GitHub org renamed from
+  `SaFoLab-WISC` since the paper's release — old links redirect).
+  Specifically: `framework/{attacker,scorer,summarizer,retrival,library}.py`
+  and `pipeline.py::AutoDANTurbo.lifelong_redteaming`.
 
 ## Algorithm summary
 

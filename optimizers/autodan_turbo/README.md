@@ -15,9 +15,10 @@ Reference: Liu et al., "AutoDAN-Turbo: A Lifelong Agent for Strategy
 Self-Exploration to Jailbreak LLMs,"
 [arXiv:2410.05295](https://arxiv.org/abs/2410.05295) (ICLR 2025 spotlight).
 Official implementation:
-[`SaFoLab-WISC/AutoDAN-Turbo`](https://github.com/SaFoLab-WISC/AutoDAN-Turbo)
-(MIT License). See [ASSUMPTIONS.md](ASSUMPTIONS.md) for the full
-paper-to-code mapping and every deliberate departure.
+[`SaFo-Lab/AutoDAN-Turbo`](https://github.com/SaFo-Lab/AutoDAN-Turbo)
+(MIT License; GitHub org renamed from `SaFoLab-WISC` since the paper's
+release — old links redirect). See [ASSUMPTIONS.md](ASSUMPTIONS.md) for the
+full paper-to-code mapping and every deliberate departure.
 
 ## Install
 

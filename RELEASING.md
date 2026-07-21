@@ -94,7 +94,9 @@ Before a module's first release, make sure it has:
 - a `superred-<kind>-<name>` dist name,
 - a `LICENSE` file (MIT, matching the `superred` framework) plus `license = "MIT"`
   and `license-files = ["LICENSE"]` in `pyproject.toml`,
-- `authors = [{ name = "Simon Sure", email = "info@simonsure.com" }]`,
+- `authors = [{ name = "<your name>", email = "<your email>" }]` — list the
+  people who actually wrote the module, not a placeholder (e.g.
+  `superred-optimizer-goat` credits both of its authors),
 - a `README.md` referenced by `readme = "README.md"` (it becomes the PyPI page),
 - attribution for any vendored upstream code or bundled datasets (see
   `security_claims/strongreject/LICENSES/` for the pattern to copy).

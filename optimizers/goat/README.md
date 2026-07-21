@@ -64,7 +64,10 @@ example.
 
 ## License
 
-MIT. See [ASSUMPTIONS.md](ASSUMPTIONS.md) for the upstream reference; GOAT has
-no official public code release, so only the paper's prompts/definitions
-(Table 1, Figs A.1-A.3) are reproduced (as text, not code) and reimplemented
-here as new, original Python.
+MIT. See [ASSUMPTIONS.md](ASSUMPTIONS.md) for the upstream reference; the
+paper's own authors (Meta) never released official code, so only their
+prompts/definitions (Table 1, Figs A.1-A.3) are reproduced (as text, not code)
+and reimplemented here as new, original Python. A third-party, unofficial GOAT
+probe was later merged into NVIDIA's [`garak`](https://github.com/NVIDIA/garak)
+scanner (`garak/probes/goat.py`, Apache-2.0); this port does not use, vendor,
+or derive from that implementation.
