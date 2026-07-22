@@ -20,7 +20,7 @@ edit, web) plus the DTAP environment tools exposed over MCP.
 
 ## What it adds
 
-`ClaudeCodeDtapTarget` implements the four abstract hooks of the base:
+`DtapClaudeCodeTarget` implements the four abstract hooks of the base:
 
 1. **`_agent_kind()`** -> `"claude_code"`.
 2. **`_native_tool_deny(policy)`** maps the `native_tools_policy` config slot to
@@ -61,9 +61,9 @@ double-counted env traffic.
 ## Usage
 
 ```python
-from dtap_claudecode_target import ClaudeCodeDtapTarget
+from dtap_claudecode_target import DtapClaudeCodeTarget
 
-target = ClaudeCodeDtapTarget(
+target = DtapClaudeCodeTarget(
     model="claude-opus-4-8",
     api_base="https://my-litellm-proxy/",   # → ANTHROPIC_BASE_URL in the container
     api_key="sk-...",                        # → ANTHROPIC_AUTH_TOKEN
@@ -101,3 +101,21 @@ LITELLM_API_KEY=... LITELLM_API_BASE=... \
 
 See `ASSUMPTIONS.md` for the fidelity ledger (transcript schema, the env-tool
 skip, the native-tool list, and the Docker/proxy wiring).
+
+## Credits / upstream
+
+This target is a faithful reimplementation of the Claude Agent SDK backend of
+the [DecodingTrust-Agent (DTAP)](https://github.com/AI-secure/DecodingTrust-Agent)
+red-teaming platform (Apache-2.0; arXiv:2605.04808). No upstream source is
+vendored; the code independently reproduces upstream's run loop, transcript
+schema, and trajectory-conversion structure, with superred-specific deviations
+documented in `ASSUMPTIONS.md`. The only near-verbatim fragment is the
+os-filesystem tool deny list. See `LICENSES/NOTICE.md` for full attribution.
+
+At Docker-image build time the agent image pulls Anthropic's
+[`claude-agent-sdk`](https://github.com/anthropics/claude-agent-sdk-python)
+(MIT) and the `@anthropic-ai/claude-code` CLI (Anthropic commercial terms)
+directly from PyPI/npm; neither is redistributed inside this package.
+
+This module's own code is released under the MIT License,
+Copyright (c) 2026 Simon Sure.

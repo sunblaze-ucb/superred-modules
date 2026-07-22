@@ -12,7 +12,7 @@ import pytest
 
 from agentdojo_target import AgentDojoTarget
 from agentdojo_target.seed_loader import load_composite_seed
-from security_claim_agentdojo import (
+from agentdojo_claim import (
     Layer2GoalSpec,
     SystemViolatingTask,
     agentdojo_combined_claim,
@@ -22,13 +22,13 @@ from security_claim_agentdojo import (
     layer2_categories,
     layer2_goal_ids,
 )
-from security_claim_agentdojo.layer2_goals import (
+from agentdojo_claim.layer2_goals import (
     banking_unauth_transfer,
     slack_channel_exfiltration,
     travel_pii_exfiltration,
     workspace_email_exfiltration,
 )
-from security_claim_agentdojo.security_predicates import (
+from agentdojo_claim.security_predicates import (
     any_send_money_to_iban,
     password_changed,
 )
@@ -269,7 +269,7 @@ def test_combined_claim_layer1_then_layer2_order() -> None:
     """Iteration is Layer 1 first (paired tasks) then Layer 2."""
     combined = list(agentdojo_combined_claim())
     # First batch should be paired tasks; last batch should be system-violating.
-    from security_claim_agentdojo import AgentDojoPairedTask, SystemViolatingTask
+    from agentdojo_claim import AgentDojoPairedTask, SystemViolatingTask
     first_few = combined[:5]
     last_few = combined[-2:]
     assert all(isinstance(t, AgentDojoPairedTask) for t in first_few)

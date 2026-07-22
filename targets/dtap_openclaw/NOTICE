@@ -1,0 +1,53 @@
+# NOTICE
+
+superred-target-dtap-openclaw
+
+This module's own code is licensed under the MIT License, Copyright (c) 2026
+Simon Sure (see LICENSE).
+
+It is a faithful reimplementation ("port") of the OpenClaw agent adapter from
+the DecodingTrust-Agent Platform (DTAP), and includes no upstream source code
+verbatim.
+
+## Derived from: DecodingTrust-Agent (DTAP)
+
+- Source: https://github.com/AI-secure/DecodingTrust-Agent
+- Pinned commit: e0323a521ba4ef88f8e14c1eccf68d0a3d19a458
+- License: Apache License 2.0 (SPDX: Apache-2.0), Copyright (c) The
+  DecodingTrust-Agent authors (Virtue AI; University of Chicago; UIUC; UCSB;
+  Johns Hopkins; UC Berkeley; Stanford).
+
+What is derived: the OpenClaw agent adapter under `agent/openclaw/src/`
+(`agent.py`, `utils.py`, `plugin_generator.py`). Specifically this module
+reimplements, against the shared `dtap_scaffold` contracts, upstream's:
+
+- OpenClaw `openclaw.json` provider / MCP / tools / skills wiring and the
+  `openclaw ... agent --local --message <turn> ... --session-id <id>`
+  CLI invocation (with `OPENCLAW_TRAJECTORY=1`);
+- the non-fatal per-turn failure semantics (a failed turn is logged and the
+  episode still completes, always yielding a trajectory);
+- the `OpenClawTrajectoryConverter` parse + dedup logic
+  (`_convert_runtime_trajectory_entries` / `_append_message_steps`) and the
+  DT-Arena `trajectory_json` schema.
+
+Changes made (per Apache-2.0 sec. 4(b)): the host-subprocess launch is
+repackaged to run inside an isolated Docker container; OpenClaw's native
+`exec`/`fs` tools are ENABLED by default (upstream disabled them for the
+filesystem domain); credentials are wired via explicit constructor args
+through a LiteLLM provider block; a single host MCP proxy fronts all env
+servers; and the converter output is the scaffold's `TrajectoryArtifact` with
+an env/native tool-call split. Every deviation is documented in
+`ASSUMPTIONS.md`. No upstream Python source is vendored (ASSUMPTIONS A.4).
+
+The Apache-2.0 license text is available at
+https://www.apache.org/licenses/LICENSE-2.0 and in upstream's `LICENSE`.
+
+## Not bundled
+
+- No DTAP benchmark dataset or evaluation trajectory is bundled in this
+  package. The only shipped-adjacent data file
+  (`tests/fixtures/openclaw_session.jsonl`) is a synthetic, self-authored test
+  fixture, lives under `tests/`, and is not packaged into the wheel.
+- The OpenClaw CLI (npm `openclaw`) is installed from npm inside the Docker
+  runtime image (`docker/Dockerfile`) and invoked as a subprocess; it is not a
+  Python dependency and is not redistributed in this PyPI package.

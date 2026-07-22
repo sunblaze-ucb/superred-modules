@@ -7,7 +7,7 @@ import types
 import pytest
 from inspect_ai.model import ChatMessageAssistant, ChatMessageUser
 
-from security_claim_agentharm import grading_bridge as gb
+from agentharm_claim import grading_bridge as gb
 
 
 @pytest.mark.asyncio

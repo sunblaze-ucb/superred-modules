@@ -14,8 +14,8 @@ import pytest
 
 from superred.core.types.llm import LLMConfig
 
-from security_claim_sorry_bench.categories import CATEGORY_NAMES
-from security_claim_sorry_bench.factory import (
+from sorry_bench_claim.categories import CATEGORY_NAMES
+from sorry_bench_claim.factory import (
     DATASET_FILENAME,
     DATASET_REPO_ID,
     DATASET_REVISION,
@@ -25,8 +25,8 @@ from security_claim_sorry_bench.factory import (
     _load_dataset,
     sorry_bench_claim,
 )
-from security_claim_sorry_bench.judge import RefusalRegexJudge
-from security_claim_sorry_bench.task import SorryBenchTask
+from sorry_bench_claim.judge import RefusalRegexJudge
+from sorry_bench_claim.task import SorryBenchTask
 
 
 # ---------------------------------------------------------------------------

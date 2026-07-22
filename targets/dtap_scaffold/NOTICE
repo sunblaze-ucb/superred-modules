@@ -1,0 +1,34 @@
+# NOTICE
+
+superred-target-dtap-scaffold
+Copyright (c) 2026 Simon Sure
+
+This product is licensed under the MIT License (see LICENSE).
+
+All source code and the bundled `data/tool_trees.json` authorization mapping in
+this package are original work of the superred authors. No upstream source code
+or benchmark data is redistributed inside this package.
+
+## Upstream this scaffold ports and wraps (not redistributed)
+
+This module is a faithful superred port of, and a runtime wrapper around, the
+DecodingTrust-Agent (DTap) red-teaming platform for AI agents. Its
+environment-pool orchestration behavior is reimplemented from DTAP (no upstream
+code is copied), and the optional `sdk` extra pulls the upstream package
+`decodingtrust-agent-sdk`, which this module lazy-imports at runtime; the SDK is
+NOT vendored into this wheel.
+
+- Name:      DecodingTrust-Agent (DTap) / decodingtrust-agent-sdk
+- Authors:   AI-Secure (University of Illinois / DecodingTrust team) and contributors
+- Source:    https://github.com/AI-secure/DecodingTrust-Agent
+- PyPI:      https://pypi.org/project/decodingtrust-agent-sdk/ (pinned ==0.2.12)
+- License:   Apache-2.0 (SPDX: Apache-2.0), confirmed at
+             https://github.com/AI-secure/DecodingTrust-Agent/blob/main/LICENSE
+
+`data/tool_trees.json` references DTAP service tool names (factual API
+identifiers) but is an original authorization-tree mapping authored for this
+project; it is not a copy of the DTAP benchmark dataset. The DTAP task/goal
+dataset is defined in the separate `security-claim-dtap` package, not here.
+
+When reporting measurements produced with this target, cite the
+DecodingTrust-Agent (DTap) platform.

@@ -1,0 +1,47 @@
+# NOTICE
+
+superred-claim-dtap
+Copyright (c) 2026 Simon Sure
+
+This product includes original software licensed under the MIT License (see
+LICENSE).
+
+This package is a faithful port of, and interoperates with, the
+DecodingTrust-Agent (DTAP / DTAP-BENCH) red-teaming platform. No upstream DTAP
+source code and no DTAP dataset content are contained in this wheel; the items
+below are credited because this package is derived from and designed against
+them.
+
+--------------------------------------------------------------------------------
+DecodingTrust-Agent (DTAP / DTAP-BENCH)
+Source:  https://github.com/AI-secure/DecodingTrust-Agent  (commit e0323a52)
+License: Apache License 2.0
+Copyright (c) The DecodingTrust-Agent authors (AI-Secure / Secure Learning Lab)
+
+The benchmark harness semantics are REIMPLEMENTED in original code in this
+package: the per-task directory tree, the config.yaml schema, the per-server
+environment-override tiering (mirrors upstream mcp_helpers.task_env_overrides),
+the scoring predicates (Judge.eval_task -> task_success, Judge.eval_attack ->
+attack_success, with True == attack succeeded), and the judge-helper
+"Error running eval" swallowed-error contract (pinned to
+decodingtrust-agent-sdk==0.2.12). The upstream per-task judge.py is executed
+verbatim OUT OF BAND by the separate dtap-scaffold package, not by this wheel.
+The Apache-2.0 license text is available at
+https://github.com/AI-secure/DecodingTrust-Agent/blob/main/LICENSE
+
+--------------------------------------------------------------------------------
+DecodingTrust-Agent-Platform dataset (DTAP-BENCH per-task tasks)
+Source:  https://huggingface.co/datasets/AI-Secure/DecodingTrust-Agent-Platform
+License: Apache License 2.0
+Copyright (c) The DecodingTrust-Agent authors (AI-Secure / Secure Learning Lab)
+
+The per-task dataset (config.yaml / setup.sh / judge.py / metadata) is resolved
+at RUNTIME from a local checkout ($DTAP_DATASET_ROOT) or, optionally, downloaded
+from the HuggingFace repo above. It is NOT bundled in this wheel. The file
+data/golden_hashes.json is an original faithfulness artifact containing only
+SHA-256 digests derived from a 16-task sample; it carries no reconstructable
+dataset content.
+
+--------------------------------------------------------------------------------
+When reporting numbers produced with this module, cite the DecodingTrust-Agent
+Platform (DTap) paper.

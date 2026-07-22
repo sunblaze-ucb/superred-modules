@@ -18,7 +18,7 @@ pip install -e ./security_claims/agentdojo
 
 ```python
 from agentdojo_target import AgentDojoTarget
-from security_claim_agentdojo import agentdojo_layer1_claim
+from agentdojo_claim import agentdojo_layer1_claim
 from superred.core.controller import Controller, TargetFactory
 
 target_factory = TargetFactory(
@@ -44,3 +44,19 @@ See `ASSUMPTIONS.md` for divergences from AgentDojo upstream and Layer-2 design 
 ## Status
 
 v0.1.0 alpha.  Public surface is unstable.
+
+## Credits / upstream
+
+This package's source is original superred work (MIT, Copyright (c) 2026
+Simon Sure). It bundles no third-party code or data.
+
+**Layer 1** adapts the [AgentDojo](https://github.com/ethz-spylab/agentdojo)
+benchmark (Debenedetti et al., 2024; MIT, Copyright (c) 2024 Edoardo
+Debenedetti, Jie Zhang, Mislav Balunovic, Luca Beurer-Kellner, Marc Fischer,
+and Florian Tramèr). AgentDojo is a runtime dependency (`agentdojo>=0.1.35`),
+installed from PyPI and not redistributed here; its injection/user tasks are
+run and scored via superred's `agentdojo-target`. Please cite AgentDojo when
+reporting Layer-1 results.
+
+**Layer 2** goals are bespoke, hand-authored superred content (deterministic
+security predicates, not derived from AgentDojo's tasks). See `ASSUMPTIONS.md`.

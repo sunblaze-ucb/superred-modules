@@ -3,14 +3,48 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "dtap-claudecode-target"
+name = "superred-target-dtap-claudecode"
 version = "0.1.0"
 description = "Claude Code (claude_agent_sdk) DTAP agent target for superred: subclasses dtap_scaffold.DtapAgentTarget and runs the Claude Agent SDK in an isolated Docker container against the DTAP env MCP proxy, normalizing the in-container transcript into the shared TrajectoryArtifact."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "LICENSES/*"]
 requires-python = ">=3.11,<3.14"
+authors = [
+    { name = "Simon Sure", email = "info@simonsure.com" },
+]
+keywords = [
+    "superred",
+    "red-teaming",
+    "ai-safety",
+    "security",
+    "llm",
+    "target",
+    "agent",
+    "dtap",
+    "decodingtrust",
+    "claude-code",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security",
+]
 dependencies = [
     "superred>=0.1.0",
-    "dtap-scaffold>=0.1.0",
+    "superred-target-dtap-scaffold>=0.1.0",
 ]
+
+[project.urls]
+Homepage = "https://superred.simonsure.com"
+Documentation = "https://superred.simonsure.com"
+Repository = "https://github.com/RoldSI/superred-modules"
+Issues = "https://github.com/RoldSI/superred-modules/issues"
 
 # The Claude Agent SDK (claude-agent-sdk) and the @anthropic-ai/claude-code Node
 # CLI it drives are NOT host dependencies: they are installed INSIDE the agent

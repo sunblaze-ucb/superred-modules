@@ -9,7 +9,7 @@ import pytest
 from superred.core.llm import LLMClient
 from superred.core.types.llm import LLMUsage
 
-from security_claim_sorry_bench.judge import (
+from sorry_bench_claim.judge import (
     BASE_SCOREONLY_TEMPLATE,
     BASE_THESCORE_TEMPLATE,
     LLMAsJudge,

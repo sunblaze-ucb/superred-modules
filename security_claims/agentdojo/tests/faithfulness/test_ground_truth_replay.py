@@ -49,7 +49,7 @@ from agentdojo.task_suite.load_suites import get_suite
 from agentdojo_target.env import CompositeEnvironment, sync_initial_fields
 from agentdojo_target.seed_loader import load_composite_seed
 from agentdojo_target.tool_registry import ALL_FUNCTIONS, SUITE_NAMES
-from security_claim_agentdojo.layer1_bridge import _BENCHMARK_VERSION
+from agentdojo_claim.layer1_bridge import _BENCHMARK_VERSION
 
 # ---------------------------------------------------------------------------
 # Known divergences: upstream GT vs upstream predicate.  Each entry is a

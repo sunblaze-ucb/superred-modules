@@ -3,11 +3,47 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "strongreject-claim"
+name = "superred-claim-strongreject"
 version = "0.1.0"
 description = "StrongREJECT (Souly et al., NeurIPS 2024) jailbreak benchmark as a superred SecurityClaim against ChatbotTarget"
+readme = "README.md"
 requires-python = ">=3.11,<3.14"
-dependencies = ["superred>=0.1.0", "chatbot-target", "litellm>=1.0"]
+license = "MIT"
+license-files = ["LICENSE", "NOTICE", "LICENSES/*"]
+authors = [
+    { name = "Simon Sure", email = "info@simonsure.com" },
+]
+keywords = [
+    "superred",
+    "red-teaming",
+    "ai-safety",
+    "security",
+    "llm",
+    "security-claim",
+    "jailbreak",
+    "strongreject",
+]
+dependencies = [
+    "superred>=0.1.0",
+    "superred-target-chatbot>=0.1.0",
+    "litellm>=1.0",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security",
+]
+
+[project.urls]
+Homepage = "https://superred.simonsure.com"
+Documentation = "https://superred.simonsure.com"
+Repository = "https://github.com/RoldSI/superred-modules"
+Issues = "https://github.com/RoldSI/superred-modules/issues"
 
 [project.optional-dependencies]
 dev = [

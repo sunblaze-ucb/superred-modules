@@ -3,14 +3,46 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "security-claim-asb"
+name = "superred-claim-asb"
 version = "0.1.0"
 description = "Agent Security Bench (ASB) security claim for the ASB target: one task per (agent, benign task, attacker tool), with ASB's attack-success / utility / refusal predicates ported verbatim and hierarchical factories by scenario, aggressiveness, and attack type."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE", "LICENSES/*"]
 requires-python = ">=3.11,<3.14"
+authors = [
+    { name = "Simon Sure", email = "info@simonsure.com" },
+]
+keywords = [
+    "red-teaming",
+    "ai-safety",
+    "security",
+    "llm",
+    "agent-security-bench",
+    "asb",
+    "adversarial",
+    "benchmark",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security",
+]
 dependencies = [
     "superred>=0.1.0",
-    "asb-target>=0.1.0",
+    "superred-target-asb>=0.1.0",
 ]
+
+[project.urls]
+Homepage = "https://superred.simonsure.com"
+Documentation = "https://superred.simonsure.com"
+Repository = "https://github.com/RoldSI/superred-modules"
+Issues = "https://github.com/RoldSI/superred-modules/issues"
 
 [project.optional-dependencies]
 dev = [
@@ -20,7 +52,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/security_claim_asb"]
+packages = ["src/asb_claim"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

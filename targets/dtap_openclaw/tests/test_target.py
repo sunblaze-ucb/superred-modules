@@ -1,4 +1,4 @@
-"""Offline tests for ``OpenClawDtapTarget``.
+"""Offline tests for ``DtapOpenClawTarget``.
 
 No Node / OpenClaw / Docker. The agent-specific hooks are tested directly, and a
 full lifecycle runs the REAL base machinery (forest, five vectors, proxy env-tool
@@ -24,8 +24,8 @@ from superred.core.types.events import (
     ObservableEvent,
 )
 
-from dtap_openclaw_target import OpenClawDtapTarget, driver
-from dtap_openclaw_target.target import OpenClawDtapTarget as TargetClass
+from dtap_openclaw_target import DtapOpenClawTarget, driver
+from dtap_openclaw_target.target import DtapOpenClawTarget as TargetClass
 
 FIXTURE = Path(__file__).parent / "fixtures" / "openclaw_session.jsonl"
 GENUINE_RETURN = "GENUINE_TOOL_RETURN"
@@ -114,7 +114,7 @@ class FakeProxy:
         self.stopped += 1
 
 
-class _FakeOpenClaw(OpenClawDtapTarget):
+class _FakeOpenClaw(DtapOpenClawTarget):
     """Real OpenClaw target with fakes for the Docker/proxy/injector collaborators
     and ``_docker_run`` stubbed to return a canned trace dir."""
 
@@ -194,41 +194,41 @@ def trace_dir(tmp_path):
 
 
 def test_agent_kind() -> None:
-    t = OpenClawDtapTarget(model="m")
+    t = DtapOpenClawTarget(model="m")
     assert t._agent_kind() == "openclaw"
 
 
 def test_native_tool_deny_enabled_denies_nothing() -> None:
-    t = OpenClawDtapTarget(model="m")
+    t = DtapOpenClawTarget(model="m")
     assert t._native_tool_deny("enabled") == []
 
 
 def test_native_tool_deny_disabled_denies_exec_fs() -> None:
-    t = OpenClawDtapTarget(model="m")
+    t = DtapOpenClawTarget(model="m")
     assert t._native_tool_deny("disabled") == ["exec", "fs"]
 
 
 def test_native_tool_deny_unknown_policy_treated_as_enabled() -> None:
     # Never crash on an unexpected policy; default to enabled (deny nothing).
-    t = OpenClawDtapTarget(model="m")
+    t = DtapOpenClawTarget(model="m")
     assert t._native_tool_deny("garbage") == []
 
 
 def test_invalid_thinking_level_rejected() -> None:
     with pytest.raises(ValueError, match="invalid thinking level"):
-        OpenClawDtapTarget(model="m", thinking="ultra")
+        DtapOpenClawTarget(model="m", thinking="ultra")
 
 
 def test_valid_thinking_levels_accepted() -> None:
     for level in ("off", "minimal", "low", "medium", "high"):
-        OpenClawDtapTarget(model="m", thinking=level)
+        DtapOpenClawTarget(model="m", thinking=level)
 
 
 # --------------------------- _extract_trajectory --------------------------
 
 
 def test_extract_trajectory_uses_active_servers(trace_dir) -> None:
-    t = OpenClawDtapTarget(model="m")
+    t = DtapOpenClawTarget(model="m")
     t.set_config("active_mcp_servers", json.dumps(["travel-suite"]))
     t.set_config("task_dir", "/data/travel/malicious/indirect/risk/7")
     art = t._extract_trajectory(EpisodeResult(output_dir=trace_dir))
@@ -242,7 +242,7 @@ def test_extract_trajectory_uses_active_servers(trace_dir) -> None:
 
 
 async def test_run_episode_wraps_docker_run(monkeypatch, trace_dir) -> None:
-    t = OpenClawDtapTarget(model="m")
+    t = DtapOpenClawTarget(model="m")
 
     async def fake_docker_run(spec):  # noqa: ANN001
         return trace_dir
@@ -276,7 +276,7 @@ async def test_docker_run_offloads_to_driver(monkeypatch) -> None:
         return "/episode/out"
 
     monkeypatch.setattr(driver, "run_openclaw_container", fake_run_container)
-    t = OpenClawDtapTarget(
+    t = DtapOpenClawTarget(
         model="m",
         image="img:1",
         thinking="high",
@@ -396,10 +396,10 @@ def test_package_imports_without_node_or_openclaw() -> None:
     # The whole package must import with no Node/OpenClaw/Docker present.
     import dtap_openclaw_target as pkg
 
-    assert pkg.OpenClawDtapTarget is TargetClass
+    assert pkg.DtapOpenClawTarget is TargetClass
     assert hasattr(pkg, "driver") and hasattr(pkg, "trajectory")
     # constructing the target requires nothing external
-    assert isinstance(pkg.OpenClawDtapTarget(model="m"), TargetClass)
+    assert isinstance(pkg.DtapOpenClawTarget(model="m"), TargetClass)
 
 
 # --------------------------- _exec_on_host --------------------------------
@@ -411,7 +411,7 @@ async def test_exec_on_host_builds_docker_cmd(tmp_path, monkeypatch) -> None:
     returning combined stdout/stderr for the next foothold round."""
     import asyncio
 
-    t = OpenClawDtapTarget(model="m", api_base="http://p", api_key="k")
+    t = DtapOpenClawTarget(model="m", api_base="http://p", api_key="k")
     t._run_dir = str(tmp_path)
     captured: dict = {}
 

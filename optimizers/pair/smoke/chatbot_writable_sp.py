@@ -23,7 +23,7 @@ from pathlib import Path
 
 from chatbot_target import ChatbotTarget, RESPONSE_READABLE_TAG, SYSTEM_PROMPT_TAG, USER_TAG
 from dotenv import load_dotenv
-from security_claim_sorry_bench import sorry_bench_claim
+from sorry_bench_claim import sorry_bench_claim
 from superred.core.controller import Controller, TargetFactory
 from superred.core.types.llm import LLMConfig
 

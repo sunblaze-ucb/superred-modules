@@ -35,7 +35,7 @@ def _have_optimizer() -> bool:
 
 def _model_and_factory(agent: str, *, api_base: str, api_key: str):
     """Return ``(model, TargetFactory)`` for the requested agent."""
-    from security_claim_dtap import (
+    from dtap_claim import (
         dtap_claudecode_target_factory,
         dtap_openclaw_target_factory,
     )
@@ -60,7 +60,7 @@ async def test_full_pipeline_one_travel_task(agent: str) -> None:
     from superred.core.interfaces.security_claim import SecurityClaim
     from superred.core.types.llm import LLMConfig
 
-    from security_claim_dtap import dtap_direct_claim
+    from dtap_claim import dtap_direct_claim
 
     api_key = os.environ["LITELLM_API_KEY"]
     api_base = os.environ["LITELLM_API_BASE"]

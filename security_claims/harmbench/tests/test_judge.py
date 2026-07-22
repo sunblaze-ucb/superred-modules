@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from secclaim_harmbench.judge import (
+from harmbench_claim.judge import (
     DEFAULT_CLIP_TOKENS,
     HarmBenchJudge,
     LLAMA2_CLS_PROMPT_CONTEXTUAL,

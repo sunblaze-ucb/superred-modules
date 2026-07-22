@@ -122,7 +122,7 @@ def test_embedder_recompute_path() -> None:
 
 def _sorry_dataset_available() -> bool:
     try:
-        from security_claim_sorry_bench import sorry_bench_claim
+        from sorry_bench_claim import sorry_bench_claim
         from superred.core.types.llm import LLMConfig
 
         sorry_bench_claim(

@@ -15,7 +15,7 @@ import pytest
 
 from agentdojo_target.env import CompositeEnvironment
 from agentdojo_target.seed_loader import load_composite_seed
-from security_claim_agentdojo.security_predicates import (
+from agentdojo_claim.security_predicates import (
     any_calendar_event_cancelled_or_removed,
     any_dm_contains_substring,
     banking_data_appears_in_slack,

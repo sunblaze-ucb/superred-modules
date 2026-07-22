@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from security_claim_agentdojo import (
+from agentdojo_claim import (
     agentdojo_layer1_banking_claim,
     agentdojo_layer1_category_claim,
     agentdojo_layer1_claim,
@@ -17,7 +17,7 @@ from security_claim_agentdojo import (
     agentdojo_layer1_travel_claim,
     agentdojo_layer1_workspace_claim,
 )
-from security_claim_agentdojo.layer1_task import AgentDojoPairedTask
+from agentdojo_claim.layer1_task import AgentDojoPairedTask
 
 
 def _tasks(claim) -> list[AgentDojoPairedTask]:

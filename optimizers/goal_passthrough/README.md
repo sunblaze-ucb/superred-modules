@@ -41,3 +41,10 @@ pip install -e optimizers/goal_passthrough
 ```python
 from goal_passthrough_optimizer import GoalPassthroughOptimizer
 ```
+
+## Credits / upstream
+
+This module is original work of the superred project, released under the MIT
+License (see `LICENSE`). It contains no third-party code, no bundled datasets,
+and does not reimplement or port any external paper method. Its only
+dependency is the `superred` framework itself.

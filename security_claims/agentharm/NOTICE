@@ -1,0 +1,59 @@
+# NOTICE
+
+security-claim-agentharm (superred-claim-agentharm) is an original superred
+SecurityClaim released under the MIT License, Copyright (c) 2026 Simon Sure.
+
+It does NOT bundle any third-party source code or dataset rows. All AgentHarm
+functionality (harmful tools, per-behavior grading functions, refusal and
+semantic judges, prompt templates, and the dataset loader) is IMPORTED at
+runtime from the `inspect-evals` and `inspect-ai` packages; the AgentHarm
+dataset itself is DOWNLOADED at runtime from HuggingFace and is not
+redistributed here. This NOTICE credits those upstreams and records the
+runtime obligations they carry.
+
+## This module's code
+
+MIT, Copyright (c) 2026 Simon Sure. See `LICENSE`. The only bundled data file,
+`src/agentharm_claim/data/benign_covers.json` (41 "benign cover" tasks), is
+original work authored for superred and is covered by this same MIT license. It
+is NOT derived from AgentHarm's benign split. The cover tasks reference some
+AgentHarm entity identifiers (proper names, emails, a street address, X handles,
+and tool names) purely for grader compatibility; these are non-copyrightable
+facts and do not make the file a redistribution of the AgentHarm dataset.
+
+## Inspect AI (runtime dependency)
+
+- Source: https://github.com/UKGovernmentBEIS/inspect_ai
+- License: MIT (SPDX: MIT), Copyright (c) 2024 UK AI Security Institute
+- Used as: an unmodified pip dependency (`inspect-ai`). Tools, models, and
+  dataset primitives are imported, not copied.
+
+## Inspect Evals / AgentHarm implementation (runtime dependency)
+
+- Source: https://github.com/UKGovernmentBEIS/inspect_evals
+- License: MIT (SPDX: MIT), Copyright (c) 2024 UK AI Security Institute
+- Used as: an unmodified pip dependency (`inspect-evals==0.13.1`). This module
+  imports AgentHarm's harmful tool factories, grading functions, RefusalJudgeLLM
+  and semantic judge, system/jailbreak prompt functions, and dataset loader
+  from `inspect_evals.agentharm` verbatim (by import). `metrics.py` is an
+  independent reimplementation of the arithmetic of
+  `inspect_evals.agentharm.metric`.
+
+## AgentHarm benchmark and dataset (Andriushchenko et al., 2024)
+
+- Paper: "AgentHarm: A Benchmark for Measuring Harmfulness of LLM Agents",
+  arXiv:2410.09024
+- Dataset: https://huggingface.co/datasets/ai-safety-institute/AgentHarm
+  (harmful `test_public` split, pinned revision
+  e23b3fe60a0da9037314b88e5ee3a0c054970dad)
+- Dataset license: MIT License WITH an additional field-of-use clause,
+  Copyright (c) 2024 Gray Swan AI and UK AI Safety Institute. The additional
+  clause states: "We prohibit using the dataset and benchmark for purposes
+  besides improving the safety and security of AI systems."
+- Redistribution: this package does NOT bundle the dataset; it is downloaded on
+  first use from HuggingFace by upstream `inspect_evals`. Users obtain the
+  dataset directly under the above license, and the field-of-use restriction
+  applies to their use of it.
+
+When reporting numbers produced with this module, cite Andriushchenko et al.
+2024 (BibTeX in the README).

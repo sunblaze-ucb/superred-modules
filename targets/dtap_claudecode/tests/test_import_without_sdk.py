@@ -18,7 +18,7 @@ def test_claude_agent_sdk_is_not_a_host_dependency():
 
 def test_package_imports_without_sdk():
     pkg = importlib.import_module("dtap_claudecode_target")
-    assert hasattr(pkg, "ClaudeCodeDtapTarget")
+    assert hasattr(pkg, "DtapClaudeCodeTarget")
     assert hasattr(pkg, "convert")
 
 

@@ -1,4 +1,4 @@
-"""Full lifecycle smoke test of ClaudeCodeDtapTarget with FAKE collaborators and
+"""Full lifecycle smoke test of DtapClaudeCodeTarget with FAKE collaborators and
 a FAKE _docker_run that drops a canned transcript. No Docker / SDK / LLM.
 
 Proves the Claude-Code target integrates with the frozen base: the five DTAP
@@ -23,7 +23,7 @@ from superred.core.types.events import (
 )
 from superred.core.types.security_domain import scope_includes
 
-from dtap_claudecode_target import ClaudeCodeDtapTarget
+from dtap_claudecode_target import DtapClaudeCodeTarget
 from dtap_claudecode_target.trajectory import RESULT_FILENAME, TRANSCRIPT_FILENAME
 
 GENUINE_RETURN = "GENUINE_TOOL_RETURN"
@@ -174,7 +174,7 @@ def _canned_records():
 # --------------------------- fake target ----------------------------------
 
 
-class FakeDockerClaudeCode(ClaudeCodeDtapTarget):
+class FakeDockerClaudeCode(DtapClaudeCodeTarget):
     """Overrides the collaborator factories + the single docker seam with fakes."""
 
     def __init__(self, **kw):

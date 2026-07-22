@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 from agentdojo_target.target import AgentDojoTarget
-from security_claim_agentdojo.layer1_factory import _build_task
+from agentdojo_claim.layer1_factory import _build_task
 
 
 class _StubTarget(AgentDojoTarget):

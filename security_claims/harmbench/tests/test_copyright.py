@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from secclaim_harmbench import copyright as cp
+from harmbench_claim import copyright as cp
 
 
 def test_invalid_tags_raise() -> None:

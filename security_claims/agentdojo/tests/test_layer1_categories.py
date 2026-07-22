@@ -6,13 +6,13 @@ every (suite, injection_task) pair the user confirmed is present.
 
 from __future__ import annotations
 
-from security_claim_agentdojo.layer1_categories import (
+from agentdojo_claim.layer1_categories import (
     ALL_CATEGORIES,
     CATEGORIES_BY_SUITE,
     INJECTION_CATEGORIES,
     category_of,
 )
-from security_claim_agentdojo.layer1_pairs import CANONICAL_PAIRS
+from agentdojo_claim.layer1_pairs import CANONICAL_PAIRS
 
 
 def test_every_canonical_pair_has_a_category() -> None:

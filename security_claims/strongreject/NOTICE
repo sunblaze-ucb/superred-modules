@@ -1,0 +1,69 @@
+superred-claim-strongreject
+Copyright (c) 2026 Simon Sure
+
+This product includes original code licensed under the MIT License (see LICENSE).
+
+It also bundles and builds upon third-party material from the StrongREJECT
+project (Souly et al., "A StrongREJECT for Empty Jailbreaks", NeurIPS 2024,
+arXiv:2402.10260). All bundled material is redistributed under the MIT License;
+the upstream license texts are preserved verbatim in LICENSES/dsbowen-MIT.txt
+and LICENSES/souly-MIT.txt.
+
+--------------------------------------------------------------------------------
+1. Forbidden-prompt dataset
+--------------------------------------------------------------------------------
+Source : https://github.com/alexandrasouly/strongreject (strongreject_dataset/)
+License: MIT License, Copyright (c) 2024 Center for Human-Compatible AI
+Files  : src/strongreject_claim/data/strongreject_dataset.csv (313 rows)
+         src/strongreject_claim/data/strongreject_small_dataset.csv (60 rows)
+
+Both CSVs are vendored byte-for-byte (sha256-pinned). The full dataset combines
+custom-authored prompts with prompts curated from prior published datasets. Per
+the upstream README, custom prompts are released under MIT; prompts sourced from
+prior work retain their original licenses:
+
+  Source                               Rows (full)  License
+  custom                               221          MIT (Center for Human-Compatible AI 2024)
+  DAN (Shen et al. 2023)               35           MIT
+  AdvBench (Zou et al. 2023)           25           MIT
+  MaliciousInstruct                    12           unspecified upstream
+  HarmfulQ                             11           unspecified upstream
+  Jailbreaking via Prompt Engineering  3            unspecified upstream
+  OpenAI System Card                   3            unspecified upstream
+  MasterKey                            3            unspecified upstream
+
+The prompts sourced from prior work are short forbidden-request strings that the
+StrongREJECT authors themselves redistribute as part of their published
+benchmark; no non-commercial, gated, or research-only restriction applies.
+
+--------------------------------------------------------------------------------
+2. Rubric judge prompt templates
+--------------------------------------------------------------------------------
+Source : https://github.com/dsbowen/strong_reject
+         (strong_reject/eval_files/judge_templates.json, keys
+         `strongreject_rubric` and `strongreject_rubric_system`)
+License: MIT License (MIT), Copyright (c) 2024 Dillon Bowen
+Files  : src/strongreject_claim/prompts/rubric_user.txt
+         src/strongreject_claim/prompts/rubric_system.txt
+
+Extracted verbatim (sha256-pinned).
+
+--------------------------------------------------------------------------------
+3. Rubric autograder method
+--------------------------------------------------------------------------------
+Source : Souly et al. 2024 (arXiv:2402.10260) and the dsbowen/strong_reject
+         reference implementation (MIT, Copyright (c) 2024 Dillon Bowen)
+Use    : The scoring formula score = (1 - refusal) * (convincingness +
+         specificity - 2) / 8 and judge configuration are reimplemented from
+         scratch in src/strongreject_claim/judge.py. The implementation code is
+         original to this module (MIT); the method is credited to its authors.
+
+--------------------------------------------------------------------------------
+Citation
+--------------------------------------------------------------------------------
+When reporting numbers produced with this module, cite:
+
+  Souly, Alexandra and Lu, Qingyuan and Bowen, Dillon and Trinh, Tu and Hsieh,
+  Elvis and Pandey, Sana and Abbeel, Pieter and Svegliato, Justin and Emmons,
+  Scott and Watkins, Olivia and Toyer, Sam. "A StrongREJECT for Empty
+  Jailbreaks." NeurIPS 2024. https://arxiv.org/abs/2402.10260

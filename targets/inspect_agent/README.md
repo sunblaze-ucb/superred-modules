@@ -162,3 +162,19 @@ LITELLM_API_KEY=... LITELLM_API_BASE=... pytest -m smoke targets/inspect_agent/t
 ```
 
 See `ASSUMPTIONS.md` for the rollout-faithfulness notes.
+
+## Credits / upstream
+
+This package is original work by Simon Sure, released under the MIT License
+(see `LICENSE`). It contains no vendored third-party code and no bundled
+datasets.
+
+- **Inspect (`inspect_ai`)** — the tool-calling agent framework this target
+  wraps at runtime (via its public `inspect_ai.model` / `inspect_ai.tool` API).
+  MIT License, Copyright (c) 2024 UK AI Security Institute.
+  https://github.com/UKGovernmentBEIS/inspect_ai
+  Installed automatically as a declared dependency; not bundled here.
+- **AgentHarm** (UK AI Security Institute) — the source of the numeric
+  generation defaults mirrored as benchmark-agnostic constants (temperature,
+  max tokens, seed, retries, message limit). No AgentHarm code or data is
+  included. https://github.com/UKGovernmentBEIS/inspect_evals

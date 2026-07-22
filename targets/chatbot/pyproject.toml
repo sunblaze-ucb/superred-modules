@@ -3,24 +3,54 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "chatbot-target"
+name = "superred-target-chatbot"
 version = "0.1.0"
-description = "Chatbot target for superred -- wraps any LLM via litellm"
+description = "Chatbot target for the superred red-teaming framework: wraps any LLM via litellm"
+readme = "README.md"
 requires-python = ">=3.11,<3.14"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Simon Sure", email = "info@simonsure.com" },
+]
+keywords = [
+    "superred",
+    "red-teaming",
+    "ai-safety",
+    "security",
+    "llm",
+    "target",
+]
 # litellm>=1.89.0: the victim model may be one litellm serves via the Responses
 # API (e.g. OpenAI gpt-5.x on AWS Bedrock Mantle). Earlier litellm crashes
 # routing those; 1.89.0 bridges chat<->responses so acompletion() just works.
 dependencies = ["superred>=0.1.0", "litellm>=1.89.0"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security",
+]
 
 [project.optional-dependencies]
 # AWS Bedrock provider support: litellm needs the AWS SDK (boto3) to sign
-# Bedrock / Bedrock Mantle requests. Install with chatbot-target[bedrock].
+# Bedrock / Bedrock Mantle requests. Install with superred-target-chatbot[bedrock].
 bedrock = ["boto3>=1.40"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-cov>=6.0",
 ]
+
+[project.urls]
+Homepage = "https://superred.simonsure.com"
+Documentation = "https://superred.simonsure.com"
+Repository = "https://github.com/RoldSI/superred-modules"
+Issues = "https://github.com/RoldSI/superred-modules/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/chatbot_target"]

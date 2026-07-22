@@ -1,0 +1,61 @@
+# NOTICE
+
+superred-claim-sorry-bench
+
+This package is an original superred SecurityClaim port of SORRY-Bench.
+The code in this package is licensed MIT (see LICENSE), Copyright (c) 2026
+Simon Sure. It also incorporates a small amount of third-party material,
+attributed below.
+
+## Vendored judge prompt templates
+
+Source: github.com/SORRY-Bench/SORRY-Bench, file
+`data/sorry_bench/judge_prompts.jsonl` (entries `base-#thescore` and
+`base-scoreonly`) at commit 7da10addffb6790cfeb75281eaffb5a176861653.
+Reproduced verbatim as the Python constants `BASE_THESCORE_TEMPLATE` and
+`BASE_SCOREONLY_TEMPLATE` in `src/sorry_bench_claim/judge.py`.
+
+License: MIT, Copyright (c) 2023 LLM-Tuning-Safety.
+
+    MIT License
+
+    Copyright (c) 2023 LLM-Tuning-Safety
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the "Software"),
+    to deal in the Software without restriction, including without limitation
+    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+    and/or sell copies of the Software, and to permit persons to whom the
+    Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED. See the upstream LICENSE for the full disclaimer.
+
+## Benchmark dataset (NOT bundled)
+
+Source: huggingface.co/datasets/sorry-bench/sorry-bench-202503.
+License: custom "SORRY-Bench Dataset License Agreement" (gated,
+NON-REDISTRIBUTABLE). This package ships NONE of the benchmark prompts.
+The 440 unsafe-instruction prompts are loaded at runtime from the user's
+own gated HuggingFace download (or a user-supplied path); the user must
+accept the dataset gate and authenticate themselves. The only dataset-derived
+material shipped here is the 44 canonical category names (reproduced in
+`categories.py` from the dataset's `meta_info.py`; these are also published in
+the paper's Table 5).
+
+## Methodology and quoted text
+
+Source: Tinghao Xie et al., "SORRY-Bench: Systematically Evaluating Large
+Language Model Safety Refusal", ICLR 2025, arXiv:2406.14598.
+This package is a faithful port of the SORRY-Bench evaluation methodology.
+Short verbatim quotations appear in docstrings: the fulfillment rubric
+(paper §3.1) and the per-model system-prompt table (paper §K.1). Please cite
+the paper when reporting numbers produced with this module.
+
+## Runtime dependency
+
+`huggingface_hub` (Apache-2.0) is used to fetch the gated dataset at runtime.
+It is an ordinary pip dependency and is not bundled in this package.

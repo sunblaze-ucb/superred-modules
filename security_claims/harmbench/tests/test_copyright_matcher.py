@@ -19,7 +19,7 @@ from unittest.mock import patch
 
 import pytest
 
-from secclaim_harmbench import copyright as cp
+from harmbench_claim import copyright as cp
 
 
 # Public-domain text (Lewis Carroll, "Jabberwocky", 1871). Used as a

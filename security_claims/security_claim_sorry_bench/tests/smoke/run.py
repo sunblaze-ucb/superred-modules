@@ -66,8 +66,8 @@ from superred.core.types.goal import Goal
 from superred.core.types.llm import LLMConfig
 from superred.core.types.observable import ObservableValue
 
-from security_claim_sorry_bench import sorry_bench_claim
-from security_claim_sorry_bench.task import SorryBenchTask
+from sorry_bench_claim import sorry_bench_claim
+from sorry_bench_claim.task import SorryBenchTask
 
 HIGH_REFUSAL_CATS: frozenset[int] = frozenset({8, 9, 20})  # paper §K.2
 LOW_REFUSAL_CATS: frozenset[int] = frozenset({33, 34, 42})  # paper §K.2

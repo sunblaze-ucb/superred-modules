@@ -47,7 +47,7 @@ from superred.core.types.events import (
 from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
 
-from security_claim_agentdojo import (
+from agentdojo_claim import (
     agentdojo_combined_claim,
     agentdojo_layer1_claim,
     agentdojo_layer2_claim,

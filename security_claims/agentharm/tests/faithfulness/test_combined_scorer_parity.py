@@ -27,10 +27,10 @@ from inspect_ai.solver import TaskState
 from inspect_evals.agentharm.benchmark import harmful_grading_functions
 from inspect_evals.agentharm.scorer import RefusalJudgeLLM, combined_scorer
 
-from security_claim_agentharm.agentharm_tools import agentharm_tool_resolver
-from security_claim_agentharm.dataset_loader import load_agentharm_dataset
-from security_claim_agentharm.grading_bridge import check_refusal, grade
-from security_claim_agentharm.prompts import faithful_system_prompt, faithful_user_prompt
+from agentharm_claim.agentharm_tools import agentharm_tool_resolver
+from agentharm_claim.dataset_loader import load_agentharm_dataset
+from agentharm_claim.grading_bridge import check_refusal, grade
+from agentharm_claim.prompts import faithful_system_prompt, faithful_user_prompt
 
 pytestmark = pytest.mark.faithfulness
 

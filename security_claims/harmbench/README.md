@@ -1,4 +1,4 @@
-# secclaim-harmbench
+# superred-claim-harmbench
 
 [HarmBench](https://www.harmbench.org/) standardized red-teaming benchmark
 ([Mazeika et al., ICML 2024](https://arxiv.org/abs/2402.04249)) packaged as
@@ -20,7 +20,7 @@ a superred `SecurityClaim` against `ChatbotTarget`.
 ```python
 import asyncio, os
 from chatbot_target import ChatbotTarget, USER_TAG, RESPONSE_READABLE_TAG
-from secclaim_harmbench import harmbench_standard_val
+from harmbench_claim import harmbench_standard_val
 from superred.core.controller import Controller, TargetFactory
 
 api_key = os.environ["LITELLM_API_KEY"]
@@ -62,12 +62,12 @@ result = asyncio.run(controller.run())   # -> ThreatModelResult
 ## Installation
 
 ```bash
-pip install -e ./security_claims/harmbench   # provides the secclaim_harmbench package
+pip install -e ./security_claims/harmbench   # provides the harmbench_claim package
 python -m spacy download en_core_web_sm      # for the copyright MinHash matcher
 ```
 
-The pip-installable name is `secclaim-harmbench`; the importable Python
-package is `secclaim_harmbench`.
+The pip-installable name is `superred-claim-harmbench`; the importable Python
+package is `harmbench_claim`.
 
 ## Public factories
 
@@ -155,7 +155,7 @@ optimizer) pairs within experiments using this module.
 
 Bundled data is verbatim from HarmBench commit
 `8e1604d1171fe8a48d8febecd22f600e462bdcdd` (MIT licensed). See
-`src/secclaim_harmbench/data/PROVENANCE.md`.
+`src/harmbench_claim/data/PROVENANCE.md`.
 
 ## Citation
 
@@ -169,3 +169,30 @@ Bundled data is verbatim from HarmBench commit
   primaryClass={cs.LG}
 }
 ```
+
+## Credits / upstream
+
+This module packages the [HarmBench](https://github.com/centerforaisafety/HarmBench)
+standardized red-teaming benchmark (Mazeika et al., ICML 2024,
+[arXiv:2402.04249](https://arxiv.org/abs/2402.04249)) as a superred
+`SecurityClaim`.
+
+- **HarmBench** — MIT License, Copyright (c) 2024 centerforaisafety. The
+  bundled behavior CSVs and copyright-classifier MinHash `.pkl` files, the
+  verbatim Llama-2 classifier prompt templates, the AdvBench refusal-prefix
+  list, and the sliding-window MinHash copyright matcher are vendored/ported
+  from HarmBench commit `8e1604d`. The `.pkl` files hold only one-way MinHash
+  signatures — no copyrighted source text is redistributed.
+- The AdvBench refusal-prefix list traces to Zou et al. 2023
+  ([llm-attacks](https://github.com/llm-attacks/llm-attacks), MIT), vendored
+  here via HarmBench.
+- The contextual-category behaviors carry short `ContextString` excerpts
+  (e.g. Wikipedia text under CC-BY-SA, a published paper, forum posts, a code
+  snippet) that centerforaisafety does not itself own. They are redistributed
+  byte-identically to the upstream, widely-mirrored HarmBench ICML benchmark
+  under its MIT terms, and this mirrors the upstream benchmark rather than
+  asserting fresh MIT coverage of those excerpts.
+
+Original superred integration code is MIT-licensed, Copyright (c) 2026
+Simon Sure. Full attribution in `LICENSES/NOTICE.md`; upstream license text in
+`LICENSES/harmbench-MIT.txt`.

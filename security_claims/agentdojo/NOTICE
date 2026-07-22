@@ -1,0 +1,31 @@
+# NOTICE
+
+superred-claim-agentdojo
+
+This package's own source code is original work, released under the MIT
+License (see LICENSE), Copyright (c) 2026 Simon Sure.
+
+It bundles no third-party code and no third-party datasets. The following
+upstream project is a RUNTIME DEPENDENCY (installed separately from PyPI,
+not redistributed inside this wheel) and is credited here because Layer 1
+of this SecurityClaim is a faithful adapter of the AgentDojo benchmark.
+
+## AgentDojo
+
+Layer 1 runs and scores the original AgentDojo injection/user tasks by
+importing the AgentDojo library at runtime (task base classes, task-suite
+loader, and its security/utility trace predicates); it also references
+AgentDojo's task identifiers. No AgentDojo source code or data is copied
+into this package.
+
+- Project: AgentDojo (Debenedetti et al., NeurIPS 2024 Datasets & Benchmarks)
+- Repository: https://github.com/ethz-spylab/agentdojo
+- License: MIT
+- Copyright (c) 2024 Edoardo Debenedetti, Jie Zhang, Mislav Balunovic,
+  Luca Beurer-Kellner, Marc Fischer, and Florian Tramèr
+
+## Citation
+
+When reporting numbers produced with this module, cite Debenedetti et al.,
+"AgentDojo: A Dynamic Environment to Evaluate Prompt Injection Attacks and
+Defenses for LLM Agents" (2024).

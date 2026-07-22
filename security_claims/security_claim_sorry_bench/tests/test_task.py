@@ -8,8 +8,8 @@ import pytest
 
 from chatbot_target import ChatbotTarget, USER_TAG
 
-from security_claim_sorry_bench.judge import RefusalRegexJudge
-from security_claim_sorry_bench.task import SorryBenchTask
+from sorry_bench_claim.judge import RefusalRegexJudge
+from sorry_bench_claim.task import SorryBenchTask
 
 
 # ---------------------------------------------------------------------------

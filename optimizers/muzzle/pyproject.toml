@@ -3,14 +3,47 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "muzzle-optimizer"
+name = "superred-optimizer-muzzle"
 version = "0.1.0"
 description = "MUZZLE adaptive agentic indirect-prompt-injection optimizer for superred (arXiv 2602.09222)"
+readme = "README.md"
 requires-python = ">=3.11,<3.14"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE", "LICENSES/*"]
+authors = [
+    { name = "Simon Sure", email = "info@simonsure.com" },
+]
+keywords = [
+    "superred",
+    "red-teaming",
+    "ai-safety",
+    "security",
+    "llm",
+    "optimizer",
+    "prompt-injection",
+    "indirect-prompt-injection",
+    "agent",
+]
 dependencies = ["superred>=0.1.0", "PyYAML>=6.0"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security",
+]
 
 [project.optional-dependencies]
 test = ["pytest", "pytest-asyncio", "mypy", "ruff", "types-PyYAML"]
+
+[project.urls]
+Homepage = "https://superred.simonsure.com"
+Documentation = "https://superred.simonsure.com"
+Repository = "https://github.com/RoldSI/superred-modules"
+Issues = "https://github.com/RoldSI/superred-modules/issues"
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
@@ -27,4 +60,4 @@ line-length = 100
 packages = ["src/muzzle_optimizer"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"src/muzzle_optimizer/data" = "muzzle_optimizer/data"
+"ASSUMPTIONS.md" = "muzzle_optimizer/ASSUMPTIONS.md"

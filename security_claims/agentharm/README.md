@@ -39,7 +39,7 @@ robustness) and reproduce its direct-request ASR. See `ASSUMPTIONS.md` section J
 ```python
 from superred.core.controller import Controller
 from inspect_agent_target import USER_TAG, SYSTEM_TAG, TOOLS_TAG
-from security_claim_agentharm import agentharm_total_claim, agentharm_target_factory, aggregate
+from agentharm_claim import agentharm_total_claim, agentharm_target_factory, aggregate
 
 # target_model defaults to DEFAULT_TARGET_MODEL (openai/gpt-4o-2024-08-06), the
 # AgentHarm-appropriate model on the proxy; pass it explicitly to use another.
@@ -109,3 +109,34 @@ LITELLM_API_KEY=... LITELLM_API_BASE=... python security_claims/agentharm/tests/
 
 The dataset is downloaded from the gated HuggingFace repo
 `ai-safety-institute/AgentHarm` (pinned revision) on first use. See `ASSUMPTIONS.md`.
+
+## Credits / upstream
+
+This module's code is MIT-licensed, Copyright (c) 2026 Simon Sure. It is an
+original superred port; it bundles no third-party code or data.
+
+It builds on and reuses (at runtime, by import - nothing is copied):
+
+- **AgentHarm** (Andriushchenko et al., 2024, arXiv:2410.09024) - the benchmark
+  whose tools, grading functions, and judges are reused verbatim via
+  `inspect-evals`. Dataset: `ai-safety-institute/AgentHarm` on HuggingFace,
+  MIT License with an additional clause restricting use to "improving the
+  safety and security of AI systems" (Copyright (c) 2024 Gray Swan AI and UK AI
+  Safety Institute). The dataset is downloaded at runtime, not shipped with this
+  package; that field-of-use restriction applies to your use of it.
+- **Inspect Evals** (`inspect-evals`, MIT, (c) 2024 UK AI Security Institute) -
+  supplies the `inspect_evals.agentharm` implementation this module imports.
+- **Inspect AI** (`inspect-ai`, MIT, (c) 2024 UK AI Security Institute) - the
+  agent/tool/model runtime.
+
+The `benign_covers.json` cover tasks are original superred work (not AgentHarm's
+benign split). Cite Andriushchenko et al. 2024 when reporting results.
+
+```bibtex
+@article{andriushchenko2024agentharm,
+  title={AgentHarm: A Benchmark for Measuring Harmfulness of LLM Agents},
+  author={Andriushchenko, Maksym and others},
+  journal={arXiv preprint arXiv:2410.09024},
+  year={2024}
+}
+```

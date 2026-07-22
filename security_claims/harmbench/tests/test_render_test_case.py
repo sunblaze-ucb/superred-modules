@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from secclaim_harmbench.task import render_test_case
+from harmbench_claim.task import render_test_case
 
 
 def test_standard_returns_raw_behavior() -> None:

@@ -3,14 +3,46 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "crescendo-optimizer"
+name = "superred-optimizer-crescendo"
 version = "0.1.0"
 description = "Crescendo multi-turn jailbreak optimizer for superred"
+readme = "README.md"
 requires-python = ">=3.11,<3.14"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE", "LICENSES/*"]
+authors = [
+    { name = "Simon Sure", email = "info@simonsure.com" },
+    { name = "Sarthak Munshi", email = "sarthakmunshi@gmail.com" },
+]
+keywords = [
+    "red-teaming",
+    "ai-safety",
+    "jailbreak",
+    "crescendo",
+    "multi-turn",
+    "llm-security",
+    "superred",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security",
+]
 dependencies = ["superred>=0.1.0"]
 
 [project.optional-dependencies]
 test = ["pytest", "pytest-asyncio"]
+
+[project.urls]
+Homepage = "https://superred.simonsure.com"
+Documentation = "https://superred.simonsure.com"
+Repository = "https://github.com/RoldSI/superred-modules"
+Issues = "https://github.com/RoldSI/superred-modules/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/crescendo_optimizer"]

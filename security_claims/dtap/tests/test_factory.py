@@ -10,7 +10,7 @@ import yaml
 from conftest import dataset_root, requires_dataset
 from superred.core.controller import TargetFactory
 
-from security_claim_dtap.factory import (
+from dtap_claim.factory import (
     dtap_benign_claim,
     dtap_claim,
     dtap_claudecode_target_factory,
@@ -21,7 +21,7 @@ from security_claim_dtap.factory import (
     dtap_openclaw_target_factory,
     dtap_risk_claim,
 )
-from security_claim_dtap.task import DtapTask
+from dtap_claim.task import DtapTask
 
 # ---------------------------------------------------------------------------
 # Enumeration + filters + roll-ups (OFFLINE, on a synthetic dataset tree)
@@ -237,7 +237,7 @@ def test_claudecode_factory_create_lazy_imports_and_wires(monkeypatch) -> None:
             captured.update(model=model, api_base=api_base, api_key=api_key, state_root=state_root)
 
     mod = types.ModuleType("dtap_claudecode_target")
-    mod.ClaudeCodeDtapTarget = FakeTarget  # type: ignore[attr-defined]
+    mod.DtapClaudeCodeTarget = FakeTarget  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "dtap_claudecode_target", mod)
 
     tf = dtap_claudecode_target_factory(
@@ -261,7 +261,7 @@ def test_openclaw_factory_create_lazy_imports_and_wires(monkeypatch) -> None:
             captured.update(model=model, api_base=api_base, api_key=api_key, state_root=state_root)
 
     mod = types.ModuleType("dtap_openclaw_target")
-    mod.OpenClawDtapTarget = FakeTarget  # type: ignore[attr-defined]
+    mod.DtapOpenClawTarget = FakeTarget  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "dtap_openclaw_target", mod)
 
     tf = dtap_openclaw_target_factory(model="gpt", api_base=None, api_key=None)

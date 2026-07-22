@@ -45,7 +45,7 @@ from superred.core.types.events import (
 from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
 
-from security_claim_agentharm import (
+from agentharm_claim import (
     agentharm_claim,
     agentharm_target_factory,
     aggregate,

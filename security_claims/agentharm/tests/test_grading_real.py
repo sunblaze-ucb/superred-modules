@@ -15,8 +15,8 @@ from typing import Any
 
 import pytest
 
-from security_claim_agentharm import grading_bridge as gb
-from security_claim_agentharm.dataset_loader import load_agentharm_dataset
+from agentharm_claim import grading_bridge as gb
+from agentharm_claim.dataset_loader import load_agentharm_dataset
 
 
 class _StubJudge:

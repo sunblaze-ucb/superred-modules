@@ -6,7 +6,7 @@ import pytest
 from inspect_agent_target.target import InspectAgentTarget
 from superred.core.controller import TargetFactory
 
-from security_claim_agentharm.factory import (
+from agentharm_claim.factory import (
     agentharm_category_claim,
     agentharm_claim,
     agentharm_fraud_claim,
@@ -91,7 +91,7 @@ def test_benign_cover_missing_cover_for_non_excluded_base_raises(
 ) -> None:
     # A non-excluded base with no cover (a data gap) must raise a clear error, not be
     # silently dropped. Simulate the gap by making cover_for return None for a live base.
-    import security_claim_agentharm.factory as fac
+    import agentharm_claim.factory as fac
 
     monkeypatch.setattr(fac, "cover_for", lambda _bid: None)
     with pytest.raises(ValueError, match="has no defined cover"):

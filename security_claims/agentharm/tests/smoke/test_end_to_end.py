@@ -32,7 +32,7 @@ from superred.core.types.events import (
     RunStartEvent,
 )
 
-from security_claim_agentharm import (
+from agentharm_claim import (
     agentharm_claim,
     agentharm_target_factory,
     aggregate,

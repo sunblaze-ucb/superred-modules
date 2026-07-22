@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from secclaim_harmbench import (
+from harmbench_claim import (
     harmbench_claim,
     harmbench_complete,
     harmbench_contextual_test,

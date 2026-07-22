@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from secclaim_harmbench.loader import VALID_FUNCTIONAL, VALID_SPLITS, load_behaviors
+from harmbench_claim.loader import VALID_FUNCTIONAL, VALID_SPLITS, load_behaviors
 
 
 # Verified counts from the bundled CSVs (see PROVENANCE.md):

@@ -29,11 +29,11 @@ from agentdojo.functions_runtime import FunctionCall
 
 from agentdojo_target import AgentDojoTarget
 from agentdojo_target.seed_loader import load_composite_seed
-from security_claim_agentdojo.layer1_bridge import (
+from agentdojo_claim.layer1_bridge import (
     get_injection_task,
     get_user_task,
 )
-from security_claim_agentdojo.layer1_task import AgentDojoPairedTask
+from agentdojo_claim.layer1_task import AgentDojoPairedTask
 
 
 # ---------------------------------------------------------------------------

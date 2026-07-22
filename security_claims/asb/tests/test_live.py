@@ -9,7 +9,7 @@ import os
 import pytest
 from superred.core.types.llm import LLMConfig
 
-from security_claim_asb import AsbAdversarialJudge
+from asb_claim import AsbAdversarialJudge
 
 pytestmark = pytest.mark.live
 

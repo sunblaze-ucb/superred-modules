@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from security_claim_agentharm.covers import (
+from agentharm_claim.covers import (
     EXCLUDED_BASES,
     base_id,
     cover_for,
