@@ -19,11 +19,8 @@ deliberate departure.
 
 ## Install
 
-From the repository root, with the shared virtual environment active:
-
 ```bash
-pip install -e ../superred        # the framework first
-pip install -e optimizers/code_chameleon
+pip install code-chameleon-optimizer
 ```
 
 ## Usage
@@ -41,26 +38,7 @@ optimizer = CodeChameleonOptimizer(encrypt_rules=["reverse", "odd_even", "length
 
 Wire it into a `Controller` like any other superred optimizer — see the
 framework's [architecture overview](https://superred.simonsure.com) and a
-target's README (e.g. `chatbot`) for a full `Controller.run()` example.
-
-## Assumptions
-
-Plain-language summary; see [ASSUMPTIONS.md](ASSUMPTIONS.md) for the details.
-
-- **Official encryption rules only.** Supported rules are exactly the upstream
-  names: `binary_tree`, `reverse`, `odd_even`, `length`, and `none`. Prompt
-  templates keep the official wording verbatim (including small typos like
-  `privoded`) because wording can change attack results.
-- **One rule per run.** One superred run is one CodeChameleon attempt with one
-  rule. By default there is a single attempt; pass several `encrypt_rules` to
-  try each in order across staged runs.
-- **User prompt is the target.** The CodeChameleon prompt goes into
-  `user_message` (or the first user-like controllable). If `system_prompt` is
-  writable, the official GPT-adapter system prompt is added there too; the model
-  response is never modified.
-- **Success scoring.** When superred reports an evaluation it is authoritative.
-  Otherwise the official GPT-4-style CodeChameleon judge scores the response 1–5
-  and only a top score of `5` counts as success.
+target's README (e.g. `superred-target-chatbot`) for a full `Controller.run()` example.
 
 ## License
 

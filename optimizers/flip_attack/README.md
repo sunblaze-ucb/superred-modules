@@ -17,11 +17,8 @@ deliberate departure.
 
 ## Install
 
-From the repository root, with the shared virtual environment active:
-
 ```bash
-pip install -e ../superred        # the framework first
-pip install -e optimizers/flip_attack
+pip install flip-attack-optimizer
 ```
 
 ## Usage
@@ -38,25 +35,7 @@ optimizer = FlipAttackOptimizer(flip_modes=["FCS"])
 
 Wire it into a `Controller` like any other superred optimizer — see the
 framework's [architecture overview](https://superred.simonsure.com) and a
-target's README (e.g. `chatbot`) for a full `Controller.run()` example.
-
-## Assumptions
-
-Plain-language summary; see [ASSUMPTIONS.md](ASSUMPTIONS.md) for the details.
-
-- **Flip modes.** Four official modes are supported: `FCS`, `FWO`, `FCW`, and
-  `FMM`. Prompt text and structure follow the official code (the triple `NEVER`,
-  the Step 1/2 layout, and the hardcoded few-shot examples).
-- **Mode rotation is a framework extension.** By default the optimizer rotates
-  through the four modes, one per run. The original attack uses a single mode
-  per instance — set `flip_modes=["FCS"]` for that paper-faithful behaviour.
-- **Channel mapping.** For a single user-like channel, decode instructions and
-  the transformed task are folded into one payload. When a `system_prompt`
-  channel is visible, the instructions go there and the user message carries only
-  the transformed task.
-- **Scoring.** `asr_gpt` (default) uses the official judge prompt and counts only
-  a rating of `10` as success; `asr_dict` uses the official refusal-string list.
-  The optimizer only calls the LLM to *score* — never to build the attack.
+target's README (e.g. `superred-target-chatbot`) for a full `Controller.run()` example.
 
 ## License
 

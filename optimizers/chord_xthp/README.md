@@ -19,11 +19,8 @@ mapping and every deliberate departure.
 
 ## Install
 
-From the repository root, with the shared virtual environment active:
-
 ```bash
-pip install -e ../superred        # the framework first
-pip install -e optimizers/chord_xthp
+pip install chord-xthp-optimizer
 ```
 
 ## Usage
@@ -45,27 +42,6 @@ optimizer = ChordXTHPOptimizer(
 This optimizer targets **agent-style** targets that expose a writable tool/skill
 catalog. Wire it into a `Controller` like any other superred optimizer — see the
 framework's [architecture overview](https://superred.simonsure.com).
-
-## Assumptions
-
-Plain-language summary; see [ASSUMPTIONS.md](ASSUMPTIONS.md) for the details.
-
-- **Writable tool catalog is required.** Every Chord attack needs the malicious
-  helper registered so the agent can call it, and only a catalog controllable can
-  do that. If no writable tool/skill catalog is in scope, the optimizer finishes
-  immediately instead of burning attempts — even if a system or user prompt is
-  writable.
-- **Official data reused.** The packaged helper names/descriptions, sensitive-
-  argument mappings, and example queries come from Chord; success follows Chord's
-  HSR (hijack) and HASR (harvest) rules, with an LLM judge for harvest matching
-  the official prompt.
-- **Injects, does not re-run Chord.** Chord's own runtime owns a full
-  LangChain/LlamaIndex agent loop; superred already owns the controller, target,
-  and trajectory, so this optimizer injects Chord-style helpers through granted
-  superred surfaces instead of running Chord's runtime inside superred.
-- **Victim selection.** A visible tool catalog is the source of truth for
-  choosing the victim tool; official names and goal hints are used only when they
-  match the visible catalog or when no catalog is visible.
 
 ## License
 

@@ -23,11 +23,8 @@ implement a separate WebSentinel defense.
 
 ## Install
 
-From the repository root, with the shared virtual environment active:
-
 ```bash
-pip install -e ../superred        # the framework first
-pip install -e optimizers/agentvigil_websentinel
+pip install agentvigil-websentinel-optimizer
 ```
 
 ## Usage
@@ -47,29 +44,6 @@ This optimizer targets **agent-style** targets (AgentDojo, browser/RAG/memory/
 MCP agents) that expose a content or tool-result surface. Wire it into a
 `Controller` like any other superred optimizer — see the framework's
 [architecture overview](https://superred.simonsure.com).
-
-## Assumptions
-
-Plain-language summary; see [ASSUMPTIONS.md](ASSUMPTIONS.md) for the details.
-
-- **Injects into content the agent reads.** The closest superred match for a
-  contaminated web page / retrieved doc / tool result is a content or tool
-  `PostCall` event. When several surfaces are in scope the optimizer picks one
-  per run, preferring dynamic content/tool post-calls (closest to the paper),
-  then a writable tool catalog, then system prompt, then user prompt as a
-  simple-target fallback.
-- **Official search preserved.** Seed selection follows the MCTS/UCT idea and the
-  five official mutation families; mutations are produced by a helper LLM and
-  parsed from `<response>...</response>`. Generated mutations stay pending until
-  their own run is scored, so unscored candidates are not selected as parents.
-- **One run is one seed evaluation.** The official fuzzer scores a seed across
-  many tasks; superred runs one task at a time, so one run evaluates one seed.
-  `max_attempts=20` mirrors the official loop count, not the total
-  target-evaluation count.
-- **Learned delivery.** If the preferred surface never fires, the held seed is
-  not scored (it never reached the target) and is retried one notch deeper on the
-  surface ladder; after every reachable surface misses in a row, the optimizer
-  gives up instead of spinning empty runs.
 
 ## License
 

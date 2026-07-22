@@ -18,11 +18,8 @@ deliberate departure.
 
 ## Install
 
-From the repository root, with the shared virtual environment active:
-
 ```bash
-pip install -e ../superred        # the framework first
-pip install -e optimizers/fitd
+pip install fitd-optimizer
 ```
 
 ## Usage
@@ -39,28 +36,7 @@ optimizer = FITDOptimizer(prompt_sequence=[...])
 
 Wire it into a `Controller` like any other superred optimizer — see the
 framework's [architecture overview](https://superred.simonsure.com) and a
-target's README (e.g. `chatbot`) for a full `Controller.run()` example.
-
-## Assumptions
-
-Plain-language summary; see [ASSUMPTIONS.md](ASSUMPTIONS.md) for the details.
-
-- **Stays multi-turn.** FITD keeps its conversation shape — benign query, then a
-  generated ladder of escalating bridge prompts — rather than collapsing into a
-  single prompt. The official refusal phrases, judges, and prompt-generation
-  formats are preserved.
-- **One attempt per run, turn by turn.** One superred run is one FITD attempt;
-  within it, targets like `chatbot` emit repeated `user_message` events so the
-  ladder is walked turn by turn. The ladder goes into `user_message`; a writable
-  `system_prompt` is used only for a short conversation setup.
-- **Refusal backtracking, adapted.** The paper pops a refused query from target
-  history. superred has no in-place history-pop primitive, so on a refusal FITD
-  stops the run and replays the accepted prefix in the next run before sending
-  the recovery prompt — matching the backtracking intent as closely as superred
-  allows.
-- **Success scoring.** Framework evaluation is authoritative when present.
-  Otherwise the official `safe`/`unsafe` judge scores the final response, then
-  the `find_most` judge evaluates the most jailbreak-like prior output.
+target's README (e.g. `superred-target-chatbot`) for a full `Controller.run()` example.
 
 ## License
 

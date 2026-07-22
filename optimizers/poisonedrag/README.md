@@ -19,11 +19,8 @@ deliberate departure.
 
 ## Install
 
-From the repository root, with the shared virtual environment active:
-
 ```bash
-pip install -e ../superred        # the framework first
-pip install -e optimizers/poisonedrag
+pip install poisonedrag-optimizer
 ```
 
 ## Usage
@@ -41,26 +38,7 @@ optimizer = PoisonedRAGOptimizer(official_adv_results_dataset="nq")
 
 Wire it into a `Controller` like any other superred optimizer — see the
 framework's [architecture overview](https://superred.simonsure.com) and a
-target's README (e.g. `chatbot`) for a full `Controller.run()` example.
-
-## Assumptions
-
-Plain-language summary; see [ASSUMPTIONS.md](ASSUMPTIONS.md) for the details.
-
-- **Official poison shape.** Poison docs use the black-box `question + "." +
-  corpus` form, and the official multi-context RAG wrapper and JSON
-  joint-generation prompt are preserved. Bundled official attack results for
-  `nq`, `hotpotqa`, and `msmarco` are available.
-- **Surface preference.** The optimizer prefers a writable corpus/context surface
-  (true database poisoning), then a writable `system_prompt`, then `user_message`,
-  then runtime context. User- and system-prompt injection are capability
-  fallbacks, not real database poisoning.
-- **Budget behaviour.** With no explicit `max_attempts` the optimizer keeps
-  attempting until success or the attack becomes undeliverable, letting the
-  controller's run budget bound the loop. Set `max_attempts=1` for paper-parity.
-- **Not implemented on purpose.** HotFlip is out of scope because superred
-  optimizers do not receive retriever weights, tokenizers, gradients, or BEIR
-  scores. Retrieval precision/recall stays target- or benchmark-owned.
+target's README (e.g. `superred-target-chatbot`) for a full `Controller.run()` example.
 
 ## License
 

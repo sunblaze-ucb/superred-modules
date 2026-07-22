@@ -21,12 +21,10 @@ mapping and every deliberate departure.
 
 DRA depends on [Detoxify](https://github.com/unitaryai/detoxify) to decide which
 guide words are sensitive; it is a normal dependency of this package and is
-installed automatically. From the repository root, with the shared virtual
-environment active:
+installed automatically.
 
 ```bash
-pip install -e ../superred        # the framework first
-pip install -e optimizers/dra
+pip install dra-optimizer
 ```
 
 If Detoxify cannot load in a constrained environment, the optimizer falls back
@@ -48,26 +46,7 @@ optimizer = DraOptimizer(model="gpt", max_attempts=10)
 
 Wire it into a `Controller` like any other superred optimizer — see the
 framework's [architecture overview](https://superred.simonsure.com) and a
-target's README (e.g. `chatbot`) for a full `Controller.run()` example.
-
-## Assumptions
-
-Plain-language summary; see [ASSUMPTIONS.md](ASSUMPTIONS.md) for the details.
-
-- **One randomized prompt per run.** Each superred run builds one randomized DRA
-  prompt. After a visible response, a refusal lowers `toxic_trunc` by 0.1 and
-  missing target-word coverage raises `benign_trunc` by 0.1, matching the
-  official retry loop.
-- **User prompt is the target.** The DRA prompt goes into `user_message`. If
-  `system_prompt` is writable, the official `You are a helpful assistant.` system
-  prompt is added; the model response is never edited.
-- **Success scoring.** Framework evaluation is authoritative when present.
-  Otherwise the official lightweight checks apply (refusal-prefix + exact-match
-  coverage), with an optional GPT-style judge fallback that only counts a rating
-  of `10` as success (disable with `use_llm_judge_when_no_feedback=False`).
-- **Code-faithful, not paper-broad.** The paper defines exact match more broadly
-  (word overlap or embedding similarity); this port follows the released
-  script's target-word coverage for comparability with the reference code.
+target's README (e.g. `superred-target-chatbot`) for a full `Controller.run()` example.
 
 ## License
 

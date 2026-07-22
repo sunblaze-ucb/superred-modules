@@ -18,11 +18,8 @@ deliberate departure.
 
 ## Install
 
-From the repository root, with the shared virtual environment active:
-
 ```bash
-pip install -e ../superred        # the framework first
-pip install -e optimizers/tap
+pip install tap-optimizer
 ```
 
 ## Usage
@@ -39,28 +36,7 @@ optimizer = TapOptimizer(target_str="Sure, here is", tree_depth=8)
 
 Wire it into a `Controller` like any other superred optimizer — see the
 framework's [architecture overview](https://superred.simonsure.com) and a
-target's README (e.g. `chatbot`) for a full `Controller.run()` example.
-
-## Assumptions
-
-Plain-language summary of how this port behaves; see
-[ASSUMPTIONS.md](ASSUMPTIONS.md) for the details.
-
-- **One candidate per run.** Original TAP sends a whole batch of candidate
-  prompts to the target at once. superred targets are event-driven, so each
-  surviving candidate is injected into `user_message` in its own target run;
-  once every candidate at a depth has run, TAP judge-prunes and goes deeper.
-- **User-prompt attack by default.** If only `user_message` is in scope, TAP
-  keeps the paper's behaviour and injects there. If `system_prompt` is also in
-  scope, it is used automatically as a stronger threat model.
-- **Framework score is authoritative.** When superred reports success
-  (`evaluation.success=True`), that is treated as a hard success. If only a
-  response is visible, TAP's own 1–10 judge decides; if neither is visible, the
-  candidate scores 1.
-- **Optional target context.** When superred exposes static target metadata
-  (model name, injection points), TAP adds it to the attacker prompt, capped so
-  it cannot crowd out the TAP instructions. This is a superred extension the
-  original attacker did not have.
+target's README (e.g. `superred-target-chatbot`) for a full `Controller.run()` example.
 
 ## License
 

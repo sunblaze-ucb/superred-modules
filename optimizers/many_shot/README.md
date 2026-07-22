@@ -18,11 +18,8 @@ paper-to-code mapping and every deliberate departure.
 
 ## Install
 
-From the repository root, with the shared virtual environment active:
-
 ```bash
-pip install -e ../superred        # the framework first
-pip install -e optimizers/many_shot
+pip install many-shot-optimizer
 ```
 
 ## Usage
@@ -39,27 +36,7 @@ optimizer = ManyShotOptimizer(example_counts=[32, 64, 128, 256, 400, 512])
 
 Wire it into a `Controller` like any other superred optimizer — see the
 framework's [architecture overview](https://superred.simonsure.com) and a
-target's README (e.g. `chatbot`) for a full `Controller.run()` example.
-
-## Assumptions
-
-Plain-language summary; see [ASSUMPTIONS.md](ASSUMPTIONS.md) for the details.
-
-- **Prompt shape.** A preamble, many repeated `User:` / `Assistant:` examples,
-  then the real objective. Bundled examples live in `data/examples.json`; example
-  order is shuffled by default (set `random_seed` for a repeatable shuffle).
-- **Shot-count sweep is a framework feature.** The default is a single
-  256-example attempt. Passing an `example_counts` schedule maps the paper's
-  "success vs. number of examples" study onto staged superred runs.
-- **Channel mapping.** For a single channel, the whole prompt goes into the first
-  user-like controllable. When `system_prompt` is visible, the preamble and
-  examples go there and the objective goes into `user_message` (force the
-  single-prompt path with `use_system_prompt_when_available=False`).
-- **Scoring.** The default evaluator is a refusal classifier (compliance `1.0`,
-  refusal `0.0`), matching the paper's attack-success-rate framing; framework
-  evaluation, when present, can also mark success. The paper's negative-log-
-  likelihood metric needs target token logprobs, which superred does not expose,
-  so it is not implemented.
+target's README (e.g. `superred-target-chatbot`) for a full `Controller.run()` example.
 
 ## License
 

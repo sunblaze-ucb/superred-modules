@@ -20,12 +20,10 @@ mapping and every deliberate departure.
 
 GPTFuzzer's default success classifier is the official `hubert233/GPTFuzz`
 RoBERTa model, so this package depends on `torch` and `transformers`; they are
-installed automatically. From the repository root, with the shared virtual
-environment active:
+installed automatically.
 
 ```bash
-pip install -e ../superred        # the framework first
-pip install -e optimizers/gptfuzzer
+pip install gptfuzzer-optimizer
 ```
 
 The classifier weights are downloaded lazily on the first response-visible run.
@@ -45,25 +43,7 @@ optimizer = GPTFuzzerOptimizer()
 
 Wire it into a `Controller` like any other superred optimizer — see the
 framework's [architecture overview](https://superred.simonsure.com) and a
-target's README (e.g. `chatbot`) for a full `Controller.run()` example.
-
-## Assumptions
-
-Plain-language summary; see [ASSUMPTIONS.md](ASSUMPTIONS.md) for the details.
-
-- **Official building blocks.** Seed templates come from the official
-  `GPTFuzzer.csv`; the five mutation operators, the random-single mutator policy,
-  and the MCTS-Explore selector all match the upstream defaults.
-- **One prompt per run.** One superred run evaluates one synthesized prompt. With
-  the default `energy=1` this is the official one-mutation, one-query loop; higher
-  `energy` queues extra mutations across later runs.
-- **Channel mapping.** Under a user-only threat model the whole synthesized
-  prompt goes into `user_message`. If `system_prompt` is writable, the template
-  prefix goes there and the goal plus suffix go into `user_message` (disable with
-  `use_system_prompt_when_available=False`).
-- **Success scoring.** Framework evaluation is authoritative when present; a
-  failed evaluation never counts as success. Otherwise the official
-  `hubert233/GPTFuzz` RoBERTa classifier scores the visible response.
+target's README (e.g. `superred-target-chatbot`) for a full `Controller.run()` example.
 
 ## License
 
