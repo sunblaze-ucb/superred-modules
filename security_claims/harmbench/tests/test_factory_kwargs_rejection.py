@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from secclaim_harmbench import (
+from harmbench_claim import (
     harmbench_complete,
     harmbench_contextual_test,
     harmbench_contextual_val,

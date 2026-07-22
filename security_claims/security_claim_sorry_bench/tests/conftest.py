@@ -1,4 +1,4 @@
-"""Shared fixtures for the security_claim_sorry_bench test suite.
+"""Shared fixtures for the sorry_bench_claim test suite.
 
 No synthetic test fixture is shipped; tests use the real gated
 ``question.jsonl`` from HuggingFace. The ``question_jsonl_path`` fixture
@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from security_claim_sorry_bench.factory import (
+from sorry_bench_claim.factory import (
     DATASET_FILENAME,
     DATASET_REPO_ID,
     DATASET_REVISION,

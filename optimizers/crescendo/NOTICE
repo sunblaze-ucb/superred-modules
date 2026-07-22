@@ -1,0 +1,51 @@
+# NOTICE
+
+This module (superred-optimizer-crescendo) is a superred optimizer that
+reimplements the Crescendo multi-turn jailbreak. Our own code is MIT
+licensed (see LICENSE). It additionally bundles prompt templates taken from
+Microsoft PyRIT, which are also MIT licensed. This NOTICE preserves the
+required upstream attribution.
+
+## Code (this module)
+
+MIT, Copyright (c) 2026 Simon Sure, Sarthak Munshi. See LICENSE.
+
+## Attacker prompt variants
+
+Source: github.com/microsoft/PyRIT,
+`pyrit/datasets/executors/crescendo/crescendo_variant_1.yaml` through
+`crescendo_variant_5.yaml`. Transcribed (YAML -> Python string) verbatim into:
+
+- `src/crescendo_optimizer/prompts/variant_1.py`
+- `src/crescendo_optimizer/prompts/variant_2.py`
+- `src/crescendo_optimizer/prompts/variant_3.py`
+- `src/crescendo_optimizer/prompts/variant_4.py`
+- `src/crescendo_optimizer/prompts/variant_5.py`
+
+License: MIT, Copyright (c) Microsoft Corporation.
+Upstream authors credited in the source YAML: Mark Russinovich, Ahmed Salem,
+Ronen Eldan (Microsoft). Original technique source:
+https://crescendo-the-multiturn-jailbreak.github.io/
+
+## Task-achieved scoring prompt
+
+Source: github.com/microsoft/PyRIT. The `SCORING_SYSTEM_PROMPT` constant in
+`src/crescendo_optimizer/evaluator.py` is transcribed verbatim from two PyRIT
+files:
+
+- `pyrit/datasets/score/scales/red_teamer_system_prompt.yaml` (the
+  "meticulous editor" scorer system-prompt template and the
+  score_value/description/rationale JSON schema)
+- `pyrit/datasets/score/scales/task_achieved_scale.yaml` (the 0-100 scale
+  definition and worked examples)
+
+License: MIT, Copyright (c) Microsoft Corporation.
+
+## Method / citation
+
+The Crescendo attack algorithm is reimplemented from:
+Mark Russinovich, Ahmed Salem, Ronen Eldan, "Great, Now Write an Article
+About That: The Crescendo Multi-Turn LLM Jailbreak Attack," USENIX Security
+2025. https://crescendo-the-multiturn-jailbreak.github.io/
+
+When reporting numbers produced with this module, cite the Crescendo paper.

@@ -1,6 +1,7 @@
-# security_claim_dtap
+# superred-claim-dtap
 
 The **DecodingTrust-Agent (DTAP-BENCH)** security claim for superred.
+Import package: `dtap_claim`.
 
 In one sentence: DTAP is a large agent-safety benchmark whose tasks each spin up a
 real tool environment (a travel booking platform, a CRM, a filesystem, ...), give
@@ -66,7 +67,7 @@ target factories, so this claim does not depend on them.
 ## Usage
 
 ```python
-from security_claim_dtap import (
+from dtap_claim import (
     dtap_claim,
     dtap_domain_claim,
     dtap_direct_claim,
@@ -102,3 +103,25 @@ byte-identity of the sampled tasks' attacker goals and judges; the offline test
 suite mocks every Docker / HTTP / LLM boundary, so it runs without a daemon or
 credentials (dataset-dependent and live tests skip when their resources are
 absent).
+
+## Credits / upstream
+
+This package is a target-agnostic superred `SecurityClaim` that faithfully ports
+the **DecodingTrust-Agent (DTAP / DTAP-BENCH)** benchmark. All code here is
+original superred work under the MIT License (see `LICENSE`); the upstream it is
+derived from is credited in `NOTICE`.
+
+- **DecodingTrust-Agent (DTAP)** — Apache-2.0 —
+  https://github.com/AI-secure/DecodingTrust-Agent
+  The benchmark harness semantics (per-task config schema, env-override tiering,
+  and the `eval_task` / `eval_attack` scoring predicates) are reimplemented here.
+  The upstream per-task `judge.py` is run verbatim out of band by the separate
+  `dtap-scaffold` package, not by this wheel.
+- **DecodingTrust-Agent-Platform dataset** — Apache-2.0 —
+  https://huggingface.co/datasets/AI-Secure/DecodingTrust-Agent-Platform
+  Resolved at runtime (local `$DTAP_DATASET_ROOT` or optional HuggingFace
+  download); no dataset content is bundled. `data/golden_hashes.json` ships only
+  SHA-256 digests of a small sample as a byte-drift tripwire.
+
+When reporting results produced with this module, cite the DecodingTrust-Agent
+Platform (DTap) paper.

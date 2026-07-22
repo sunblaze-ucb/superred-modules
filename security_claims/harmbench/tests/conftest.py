@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from secclaim_harmbench.judge import HarmBenchJudge
+from harmbench_claim.judge import HarmBenchJudge
 
 
 def _make_judge() -> HarmBenchJudge:

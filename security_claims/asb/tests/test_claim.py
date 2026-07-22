@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from asb_target import MEMORY_TAG
 
-from security_claim_asb import (
+from asb_claim import (
     AsbAttackTask,
     StubAdversarialJudge,
     StubRefusalJudge,
@@ -22,7 +22,7 @@ from security_claim_asb import (
     asb_non_aggressive_claim,
     asb_stealthy_claim,
 )
-from security_claim_asb.judge import ASB_REFUSAL_SYSTEM_PROMPT, AsbRefusalJudge
+from asb_claim.judge import ASB_REFUSAL_SYSTEM_PROMPT, AsbRefusalJudge
 
 # ======================================================================
 # Factory enumeration

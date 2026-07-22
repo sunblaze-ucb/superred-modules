@@ -9,7 +9,7 @@ from conftest import FakeDtapTarget, NonDtapTarget, make_task_config
 from dtap_scaffold import config_specs as cfg
 from superred.core.interfaces.task import NotApplicable
 
-from security_claim_dtap.task import REQUIRED_CONFIG_SLOTS, DtapTask
+from dtap_claim.task import REQUIRED_CONFIG_SLOTS, DtapTask
 
 # ---------------------------------------------------------------------------
 # Goal mapping

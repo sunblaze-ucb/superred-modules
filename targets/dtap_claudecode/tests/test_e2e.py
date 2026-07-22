@@ -1,5 +1,5 @@
 """Real container + live-model end-to-end (SKIPPED unless Docker + LLM creds
-are available). Runs the full ClaudeCodeDtapTarget against the built agent image
+are available). Runs the full DtapClaudeCodeTarget against the built agent image
 and a litellm-proxied model, with fake env collaborators so no DTAP env stack is
 required."""
 
@@ -22,9 +22,9 @@ _IMAGE = os.environ.get("DTAP_CLAUDECODE_IMAGE", "dtap-claudecode:latest")
 @pytest.mark.skipif(not _CREDS, reason="requires LITELLM_API_KEY / LITELLM_API_BASE")
 async def test_real_container_episode():
     # Imported here so collection never fails when superred extras differ.
-    from dtap_claudecode_target import ClaudeCodeDtapTarget
+    from dtap_claudecode_target import DtapClaudeCodeTarget
 
-    target = ClaudeCodeDtapTarget(
+    target = DtapClaudeCodeTarget(
         model=os.environ.get("DTAP_MODEL", "claude-opus-4-8"),
         api_base=os.environ["LITELLM_API_BASE"],
         api_key=os.environ["LITELLM_API_KEY"],

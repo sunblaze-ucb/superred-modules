@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from inspect_agent_target import TOOLS_TAG, InspectAgentTarget
 
-from security_claim_agentharm.agentharm_tools import ALL_HARMFUL_TOOL_NAMES
-from security_claim_agentharm.tool_scopes import TOOL_SCOPES
+from agentharm_claim.agentharm_tools import ALL_HARMFUL_TOOL_NAMES
+from agentharm_claim.tool_scopes import TOOL_SCOPES
 
 
 def test_covers_exactly_the_80_harmful_tools() -> None:

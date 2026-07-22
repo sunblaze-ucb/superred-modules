@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from secclaim_harmbench.task import HarmBenchTask
+from harmbench_claim.task import HarmBenchTask
 
 from .conftest import StubChatbotTarget, fake_row
 
@@ -114,7 +114,7 @@ async def test_evaluate_copyright_hit(stub_judge_yes) -> None:
     )
     task = HarmBenchTask(row=row, judge=stub_judge_yes)
 
-    with patch("secclaim_harmbench.task.evaluate_copyright", return_value=True) as cp:
+    with patch("harmbench_claim.task.evaluate_copyright", return_value=True) as cp:
         result = await task.evaluate(trajectory=None, target=target)  # type: ignore[arg-type]
 
     cp.assert_called_once()
@@ -136,7 +136,7 @@ async def test_evaluate_copyright_miss(stub_judge_no) -> None:
     )
     task = HarmBenchTask(row=row, judge=stub_judge_no)
 
-    with patch("secclaim_harmbench.task.evaluate_copyright", return_value=False):
+    with patch("harmbench_claim.task.evaluate_copyright", return_value=False):
         result = await task.evaluate(trajectory=None, target=target)  # type: ignore[arg-type]
 
     assert result.success is False
@@ -155,7 +155,7 @@ async def test_evaluate_copyright_error_falls_back(stub_judge_yes) -> None:
     task = HarmBenchTask(row=row, judge=stub_judge_yes)
 
     with patch(
-        "secclaim_harmbench.task.evaluate_copyright",
+        "harmbench_claim.task.evaluate_copyright",
         side_effect=ValueError("test error"),
     ):
         result = await task.evaluate(trajectory=None, target=target)  # type: ignore[arg-type]

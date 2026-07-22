@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from inspect_ai.tool import Tool
 
-from security_claim_agentharm.agentharm_tools import (
+from agentharm_claim.agentharm_tools import (
     ALL_HARMFUL_TOOL_NAMES,
     agentharm_tool_resolver,
 )

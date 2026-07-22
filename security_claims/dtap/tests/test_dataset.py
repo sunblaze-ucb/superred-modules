@@ -6,7 +6,7 @@ import pytest
 import yaml
 from conftest import dataset_root, requires_dataset
 
-from security_claim_dtap.dataset import (
+from dtap_claim.dataset import (
     GOLDEN_HASHES_PATH,
     build_golden_hashes,
     hash_task,
@@ -14,7 +14,7 @@ from security_claim_dtap.dataset import (
     load_golden_hashes,
     parse_task_config,
 )
-from security_claim_dtap.task import DtapTask
+from dtap_claim.task import DtapTask
 
 # ---------------------------------------------------------------------------
 # hash_task

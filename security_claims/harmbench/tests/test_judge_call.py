@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from secclaim_harmbench.judge import HarmBenchJudge
+from harmbench_claim.judge import HarmBenchJudge
 
 
 def _make_response(text: str) -> SimpleNamespace:
@@ -35,7 +35,7 @@ async def test_judge_yes_verdict() -> None:
     """A 'Yes' from the underlying LLM produces is_harmful=True."""
     judge = _judge()
     with patch(
-        "secclaim_harmbench.judge.acompletion",
+        "harmbench_claim.judge.acompletion",
         new=AsyncMock(return_value=_make_response("Yes")),
     ):
         verdict, raw = await judge.judge(
@@ -49,7 +49,7 @@ async def test_judge_yes_verdict() -> None:
 async def test_judge_no_verdict() -> None:
     judge = _judge()
     with patch(
-        "secclaim_harmbench.judge.acompletion",
+        "harmbench_claim.judge.acompletion",
         new=AsyncMock(return_value=_make_response("No")),
     ):
         verdict, raw = await judge.judge(
@@ -65,7 +65,7 @@ async def test_judge_unparseable_raises() -> None:
     RuntimeError (rather than silently defaulting to False)."""
     judge = _judge()
     with patch(
-        "secclaim_harmbench.judge.acompletion",
+        "harmbench_claim.judge.acompletion",
         new=AsyncMock(return_value=_make_response("Maybe.")),
     ):
         with pytest.raises(RuntimeError, match="unparseable judge output"):
@@ -78,7 +78,7 @@ async def test_judge_passes_correct_kwargs_to_litellm() -> None:
     are all passed through correctly."""
     judge = _judge()
     mock_acompletion = AsyncMock(return_value=_make_response("Yes"))
-    with patch("secclaim_harmbench.judge.acompletion", new=mock_acompletion):
+    with patch("harmbench_claim.judge.acompletion", new=mock_acompletion):
         await judge.judge(behavior="BEHAVIOR_TEXT", generation="GEN_TEXT")
 
     call_kwargs = mock_acompletion.await_args.kwargs
@@ -102,7 +102,7 @@ async def test_judge_passes_correct_kwargs_to_litellm() -> None:
 async def test_judge_uses_standard_template_when_no_context() -> None:
     judge = _judge()
     mock_acompletion = AsyncMock(return_value=_make_response("Yes"))
-    with patch("secclaim_harmbench.judge.acompletion", new=mock_acompletion):
+    with patch("harmbench_claim.judge.acompletion", new=mock_acompletion):
         await judge.judge(behavior="b", generation="g", context=None)
     prompt = mock_acompletion.await_args.kwargs["messages"][0]["content"]
     assert "[CONTEXT]:" not in prompt   # standard template has no context field
@@ -112,7 +112,7 @@ async def test_judge_uses_standard_template_when_no_context() -> None:
 async def test_judge_uses_contextual_template_when_context_present() -> None:
     judge = _judge()
     mock_acompletion = AsyncMock(return_value=_make_response("Yes"))
-    with patch("secclaim_harmbench.judge.acompletion", new=mock_acompletion):
+    with patch("harmbench_claim.judge.acompletion", new=mock_acompletion):
         await judge.judge(
             behavior="b", generation="g", context="THE_CONTEXT_VALUE",
         )
@@ -128,7 +128,7 @@ async def test_judge_omits_api_base_when_none(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.delenv("LITELLM_API_KEY", raising=False)
     judge = HarmBenchJudge(model="openai/test")
     mock_acompletion = AsyncMock(return_value=_make_response("Yes"))
-    with patch("secclaim_harmbench.judge.acompletion", new=mock_acompletion):
+    with patch("harmbench_claim.judge.acompletion", new=mock_acompletion):
         await judge.judge(behavior="b", generation="g")
     call_kwargs = mock_acompletion.await_args.kwargs
     assert "api_base" not in call_kwargs
@@ -143,7 +143,7 @@ async def test_judge_uses_env_credentials_when_args_omitted(
     monkeypatch.setenv("LITELLM_API_KEY", "sk-env")
     judge = HarmBenchJudge(model="openai/test")
     mock_acompletion = AsyncMock(return_value=_make_response("Yes"))
-    with patch("secclaim_harmbench.judge.acompletion", new=mock_acompletion):
+    with patch("harmbench_claim.judge.acompletion", new=mock_acompletion):
         await judge.judge(behavior="b", generation="g")
     call_kwargs = mock_acompletion.await_args.kwargs
     assert call_kwargs["api_base"] == "https://env-base/"
@@ -159,7 +159,7 @@ async def test_judge_handles_none_content_in_response() -> None:
         choices=[SimpleNamespace(message=SimpleNamespace(content=None))],
     )
     with patch(
-        "secclaim_harmbench.judge.acompletion", new=AsyncMock(return_value=response),
+        "harmbench_claim.judge.acompletion", new=AsyncMock(return_value=response),
     ):
         with pytest.raises(RuntimeError):
             await judge.judge(behavior="b", generation="g")
@@ -174,7 +174,7 @@ async def test_judge_handles_empty_choices_list() -> None:
     judge = _judge()
     response = SimpleNamespace(choices=[])
     with patch(
-        "secclaim_harmbench.judge.acompletion", new=AsyncMock(return_value=response),
+        "harmbench_claim.judge.acompletion", new=AsyncMock(return_value=response),
     ):
         with pytest.raises(RuntimeError, match="no choices"):
             await judge.judge(behavior="b", generation="g")

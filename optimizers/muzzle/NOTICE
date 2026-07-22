@@ -1,0 +1,56 @@
+# NOTICE
+
+superred-optimizer-muzzle is a superred port of the MUZZLE red-teaming method.
+Our own code is MIT licensed (see LICENSE). It also bundles and derives from
+the third-party work listed below, which retains its original license. Upstream
+license texts are preserved verbatim under `LICENSES/`.
+
+## 1. MUZZLE (method, agent prompts, injection templates, judge heuristic, control logic)
+
+- Source repo: https://github.com/gsiros/muzzle
+  (pinned at SHA ed611c0de448caf3dc50542b0a90023424774bf7)
+- Paper: Georgios Syros, Evan Rose, Brian Grinstead, Christoph Kerschbaumer,
+  William Robertson, Cristina Nita-Rotaru, Alina Oprea, "MUZZLE: Adaptive
+  Agentic Red-Teaming of Web Agents Against Indirect Prompt Injection Attacks",
+  arXiv:2602.09222 (2026).
+- License: Apache License, Version 2.0. Copyright (c) 2026 Georgios Syros and
+  the MUZZLE authors. (The upstream LICENSE is the unmodified Apache-2.0
+  template and does not carry an explicit copyright line; the repo has no
+  NOTICE file.) Full license text: `LICENSES/muzzle-Apache-2.0.txt`.
+
+Reproduced verbatim or behaviorally ported from upstream:
+- Agent system prompts: `data/prompts/{summarizer,grafter,prompter,judge,dispatcher}.yaml`
+  (byte-identical; `dispatcher.yaml` is vendored for audit only).
+- Indirect-injection templates:
+  `data/injections/{generic,goal_hijacking}_{plain_text,url_injection}.json`
+  (byte-identical).
+- The deterministic payload-presence heuristic and Judge grounding semantics in
+  `judge.py`, ported verbatim from `muzzle/prototype/agents/judge.py`.
+- `json_utils.load_system_prompt` / `extract_json_object`, behavioral ports of
+  upstream `agents/utils.py`.
+- The five red-team roles and the OBSERVE/PROBE/ATTACK control logic.
+
+Modifications from upstream are documented in `ASSUMPTIONS.md` (satisfying
+Apache-2.0 section 4(b), "state changes").
+
+## 2. PAIR / JailbreakingLLMs (vendored attacker core)
+
+- Source repo: https://github.com/patrickrchao/JailbreakingLLMs
+- Paper: Patrick Chao, Alexander Robey, Edgar Dobriban, Hamed Hassani,
+  George J. Pappas, Eric Wong, "Jailbreaking Black Box Large Language Models in
+  Twenty Queries" (2023).
+- License: MIT. Copyright (c) 2023 PAIR Team.
+  Full license text: `LICENSES/pair-MIT.txt`.
+
+Vendored under `src/muzzle_optimizer/pair/` (via the reviewed superred
+pair_optimizer port, reviewed against public JailbreakingLLMs):
+- `prompts.py`, `json_utils.py`: adapted from upstream PAIR (`prompts.py` adds a
+  superred-original `append_superred_context()`; `json_utils.py` uses a superred
+  `PairProposal` dataclass and `ast.literal_eval` extraction).
+- `attacker.py`, `evaluator.py`: PAIR logic adapted to the superred LLM client;
+  only the runtime wiring / import path differs.
+
+## Citation
+
+When reporting results produced with this module, cite Syros et al. 2026
+(MUZZLE) and Chao et al. 2023 (PAIR).

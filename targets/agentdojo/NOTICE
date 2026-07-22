@@ -1,0 +1,34 @@
+# NOTICE
+
+superred-target-agentdojo
+
+This package (all code under `src/agentdojo_target/`, including the original
+`system_specification.md`) is original work of the superred project, released
+under the MIT License. Copyright (c) 2026 Simon Sure.
+
+## Upstream: AgentDojo
+
+This package is a faithful port / adapter of the AgentDojo benchmark. It does
+NOT vendor any AgentDojo source code or data: `agentdojo` is a pinned runtime
+dependency (`agentdojo==0.1.35`) installed from PyPI, and all benchmark
+environment data (the banking / workspace / slack / travel suite
+`environment.yaml` and `injection_vectors.yaml` files) is loaded at run time
+from the installed `agentdojo` package. Nothing from AgentDojo is redistributed
+inside this wheel.
+
+Because this module reproduces AgentDojo's tool set, task semantics, and
+benchmark structure (pinned to AgentDojo v1.2.2; see `ASSUMPTIONS.md` for every
+documented divergence), we credit the upstream authors:
+
+- Project: AgentDojo (Debenedetti et al., "AgentDojo: A Dynamic Environment to
+  Evaluate Attacks and Defenses for LLM Agents", NeurIPS 2024,
+  arXiv:2406.13352)
+- Repository: https://github.com/ethz-spylab/agentdojo
+- License: MIT
+- Copyright (c) 2024 Edoardo Debenedetti, Jie Zhang, Mislav Balunovic,
+  Luca Beurer-Kellner, Marc Fischer, and Florian Tramèr
+
+## Citation
+
+When reporting results produced with this target, cite the AgentDojo paper
+(Debenedetti et al., NeurIPS 2024).

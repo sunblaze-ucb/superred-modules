@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from superred.core.types.evaluation import EvaluationResult, Score
 
-from security_claim_agentharm.metrics import aggregate
+from agentharm_claim.metrics import aggregate
 
 
 def _result(score: float, refusal: float, category: str) -> EvaluationResult:

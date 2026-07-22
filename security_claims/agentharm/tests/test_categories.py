@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from security_claim_agentharm.categories import (
+from agentharm_claim.categories import (
     EXPECTED_CATEGORIES,
     category_slug,
     discover_categories,
     validate_categories,
 )
-from security_claim_agentharm.dataset_loader import load_agentharm_dataset
+from agentharm_claim.dataset_loader import load_agentharm_dataset
 
 
 def test_expected_categories_count() -> None:

@@ -1,0 +1,58 @@
+# NOTICE
+
+superred-optimizer-pair (import package `pair_optimizer`)
+
+This optimizer is a faithful reimplementation of PAIR (Prompt Automatic
+Iterative Refinement) for the superred framework. Our own integration code is
+released under MIT (see LICENSE). This NOTICE credits the upstream work whose
+prompt text and algorithm this module ports and, in part, ships verbatim.
+
+## Code (this module)
+
+MIT, Copyright (c) 2026 Simon Sure and Sarthak Munshi. See LICENSE.
+
+## PAIR attacker prompts, GPT-judge prompt, feedback formats, GCG refusal dictionary
+
+Source: https://github.com/patrickrchao/JailbreakingLLMs
+Paper: Chao, Robey, Dobriban, Hassani, Pappas, Wong, "Jailbreaking Black Box
+Large Language Models in Twenty Queries", arXiv:2310.08419.
+
+The following are ported verbatim (or near-verbatim) from the upstream repo and
+ship inside this wheel:
+
+- Attacker system prompts: `roleplaying_prompt`, `logical_appeal_prompt`,
+  `authority_endorsement_prompt` (src/pair_optimizer/prompts.py) from upstream
+  `system_prompts.py`.
+- GPT-judge system prompt and the `Rating: [[n]]` output format
+  (`get_judge_system_prompt`), the init message (`get_init_msg`), and the
+  target-response feedback format (`process_target_response`).
+- The GCG refusal-keyword dictionary used by the `gcg` judge
+  (`GCG_REFUSAL_KEYWORDS` in src/pair_optimizer/evaluator.py) from upstream
+  `judges.py`.
+- The stop-at-`}` JSON generation/parsing shape and the runtime defaults.
+
+License: MIT, Copyright (c) 2023 PAIR Team.
+
+## Persuasion example prompts (indirect)
+
+The worked example adversarial prompts inside `logical_appeal_prompt` and
+`authority_endorsement_prompt` originate from Zeng, Lin, Zhang, Yang, Jia, Shi,
+"How Johnny Can Persuade LLMs to Jailbreak Them", arXiv:2401.06373
+(https://github.com/CHATS-lab/persuasive_jailbreaker). They reach this module
+through the PAIR repository, which incorporated them under its MIT license with
+the same "Examples from Zeng et al." attribution preserved in our code. No
+material is taken directly from the CHATS-lab dataset or pipeline code.
+
+## GCG refusal dictionary origin (indirect)
+
+The refusal-string list used by the `gcg` judge originates from GCG (Zou, Wang,
+Carlini, Nasr, Kolter, Fredrikson, "Universal and Transferable Adversarial
+Attacks on Aligned Language Models", arXiv:2307.15043,
+https://github.com/llm-attacks/llm-attacks). It reaches this module through
+PAIR's `judges.py`. License: MIT, Copyright (c) 2023 Andy Zou.
+
+## Citation
+
+When reporting results produced with this optimizer, cite Chao et al. 2023
+(PAIR). The persuasion prompt templates additionally derive from Zeng et al.
+2024.

@@ -165,3 +165,30 @@ Code under MIT (this module). Vendored materials:
 - `src/strongreject_claim/prompts/*.txt` - StrongREJECT rubric judge templates, extracted verbatim from `github.com/dsbowen/strong_reject` `judge_templates.json` (MIT, Dillon Bowen 2024).
 
 Upstream MIT license texts are preserved in `LICENSES/dsbowen-MIT.txt` and `LICENSES/souly-MIT.txt`.
+
+## Credits and upstream
+
+The framework code in this package is original work by Simon Sure, released
+under the MIT License (see `LICENSE`).
+
+This package bundles and builds upon the **StrongREJECT** benchmark
+(Souly et al., "A StrongREJECT for Empty Jailbreaks", NeurIPS 2024,
+[arXiv:2402.10260](https://arxiv.org/abs/2402.10260)):
+
+- **Forbidden-prompt dataset** (`src/strongreject_claim/data/*.csv`) - vendored
+  byte-for-byte from
+  [alexandrasouly/strongreject](https://github.com/alexandrasouly/strongreject).
+  MIT License, Copyright (c) 2024 Center for Human-Compatible AI. Custom prompts
+  are MIT; prompts curated from prior datasets (DAN, AdvBench, and others) retain
+  their original licenses - see `LICENSES/NOTICE.md`.
+- **Rubric judge templates** (`src/strongreject_claim/prompts/*.txt`) - extracted
+  verbatim from
+  [dsbowen/strong_reject](https://github.com/dsbowen/strong_reject)
+  (`judge_templates.json`). MIT License, Copyright (c) 2024 Dillon Bowen.
+- **Rubric scoring method** - reimplemented from the paper and the dsbowen
+  reference implementation (MIT).
+
+Upstream MIT license texts are preserved in `LICENSES/dsbowen-MIT.txt` and
+`LICENSES/souly-MIT.txt`; full per-file attribution is in `LICENSES/NOTICE.md`.
+
+Please cite Souly et al. 2024 when reporting results produced with this module.

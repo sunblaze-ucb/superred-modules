@@ -14,7 +14,7 @@ own native `exec`/`fs` tools.
 
 ## What it adds over the base
 
-`OpenClawDtapTarget` implements only the four agent-specific hooks the base calls;
+`DtapOpenClawTarget` implements only the four agent-specific hooks the base calls;
 the base owns the run loop, the vectors, and the observables.
 
 1. **`_agent_kind`** -> `"openclaw"`.
@@ -40,9 +40,9 @@ the base owns the run loop, the vectors, and the observables.
 ## Usage
 
 ```python
-from dtap_openclaw_target import OpenClawDtapTarget
+from dtap_openclaw_target import DtapOpenClawTarget
 
-target = OpenClawDtapTarget(
+target = DtapOpenClawTarget(
     model="openai/gpt-4o-2024-05-13",      # routed through the LiteLLM proxy
     api_base="https://my-litellm-proxy/",
     api_key="sk-...",
@@ -94,3 +94,25 @@ PYTHONPATH="src:../dtap_scaffold/src" python -m pytest tests -q
 The real end-to-end test is marked `@pytest.mark.docker @pytest.mark.live` and is
 skipped unless a Docker daemon, the built image, and LiteLLM credentials
 (`LITELLM_API_KEY` / `LITELLM_API_BASE`) are all present.
+
+## Credits / upstream
+
+This module's own code is MIT-licensed (Copyright (c) 2026 Simon Sure; see
+`LICENSE`).
+
+It is a faithful reimplementation of the **OpenClaw agent adapter** from the
+**DecodingTrust-Agent Platform (DTAP)** -
+[AI-secure/DecodingTrust-Agent](https://github.com/AI-secure/DecodingTrust-Agent),
+pinned commit `e0323a52`, licensed **Apache-2.0**. We reimplement upstream's
+`agent/openclaw/src/{agent.py,utils.py}` config wiring, CLI invocation, and
+trajectory converter against the shared `dtap_scaffold` contracts; **no
+upstream source is vendored**. Every deviation from upstream (host-CLI ->
+container packaging, native `exec`/`fs` tools enabled, LiteLLM provider wiring,
+single-host-proxy MCP convention, env/native trajectory split) is documented in
+[`ASSUMPTIONS.md`](ASSUMPTIONS.md). See [`NOTICE`](NOTICE) for full attribution.
+
+The OpenClaw CLI itself is installed from npm inside the Docker runtime image
+and invoked as a subprocess; it is not redistributed in this package. No DTAP
+dataset is bundled here (the DTAP tasks live in the separate DTAP security
+claim). If you report numbers produced with this module, cite the DTAP paper
+(arXiv:2605.04808).

@@ -3,15 +3,48 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "security-claim-agentdojo"
+name = "superred-claim-agentdojo"
 version = "0.1.0"
 description = "AgentDojo SecurityClaim for superred: original injection-task port + bespoke system-purpose-violation goals against the composite AgentDojoTarget"
+readme = "README.md"
 requires-python = ">=3.11,<3.14"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE"]
+authors = [
+    { name = "Simon Sure", email = "info@simonsure.com" },
+]
+keywords = [
+    "superred",
+    "red-teaming",
+    "ai-safety",
+    "security",
+    "llm",
+    "security-claim",
+    "agentdojo",
+    "prompt-injection",
+    "agents",
+]
 dependencies = [
     "superred>=0.1.0",
-    "agentdojo-target",
+    "superred-target-agentdojo>=0.1.0",
     "agentdojo>=0.1.35",
 ]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security",
+]
+
+[project.urls]
+Homepage = "https://superred.simonsure.com"
+Documentation = "https://superred.simonsure.com"
+Repository = "https://github.com/RoldSI/superred-modules"
+Issues = "https://github.com/RoldSI/superred-modules/issues"
 
 [project.optional-dependencies]
 dev = [
@@ -21,7 +54,13 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/security_claim_agentdojo"]
+packages = ["src/agentdojo_claim"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "audit_raw",
+    "UPSTREAM_PREDICATE_AUDIT.md",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

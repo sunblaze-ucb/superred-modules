@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from secclaim_harmbench.task import HarmBenchTask
+from harmbench_claim.task import HarmBenchTask
 
 from .conftest import StubChatbotTarget, fake_row
 

@@ -62,6 +62,24 @@ await controller.run()
 - [`security_claim_agentdojo`](../../security_claims/agentdojo/): the paired SecurityClaim package with three layers (original AgentDojo tasks, system-purpose-violation tasks, combined).
 - `ASSUMPTIONS.md`: enumerates every divergence from AgentDojo upstream.
 
+## Credits / upstream
+
+This package is a superred port/adapter of the **AgentDojo** benchmark. It is
+original code (MIT, Copyright (c) 2026 Simon Sure) that wraps the upstream
+`agentdojo` library as a pinned runtime dependency (`agentdojo==0.1.35`). No
+AgentDojo source code or data is bundled: the four suites' environment data is
+loaded at run time from the installed `agentdojo` package.
+
+- **AgentDojo** - Debenedetti et al., *AgentDojo: A Dynamic Environment to
+  Evaluate Attacks and Defenses for LLM Agents*, NeurIPS 2024
+  ([arXiv:2406.13352](https://arxiv.org/abs/2406.13352)).
+  Repo: https://github.com/ethz-spylab/agentdojo - License: MIT,
+  Copyright (c) 2024 Edoardo Debenedetti, Jie Zhang, Mislav Balunovic,
+  Luca Beurer-Kellner, Marc Fischer, and Florian Tramèr.
+
+Please cite the AgentDojo paper when reporting results produced with this
+target. See `ASSUMPTIONS.md` for every documented divergence from upstream.
+
 ## Status
 
 v0.1.0 alpha. The public API is unstable and may change without notice.

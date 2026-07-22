@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from inspect_evals.agentharm.prompts import get_jailbreak_template, get_system_prompt
 
-from security_claim_agentharm.prompts import faithful_system_prompt, faithful_user_prompt
+from agentharm_claim.prompts import faithful_system_prompt, faithful_user_prompt
 
 
 def test_system_prompt_default_model() -> None:

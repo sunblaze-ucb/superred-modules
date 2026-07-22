@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from security_claim_dtap.dataset import (
+from dtap_claim.dataset import (
     TaskConfig,
     iter_task_config_paths,
     parse_task_config,

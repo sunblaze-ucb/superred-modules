@@ -1,4 +1,4 @@
-"""``ClaudeCodeDtapTarget``: the Claude Code concrete DTAP agent target.
+"""``DtapClaudeCodeTarget``: the Claude Code concrete DTAP agent target.
 
 Subclasses :class:`dtap_scaffold.agent_base.DtapAgentTarget`, which owns the whole
 superred lifecycle (env activation, the security-domain forest, the DTAP
@@ -56,10 +56,10 @@ OS_FILESYSTEM_DISALLOWED_TOOLS = (
     "AskUserQuestion",
 )
 
-__all__ = ["ClaudeCodeDtapTarget", "OS_FILESYSTEM_DISALLOWED_TOOLS", "DEFAULT_IMAGE"]
+__all__ = ["DtapClaudeCodeTarget", "OS_FILESYSTEM_DISALLOWED_TOOLS", "DEFAULT_IMAGE"]
 
 
-class ClaudeCodeDtapTarget(DtapAgentTarget):
+class DtapClaudeCodeTarget(DtapAgentTarget):
     """DTAP agent target backed by the Claude Agent SDK (Claude Code), in Docker.
 
     Args mirror the base, plus ``image`` (the agent Docker image to run). Model

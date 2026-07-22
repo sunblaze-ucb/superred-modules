@@ -6,7 +6,7 @@ exposes the four ASB injection surfaces (DPI/OPI/PoT/MP) as superred
 Controllables on a trust-boundary forest (roots: user, system, tools,
 memory), restores ASB's durable memory store, and performs no injection by
 default. The benchmark-specific data, grading, and tasks live in the paired
-``security_claim_asb`` package.
+``asb_claim`` package.
 """
 
 from __future__ import annotations

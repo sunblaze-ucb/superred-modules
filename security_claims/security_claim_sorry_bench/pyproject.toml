@@ -3,13 +3,38 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "security-claim-sorry-bench"
+name = "superred-claim-sorry-bench"
 version = "0.1.0"
 description = "SORRY-Bench safety-refusal benchmark as a superred SecurityClaim"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE", "LICENSES/*"]
 requires-python = ">=3.11,<3.14"
+authors = [
+    { name = "Simon Sure", email = "info@simonsure.com" },
+]
+keywords = [
+    "red-teaming",
+    "ai-safety",
+    "security",
+    "llm",
+    "sorry-bench",
+    "safety-refusal",
+    "benchmark",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security",
+]
 dependencies = [
     "superred>=0.1.0",
-    "chatbot-target",
+    "superred-target-chatbot>=0.1.0",
     "huggingface_hub>=0.20",
 ]
 
@@ -17,8 +42,14 @@ dependencies = [
 test = ["pytest", "pytest-asyncio"]
 smoke = ["python-dotenv"]
 
+[project.urls]
+Homepage = "https://superred.simonsure.com"
+Documentation = "https://superred.simonsure.com"
+Repository = "https://github.com/RoldSI/superred-modules"
+Issues = "https://github.com/RoldSI/superred-modules/issues"
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/security_claim_sorry_bench"]
+packages = ["src/sorry_bench_claim"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

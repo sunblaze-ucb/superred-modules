@@ -9,9 +9,9 @@ description = "Combined chatbot safety SecurityClaim (HarmBench + SORRY-Bench + 
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "superred>=0.1.0",
-    "secclaim-harmbench>=0.1.0",
-    "security-claim-sorry-bench>=0.1.0",
-    "strongreject-claim>=0.1.0",
+    "superred-claim-harmbench>=0.1.0",
+    "superred-claim-sorry-bench>=0.1.0",
+    "superred-claim-strongreject>=0.1.0",
 ]
 
 [project.optional-dependencies]

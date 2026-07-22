@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from security_claim_sorry_bench.categories import (
+from sorry_bench_claim.categories import (
     CATEGORY_DOMAINS,
     CATEGORY_NAMES,
     CATEGORY_NAMES_SHORTEST,

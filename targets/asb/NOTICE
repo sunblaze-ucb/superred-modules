@@ -1,0 +1,50 @@
+# NOTICE
+
+superred-target-asb (import package `asb_target`)
+
+This module's own source code is licensed under the MIT License,
+Copyright (c) 2026 Simon Sure. See LICENSE.
+
+It also bundles and redistributes third-party material, retained under its
+original license as required below.
+
+## Vendored code: Agent Security Bench (ASB)
+
+Location in wheel: `src/asb_target/_asb_vendor/` (the `pyopenagi/` and `aios/`
+trees in full).
+
+- Project: Agent Security Bench (ASB), by AGI Research. Official code for the
+  ICLR 2025 paper "Agent Security Bench (ASB): Formalizing and Benchmarking
+  Attacks and Defenses in LLM-based Agents" (Zhang et al.).
+- Upstream: https://github.com/agiresearch/ASB
+- Pinned commit: 1f561dccf92d55302368fa67679b4ba9d9c8fdc4
+- License: MIT, Copyright (c) 2024 AGI Research. The verbatim license text is
+  preserved at `src/asb_target/_asb_vendor/LICENSE` and at
+  `LICENSES/ASB-MIT.txt`.
+
+This is a verbatim copy of ASB's agent runtime (the plan-then-execute
+`ReactAgentAttack` loop, simulated tools, FIFO scheduler, and LLM kernel).
+The vendored `aios/` and `pyopenagi/` packages originate from AGI Research's
+AIOS / OpenAGI projects as incorporated into the ASB repository under ASB's
+MIT license (same copyright holder). Four files received de-dependency
+surgery (lazy/guarded optional imports; no agent-behavioral change), each
+marked in-code and described in `src/asb_target/_asb_vendor/NOTICE.md` and
+`ASSUMPTIONS.md`.
+
+## Bundled data (ASB, same MIT license)
+
+- `src/asb_target/data/all_normal_tools.jsonl` — 20 benign simulated-tool
+  definitions (name, description, expected achievement, corresponding agent),
+  sourced from ASB (github.com/agiresearch/ASB).
+- `src/asb_target/_asb_vendor/pyopenagi/agents/example/*/config.json` — 12
+  ASB example-agent scenario configuration files.
+
+Both are covered by the single repository-wide ASB MIT license
+(Copyright (c) 2024 AGI Research). No non-commercial, research-only, or gated
+terms apply. No harmful / forbidden-prompt dataset is bundled in this target;
+attack content lives in the separate ASB security-claim module.
+
+## Citation
+
+When reporting numbers produced with this module, cite Agent Security Bench
+(ASB), ICLR 2025 (arXiv:2410.02644).

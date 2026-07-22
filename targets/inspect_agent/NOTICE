@@ -1,0 +1,34 @@
+# NOTICE
+
+superred-target-inspect-agent
+
+This package (all code under `src/inspect_agent_target/`) is original work,
+Copyright (c) 2026 Simon Sure, released under the MIT License (see LICENSE).
+
+No third-party source code or datasets are vendored or bundled inside this
+package. The items below are credited for transparency; none imposes a
+redistribution obligation on this wheel because none of their material is
+shipped inside it.
+
+## Wrapped framework (runtime dependency, not bundled)
+
+Inspect (inspect_ai)
+  Source:    https://github.com/UKGovernmentBEIS/inspect_ai
+  License:   MIT License, Copyright (c) 2024 UK AI Security Institute
+  Confirmed: https://raw.githubusercontent.com/UKGovernmentBEIS/inspect_ai/main/LICENSE
+  Use:       Imported at runtime via its public API (inspect_ai.model,
+             inspect_ai.tool). `run_rollout` re-implements the control flow of
+             inspect's `generate(tool_calls="loop")` using inspect's own
+             primitives (Model.generate + execute_tools). No inspect source is
+             copied into this package; inspect-ai is pip-installed separately
+             as a declared dependency.
+
+## Configuration inspiration (no code or data used)
+
+AgentHarm benchmark (UK AI Security Institute)
+  Source:    https://github.com/UKGovernmentBEIS/inspect_evals
+  License:   MIT License
+  Use:       Only numeric generation defaults are mirrored as benchmark-agnostic
+             constants (temperature 0.0, max_tokens 4096, seed 0, max_retries 3,
+             message_limit 20). No AgentHarm code, prompts, tools, or dataset are
+             included in this package.

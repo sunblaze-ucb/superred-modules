@@ -1,4 +1,4 @@
-"""``OpenClawDtapTarget``: the OpenClaw concrete DTAP agent target.
+"""``DtapOpenClawTarget``: the OpenClaw concrete DTAP agent target.
 
 All the superred Target machinery -- the security-domain forest, the DTAP injection
 vectors (system / user / skill / tool-description PreCall, env-write PostCall), the
@@ -33,7 +33,7 @@ from dtap_scaffold.types import AgentLaunchSpec, EpisodeResult, TrajectoryArtifa
 
 from dtap_openclaw_target import driver, trajectory
 
-__all__ = ["OpenClawDtapTarget"]
+__all__ = ["DtapOpenClawTarget"]
 
 # OpenClaw native tool families gated off when the native-tools policy is "disabled".
 _DISABLED_NATIVE_TOOLS: tuple[str, ...] = ("exec", "fs")
@@ -42,7 +42,7 @@ _DISABLED_NATIVE_TOOLS: tuple[str, ...] = ("exec", "fs")
 _VALID_THINKING = ("off", "minimal", "low", "medium", "high")
 
 
-class OpenClawDtapTarget(DtapAgentTarget):
+class DtapOpenClawTarget(DtapAgentTarget):
     """DTAP target backed by the OpenClaw CLI, run headless inside Docker."""
 
     def __init__(

@@ -1,4 +1,4 @@
-# security-claim-sorry-bench
+# superred-claim-sorry-bench
 
 [SORRY-Bench](https://sorry-bench.github.io/) safety-refusal benchmark
 ([Xie et al., ICLR 2025](https://arxiv.org/abs/2406.14598)) packaged as a
@@ -39,7 +39,7 @@ ships any benchmark prompts. Two ways to provide them at runtime:
 ```python
 import asyncio
 from chatbot_target import ChatbotTarget, USER_TAG, RESPONSE_READABLE_TAG
-from security_claim_sorry_bench import sorry_bench_claim
+from sorry_bench_claim import sorry_bench_claim
 from superred.core.controller import Controller, TargetFactory
 from superred.core.interfaces.optimizer import Optimizer
 from superred.core.types.events import (
@@ -237,3 +237,23 @@ pin a specific value lives outside this branch.
   (custom non-redistributable license — `LICENSE` quoted in the dataset
   card; this module respects that and never bundles prompts).
 - **Vendored prompt templates**: see [JUDGE_PROMPTS_NOTICE.md](./JUDGE_PROMPTS_NOTICE.md).
+
+## Credits / upstream
+
+This module is an original superred `SecurityClaim` port of **SORRY-Bench**.
+The port code is MIT-licensed, Copyright (c) 2026 Simon Sure.
+
+- **Paper / methodology**: Tinghao Xie et al., *SORRY-Bench: Systematically
+  Evaluating Large Language Model Safety Refusal*, ICLR 2025,
+  arXiv:[2406.14598](https://arxiv.org/abs/2406.14598). Please cite this paper
+  when reporting numbers produced with this module.
+- **Upstream code** (judge prompt templates, vendored verbatim):
+  [SORRY-Bench/SORRY-Bench](https://github.com/SORRY-Bench/SORRY-Bench),
+  MIT, Copyright (c) 2023 LLM-Tuning-Safety (commit `7da10ad`).
+- **Dataset** (NOT bundled, loaded at runtime):
+  [sorry-bench/sorry-bench-202503](https://huggingface.co/datasets/sorry-bench/sorry-bench-202503),
+  under a custom **non-redistributable** license. You must accept the dataset
+  gate and authenticate to HuggingFace yourself; this package ships no prompts.
+
+See `NOTICE` for full attribution and `JUDGE_PROMPTS_NOTICE.md` for the
+per-template provenance table.

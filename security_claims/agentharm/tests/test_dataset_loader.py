@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from security_claim_agentharm.dataset_loader import (
+from agentharm_claim.dataset_loader import (
     DATASET_REVISION,
     dataset_by_id,
     load_agentharm_dataset,

@@ -95,3 +95,21 @@ ruff check optimizers/muzzle
 
 `smoke/` holds env-gated live end-to-end checks against real agentic targets (`agentdojo`,
 `inspect_agent`); they need an LLM proxy (`LITELLM_API_KEY` / `LITELLM_API_BASE`).
+
+## Credits / upstream
+
+This module ports the **MUZZLE** red-teaming method to superred and vendors the
+**PAIR** attacker core. Our integration code is MIT (see `LICENSE`); upstream
+components keep their original licenses (see `NOTICE` and `LICENSES/`).
+
+- **MUZZLE** — Syros et al., "MUZZLE: Adaptive Agentic Red-Teaming of Web Agents
+  Against Indirect Prompt Injection Attacks", arXiv:2602.09222 (2026).
+  Source: https://github.com/gsiros/muzzle (Apache-2.0). The five agent prompt
+  YAMLs, the four injection templates, the judge payload-presence heuristic, and
+  the OBSERVE/PROBE/ATTACK control logic derive from this repo. Deviations from
+  upstream are logged in `ASSUMPTIONS.md`.
+- **PAIR** — Chao et al., "Jailbreaking Black Box Large Language Models in Twenty
+  Queries" (2023). Source: https://github.com/patrickrchao/JailbreakingLLMs
+  (MIT, Copyright (c) 2023 PAIR Team). Vendored under `muzzle_optimizer/pair/`.
+
+Please cite both papers when reporting results produced with this module.

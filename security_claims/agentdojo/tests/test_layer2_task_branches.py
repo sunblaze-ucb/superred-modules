@@ -18,7 +18,7 @@ import agentdojo.task_suite.load_suites  # noqa: F401
 from agentdojo_target import AgentDojoTarget
 from superred.core.types.trajectory import Trajectory
 
-from security_claim_agentdojo.layer2_task import Layer2GoalSpec, SystemViolatingTask
+from agentdojo_claim.layer2_task import Layer2GoalSpec, SystemViolatingTask
 
 
 class _StubTarget(AgentDojoTarget):

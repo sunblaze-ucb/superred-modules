@@ -108,7 +108,7 @@ async def test_e2e_against_real_llm_three_standard_behaviors() -> None:
     from chatbot_target import ChatbotTarget, RESPONSE_READABLE_TAG, USER_TAG  # type: ignore[import-untyped]
     from superred.core.controller import Controller
 
-    from secclaim_harmbench import harmbench_claim
+    from harmbench_claim import harmbench_claim
 
     api_key = os.environ["LITELLM_API_KEY"]
     api_base = os.environ["LITELLM_API_BASE"]
@@ -187,7 +187,7 @@ async def test_e2e_copyright_path_no_judge_call() -> None:
     from superred.core.controller import Controller
     from superred.core.interfaces.security_claim import SecurityClaim
 
-    from secclaim_harmbench import harmbench_claim
+    from harmbench_claim import harmbench_claim
 
     api_key = os.environ["LITELLM_API_KEY"]
     api_base = os.environ["LITELLM_API_BASE"]

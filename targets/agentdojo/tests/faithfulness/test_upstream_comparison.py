@@ -94,7 +94,7 @@ pytestmark = [
 
 
 # Hand-picked 12 pairs covering attack semantics across all four suites.
-# Sourced from CANONICAL_PAIRS (security_claim_agentdojo.layer1_pairs).
+# Sourced from CANONICAL_PAIRS (agentdojo_claim.layer1_pairs).
 #
 # Selection rationale (one IT per attack semantic family per suite):
 # - banking: IT0 (send-money), IT2 (send-money-conditional), IT4 (scheduled-txn)
@@ -265,7 +265,7 @@ async def _run_port_pair(
     import agentdojo.task_suite.load_suites  # noqa: F401
 
     from agentdojo_target.target import AgentDojoTarget
-    from security_claim_agentdojo.layer1_factory import agentdojo_layer1_claim
+    from agentdojo_claim.layer1_factory import agentdojo_layer1_claim
     from superred.core.controller import Controller, TargetFactory
     from superred.core.types.security_domain import SecurityDomainTag
 

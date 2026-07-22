@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-from security_claim_agentharm import task as task_mod
-from security_claim_agentharm.task import AgentHarmTask
+from agentharm_claim import task as task_mod
+from agentharm_claim.task import AgentHarmTask
 
 
 class _FakeTarget:

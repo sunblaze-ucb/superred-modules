@@ -1,0 +1,51 @@
+# NOTICE
+
+superred-claim-asb
+
+This module is a port of Agent Security Bench (ASB) into the superred
+red-teaming framework. Original code in this module (the superred adaptation:
+task, factories, loaders, the adversarial success judge, and tests) is licensed
+MIT (see LICENSE). It bundles benchmark data and reproduces evaluation logic
+from ASB; the upstream MIT license text is preserved verbatim in
+`src/asb_claim/data/ASB_LICENSE` (and also in `LICENSES/ASB-MIT.txt`).
+
+## Upstream: Agent Security Bench (ASB)
+
+- Project: Agent Security Bench (ASB)
+- Repository: https://github.com/agiresearch/ASB (commit 1f561dcc)
+- Paper: "Agent Security Bench (ASB): Formalizing and Benchmarking Attacks and
+  Defenses in LLM-based Agents", Hanrong Zhang, Jingyuan Huang, Kai Mei,
+  Yifei Yao, Zhenting Wang, Chenlu Zhan, Hongwei Wang, Yongfeng Zhang,
+  ICLR 2025.
+- License: MIT
+- Copyright (c) 2024 AGI Research
+
+### Bundled data (vendored verbatim, MIT)
+
+From the ASB repository, under `src/asb_claim/data/`:
+
+- `agent_task.jsonl` (10 scenario agents + benign tasks)
+- `all_attack_tools.jsonl` (400 attacker tools)
+- `all_attack_tools_aggressive.jsonl` (200 aggressive)
+- `all_attack_tools_non_aggressive.jsonl` (200 non-aggressive)
+- `all_normal_tools.jsonl` (20 normal tools, Expected Achievements strings)
+- `ASB_LICENSE` (verbatim upstream MIT license)
+
+### Ported evaluation logic (MIT)
+
+The attack-success / utility (`check_original_success`) / refusal
+(`judge_response`) / `memory_found` predicates are ported from ASB
+`main_attacker.py`, and the refusal-judge system prompt
+(`ASB_REFUSAL_SYSTEM_PROMPT` in `src/asb_claim/judge.py`) is
+reproduced verbatim. Deviations are documented in this module's
+`ASSUMPTIONS.md`.
+
+The adversarial success judge (`AsbAdversarialJudge` /
+`ASB_ADVERSARIAL_SYSTEM_PROMPT`), the deterministic tool-invocation success
+predicate, the memory trust-boundary tagging, and the derived convenience
+sub-scores are original to this module and have no upstream analogue.
+
+## Citation
+
+When reporting numbers produced with this module, cite Zhang et al., ICLR 2025
+(Agent Security Bench).

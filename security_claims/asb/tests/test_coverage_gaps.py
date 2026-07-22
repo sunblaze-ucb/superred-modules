@@ -17,8 +17,8 @@ from typing import Any
 
 import pytest
 
-from security_claim_asb import AsbAttackTask, asb_claim, asb_target_factory
-from security_claim_asb.judge import AsbRefusalJudge, RefusalJudge
+from asb_claim import AsbAttackTask, asb_claim, asb_target_factory
+from asb_claim.judge import AsbRefusalJudge, RefusalJudge
 
 # ======================================================================
 # 1. Refusal-judge filter end-to-end through evaluate()

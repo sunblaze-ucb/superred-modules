@@ -11,9 +11,9 @@ from __future__ import annotations
 
 from inspect_evals.agentharm.benchmark import harmful_grading_functions
 
-from security_claim_agentharm import agentharm_total_claim
-from security_claim_agentharm.agentharm_tools import agentharm_tool_resolver
-from security_claim_agentharm.dataset_loader import dataset_by_id, load_agentharm_dataset
+from agentharm_claim import agentharm_total_claim
+from agentharm_claim.agentharm_tools import agentharm_tool_resolver
+from agentharm_claim.dataset_loader import dataset_by_id, load_agentharm_dataset
 
 _MODEL = "openai/gpt-4o-mini"
 

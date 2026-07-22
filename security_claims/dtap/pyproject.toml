@@ -3,14 +3,47 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "security-claim-dtap"
+name = "superred-claim-dtap"
 version = "0.1.0"
 description = "DecodingTrust-Agent (DTAP-BENCH) security claim: one task per DTAP per-task config (benign or malicious, direct/indirect), driving either DTAP agent target through the byte-faithful out-of-band env-state judge. Target-agnostic; hierarchical factories by domain, threat model, and risk category."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE", "LICENSES/*"]
 requires-python = ">=3.11,<3.14"
+authors = [
+    { name = "Simon Sure", email = "info@simonsure.com" },
+]
+keywords = [
+    "red-teaming",
+    "ai-safety",
+    "security",
+    "llm",
+    "agent",
+    "decodingtrust",
+    "dtap",
+    "benchmark",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security",
+]
 dependencies = [
     "superred>=0.1.0",
-    "dtap-scaffold>=0.1.0",
+    "superred-target-dtap-scaffold>=0.1.0",
+    "PyYAML>=6.0",
 ]
+
+[project.urls]
+Homepage = "https://superred.simonsure.com"
+Documentation = "https://superred.simonsure.com"
+Repository = "https://github.com/RoldSI/superred-modules"
+Issues = "https://github.com/RoldSI/superred-modules/issues"
 
 [project.optional-dependencies]
 # Auto-download the DTAP per-task dataset (goal enumeration) from HuggingFace;
@@ -24,7 +57,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/security_claim_dtap"]
+packages = ["src/dtap_claim"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

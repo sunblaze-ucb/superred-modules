@@ -31,8 +31,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from secclaim_harmbench import harmbench_claim
-from security_claim_sorry_bench import sorry_bench_claim
+from harmbench_claim import harmbench_claim
+from sorry_bench_claim import sorry_bench_claim
 from strongreject_claim import strongreject_full_claim, strongreject_small_claim
 from superred.core.interfaces.security_claim import SecurityClaim
 from superred.core.types.llm import LLMConfig

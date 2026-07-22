@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from secclaim_harmbench.advbench import REFUSAL_PREFIXES, refusal_label
+from harmbench_claim.advbench import REFUSAL_PREFIXES, refusal_label
 
 
 def test_prefix_count_matches_upstream() -> None:

@@ -1,4 +1,4 @@
-"""Offline tests for ClaudeCodeDtapTarget's host-side hooks and helpers
+"""Offline tests for DtapClaudeCodeTarget's host-side hooks and helpers
 (no Docker, no SDK)."""
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ import os
 import pytest
 from dtap_scaffold.types import AgentLaunchSpec, EpisodeResult
 
-from dtap_claudecode_target import ClaudeCodeDtapTarget
+from dtap_claudecode_target import DtapClaudeCodeTarget
 from dtap_claudecode_target.target import (
     CONTAINER_MOUNT,
     CONTAINER_WORKSPACE,
@@ -18,8 +18,8 @@ from dtap_claudecode_target.target import (
 from dtap_claudecode_target.trajectory import RESULT_FILENAME, TRANSCRIPT_FILENAME
 
 
-def _target(**kw) -> ClaudeCodeDtapTarget:
-    return ClaudeCodeDtapTarget(model="claude-x", api_base="http://proxy", api_key="k", **kw)
+def _target(**kw) -> DtapClaudeCodeTarget:
+    return DtapClaudeCodeTarget(model="claude-x", api_base="http://proxy", api_key="k", **kw)
 
 
 def _spec(**overrides) -> AgentLaunchSpec:
@@ -129,7 +129,7 @@ def test_docker_command_wiring():
 
 
 def test_docker_command_omits_absent_credentials():
-    t = ClaudeCodeDtapTarget(model="m")  # no api_base/api_key
+    t = DtapClaudeCodeTarget(model="m")  # no api_base/api_key
     cmd = t._docker_command(_spec(api_base=None, api_key=None, model="m"), "/i")
     assert not any(c.startswith("ANTHROPIC_BASE_URL=") for c in cmd)
     assert not any(c.startswith("ANTHROPIC_AUTH_TOKEN=") for c in cmd)

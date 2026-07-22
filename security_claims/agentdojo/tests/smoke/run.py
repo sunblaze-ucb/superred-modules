@@ -51,7 +51,7 @@ from superred.core.types.events import (
 from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
 
-from security_claim_agentdojo import agentdojo_layer1_claim
+from agentdojo_claim import agentdojo_layer1_claim
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("smoke")

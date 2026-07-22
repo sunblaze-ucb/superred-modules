@@ -9,7 +9,7 @@ machinery -- the security-domain forest, the five DTAP injection vectors, the en
 activation by config, the host MCP proxy / Docker / injection lifecycle, the
 emit-once observables, and the query surface the claim's out-of-band judge reads --
 lives in the shared, frozen `dtap_scaffold` base
-(`dtap_scaffold.agent_base.DtapAgentTarget`). `OpenClawDtapTarget` subclasses it and
+(`dtap_scaffold.agent_base.DtapAgentTarget`). `DtapOpenClawTarget` subclasses it and
 implements only the four abstract hooks (`_agent_kind`, `_native_tool_deny`,
 `_run_episode`, `_extract_trajectory`). The faithfulness claims here therefore cover
 just: how OpenClaw is launched, how it is wired to the proxy/provider, the

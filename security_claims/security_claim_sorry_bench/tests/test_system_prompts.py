@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from security_claim_sorry_bench.system_prompts import sorry_bench_system_prompt
+from sorry_bench_claim.system_prompts import sorry_bench_system_prompt
 
 
 class TestGptAndQwenFamily:
