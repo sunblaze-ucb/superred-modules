@@ -47,11 +47,16 @@ MCP agents) that expose a content or tool-result surface. Wire it into a
 
 ## License
 
-MIT for this port's code (see [LICENSE](LICENSE)). The upstream reference
-implementation is
-[`wzunknown/agentvigil-websentinel`](https://github.com/wzunknown/agentvigil-websentinel).
-This module packages reusable literals it references (the mutator prompts from
-`mutate_prompts.py` and the seed corpora from `new_seeds.py`/`seeds.py`) as
-data-only files and does not vendor a runtime implementation. Redistributed
-upstream literals remain under their original terms; consult the upstream
-repository for its license before redistributing them separately.
+**No license is granted yet** (see [LICENSE](LICENSE)). The upstream reference
+implementation,
+[`wzunknown/agentvigil-websentinel`](https://github.com/wzunknown/agentvigil-websentinel),
+publishes **no license file**. This module reproduces literals it references
+(the mutator prompts from `mutate_prompts.py` and the seed corpora from
+`new_seeds.py`/`seeds.py`). Absent an express upstream license grant, that
+material is presumed all-rights-reserved. Written permission to use and
+redistribute it **has been sought from the upstream author but not yet
+received**; pending that permission (or a subsequently published upstream
+license), this module is withheld and is **not** released under the MIT License
+that applies to other superred optimizers. Once permission is obtained or the
+upstream-derived literals are fully replaced with original content, a definitive
+license will be applied here.
