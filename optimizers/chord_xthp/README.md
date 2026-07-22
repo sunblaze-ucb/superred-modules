@@ -47,6 +47,8 @@ framework's [architecture overview](https://superred.simonsure.com).
 
 MIT for this port's code (see [LICENSE](LICENSE)). The upstream reference
 implementation, [`systemsecurity-uiuc/Chord`](https://github.com/systemsecurity-uiuc/Chord),
-is MIT licensed. The bundled helper data and prompts originate from that
-repository. This port reimplements the attack against superred's event model
-rather than vendoring Chord's agent runtime.
+is MIT licensed. The bundled helper data originates from that repository; its
+MIT copyright notice is preserved in [`NOTICE`](NOTICE) and
+[`LICENSES/Chord-MIT.txt`](LICENSES/Chord-MIT.txt). This port reimplements the
+attack against superred's event model rather than vendoring Chord's agent
+runtime.

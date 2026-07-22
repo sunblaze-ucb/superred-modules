@@ -1,0 +1,30 @@
+# NOTICE
+
+This module (dra-optimizer) is a superred optimizer that reimplements the
+Disguise and Reconstruction Attack (DRA). Our own code is MIT licensed (see
+LICENSE). It additionally bundles a data file taken from the official DRA
+repository, which is MIT licensed. This NOTICE preserves the required upstream
+attribution.
+
+## Code (this module)
+
+MIT, Copyright (c) 2026 Simon Sure, Sarthak Munshi. See LICENSE.
+
+## Bundled official DRA data
+
+Source: github.com/LLM-DRA/DRA, `data/behaviors.json`. Transcribed verbatim
+into `src/dra_optimizer/data/behaviors.json`.
+
+License: MIT, Copyright (c) 2024 LLM-DRA. Full text in `LICENSES/DRA-MIT.txt`.
+
+## Method / citation
+
+The DRA attack is reimplemented from: "Making Them Ask and Answer: Jailbreaking
+Large Language Models in Few Queries via Disguise and Reconstruction,"
+arXiv:2402.18104 (USENIX Security 2024). When reporting numbers produced with
+this module, cite the DRA paper.
+
+## Runtime dependency
+
+This module depends on Detoxify (github.com/unitaryai/detoxify), which is
+installed separately by pip under its own license and is not bundled here.

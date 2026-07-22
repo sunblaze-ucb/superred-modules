@@ -52,6 +52,9 @@ target's README (e.g. `superred-target-chatbot`) for a full `Controller.run()` e
 
 MIT for this port's code (see [LICENSE](LICENSE)). The upstream reference
 implementation, [`LLM-DRA/DRA`](https://github.com/LLM-DRA/DRA), is MIT licensed.
-This port reimplements the DRA prompt-generation structure against superred's
-event model rather than vendoring upstream source files. Detoxify is a
-third-party dependency under its own license.
+The bundled `behaviors.json` originates from that repository; its MIT copyright
+notice is preserved in [`NOTICE`](NOTICE) and
+[`LICENSES/DRA-MIT.txt`](LICENSES/DRA-MIT.txt). This port reimplements the DRA
+prompt-generation structure against superred's event model rather than vendoring
+upstream source files. Detoxify is a third-party dependency under its own
+license.

@@ -50,5 +50,7 @@ target's README (e.g. `superred-target-chatbot`) for a full `Controller.run()` e
 MIT for this port's code (see [LICENSE](LICENSE)). The upstream reference
 implementation, [`sherdencooper/GPTFuzz`](https://github.com/sherdencooper/GPTFuzz),
 is MIT licensed. The bundled seed templates originate from that repository's
-`GPTFuzzer.csv`. `torch`, `transformers`, and the `hubert233/GPTFuzz` model are
-third-party components under their own licenses.
+`GPTFuzzer.csv`; its MIT copyright notice is preserved in [`NOTICE`](NOTICE) and
+[`LICENSES/GPTFuzz-MIT.txt`](LICENSES/GPTFuzz-MIT.txt). `torch`, `transformers`,
+and the `hubert233/GPTFuzz` model are third-party components under their own
+licenses.

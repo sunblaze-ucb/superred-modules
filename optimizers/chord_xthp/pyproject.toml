@@ -9,7 +9,7 @@ description = "Chord/XTHP optimizer for superred agent tool-control-flow targets
 requires-python = ">=3.11,<3.14"
 readme = "README.md"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "NOTICE", "LICENSES/*"]
 authors = [
     { name = "Simon Sure", email = "info@simonsure.com" },
     { name = "Sarthak Munshi", email = "sarthakmunshi@gmail.com" },
