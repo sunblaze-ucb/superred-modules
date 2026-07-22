@@ -40,10 +40,12 @@ target's README (e.g. `superred-target-chatbot`) for a full `Controller.run()` e
 
 ## License
 
-MIT for this port's code (see [LICENSE](LICENSE)). The upstream reference
+**No license is granted yet** (see [LICENSE](LICENSE)). The upstream reference
 implementation,
 [`Jinxiaolong1129/Foot-in-the-door-Jailbreak`](https://github.com/Jinxiaolong1129/Foot-in-the-door-Jailbreak),
-carries **no license file** (default all-rights-reserved). This port does not
-vendor upstream source; the FITD conversation structure, prompts, and judges are
-reconstructed from the paper and the publicly observable repository. If upstream
-publishes a license in the future, this notice should be revisited.
+carries **no license file** (default all-rights-reserved), and this module
+bundles prompts and judge text reproduced from it. Because there is no upstream
+license to redistribute that material under, this module is withheld pending the
+upstream author's permission and is not released under MIT (unlike other superred
+optimizers). Once permission is obtained or the material is fully replaced with
+original text, a proper license will be applied here.

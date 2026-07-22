@@ -43,10 +43,11 @@ see the framework's [architecture overview](https://superred.simonsure.com).
 
 ## License
 
-MIT for this port's code (see [LICENSE](LICENSE)). The upstream reference
+**No license is granted yet** (see [LICENSE](LICENSE)). The upstream reference
 implementation, [`dsh3n77/MINJA`](https://github.com/dsh3n77/MINJA), carries
-**no license file** (default all-rights-reserved). This port does not vendor
-upstream runtime source; the RAP/WebShop scenario data it reads is reconstructed
-from that publicly observable repository, and the attack is reimplemented against
-superred's event model. If upstream publishes a license in the future, this
-notice should be revisited.
+**no license file** (default all-rights-reserved), and this module bundles
+RAP/WebShop scenario data reproduced from it. Because there is no upstream
+license to redistribute that material under, this module is withheld pending the
+upstream author's permission and is not released under MIT (unlike other superred
+optimizers). Once permission is obtained or the data is fully replaced with
+original content, a proper license will be applied here.

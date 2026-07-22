@@ -42,10 +42,12 @@ target's README (e.g. `superred-target-chatbot`) for a full `Controller.run()` e
 
 ## License
 
-MIT for this port's code (see [LICENSE](LICENSE)). The upstream reference
+**No license is granted yet** (see [LICENSE](LICENSE)). The upstream reference
 implementation,
 [`huizhang-L/CodeChameleon`](https://github.com/huizhang-L/CodeChameleon),
-carries **no license file** (default all-rights-reserved). This port does not
-vendor upstream source; the encryption rules and prompt templates are
-reconstructed from the paper and the publicly observable repository. If upstream
-publishes a license in the future, this notice should be revisited.
+carries **no license file** (default all-rights-reserved), and this module
+bundles prompt templates reproduced from it. Because there is no upstream
+license to redistribute that material under, this module is withheld pending the
+upstream author's permission and is not released under MIT (unlike other superred
+optimizers). Once permission is obtained or the material is fully replaced with
+original text, a proper license will be applied here.
