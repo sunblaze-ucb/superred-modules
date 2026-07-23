@@ -1,4 +1,4 @@
-# many-shot-optimizer
+# superred-optimizer-many-shot
 
 A **Many-Shot Jailbreaking** single-turn optimizer for the
 [superred](https://superred.simonsure.com) red-teaming framework.
@@ -19,7 +19,7 @@ paper-to-code mapping and every deliberate departure.
 ## Install
 
 ```bash
-pip install many-shot-optimizer
+pip install superred-optimizer-many-shot
 ```
 
 ## Usage

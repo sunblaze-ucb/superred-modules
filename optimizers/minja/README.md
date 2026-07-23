@@ -1,4 +1,4 @@
-# minja-optimizer
+# superred-optimizer-minja
 
 A **MINJA (Memory INJection Attack)** optimizer for
 [superred](https://superred.simonsure.com) agent targets.
@@ -19,7 +19,7 @@ deliberate departure.
 ## Install
 
 ```bash
-pip install minja-optimizer
+pip install superred-optimizer-minja
 ```
 
 ## Usage

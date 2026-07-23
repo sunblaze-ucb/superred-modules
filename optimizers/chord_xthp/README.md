@@ -1,4 +1,4 @@
-# chord-xthp-optimizer
+# superred-optimizer-chord-xthp
 
 A **Chord (Cross-Tool Harvesting and Polluting, XTHP)** optimizer for
 [superred](https://superred.simonsure.com) agent targets.
@@ -20,7 +20,7 @@ mapping and every deliberate departure.
 ## Install
 
 ```bash
-pip install chord-xthp-optimizer
+pip install superred-optimizer-chord-xthp
 ```
 
 ## Usage

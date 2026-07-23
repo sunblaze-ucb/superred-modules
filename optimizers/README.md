@@ -65,7 +65,7 @@ random code (keep trying until one slips through). No attacker LLM: the cipher
 is built by plain code. Single-turn, default 6 attempts. Source: Huang, Li,
 Tang, *Endless Jailbreaks with Bijection Learning* (ICLR 2025).
 
-### CodeChameleon (`code-chameleon-optimizer`)
+### CodeChameleon (`superred-optimizer-code-chameleon`)
 
 Disguises the harmful request as a programming puzzle: it scrambles the request
 (e.g. shuffling word order by a "binary tree" rule) and hands the target both the
@@ -85,7 +85,7 @@ it rotates through several pre-written escalation styles. Multi-turn; default up
 to 15 attempts. Uses an attacker LLM plus an internal turn-by-turn evaluator.
 Source: Russinovich et al., *Crescendo* (USENIX Security 2025).
 
-### DRA, Disguise and Reconstruction Attack (`dra-optimizer`)
+### DRA, Disguise and Reconstruction Attack (`superred-optimizer-dra`)
 
 Hides the harmful request one character at a time inside ordinary-looking cover
 words (each real letter marked in parentheses), then instructs the target to
@@ -95,7 +95,7 @@ training is less likely to fire. Fixed template, no attacker LLM (lightweight
 refusal checks plus an optional judge fallback). Single-turn, default 20
 attempts. See `ASSUMPTIONS.md` for the citation.
 
-### EIA, Environmental Injection Attack (`eia-agent-optimizer`)
+### EIA, Environmental Injection Attack (`superred-optimizer-eia-agent`)
 
 Poisons the web environment that an agent observes: it injects hidden or subtly
 visible form fields into webpage/read content with labels like "this is the
@@ -105,7 +105,7 @@ templates, no attacker LLM. Agent-focused; default is the official
 action-grounding aria-label form injection. See `ASSUMPTIONS.md` for the
 citation.
 
-### FITD, Foot-in-the-Door (`fitd-optimizer`)
+### FITD, Foot-in-the-Door (`superred-optimizer-fitd`)
 
 Uses the classic persuasion trick: get the model to agree to small, benign
 things first, then walk it up a ladder of progressively more harmful requests,
@@ -115,7 +115,7 @@ backtracks. Multi-turn; default a 10-rung ladder, up to 5 attempts. Uses a
 helper LLM to build the ladder and rewrites. See `ASSUMPTIONS.md` for the
 citation.
 
-### FlipAttack (`flip-attack-optimizer`)
+### FlipAttack (`superred-optimizer-flip-attack`)
 
 Scrambles the request by reversing it (whole sentence, word order, or letters
 within each word), so the harmful text never appears readably, then tells the
@@ -142,7 +142,7 @@ target's reactions. Only the chosen reply is sent; the reasoning stays internal.
 Multi-turn (default 5 turns per attempt), default 10 attempts. Source: Pavlova
 et al., *GOAT* (2024).
 
-### GPTFuzzer (`gptfuzzer-optimizer`)
+### GPTFuzzer (`superred-optimizer-gptfuzzer`)
 
 Starts from a library of human-written jailbreak templates (each with a slot for
 the harmful goal) and fuzz-tests them: it mutates templates with five operations
@@ -152,7 +152,7 @@ off. Uses an LLM only to mutate templates; scores responses with the project's
 trained classifier. Single-turn; large default query budget. See `ASSUMPTIONS.md`
 for the citation.
 
-### Many-Shot Jailbreaking (`many-shot-optimizer`)
+### Many-Shot Jailbreaking (`superred-optimizer-many-shot`)
 
 Floods the target with one very long prompt containing many invented
 user/assistant exchanges in which the assistant happily complies with harmful
@@ -169,7 +169,7 @@ that feedback, running several refinement conversations in parallel "streams" at
 once. Multi-turn refinement; default 3 streams times 3 iterations. Uses an
 attacker LLM and an internal judge. See `ASSUMPTIONS.md` for the citation.
 
-### PoisonedRAG (`poisonedrag-optimizer`)
+### PoisonedRAG (`superred-optimizer-poisonedrag`)
 
 Poisons a RAG target's knowledge base or retrieved-context surface with a small
 set of adversarial documents, then asks the target question so those documents
@@ -179,7 +179,7 @@ user message. Single-turn, default 5 poison documents. Uses an LLM only when it
 needs to generate poison documents on the fly. See `ASSUMPTIONS.md` for the
 citation.
 
-### TAP, Tree of Attacks with Pruning (`tap-optimizer`)
+### TAP, Tree of Attacks with Pruning (`superred-optimizer-tap`)
 
 An attacker AI grows a branching tree of candidate prompts: it generates several
 branches, prunes ones that drift off-topic, tests the survivors on the target

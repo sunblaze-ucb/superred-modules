@@ -1,6 +1,6 @@
 # NOTICE
 
-This module (dra-optimizer) is a superred optimizer that reimplements the
+This module (superred-optimizer-dra) is a superred optimizer that reimplements the
 Disguise and Reconstruction Attack (DRA). Our own code is MIT licensed (see
 LICENSE). It additionally bundles a data file taken from the official DRA
 repository, which is MIT licensed. This NOTICE preserves the required upstream

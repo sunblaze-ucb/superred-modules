@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "poisonedrag-optimizer"
+name = "superred-optimizer-poisonedrag"
 version = "0.1.0"
 description = "PoisonedRAG knowledge-corruption optimizer for superred"
 requires-python = ">=3.11,<3.14"

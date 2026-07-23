@@ -1,4 +1,4 @@
-# eia-agent-optimizer
+# superred-optimizer-eia-agent
 
 An **EIA (Environmental Injection Attack)** optimizer for
 [superred](https://superred.simonsure.com) web-agent targets.
@@ -20,7 +20,7 @@ deliberate departure.
 ## Install
 
 ```bash
-pip install eia-agent-optimizer
+pip install superred-optimizer-eia-agent
 ```
 
 ## Usage

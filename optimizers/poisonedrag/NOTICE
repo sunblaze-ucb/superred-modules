@@ -1,6 +1,6 @@
 # NOTICE
 
-This module (poisonedrag-optimizer) is a superred optimizer that reimplements
+This module (superred-optimizer-poisonedrag) is a superred optimizer that reimplements
 the PoisonedRAG knowledge-corruption attack. Our own code is MIT licensed (see
 LICENSE). It additionally bundles official attack-result datasets taken from
 the official PoisonedRAG repository, which is MIT licensed. This NOTICE

@@ -1,4 +1,4 @@
-# dra-optimizer
+# superred-optimizer-dra
 
 A **DRA (Disguise and Reconstruction Attack)** jailbreak optimizer for the
 [superred](https://superred.simonsure.com) red-teaming framework.
@@ -24,7 +24,7 @@ guide words are sensitive; it is a normal dependency of this package and is
 installed automatically.
 
 ```bash
-pip install dra-optimizer
+pip install superred-optimizer-dra
 ```
 
 If Detoxify cannot load in a constrained environment, the optimizer falls back

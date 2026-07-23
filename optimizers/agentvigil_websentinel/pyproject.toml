@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "agentvigil-websentinel-optimizer"
+name = "superred-optimizer-agentvigil-websentinel"
 version = "0.1.0"
 description = "AgentVigil/WebSentinel indirect prompt-injection optimizer for superred agent targets"
 requires-python = ">=3.11,<3.14"

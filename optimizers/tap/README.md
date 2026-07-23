@@ -1,4 +1,4 @@
-# tap-optimizer
+# superred-optimizer-tap
 
 A **Tree of Attacks with Pruning (TAP)** jailbreak optimizer for the
 [superred](https://superred.simonsure.com) red-teaming framework.
@@ -19,7 +19,7 @@ deliberate departure.
 ## Install
 
 ```bash
-pip install tap-optimizer
+pip install superred-optimizer-tap
 ```
 
 ## Usage

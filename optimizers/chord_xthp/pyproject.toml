@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "chord-xthp-optimizer"
+name = "superred-optimizer-chord-xthp"
 version = "0.1.0"
 description = "Chord/XTHP optimizer for superred agent tool-control-flow targets"
 requires-python = ">=3.11,<3.14"

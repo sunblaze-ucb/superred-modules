@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "code-chameleon-optimizer"
+name = "superred-optimizer-code-chameleon"
 version = "0.1.0"
 description = "CodeChameleon jailbreak optimizer for superred"
 requires-python = ">=3.11,<3.14"

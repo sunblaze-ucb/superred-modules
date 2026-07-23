@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "eia-agent-optimizer"
+name = "superred-optimizer-eia-agent"
 version = "0.1.0"
 description = "Environmental Injection Attack optimizer for SuperRed web agents"
 requires-python = ">=3.11,<3.14"

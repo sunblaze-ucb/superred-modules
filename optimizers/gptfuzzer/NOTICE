@@ -1,6 +1,6 @@
 # NOTICE
 
-This module (gptfuzzer-optimizer) is a superred optimizer that reimplements the
+This module (superred-optimizer-gptfuzzer) is a superred optimizer that reimplements the
 GPTFuzzer jailbreak fuzzer. Our own code is MIT licensed (see LICENSE). It
 additionally bundles the seed-template dataset taken from the official GPTFuzz
 repository, which is MIT licensed. This NOTICE preserves the required upstream

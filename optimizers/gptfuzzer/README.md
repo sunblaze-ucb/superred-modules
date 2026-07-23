@@ -1,4 +1,4 @@
-# gptfuzzer-optimizer
+# superred-optimizer-gptfuzzer
 
 A **GPTFuzzer** jailbreak optimizer for the
 [superred](https://superred.simonsure.com) red-teaming framework.
@@ -23,7 +23,7 @@ RoBERTa model, so this package depends on `torch` and `transformers`; they are
 installed automatically.
 
 ```bash
-pip install gptfuzzer-optimizer
+pip install superred-optimizer-gptfuzzer
 ```
 
 The classifier weights are downloaded lazily on the first response-visible run.

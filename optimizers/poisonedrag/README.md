@@ -1,4 +1,4 @@
-# poisonedrag-optimizer
+# superred-optimizer-poisonedrag
 
 A **PoisonedRAG** knowledge-corruption optimizer for the
 [superred](https://superred.simonsure.com) red-teaming framework.
@@ -20,7 +20,7 @@ deliberate departure.
 ## Install
 
 ```bash
-pip install poisonedrag-optimizer
+pip install superred-optimizer-poisonedrag
 ```
 
 ## Usage

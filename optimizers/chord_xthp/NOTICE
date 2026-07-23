@@ -1,6 +1,6 @@
 # NOTICE
 
-This module (chord-xthp-optimizer) is a superred optimizer that reimplements
+This module (superred-optimizer-chord-xthp) is a superred optimizer that reimplements
 the Chord Cross-Tool Harvesting and Polluting (XTHP) attack. Our own code is
 MIT licensed (see LICENSE). It additionally bundles data artifacts taken from
 the official Chord repository, which is MIT licensed. This NOTICE preserves the

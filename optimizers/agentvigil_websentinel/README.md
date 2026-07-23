@@ -1,4 +1,4 @@
-# agentvigil-websentinel-optimizer
+# superred-optimizer-agentvigil-websentinel
 
 An **AgentVigil** indirect prompt-injection optimizer for
 [superred](https://superred.simonsure.com) agent targets.
@@ -24,7 +24,7 @@ implement a separate WebSentinel defense.
 ## Install
 
 ```bash
-pip install agentvigil-websentinel-optimizer
+pip install superred-optimizer-agentvigil-websentinel
 ```
 
 ## Usage

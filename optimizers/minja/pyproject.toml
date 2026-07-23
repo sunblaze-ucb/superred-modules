@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "minja-optimizer"
+name = "superred-optimizer-minja"
 version = "0.1.0"
 description = "MINJA memory-injection optimizer for superred agent targets"
 requires-python = ">=3.11,<3.14"
