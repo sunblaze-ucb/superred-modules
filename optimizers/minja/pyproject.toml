@@ -3,10 +3,16 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "minja-optimizer"
+name = "superred-optimizer-minja"
 version = "0.1.0"
 description = "MINJA memory-injection optimizer for superred agent targets"
 requires-python = ">=3.11,<3.14"
+readme = "README.md"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Simon Sure", email = "info@simonsure.com" },
+    { name = "Sarthak Munshi", email = "sarthakmunshi@gmail.com" },
+]
 dependencies = ["superred>=0.1.0"]
 
 [project.optional-dependencies]

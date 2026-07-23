@@ -1,0 +1,31 @@
+# NOTICE
+
+This module (superred-optimizer-poisonedrag) is a superred optimizer that reimplements
+the PoisonedRAG knowledge-corruption attack. Our own code is MIT licensed (see
+LICENSE). It additionally bundles official attack-result datasets taken from
+the official PoisonedRAG repository, which is MIT licensed. This NOTICE
+preserves the required upstream attribution.
+
+## Code (this module)
+
+MIT, Copyright (c) 2026 Simon Sure, Sarthak Munshi. See LICENSE.
+
+## Bundled official PoisonedRAG data
+
+Source: github.com/sleeepeer/PoisonedRAG, `results/adv_targeted_results/`. The
+following files are transcribed verbatim into
+`src/poisonedrag_optimizer/data/adv_targeted_results/`:
+
+- `nq.json`       (from `results/adv_targeted_results/nq.json`)
+- `hotpotqa.json` (from `results/adv_targeted_results/hotpotqa.json`)
+- `msmarco.json`  (from `results/adv_targeted_results/msmarco.json`)
+
+License: MIT, Copyright (c) 2024 Runpeng Geng. Full text in
+`LICENSES/PoisonedRAG-MIT.txt`.
+
+## Method / citation
+
+The PoisonedRAG attack is reimplemented from: "PoisonedRAG: Knowledge
+Corruption Attacks to Retrieval-Augmented Generation of Large Language Models,"
+arXiv:2402.07867 (USENIX Security 2025). When reporting numbers produced with
+this module, cite the PoisonedRAG paper.

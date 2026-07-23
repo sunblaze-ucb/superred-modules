@@ -1,0 +1,24 @@
+NO LICENSE GRANTED — REDISTRIBUTION PENDING AUTHOR PERMISSION
+
+This module reproduces certain literals (mutator prompt templates and seed
+corpora) that originate from the upstream AgentVigil/WebSentinel work at
+https://github.com/wzunknown/agentvigil-websentinel. As of this writing, that
+upstream repository publishes no license. In the absence of an express license
+grant, the upstream material is presumed to be "all rights reserved" under
+applicable copyright law, and no rights to use, copy, modify, or distribute it
+are granted by the upstream author.
+
+Written permission to use and redistribute the upstream material has been
+sought from the upstream author but has not yet been received. Pending receipt
+of that permission (or a subsequently published upstream license), NO LICENSE
+IS GRANTED for this module, and it is NOT released under the MIT License that
+applies to other superred optimizers. This module is withheld from
+distribution and, to the extent it is made available at all, is provided on an
+"AS IS" basis, without warranty or indemnity of any kind, express or implied.
+
+Nothing in this notice constitutes a waiver of, an admission regarding, or a
+grant of any party's rights, and no course of dealing or delay shall be
+construed as such. Once the requested permission is obtained, or the
+upstream-derived material is fully removed and replaced with independently
+authored content, a definitive license will be applied here and this notice
+superseded.

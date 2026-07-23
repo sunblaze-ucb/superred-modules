@@ -3,10 +3,17 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "many-shot-optimizer"
+name = "superred-optimizer-many-shot"
 version = "0.1.0"
 description = "Many-Shot Jailbreak single-turn optimizer for superred"
 requires-python = ">=3.11,<3.14"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Simon Sure", email = "info@simonsure.com" },
+    { name = "Sarthak Munshi", email = "sarthakmunshi@gmail.com" },
+]
 dependencies = ["superred>=0.1.0"]
 
 [project.optional-dependencies]

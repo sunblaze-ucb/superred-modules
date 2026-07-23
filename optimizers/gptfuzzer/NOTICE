@@ -1,0 +1,32 @@
+# NOTICE
+
+This module (superred-optimizer-gptfuzzer) is a superred optimizer that reimplements the
+GPTFuzzer jailbreak fuzzer. Our own code is MIT licensed (see LICENSE). It
+additionally bundles the seed-template dataset taken from the official GPTFuzz
+repository, which is MIT licensed. This NOTICE preserves the required upstream
+attribution.
+
+## Code (this module)
+
+MIT, Copyright (c) 2026 Simon Sure, Sarthak Munshi. See LICENSE.
+
+## Bundled official GPTFuzz data
+
+Source: github.com/sherdencooper/GPTFuzz, `datasets/prompts/GPTFuzzer.csv`.
+Transcribed verbatim (byte-for-byte identical) into
+`src/gptfuzzer_optimizer/data/GPTFuzzer.csv`.
+
+License: MIT, Copyright (c) 2023 Jiahao Yu. Full text in
+`LICENSES/GPTFuzz-MIT.txt`.
+
+## Method / citation
+
+The GPTFuzzer attack is reimplemented from: "GPTFUZZER: Red Teaming Large
+Language Models with Auto-Generated Jailbreak Prompts," arXiv:2309.10253. When
+reporting numbers produced with this module, cite the GPTFuzzer paper.
+
+## Runtime model dependency
+
+The default success classifier is the `hubert233/GPTFuzz` RoBERTa model,
+downloaded at runtime by `transformers` from the Hugging Face Hub. It is a
+third-party model under its own license and is not bundled here.

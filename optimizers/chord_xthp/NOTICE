@@ -1,0 +1,28 @@
+# NOTICE
+
+This module (superred-optimizer-chord-xthp) is a superred optimizer that reimplements
+the Chord Cross-Tool Harvesting and Polluting (XTHP) attack. Our own code is
+MIT licensed (see LICENSE). It additionally bundles data artifacts taken from
+the official Chord repository, which is MIT licensed. This NOTICE preserves the
+required upstream attribution.
+
+## Code (this module)
+
+MIT, Copyright (c) 2026 Simon Sure, Sarthak Munshi. See LICENSE.
+
+## Bundled official Chord data
+
+Source: github.com/systemsecurity-uiuc/Chord, `data/`. The following files are
+transcribed verbatim into `src/chord_xthp_optimizer/data/official/`:
+
+- `malicious_tools.json`          (from `data/malicious_tools.json`)
+- `malicious_tool_arguments.json` (from `data/malicious_tool_arguments.json`)
+- `query.json`                    (from `data/query.json`)
+
+License: MIT, Copyright 2025 river-li. Full text in `LICENSES/Chord-MIT.txt`.
+
+## Method / citation
+
+The Chord attack is reimplemented from: "Les Dissonances: Cross-Tool Harvesting
+and Polluting in Pool-of-Tools Empowered LLM Agents," arXiv:2504.03111 (NDSS
+2026). When reporting numbers produced with this module, cite the Chord paper.

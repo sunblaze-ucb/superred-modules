@@ -3,10 +3,17 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "tap-optimizer"
+name = "superred-optimizer-tap"
 version = "0.1.0"
 description = "Tree of Attacks with Pruning (TAP) optimizer for superred"
 requires-python = ">=3.11,<3.14"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Simon Sure", email = "info@simonsure.com" },
+    { name = "Sarthak Munshi", email = "sarthakmunshi@gmail.com" },
+]
 dependencies = ["superred>=0.1.0"]
 
 [project.optional-dependencies]

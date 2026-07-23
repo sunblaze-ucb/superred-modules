@@ -3,10 +3,16 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "flip-attack-optimizer"
+name = "superred-optimizer-flip-attack"
 version = "0.1.0"
 description = "FlipAttack single-turn jailbreak optimizer for superred"
 requires-python = ">=3.11,<3.14"
+readme = "README.md"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Simon Sure", email = "info@simonsure.com" },
+    { name = "Sarthak Munshi", email = "sarthakmunshi@gmail.com" },
+]
 dependencies = ["superred>=0.1.0"]
 
 [project.optional-dependencies]
