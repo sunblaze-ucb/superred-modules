@@ -408,3 +408,10 @@ auth behaviour in the production container path.
   so it is available in ``get_observables()`` at optimizer init; it is also
   emitted at the start of each ``run()``. Other static observables come from
   config so they are non-empty at ``initialize()``.
+
+## License
+
+MIT. This module is an integration against OpenClaw's public Gateway
+WebSocket protocol and plugin SDK (`openclaw/plugin-sdk`) — it does not vendor
+or derive from OpenClaw's own source. See the
+[OpenClaw project](https://github.com/openclaw/openclaw) for its license.
