@@ -1,6 +1,7 @@
 """OpenClaw target module for superred."""
 
 from openclaw_target.constants import (
+    AGENT_ADMIN_TAG,
     EXTERNAL_DATA_TAG,
     INTERNAL_CONTEXT_TAG,
     MODEL_TAG,
@@ -35,6 +36,7 @@ __all__ = [
     "INTERNAL_CONTEXT_TAG",
     "TOOL_CATALOG_TAG",
     "MODEL_TAG",
+    "AGENT_ADMIN_TAG",
     "OPENCLAW_DOMAIN",
     "USER_MESSAGE_CTRL",
     "WEB_CONTENT_CTRL",

@@ -8,6 +8,12 @@ EXTERNAL_DATA_TAG = SecurityDomainTag("external_data", parent=SYSTEM_TAG)
 INTERNAL_CONTEXT_TAG = SecurityDomainTag("internal_context", parent=SYSTEM_TAG)
 TOOL_CATALOG_TAG = SecurityDomainTag("tool_catalog", parent=SYSTEM_TAG)
 MODEL_TAG = SecurityDomainTag("model", parent=SYSTEM_TAG)
+# Gateway-enforced operator.admin write access (agents.files.set) - the same
+# scope as agents.update/agents.delete. Distinct from EXTERNAL_DATA_TAG: that
+# family needs zero gateway credential (a plugin rewriting content already
+# flowing through a normal tool call), this needs admin control of the
+# deployment itself. See target.py's PERSISTENT_MEMORY_CTRL docstring.
+AGENT_ADMIN_TAG = SecurityDomainTag("agent_admin", parent=SYSTEM_TAG)
 
 OPENCLAW_DOMAIN = SecurityDomain([
     SYSTEM_TAG,
@@ -16,6 +22,7 @@ OPENCLAW_DOMAIN = SecurityDomain([
     INTERNAL_CONTEXT_TAG,
     TOOL_CATALOG_TAG,
     MODEL_TAG,
+    AGENT_ADMIN_TAG,
 ])
 
 DEFAULT_GATEWAY_URL = "ws://127.0.0.1:18789"

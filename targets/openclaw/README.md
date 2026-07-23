@@ -102,7 +102,7 @@ Controllables (injection points):
 | `file_content_transcript` | `external_data` | PostCall, per `read` call | Transcript/memory poison (next prompt). |
 | `shell_output_transcript` | `external_data` | PostCall, per `exec`/`process` call | Transcript/memory poison (next prompt). |
 | `message_content_transcript` | `external_data` | PostCall, per `message` call | Transcript/memory poison (next prompt). |
-| `persistent_memory` | `external_data` | PostCall, once per run (end-of-run) | Cross-session `MEMORY.md` write via `agents.files.set`. Needs `enable_persistent_memory=True`. |
+| `persistent_memory` | `agent_admin` | PostCall, once per run (end-of-run) | Cross-session `MEMORY.md` write via `agents.files.set` (`operator.admin`). Needs `enable_persistent_memory=True`. |
 | `model_system_prompt` | `model` | PreCall, pre-run | Needs the LLM proxy. Same-turn (applied before the run's first model call). |
 | `model_response_injection` | `model` | PreCall, pre-run, applied to every model response | Needs the LLM proxy. **Same-turn** — spliced onto the wire before the agent sees the reply (see Design decisions). |
 
@@ -119,16 +119,22 @@ during a run). User messages and injection-point tool calls are recorded via
 their controllables and are **not** double-emitted as observables.
 
 Security domains (`constants.py`): `system` ⊃ {`user_input`, `external_data`,
-`internal_context`, `tool_catalog`, `model`}. The tag classifies assumed
-*attacker origin*, not delivery location: `external_data` is every
-controllable that models an attacker corrupting a record the agent later
-trusts as fact — same-session (`*_content`, `*_transcript`) or cross-session
-(`persistent_memory`, via `MEMORY.md`) — even though `persistent_memory`'s
-delivery point (loaded into system context) looks like `system_prompt_append`
-/ `system_prompt`. `internal_context` is reserved for the harness's own fixed,
-non-adversarial scenario setup (`system_prompt_append`'s `ConfigSpec`, the
-`system_prompt` `Observable`) — configured once by the evaluator, not an
-attack surface an optimizer searches; no controllable currently uses it.
+`internal_context`, `tool_catalog`, `model`, `agent_admin`}. The tag
+classifies the gateway compromise required to write the data, not a
+narrative "attacker origin". `external_data` covers `*_content`/
+`*_transcript`: the injection plugin rewrites content already flowing
+through a normal tool call (a malicious webpage, a planted file, an inbound
+message), needing zero gateway credential — realistic third-party content in
+third-party storage. `persistent_memory` looks similar (it also poisons a
+record the agent later trusts) but its actual mechanism is a real
+`agents.files.set` RPC into `MEMORY.md`, which the gateway gates behind
+`operator.admin` — the same scope as `agents.update`/`agents.delete` — so it
+gets its own tag, `agent_admin`, rather than `external_data`.
+`workspace_files`' `ConfigSpec` uses that identical admin-gated RPC but is
+evaluator-only (never optimizer-controlled) and is tagged `internal_context`
+for that reason, alongside `system_prompt_append`'s `ConfigSpec` and the
+`system_prompt` `Observable` — the harness's own fixed, non-adversarial
+scenario setup, configured once by the evaluator; no `Controllable` uses it.
 
 **Adding capabilities.** Tool-output injection points are declared in the
 `TOOL_OUTPUT_CONTROLLABLES` registry (gateway tool name → `Controllable`).

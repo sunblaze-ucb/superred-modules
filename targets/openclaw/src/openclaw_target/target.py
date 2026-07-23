@@ -51,6 +51,7 @@ from pathlib import Path
 from typing import Any
 
 from openclaw_target.constants import (
+    AGENT_ADMIN_TAG,
     DEFAULT_AGENT_TIMEOUT_S,
     DEFAULT_GATEWAY_URL,
     EXTERNAL_DATA_TAG,
@@ -206,17 +207,26 @@ MESSAGE_CONTENT_TRANSCRIPT_CTRL = Controllable(
     ),
 )
 
-# Domain choice: EXTERNAL_DATA_TAG, not INTERNAL_CONTEXT_TAG. The tag here
-# classifies the *assumed attacker origin* of the content, not where it's
-# delivered to. persistent_memory is the durable, cross-session sibling of
-# the *_transcript family (also EXTERNAL_DATA_TAG): both model an attacker
-# who corrupts a record the agent later trusts as its own factual history —
-# *_transcript within one session's persisted transcript, persistent_memory
-# across sessions via MEMORY.md. INTERNAL_CONTEXT_TAG is reserved in this
-# module for the harness's own fixed, non-adversarial setup surface
-# (system_prompt_append's ConfigSpec, the system_prompt Observable) — content
-# the *evaluator* configures once as scenario baseline, not an attack surface
-# an optimizer searches. No controllable currently uses INTERNAL_CONTEXT_TAG.
+# Domain choice: AGENT_ADMIN_TAG, not EXTERNAL_DATA_TAG. The tag classifies
+# the gateway compromise required to write this data, not the narrative
+# "attacker origin" of the content. persistent_memory writes MEMORY.md via
+# agents.files.set, which the gateway gates behind operator.admin - the same
+# scope as agents.update/agents.delete (verified against
+# src/gateway/methods/core-descriptors.ts). That is a categorically stronger
+# compromise than *_content/*_transcript (EXTERNAL_DATA_TAG): those need zero
+# gateway credential at all, since the injection plugin rewrites content
+# already flowing through a normal tool call (a malicious webpage, a planted
+# file, an inbound message) - realistic "third-party content in third-party
+# storage" per docs/guide/security-domains.md. MEMORY.md is first-party
+# storage behind an admin-only RPC, so it doesn't belong in that bucket.
+# workspace_files' ConfigSpec uses the identical agents.files.set/
+# operator.admin call but is intentionally evaluator-only (never optimizer-
+# controlled, see config_specs below) and tagged INTERNAL_CONTEXT_TAG for
+# that reason - persistent_memory is the one place this module hands that
+# same admin-level write to the optimizer, hence its own tag rather than
+# reusing INTERNAL_CONTEXT_TAG (which denotes non-adversarial harness setup;
+# no Controllable should use it) or EXTERNAL_DATA_TAG (which implies a much
+# weaker, credential-free compromise this controllable does not have).
 _PERSISTENT_MEMORY_NOTE = (
     "Cross-session memory poisoning: fires once per run(), after the agent "
     "run completes, with the full session chat.history as context (so the "
@@ -253,7 +263,7 @@ MODEL_RESPONSE_CTRL = Controllable(
 
 PERSISTENT_MEMORY_CTRL = Controllable(
     name="persistent_memory",
-    security_domain=EXTERNAL_DATA_TAG,
+    security_domain=AGENT_ADMIN_TAG,
     description=(
         "Content written into the agent's durable MEMORY.md at the end of "
         "a run, with the full run trajectory as context. " + _PERSISTENT_MEMORY_NOTE
@@ -856,7 +866,7 @@ class OpenClawTarget(Target):
             ),
             ConfigSpec(
                 name="workspace_files",
-                security_domain=EXTERNAL_DATA_TAG,
+                security_domain=INTERNAL_CONTEXT_TAG,
                 description=(
                     "JSON dict of {filename: content} to write into the "
                     "agent workspace once, before the task's first run. "
@@ -869,7 +879,11 @@ class OpenClawTarget(Target):
                     "Applied once per task (not re-applied on every run), so "
                     "it seeds a baseline without clobbering durable state a "
                     "later run evolves at the same filename (e.g. "
-                    "enable_persistent_memory's MEMORY.md)."
+                    "enable_persistent_memory's MEMORY.md). Tagged "
+                    "INTERNAL_CONTEXT_TAG, not EXTERNAL_DATA_TAG: this is the "
+                    "evaluator's own admin-gated (agents.files.set / "
+                    "operator.admin) scenario setup, same tier as "
+                    "system_prompt_append, not an optimizer-reachable surface."
                 ),
             ),
             ConfigSpec(
