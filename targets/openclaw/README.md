@@ -130,11 +130,18 @@ record the agent later trusts) but its actual mechanism is a real
 `agents.files.set` RPC into `MEMORY.md`, which the gateway gates behind
 `operator.admin` — the same scope as `agents.update`/`agents.delete` — so it
 gets its own tag, `agent_admin`, rather than `external_data`.
-`workspace_files`' `ConfigSpec` uses that identical admin-gated RPC but is
-evaluator-only (never optimizer-controlled) and is tagged `internal_context`
-for that reason, alongside `system_prompt_append`'s `ConfigSpec` and the
-`system_prompt` `Observable` — the harness's own fixed, non-adversarial
-scenario setup, configured once by the evaluator; no `Controllable` uses it.
+`system_prompt_append` and `workspace_files` (both `ConfigSpec`s) write
+through that identical `agents.files.set`/`operator.admin` RPC and carry the
+same `agent_admin` tag — one real trust boundary, one tag, regardless of
+which node type currently exercises it. That they're evaluator-only rather
+than optimizer-controlled is a separate, already-structural fact:
+`ConfigSpec.security_domain` is never read by the Controller's scope filter
+(only `Controllable`/`Observable`/`Score` domains gate anything), so a
+`ConfigSpec` can't become attacker-reachable no matter which tag it carries.
+`internal_context` is reserved for the harness's genuinely zero-RPC surface:
+the `system_prompt` `Observable` is a plain local attribute read, not an
+`agents.files.*` call, so it keeps its own tag distinct from the
+`ConfigSpec` that writes the value it reads.
 
 **Adding capabilities.** Tool-output injection points are declared in the
 `TOOL_OUTPUT_CONTROLLABLES` registry (gateway tool name → `Controllable`).

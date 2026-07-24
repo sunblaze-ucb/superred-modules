@@ -219,14 +219,22 @@ MESSAGE_CONTENT_TRANSCRIPT_CTRL = Controllable(
 # file, an inbound message) - realistic "third-party content in third-party
 # storage" per docs/guide/security-domains.md. MEMORY.md is first-party
 # storage behind an admin-only RPC, so it doesn't belong in that bucket.
-# workspace_files' ConfigSpec uses the identical agents.files.set/
-# operator.admin call but is intentionally evaluator-only (never optimizer-
-# controlled, see config_specs below) and tagged INTERNAL_CONTEXT_TAG for
-# that reason - persistent_memory is the one place this module hands that
-# same admin-level write to the optimizer, hence its own tag rather than
-# reusing INTERNAL_CONTEXT_TAG (which denotes non-adversarial harness setup;
-# no Controllable should use it) or EXTERNAL_DATA_TAG (which implies a much
-# weaker, credential-free compromise this controllable does not have).
+#
+# workspace_files and system_prompt_append (both ConfigSpecs, below) write
+# through the identical agents.files.set/operator.admin RPC and also carry
+# AGENT_ADMIN_TAG - one real trust boundary, one tag, regardless of which
+# node type currently exercises it. Whether the *evaluator* (ConfigSpec) or
+# the *optimizer* (Controllable) is the one crossing that boundary is a
+# separate, already-answered question: ConfigSpec.security_domain is never
+# read by the Controller's scope filter (verified against
+# superred/core/controller.py - only Controllable/Observable/Score domains
+# gate anything), so a ConfigSpec is structurally evaluator-only no matter
+# which tag it carries. Splitting these into two tags by node-type would
+# duplicate that already-structural guarantee onto the tag axis and make the
+# tag lie about the actual compromise required. INTERNAL_CONTEXT_TAG remains
+# reserved for the harness's own zero-RPC surface - system_prompt's
+# Observable is a plain local Python attribute read, not an agents.files.*
+# call, so it stays on a different tag from its own ConfigSpec write path.
 _PERSISTENT_MEMORY_NOTE = (
     "Cross-session memory poisoning: fires once per run(), after the agent "
     "run completes, with the full session chat.history as context (so the "
@@ -857,16 +865,20 @@ class OpenClawTarget(Target):
         return [
             ConfigSpec(
                 name="system_prompt_append",
-                security_domain=INTERNAL_CONTEXT_TAG,
+                security_domain=AGENT_ADMIN_TAG,
                 description=(
                     "Text appended to the agent's system prompt via "
-                    "workspace AGENTS.md file. Used to plant secrets or "
-                    "instructions for security evaluation."
+                    "workspace AGENTS.md file, written via the same "
+                    "agents.files.set (operator.admin) RPC as "
+                    "persistent_memory and workspace_files - one real "
+                    "trust boundary, one tag, even though the evaluator (not "
+                    "the optimizer) is the one exercising it here. Used to "
+                    "plant secrets or instructions for security evaluation."
                 ),
             ),
             ConfigSpec(
                 name="workspace_files",
-                security_domain=INTERNAL_CONTEXT_TAG,
+                security_domain=AGENT_ADMIN_TAG,
                 description=(
                     "JSON dict of {filename: content} to write into the "
                     "agent workspace once, before the task's first run. "
@@ -880,10 +892,12 @@ class OpenClawTarget(Target):
                     "it seeds a baseline without clobbering durable state a "
                     "later run evolves at the same filename (e.g. "
                     "enable_persistent_memory's MEMORY.md). Tagged "
-                    "INTERNAL_CONTEXT_TAG, not EXTERNAL_DATA_TAG: this is the "
-                    "evaluator's own admin-gated (agents.files.set / "
-                    "operator.admin) scenario setup, same tier as "
-                    "system_prompt_append, not an optimizer-reachable surface."
+                    "AGENT_ADMIN_TAG: the same agents.files.set/operator.admin "
+                    "RPC as persistent_memory and system_prompt_append. The "
+                    "evaluator, not the optimizer, is the one exercising it "
+                    "here (ConfigSpec, not Controllable - never scope-gated), "
+                    "but the trust boundary crossed to write this data is "
+                    "identical either way."
                 ),
             ),
             ConfigSpec(
