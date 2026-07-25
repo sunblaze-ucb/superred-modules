@@ -30,11 +30,21 @@ class Evaluator:
         *,
         llm: LLMClient,
         max_tokens: int = 10,
-        temperature: float = 0.0,
+        temperature: float | None = None,
     ) -> None:
         self._llm = llm
         self._max_tokens = max_tokens
         self._temperature = temperature
+
+    def _temp_kwargs(self) -> dict[str, float]:
+        """Temperature kwarg, omitted entirely when unset.
+
+        # ``None`` (the default) means DO NOT SEND temperature. Reasoning models
+    # reject it (gpt-5.x: "Only temperature=1 is supported"), and this
+    # component's failures are swallowed, so pinning 0.0 silently disables
+    # the check on those models rather than failing loudly.
+        """
+        return {} if self._temperature is None else {"temperature": self._temperature}
 
     async def is_on_topic(self, prompt: str, goal: str) -> bool:
         """Return True if *prompt* is on-topic for *goal*."""
@@ -44,8 +54,8 @@ class Evaluator:
         ]
         response = await self._llm.complete(
             messages,
-            temperature=self._temperature,
             max_tokens=self._max_tokens,
+            **self._temp_kwargs(),
         )
         text: str = response.choices[0].message.content or ""
         return self._parse_on_topic(text)
@@ -70,8 +80,8 @@ class Evaluator:
         ]
         llm_response = await self._llm.complete(
             messages,
-            temperature=self._temperature,
             max_tokens=self._max_tokens,
+            **self._temp_kwargs(),
         )
         text: str = llm_response.choices[0].message.content or ""
         return self._parse_score(text)

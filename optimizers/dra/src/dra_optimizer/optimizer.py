@@ -60,7 +60,7 @@ class DraOptimizer(Optimizer):
         target_controllable_name: str | None = None,
         use_system_prompt_when_available: bool = True,
         use_llm_judge_when_no_feedback: bool = True,
-        judge_temperature: float = 0.0,
+        judge_temperature: float | None = None,
         judge_top_p: float = 1.0,
         judge_max_tokens: int = 10,
         max_no_signal_runs: int = 0,

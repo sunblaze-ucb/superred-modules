@@ -70,7 +70,7 @@ class PAIROptimizer(Optimizer):
         attack_top_p: float = 0.9,
         judge_method: str = "gcg",
         judge_max_tokens: int = 10,
-        judge_temperature: float = 0.0,
+        judge_temperature: float | None = None,
         target_str: str | None = None,
         response_observable_names: Iterable[str] | None = None,
         target_controllable_name: str | None = None,

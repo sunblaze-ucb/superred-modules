@@ -84,7 +84,7 @@ class PairEvaluator:
         llm: LLMClient,
         judge_method: str = "gcg",
         judge_max_tokens: int = 10,
-        judge_temperature: float = 0.0,
+        judge_temperature: float | None = None,
     ) -> None:
         if judge_method not in {"gcg", "gpt", "no-judge"}:
             raise ValueError("judge_method must be one of ['gcg', 'gpt', 'no-judge']")
@@ -145,8 +145,8 @@ class PairEvaluator:
                 },
             ],
             max_tokens=self._judge_max_tokens,
-            temperature=self._judge_temperature,
             top_p=1.0,
+            **({} if self._judge_temperature is None else {"temperature": self._judge_temperature}),
         )
         content = result.choices[0].message.content or ""
         score = self._parse_gpt_score(content)

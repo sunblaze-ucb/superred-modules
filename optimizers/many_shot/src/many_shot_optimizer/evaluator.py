@@ -99,7 +99,6 @@ class Evaluator:
                     ),
                 }
             ],
-            temperature=0.0,
         )
         return self._parse_refusal_classifier(
             result.choices[0].message.content or "", response=response
@@ -110,7 +109,6 @@ class Evaluator:
     ) -> tuple[float, str]:
         result = await self._llm.complete(
             [{"role": "user", "content": LLM_JUDGE_PROMPT.format(goal=goal, response=response)}],
-            temperature=0.0,
         )
         return self._parse_llm_judge_score(result.choices[0].message.content or "")
 

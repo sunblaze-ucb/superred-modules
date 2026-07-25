@@ -162,7 +162,8 @@ async def test_defaults_match_original_tap_shape() -> None:
     assert opt._tree_depth == 10
     assert opt._attack_top_p == 0.9
     assert opt._attacker_max_tokens == 500
-    assert opt._evaluator_temperature == 0.0
+    # None means the evaluator sends no temperature (reasoning models reject it)
+    assert opt._evaluator_temperature is None
     assert opt._evaluator_max_tokens == 10
     assert opt._max_attack_attempts == 5
     assert opt._keep_last_n == 3

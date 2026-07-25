@@ -78,8 +78,10 @@ class Evaluator:
         self._max_tokens = max_tokens
 
     async def score_response(self, *, goal: str, response: str) -> EvaluationScore:
+        # NO TEMPERATURE: reasoning models reject it (gpt-5.x: "Only
+        # temperature=1 is supported"), and this evaluator's failures are
+        # swallowed, so pinning 0.0 silently disables the check on them.
         kwargs: dict[str, float | int] = {
-            "temperature": 0.0,
             "top_p": self._top_p,
         }
         if self._max_tokens is not None:

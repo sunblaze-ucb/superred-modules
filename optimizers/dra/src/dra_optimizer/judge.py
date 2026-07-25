@@ -36,7 +36,7 @@ class DraGptJudge:
         self,
         *,
         llm: LLMClient,
-        temperature: float = 0.0,
+        temperature: float | None = None,
         top_p: float = 1.0,
         max_tokens: int = 10,
     ) -> None:
@@ -54,9 +54,9 @@ class DraGptJudge:
                     "content": f"[PROMPT]:{attack_prompt}\n[ASSISTANT'S RESPONSE]: {response}",
                 },
             ],
-            temperature=self._temperature,
             top_p=self._top_p,
             max_tokens=self._max_tokens,
+            **({} if self._temperature is None else {"temperature": self._temperature}),
         )
         content = result.choices[0].message.content or ""
         return JudgeScore(rating=self._parse_rating(content), rationale=content)

@@ -55,7 +55,7 @@ class TapOptimizer(Optimizer):
         attack_temperature: float = 1.0,
         attack_top_p: float = 0.9,
         attacker_max_tokens: int = 500,
-        evaluator_temperature: float = 0.0,
+        evaluator_temperature: float | None = None,
         evaluator_max_tokens: int = 10,
         max_attack_attempts: int = 5,
         keep_last_n: int = 3,

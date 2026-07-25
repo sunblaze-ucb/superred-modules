@@ -119,8 +119,10 @@ class FITDAssistant:
         )
         completion = await self._llm.complete(
             [{"role": "user", "content": judge_prompt}],
+            # NO TEMPERATURE: reasoning models reject it (gpt-5.x: "Only
+            # temperature=1 is supported"), and this call's failure is
+            # swallowed, so pinning it silently disables the check.
             max_tokens=10,
-            temperature=0.0,
         )
         result = _extract_content(completion).strip()
         if result == "1":
