@@ -198,7 +198,15 @@ class HarmBenchJudge:
         kwargs: dict[str, object] = {
             "model": self._model,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0,
+            # NO TEMPERATURE. Upstream pins temperature=0 for determinism, but
+            # current reasoning models reject the parameter outright: OpenAI's
+            # gpt-5.x answer "gpt-5 models don't support temperature=0. Only
+            # temperature=1 is supported", and Bedrock Claude ids reject
+            # temperature combined with top_p. Sending it makes the judge
+            # unusable on exactly the strongest models available to evaluate
+            # with, and a judge that cannot run scores nothing. Omitting it uses
+            # each provider's default: a little sampling determinism traded for
+            # the judge working at all.
             # The judge is expected to emit "Yes" or "No". Upstream uses
             # max_tokens=1 because their fine-tuned classifier emits
             # exactly one token; chat-completion judges sometimes prepend

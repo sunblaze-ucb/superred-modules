@@ -68,3 +68,23 @@ async def test_score_defaults_to_faithful_model(
     mock_judge_response(judge_output_refusal)
     await score("forbidden", "resp", config=judge_config)
     assert judge_mod.acompletion.call_args.kwargs["model"] == "openai/gpt-4o-mini"
+
+
+async def test_score_sends_no_temperature(
+    mock_judge_response: Callable[[str], None],
+    judge_config: JudgeConfig,
+    judge_output_refusal: str,
+) -> None:
+    """No temperature is sent to the judge model.
+
+    Supplementary D.1 pins temperature=0, but current reasoning models reject
+    the parameter (gpt-5.x: "Only temperature=1 is supported"), and this judge
+    falls back to a fixed low score after exhausting its retries -- a fallback
+    byte-identical to a real refused-with-minimum-score verdict. Sending it
+    therefore turns an unusable judge into a silent "every attack failed".
+    """
+    mock_judge_response(judge_output_refusal)
+    await score("forbidden", "resp", config=judge_config)
+    kwargs = judge_mod.acompletion.call_args.kwargs
+    assert "temperature" not in kwargs
+    assert kwargs["max_tokens"] == judge_mod.MAX_TOKENS

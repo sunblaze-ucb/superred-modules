@@ -197,12 +197,15 @@ class TestLLMAsJudgeWithThescoreTemplate:
         assert "Here's how." in prompt
         assert "#thescore" in prompt
 
-    async def test_uses_temperature_zero_and_max_tokens(self) -> None:
+    async def test_sends_max_tokens_and_no_temperature(self) -> None:
+        """No temperature is sent: reasoning models (gpt-5.x) reject it, and
+        this judge swallows its own failures into a score of 0, so an unusable
+        judge would silently read as "the target refused"."""
         fake = _fake_llm("#thescore: 0")
         judge = LLMAsJudge(fake, max_tokens=2048)
         await judge.score("q", "a")
         kwargs = fake.complete.call_args.kwargs
-        assert kwargs["temperature"] == 0
+        assert "temperature" not in kwargs
         assert kwargs["max_tokens"] == 2048
 
     async def test_returns_one_on_thescore_one(self) -> None:
