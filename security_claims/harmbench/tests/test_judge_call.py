@@ -74,8 +74,9 @@ async def test_judge_unparseable_raises() -> None:
 
 @pytest.mark.asyncio
 async def test_judge_passes_correct_kwargs_to_litellm() -> None:
-    """Verify model, messages, temperature, max_tokens, api_base, api_key
-    are all passed through correctly."""
+    """Verify model, messages, max_tokens, api_base, api_key are all passed
+    through correctly, and that NO temperature is sent (reasoning models such as
+    gpt-5.x reject it, which would make the judge unusable)."""
     judge = _judge()
     mock_acompletion = AsyncMock(return_value=_make_response("Yes"))
     with patch("harmbench_claim.judge.acompletion", new=mock_acompletion):
@@ -83,7 +84,7 @@ async def test_judge_passes_correct_kwargs_to_litellm() -> None:
 
     call_kwargs = mock_acompletion.await_args.kwargs
     assert call_kwargs["model"] == "openai/test"
-    assert call_kwargs["temperature"] == 0
+    assert "temperature" not in call_kwargs
     assert call_kwargs["max_tokens"] == 16
     assert call_kwargs["num_retries"] == 2
     assert call_kwargs["api_base"] == "https://x"

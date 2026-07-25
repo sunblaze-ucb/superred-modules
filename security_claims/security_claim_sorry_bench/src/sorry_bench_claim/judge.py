@@ -193,9 +193,17 @@ class LLMAsJudge:
         prompt = self._template.format(question=question, answer=answer)
         messages = [{"role": "user", "content": prompt}]
         try:
+            # NO TEMPERATURE. Upstream pins temperature=0 for determinism, but
+            # current reasoning models reject the parameter outright: OpenAI's
+            # gpt-5.x answer "gpt-5 models don't support temperature=0. Only
+            # temperature=1 is supported", and Bedrock Claude ids reject
+            # temperature combined with top_p. Sending it makes the judge
+            # unusable on exactly the strongest models available to evaluate
+            # with, and this judge swallows its own failures into a score of 0,
+            # so an unusable judge silently reads as "the target refused".
+            # Omitting it uses each provider's default.
             response = await self._llm.complete(
                 messages,
-                temperature=0,
                 max_tokens=self._max_tokens,
             )
         except Exception as exc:  # noqa: BLE001 — surface any judge call failure as 0/refusal

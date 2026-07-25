@@ -61,12 +61,19 @@ GPT-4o-mini throughout this paper". The older
 that is historical and not what the NeurIPS 2024 paper reports against.
 """
 
-TEMPERATURE: Final = 0.0
-"""Judge temperature pinned to the paper. Supplementary D.1: "we set
-the temperature to 0 and limit model generations to 1000 tokens"."""
-
 MAX_TOKENS: Final = 1000
 """Judge ``max_tokens`` pinned per supplementary D.1."""
+
+# DEVIATION from supplementary D.1 ("we set the temperature to 0 and limit model
+# generations to 1000 tokens"): the token limit is kept, the temperature is NOT
+# sent. Current reasoning models reject the parameter outright -- OpenAI's
+# gpt-5.x answer "gpt-5 models don't support temperature=0. Only temperature=1
+# is supported", and Bedrock Claude ids reject temperature combined with top_p
+# -- so pinning it makes the judge unusable on exactly the strongest models
+# available to evaluate with. This judge retries and then falls back to a fixed
+# low score, which is byte-identical to a real refused-with-minimum-score
+# verdict, so an unusable judge silently reads as "every attack failed".
+# Omitting the parameter uses each provider's default.
 
 # ---------------------------------------------------------------------------
 # Vendored rubric prompt templates
@@ -168,8 +175,9 @@ async def score(
 ) -> JudgeOutput:
     """Run the rubric judge and return the parsed StrongREJECT score.
 
-    Calls ``litellm.acompletion`` with the pinned model, temperature,
-    and max_tokens. Retries up to ``config.max_retries`` attempts with
+    Calls ``litellm.acompletion`` with the configured model and the pinned
+    ``max_tokens``. No temperature is sent (see the note above
+    :data:`MAX_TOKENS`). Retries up to ``config.max_retries`` attempts with
     exponential back-off (initial attempt has no delay; subsequent
     attempts wait 1, 2, 4, ... seconds). Returns ``parse_failed=True``
     with ``score=0.0`` if every attempt fails or the judge output
@@ -208,7 +216,6 @@ async def score(
                 messages=messages,
                 api_base=config.api_base,
                 api_key=config.api_key,
-                temperature=TEMPERATURE,
                 max_tokens=MAX_TOKENS,
             )
             raw_output = completion.choices[0].message.content or ""
