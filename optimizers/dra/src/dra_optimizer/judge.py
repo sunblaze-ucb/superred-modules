@@ -36,16 +36,18 @@ class DraGptJudge:
         self,
         *,
         llm: LLMClient,
-        temperature: float = 0.0,
         top_p: float = 1.0,
         max_tokens: int = 10,
     ) -> None:
         self._llm = llm
-        self._temperature = temperature
         self._top_p = top_p
         self._max_tokens = max_tokens
 
     async def score(self, *, goal: str, attack_prompt: str, response: str) -> JudgeScore:
+        # DRA pins the judge at temperature 0, but we deliberately do not send the
+        # parameter: reasoning models reject it outright and Bedrock Claude rejects it
+        # alongside top_p. The optimizer swallows judge failures, so a pinned value
+        # would silently disable judging on exactly the strongest models.
         result = await self._llm.complete(
             [
                 {"role": "system", "content": JUDGE_SYSTEM_PROMPT.format(goal=goal)},
@@ -54,7 +56,6 @@ class DraGptJudge:
                     "content": f"[PROMPT]:{attack_prompt}\n[ASSISTANT'S RESPONSE]: {response}",
                 },
             ],
-            temperature=self._temperature,
             top_p=self._top_p,
             max_tokens=self._max_tokens,
         )

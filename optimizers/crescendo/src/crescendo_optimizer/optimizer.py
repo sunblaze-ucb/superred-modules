@@ -71,9 +71,10 @@ class CrescendoOptimizer(Optimizer):
           ``max_attempts_per_variant`` times. Each retry receives a lean
           failure log (first refused message + task rationale) and, when
           the previous attempt hit a terminal refusal, replays the
-          successful prefix on a temperature=0 target so the new attempt
-          generates a different next turn from the same conversation
-          state — equivalent to the paper's ``pop(H_T)`` realised across
+          successful prefix so the new attempt generates a different next
+          turn from approximately the same conversation state (no
+          temperature is pinned, so replay is not exact) -- equivalent to
+          the paper's ``pop(H_T)`` realised across
           runs. Variants stay fully independent (failure log and replay
           plan reset on rotation).
         - Ignores ``response`` controllable injections (no response
@@ -88,7 +89,6 @@ class CrescendoOptimizer(Optimizer):
         success_threshold: float = 0.8,
         max_variants: int | None = None,
         max_attempts_per_variant: int = 3,
-        attack_temperature: float = 1.0,
     ) -> None:
         """Configure the Crescendo state machine.
 
@@ -115,11 +115,6 @@ class CrescendoOptimizer(Optimizer):
                 lean failure log into the next attacker; refusal-driven
                 failures additionally queue a deterministic-prefix
                 replay plan (see ASSUMPTIONS.md §(e)).
-            attack_temperature: Temperature passed to the attacker LLM.
-                The internal evaluator and the target leave temperature
-                unset (each provider uses its default); the replay
-                determinism premise depends on the target's default
-                sampling being deterministic for repeated calls.
 
         Raises:
             ValueError: If ``max_attempts_per_variant < 1``.
@@ -127,7 +122,6 @@ class CrescendoOptimizer(Optimizer):
         super().__init__()
         if max_attempts_per_variant < 1:
             raise ValueError("max_attempts_per_variant must be >= 1")
-        self._attack_temperature = attack_temperature
         self._max_turns = max_turns
         self._max_backtracks = max_backtracks
         self._success_threshold = success_threshold
@@ -547,7 +541,6 @@ class CrescendoOptimizer(Optimizer):
         variant = get_variant(self._variant_index)
         self._attacker = Attacker(
             llm=self.llm,
-            temperature=self._attack_temperature,
             system_prompt=variant,
             target_model_id=self._target_model_id,
             target_system_prompt=self._target_system_prompt,

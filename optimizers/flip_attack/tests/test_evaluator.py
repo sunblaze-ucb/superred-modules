@@ -107,6 +107,8 @@ async def test_score_response_accepts_prompt_parameter():
     messages = call_args[0][0]
     assert "the prompt" in messages[1]["content"]
     assert call_args.kwargs["max_tokens"] == 10
+    # Temperature is deliberately not sent (reasoning models reject it).
+    assert "temperature" not in call_args.kwargs
 
 
 @pytest.mark.asyncio

@@ -94,11 +94,13 @@ class TestWarmUp:
         assert "ineffective" not in system.lower()
 
     @pytest.mark.asyncio
-    async def test_warm_up_passes_temperature(self) -> None:
+    async def test_warm_up_sends_no_temperature(self) -> None:
+        # Reasoning models reject the parameter outright, so the
+        # attacker must never send it.
         llm = _llm_returning("[END OF JAILBREAK PROMPT]")
-        attacker = Attacker(llm, temperature=0.5)
+        attacker = Attacker(llm)
         await attacker.warm_up("x")
-        assert llm.complete.call_args.kwargs["temperature"] == 0.5
+        assert "temperature" not in llm.complete.call_args.kwargs
 
 
 # ---------------------------------------------------------------------------

@@ -66,11 +66,9 @@ class PAIROptimizer(Optimizer):
         keep_last_n: int = 4,
         attack_max_tokens: int = 500,
         max_attack_attempts: int = 5,
-        attack_temperature: float = 1.0,
         attack_top_p: float = 0.9,
         judge_method: str = "gcg",
         judge_max_tokens: int = 10,
-        judge_temperature: float = 0.0,
         target_str: str | None = None,
         response_observable_names: Iterable[str] | None = None,
         target_controllable_name: str | None = None,
@@ -91,11 +89,9 @@ class PAIROptimizer(Optimizer):
         self._keep_last_n = keep_last_n
         self._attack_max_tokens = attack_max_tokens
         self._max_attack_attempts = max_attack_attempts
-        self._attack_temperature = attack_temperature
         self._attack_top_p = attack_top_p
         self._judge_method = judge_method
         self._judge_max_tokens = judge_max_tokens
-        self._judge_temperature = judge_temperature
         self._target_str_override = target_str
         self._response_observable_names = (
             frozenset(response_observable_names)
@@ -183,11 +179,14 @@ class PAIROptimizer(Optimizer):
             self._streams.append(
                 PairStream(index=idx, system_prompt=system_prompt, processed_response=init_msg)
             )
+        # No temperature is forwarded to the attacker or the judge, by design. PAIR pins
+        # 1.0 and 0.0 respectively, but reasoning models reject the parameter outright and
+        # both helpers swallow their own failures, so forwarding a pin would silently
+        # disable this optimizer on exactly the strongest attacker and judge models.
         self._attacker = PairAttacker(
             llm=self.llm,
             attack_max_tokens=self._attack_max_tokens,
             max_attack_attempts=self._max_attack_attempts,
-            temperature=self._attack_temperature,
             top_p=self._attack_top_p,
             keep_last_n=self._keep_last_n,
         )
@@ -195,7 +194,6 @@ class PAIROptimizer(Optimizer):
             llm=self.llm,
             judge_method=self._judge_method,
             judge_max_tokens=self._judge_max_tokens,
-            judge_temperature=self._judge_temperature,
         )
         self._pending_candidates = []
         self._current_candidate = None

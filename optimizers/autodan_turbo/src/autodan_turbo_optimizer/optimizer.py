@@ -88,11 +88,6 @@ class AutoDANTurboOptimizer(Optimizer):
             we default to 10 to match merged optimizer norms.
         break_score: Internal-success threshold (1.0–10.0). Paper
             value is 8.5.
-        attacker_temperature: Temperature for attacker LLM. Paper:
-            1.0.
-        scorer_temperature: Temperature for scorer LLM. Paper: 0.7.
-        summarizer_temperature: Temperature for summarizer LLM. Paper:
-            0.6.
         top_k_strategies: Cap on strategies passed to the attacker
             during ``use_strategy`` / ``find_new_strategy``. Default
             5 matches upstream ``Retrieval.pop`` (``k=5``).
@@ -117,9 +112,6 @@ class AutoDANTurboOptimizer(Optimizer):
         *,
         max_attempts: int = 10,
         break_score: float = 8.5,
-        attacker_temperature: float = 1.0,
-        scorer_temperature: float = 0.7,
-        summarizer_temperature: float = 0.6,
         top_k_strategies: int = 5,
         response_observable_names: Iterable[str] | None = None,
         target_controllable_name: str | None = None,
@@ -135,9 +127,6 @@ class AutoDANTurboOptimizer(Optimizer):
 
         self._max_attempts = max_attempts
         self._break_score = break_score
-        self._attacker_temperature = attacker_temperature
-        self._scorer_temperature = scorer_temperature
-        self._summarizer_temperature = summarizer_temperature
         self._top_k = top_k_strategies
         self._response_observable_names: frozenset[str] = frozenset(
             response_observable_names
@@ -201,15 +190,13 @@ class AutoDANTurboOptimizer(Optimizer):
         await super().initialize(goal, controllables, observables, llm_client)
         self._goal = goal
         self._library = StrategyLibrary()
-        self._attacker = Attacker(
-            llm_client, temperature=self._attacker_temperature,
-        )
-        self._scorer = Scorer(
-            llm_client, temperature=self._scorer_temperature,
-        )
-        self._summarizer = Summarizer(
-            llm_client, temperature=self._summarizer_temperature,
-        )
+        # No temperature is forwarded to the three LLM drivers: the
+        # paper's pins (1.0 / 0.7 / 0.6) are rejected outright by
+        # reasoning models, and scorer/summarizer failures are
+        # swallowed, so a pin would silently disable this optimizer.
+        self._attacker = Attacker(llm_client)
+        self._scorer = Scorer(llm_client)
+        self._summarizer = Summarizer(llm_client)
         # Capture the threat-model surfaces granted by the controller.
         self._target_context = self._extract_target_context(observables)
         self._system_prompt_writable = self._is_system_prompt_writable(

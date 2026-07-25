@@ -145,8 +145,6 @@ class GEPAOptimizer(Optimizer):
         max_attempts: Budget B — number of superred runs to perform
             (paper's main results sample budgets in the tens to low
             hundreds; default 20 is a reasonable starting budget).
-        reflection_temperature: Sampling temperature for the reflection
-            LM. The paper uses high temperature for prompt diversity.
         response_observable_names: Names recognised as target replies on
             the trajectory (defaults to ``response``,
             ``model_response``, ``assistant_response`` — same set as
@@ -169,7 +167,6 @@ class GEPAOptimizer(Optimizer):
         self,
         *,
         max_attempts: int = 20,
-        reflection_temperature: float = 1.0,
         response_observable_names: Iterable[str] | None = None,
         target_controllable_name: str | None = None,
         max_no_signal_runs: int = 0,
@@ -179,7 +176,6 @@ class GEPAOptimizer(Optimizer):
             raise ValueError("max_attempts must be at least 1")
 
         self._max_attempts = max_attempts
-        self._reflection_temperature = reflection_temperature
         self._response_observable_names: frozenset[str] = frozenset(
             response_observable_names
             if response_observable_names is not None
@@ -232,10 +228,11 @@ class GEPAOptimizer(Optimizer):
     ) -> None:
         await super().initialize(goal, controllables, observables, llm_client)
         self._goal = goal
-        self._reflector = Reflector(
-            llm=self.llm,
-            temperature=self._reflection_temperature,
-        )
+        # No sampling temperature is sent to the reflection LM: the
+        # paper pins a high one for prompt diversity, but reasoning
+        # models reject the parameter, and reflection failures are
+        # swallowed here, so a pin would silently disable mutation.
+        self._reflector = Reflector(llm=self.llm)
         self._target_observables = self._extract_static_observables(observables)
         self._target_controllable_name = self._resolve_target_controllable_name(
             controllables,

@@ -81,7 +81,6 @@ class GPTFuzzerOptimizer(Optimizer):
         max_reject: int = -1,
         max_iteration: int = -1,
         energy: int = 1,
-        mutator_temperature: float = 1.0,
         mutator_max_tokens: int = 512,
         max_no_signal_runs: int = 0,
         random_seed: int | None = None,
@@ -106,7 +105,6 @@ class GPTFuzzerOptimizer(Optimizer):
         self._max_reject = max_reject
         self._max_iteration = max_iteration
         self._energy = energy
-        self._mutator_temperature = mutator_temperature
         self._mutator_max_tokens = mutator_max_tokens
         self._max_no_signal_runs = max_no_signal_runs
         self._random_seed = random_seed
@@ -174,28 +172,23 @@ class GPTFuzzerOptimizer(Optimizer):
             mutators=[
                 OpenAIMutatorCrossOver(
                     llm=self.llm,
-                    temperature=self._mutator_temperature,
                     max_tokens=self._mutator_max_tokens,
                     seed=self._random_seed,
                 ),
                 OpenAIMutatorExpand(
                     llm=self.llm,
-                    temperature=self._mutator_temperature,
                     max_tokens=self._mutator_max_tokens,
                 ),
                 OpenAIMutatorGenerateSimilar(
                     llm=self.llm,
-                    temperature=self._mutator_temperature,
                     max_tokens=self._mutator_max_tokens,
                 ),
                 OpenAIMutatorRephrase(
                     llm=self.llm,
-                    temperature=self._mutator_temperature,
                     max_tokens=self._mutator_max_tokens,
                 ),
                 OpenAIMutatorShorten(
                     llm=self.llm,
-                    temperature=self._mutator_temperature,
                     max_tokens=self._mutator_max_tokens,
                 ),
             ],

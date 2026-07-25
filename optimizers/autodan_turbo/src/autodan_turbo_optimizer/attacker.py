@@ -79,13 +79,10 @@ class Attacker:
 
     Args:
         llm: Constrained LLM client supplied by the controller.
-        temperature: Forwarded to ``llm.complete``. Paper uses 1.0
-            for the attacker.
     """
 
-    def __init__(self, llm: LLMClient, *, temperature: float = 1.0) -> None:
+    def __init__(self, llm: LLMClient) -> None:
         self._llm = llm
-        self._temperature = temperature
 
     # ------------------------------------------------------------------
     # Public modes
@@ -295,9 +292,11 @@ Please present your jailbreak prompt enclosed between {_START_TAG} and {_END_TAG
                 ),
             },
         ]
-        response = await self._llm.complete(
-            messages, temperature=self._temperature,
-        )
+        # Temperature is deliberately not specified (the paper pins the
+        # attacker at 1.0): reasoning models reject the parameter
+        # outright and Bedrock Claude rejects it alongside top_p, so a
+        # pin would make this attacker unusable on exactly those models.
+        response = await self._llm.complete(messages)
         content = response.choices[0].message.content or ""
         jailbreak = _extract_jailbreak_prompt(content, request)
         override = (

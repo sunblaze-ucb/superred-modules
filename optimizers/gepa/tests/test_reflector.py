@@ -30,7 +30,7 @@ def _fake_llm(contents: list[str]) -> MagicMock:
 
 
 def _make_reflector(contents: list[str]) -> Reflector:
-    return Reflector(llm=_fake_llm(contents), temperature=1.0)
+    return Reflector(llm=_fake_llm(contents))
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +123,7 @@ class TestReflectorPropose:
     @pytest.mark.asyncio
     async def test_propose_substitutes_meta_prompt_placeholders(self) -> None:
         llm = _fake_llm(["```\nNEW\n```"])
-        reflector = Reflector(llm=llm, temperature=1.0)
+        reflector = Reflector(llm=llm)
 
         await reflector.propose(
             current_instruction="parent instruction",
@@ -139,9 +139,15 @@ class TestReflectorPropose:
         assert prompt.endswith("Provide the new instructions within ``` blocks.")
 
     @pytest.mark.asyncio
-    async def test_propose_uses_configured_temperature(self) -> None:
+    async def test_propose_sends_no_temperature(self) -> None:
+        """No sampling temperature reaches the LLM call.
+
+        Reasoning models reject the parameter, and a failed reflection
+        call is swallowed by the optimizer, so a pin would silently
+        disable mutation.
+        """
         llm = _fake_llm(["```\nNEW\n```"])
-        reflector = Reflector(llm=llm, temperature=0.7)
+        reflector = Reflector(llm=llm)
 
         await reflector.propose(
             current_instruction="parent",
@@ -149,7 +155,7 @@ class TestReflectorPropose:
         )
 
         kwargs = llm.complete.call_args.kwargs
-        assert kwargs["temperature"] == 0.7
+        assert "temperature" not in kwargs
 
     @pytest.mark.asyncio
     async def test_propose_returns_none_on_unparseable_output(self) -> None:
@@ -173,7 +179,7 @@ class TestReflectorPropose:
     async def test_propose_includes_response_field_in_setting_3(self) -> None:
         """When responses are in scope, the meta-prompt's side info contains them."""
         llm = _fake_llm(["```\nNEW\n```"])
-        reflector = Reflector(llm=llm, temperature=1.0)
+        reflector = Reflector(llm=llm)
 
         await reflector.propose(
             current_instruction="parent",
@@ -193,7 +199,7 @@ class TestReflectorPropose:
     async def test_propose_excludes_feedback_in_setting_3(self) -> None:
         """When feedback is out of scope, no score appears in the meta-prompt."""
         llm = _fake_llm(["```\nNEW\n```"])
-        reflector = Reflector(llm=llm, temperature=1.0)
+        reflector = Reflector(llm=llm)
 
         await reflector.propose(
             current_instruction="parent",
@@ -208,7 +214,7 @@ class TestReflectorPropose:
     async def test_propose_excludes_response_in_setting_2(self) -> None:
         """When responses are out of scope, no response text appears."""
         llm = _fake_llm(["```\nNEW\n```"])
-        reflector = Reflector(llm=llm, temperature=1.0)
+        reflector = Reflector(llm=llm)
 
         await reflector.propose(
             current_instruction="parent",

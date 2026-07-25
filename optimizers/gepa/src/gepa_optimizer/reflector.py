@@ -97,10 +97,8 @@ class Reflector:
         self,
         *,
         llm: LLMClient,
-        temperature: float = 1.0,
     ) -> None:
         self._llm = llm
-        self._temperature = temperature
 
     async def propose(
         self,
@@ -122,9 +120,12 @@ class Reflector:
             side_info=side_info,
         )
 
+        # Deliberately no ``temperature``: reasoning models reject the
+        # parameter (upstream pins a high one for prompt diversity), and
+        # the optimizer swallows a failed reflection call, so pinning it
+        # would silently disable mutation instead of surfacing an error.
         response = await self._llm.complete(
             [{"role": "user", "content": prompt}],
-            temperature=self._temperature,
         )
         raw = response.choices[0].message.content or ""
 

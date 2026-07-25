@@ -60,7 +60,6 @@ class DraOptimizer(Optimizer):
         target_controllable_name: str | None = None,
         use_system_prompt_when_available: bool = True,
         use_llm_judge_when_no_feedback: bool = True,
-        judge_temperature: float = 0.0,
         judge_top_p: float = 1.0,
         judge_max_tokens: int = 10,
         max_no_signal_runs: int = 0,
@@ -91,7 +90,6 @@ class DraOptimizer(Optimizer):
         self._target_controllable_name = target_controllable_name
         self._use_system_prompt_when_available = use_system_prompt_when_available
         self._use_llm_judge_when_no_feedback = use_llm_judge_when_no_feedback
-        self._judge_temperature = judge_temperature
         self._judge_top_p = judge_top_p
         self._judge_max_tokens = judge_max_tokens
         self._max_no_signal_runs = max(0, max_no_signal_runs)
@@ -164,9 +162,11 @@ class DraOptimizer(Optimizer):
                 rng=self._rng,
                 sensitive_token_detector=detector,
             )
+        # No temperature is forwarded to the judge on purpose: reasoning models reject
+        # the parameter and Bedrock Claude rejects it together with top_p. Judge errors
+        # are swallowed below, so pinning it would silently disable judging.
         self._judge = DraGptJudge(
             llm=self.llm,
-            temperature=self._judge_temperature,
             top_p=self._judge_top_p,
             max_tokens=self._judge_max_tokens,
         )

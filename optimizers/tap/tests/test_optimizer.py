@@ -110,7 +110,6 @@ async def _init_optimizer(**kwargs) -> TapOptimizer:
         root_nodes=1,
         tree_width=10,
         tree_depth=3,
-        attack_temperature=1.0,
         random_seed=0,
     )
     defaults.update(kwargs)
@@ -162,7 +161,6 @@ async def test_defaults_match_original_tap_shape() -> None:
     assert opt._tree_depth == 10
     assert opt._attack_top_p == 0.9
     assert opt._attacker_max_tokens == 500
-    assert opt._evaluator_temperature == 0.0
     assert opt._evaluator_max_tokens == 10
     assert opt._max_attack_attempts == 5
     assert opt._keep_last_n == 3
@@ -504,6 +502,30 @@ async def test_run_end_scores_trajectory_response_and_ignores_post_call() -> Non
     assert "[PROMPT]:attack prompt" in scoring_messages[1]["content"]
     assert "trajectory response" in scoring_messages[1]["content"]
     assert "post-call response" not in scoring_messages[1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_no_llm_call_sends_a_temperature() -> None:
+    opt = await _init_optimizer(tree_depth=2)
+    attacker_json = json.dumps({"improvement": "Try this", "prompt": "attack prompt"})
+    _setup_llm_mock(opt, [
+        attacker_json,
+        "Response: [[YES]]",
+        "Rating: [[6]]",
+    ])
+    ctrl = _make_controllable()
+    trajectory = Trajectory()
+
+    await _dispatch_event(opt, _make_run_start(trajectory))
+    await _dispatch_event(opt, _make_pre_call(ctrl))
+    trajectory.emit(_make_response_observable("trajectory response"))
+    await _dispatch_event(opt, _make_run_end())
+
+    # Covers all three call sites: attacker generation, on-topic pruning, and
+    # judge scoring.
+    assert opt.llm.complete.await_count == 3
+    for call in opt.llm.complete.call_args_list:
+        assert "temperature" not in call.kwargs
 
 
 @pytest.mark.asyncio

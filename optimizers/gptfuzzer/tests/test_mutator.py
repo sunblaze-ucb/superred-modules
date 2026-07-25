@@ -17,7 +17,7 @@ from gptfuzzer_optimizer.templates import QUESTION_PLACEHOLDER
 @pytest.mark.asyncio
 async def test_generate_similar_prompt_matches_official_wording() -> None:
     llm = AsyncMock()
-    mutator = OpenAIMutatorGenerateSimilar(llm=llm, temperature=1.0, max_tokens=512)
+    mutator = OpenAIMutatorGenerateSimilar(llm=llm, max_tokens=512)
     seed = f"seed {QUESTION_PLACEHOLDER}"
 
     await mutator.mutate(seed, n=1, prompt_nodes=[])
@@ -27,7 +27,8 @@ async def test_generate_similar_prompt_matches_official_wording() -> None:
     assert "====Template begins====" in prompt
     assert seed in prompt
     assert f"MUST have {QUESTION_PLACEHOLDER}" in prompt
-    assert llm.complete.call_args.kwargs == {"temperature": 1.0, "max_tokens": 512}
+    assert llm.complete.call_args.kwargs == {"max_tokens": 512}
+    assert "temperature" not in llm.complete.call_args.kwargs
 
 
 @pytest.mark.asyncio

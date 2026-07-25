@@ -78,8 +78,11 @@ class Evaluator:
         self._max_tokens = max_tokens
 
     async def score_response(self, *, goal: str, response: str) -> EvaluationScore:
+        # No temperature is sent, despite the official script pinning 0.0.
+        # Reasoning models reject the parameter outright, and this evaluator
+        # swallows its own exceptions, so a pin would silently disable judging
+        # on exactly the strongest models.
         kwargs: dict[str, float | int] = {
-            "temperature": 0.0,
             "top_p": self._top_p,
         }
         if self._max_tokens is not None:

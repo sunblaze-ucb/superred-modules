@@ -138,10 +138,12 @@ class TestSummarize:
         assert "Storytelling" in system
 
     @pytest.mark.asyncio
-    async def test_summarize_passes_temperature(self) -> None:
+    async def test_summarize_sends_no_temperature(self) -> None:
+        # Reasoning models reject the parameter outright, so the
+        # summarizer must never send it.
         llm = _llm_returning('{"Strategy": "X", "Definition": "x"}')
-        summarizer = Summarizer(llm, temperature=0.4)
+        summarizer = Summarizer(llm)
         await summarizer.summarize(
             request="r", weak_prompt="w", strong_prompt="s",
         )
-        assert llm.complete.call_args.kwargs["temperature"] == 0.4
+        assert "temperature" not in llm.complete.call_args.kwargs

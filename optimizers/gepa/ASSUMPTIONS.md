@@ -210,9 +210,9 @@ GEPA mirrors the integration shape established by Crescendo, FlipAttack,
 and GOAT:
 
 * Same ``Optimizer`` ABC, same ``on_event`` dispatch, same minimal
-  ctor surface (``max_attempts``, ``reflection_temperature``,
-  ``response_observable_names``, ``max_no_signal_runs``, plus
-  ``target_controllable_name`` for explicit-channel attacks).
+  ctor surface (``max_attempts``, ``response_observable_names``,
+  ``max_no_signal_runs``, plus ``target_controllable_name`` for
+  explicit-channel attacks).
 * Same primary-controllable locking on the first non-``system_prompt``
   ``ControllablePreCallEvent`` *in the default mode*; explicit-target
   mode (``target_controllable_name`` set) locks onto exactly that name.

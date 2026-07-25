@@ -46,11 +46,14 @@ class ExampleGenerator:
             if remaining <= 0:
                 break
             try:
+                # No temperature is sent on purpose: reasoning models reject
+                # the parameter outright and Bedrock Claude rejects it next to
+                # top_p. This loop swallows its own exceptions, so a pin would
+                # silently yield zero generated examples.
                 result = await self._llm.complete(
                     [{"role": "user", "content": _GENERATION_PROMPT.format(
                         count=remaining, goal=goal,
                     )}],
-                    temperature=1.0,
                 )
                 content = result.choices[0].message.content or ""
                 parsed = self._parse_examples(content)

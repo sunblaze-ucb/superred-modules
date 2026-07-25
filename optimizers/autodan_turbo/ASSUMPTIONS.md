@@ -119,8 +119,11 @@ behaviour is determined by what the framework makes visible.
   to the target. Pinned by
   `test_falls_back_to_request_when_no_end_tag` and
   `test_falls_back_to_request_on_empty_output`.
-- **Default temperatures** — attacker 1.0, scorer 0.7, summarizer
-  0.6 (paper / run-script values).
+- **No temperature is sent**: the paper's pins (attacker 1.0,
+  scorer 0.7, summarizer 0.6) are deliberately not passed to the
+  LLM. Reasoning models reject the parameter outright and Bedrock
+  Claude rejects it alongside `top_p`, so pinning it would make the
+  optimizer unusable on exactly the strongest attacker models.
 - **Default `break_score = 8.5`** — paper / run-script.
 - **Default `top_k_strategies = 5`** — matches upstream
   `Retrieval.pop` default `k=5`.
@@ -303,9 +306,6 @@ experiments.
 | --- | --- | --- |
 | `max_attempts` | `10` | merged-optimizer norm (paper batches use 150) |
 | `break_score` | `8.5` | paper / run script |
-| `attacker_temperature` | `1.0` | paper |
-| `scorer_temperature` | `0.7` | paper |
-| `summarizer_temperature` | `0.6` | paper |
 | `top_k_strategies` | `5` | matches upstream `Retrieval.pop` default `k=5` |
 | `response_observable_names` | `{"response","model_response","assistant_response"}` | matches Crescendo / GEPA / GOAT / Bijection |
 | `target_controllable_name` | `None` | optional named-controllable override; `None` enables the dual-channel extension when scope grants `system_prompt` write access |
@@ -354,9 +354,10 @@ tests/
   `system_prompt_writable=False` strips any emitted override
   (defends against smuggling).
 - **Scorer**: keyword-anchored / fall-through / clamped score parsing;
-  request and response embedding; temperature passthrough.
+  request and response embedding; no temperature in the LLM call.
 - **Summarizer**: inline-object / fenced-block / escaped-string
-  parsing; missing-field returns `None`; temperature passthrough.
+  parsing; missing-field returns `None`; no temperature in the LLM
+  call.
 - **Optimizer**: construction validation; first run uses warm-up,
   subsequent runs use retrieval; per-run state reset; user-vs-system
   PreCall lock; `target_controllable_name` override; trajectory >

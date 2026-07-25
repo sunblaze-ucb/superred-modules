@@ -35,7 +35,6 @@ class PairAttacker:
         llm: LLMClient,
         attack_max_tokens: int = 500,
         max_attack_attempts: int = 5,
-        temperature: float = 1.0,
         top_p: float = 0.9,
         keep_last_n: int = 4,
     ) -> None:
@@ -48,7 +47,6 @@ class PairAttacker:
         self._llm = llm
         self._attack_max_tokens = attack_max_tokens
         self._max_attack_attempts = max_attack_attempts
-        self._temperature = temperature
         self._top_p = top_p
         self._keep_last_n = keep_last_n
 
@@ -60,10 +58,13 @@ class PairAttacker:
         messages.append({"role": "user", "content": user_message})
         last_error: JsonExtractionError | None = None
         for _ in range(self._max_attack_attempts):
+            # PAIR pins the attacker temperature to 1.0, but we deliberately send no
+            # temperature at all: reasoning models reject the parameter outright and this
+            # attacker swallows its own generation failures, so the pin would silently
+            # disable the optimizer on exactly the strongest attacker models.
             result = await self._llm.complete(
                 messages,
                 max_tokens=self._attack_max_tokens,
-                temperature=self._temperature,
                 top_p=self._top_p,
                 stop=["}"],
             )

@@ -90,6 +90,10 @@ class Evaluator:
     async def _score_with_refusal_classifier(
         self, *, response: str, goal: str
     ) -> tuple[float, str]:
+        # No temperature is sent on purpose: reasoning models reject the
+        # parameter outright and Bedrock Claude rejects it next to top_p.
+        # Scoring failures are swallowed by the caller, so pinning it here
+        # would silently disable scoring instead of surfacing an error.
         result = await self._llm.complete(
             [
                 {
@@ -99,7 +103,6 @@ class Evaluator:
                     ),
                 }
             ],
-            temperature=0.0,
         )
         return self._parse_refusal_classifier(
             result.choices[0].message.content or "", response=response
@@ -108,9 +111,12 @@ class Evaluator:
     async def _score_with_llm_judge(
         self, *, response: str, goal: str
     ) -> tuple[float, str]:
+        # No temperature is sent on purpose: reasoning models reject the
+        # parameter outright and Bedrock Claude rejects it next to top_p.
+        # Scoring failures are swallowed by the caller, so pinning it here
+        # would silently disable scoring instead of surfacing an error.
         result = await self._llm.complete(
             [{"role": "user", "content": LLM_JUDGE_PROMPT.format(goal=goal, response=response)}],
-            temperature=0.0,
         )
         return self._parse_llm_judge_score(result.choices[0].message.content or "")
 

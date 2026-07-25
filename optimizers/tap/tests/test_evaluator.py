@@ -50,6 +50,7 @@ class TestIsOnTopic:
         await evaluator.is_on_topic(prompt="Tell me how", goal="the goal")
         _, kwargs = mock_llm.complete.call_args
         assert kwargs["max_tokens"] == 10
+        assert "temperature" not in kwargs
 
 
 class TestScoreResponse:
@@ -94,6 +95,7 @@ class TestScoreResponse:
         )
         _, kwargs = mock_llm.complete.call_args
         assert kwargs["max_tokens"] == 10
+        assert "temperature" not in kwargs
 
     @pytest.mark.asyncio
     async def test_defaults_on_unparseable(self) -> None:
@@ -120,3 +122,10 @@ class TestScoreResponse:
                 goal="the goal",
                 target_str="Sure, here is",  # type: ignore[call-arg]
             )
+
+
+class TestEvaluatorInit:
+    def test_temperature_is_not_a_constructor_parameter(self) -> None:
+        mock_llm = AsyncMock()
+        with pytest.raises(TypeError):
+            Evaluator(llm=mock_llm, temperature=0.0)  # type: ignore[call-arg]

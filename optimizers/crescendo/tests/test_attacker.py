@@ -32,7 +32,6 @@ async def test_generate_question_first_turn():
     mock_llm.complete.return_value = _mock_response(_valid_json())
     attacker = Attacker(
         llm=mock_llm,
-        temperature=1.0,
         system_prompt="You are a red teamer. Goal: {objective}",
     )
     output = await attacker.generate_question(
@@ -50,6 +49,8 @@ async def test_generate_question_first_turn():
     # System prompt should be first message
     messages = mock_llm.complete.call_args[0][0]
     assert messages[0]["role"] == "system"
+    # No temperature is sent: reasoning models reject the parameter.
+    assert "temperature" not in mock_llm.complete.call_args.kwargs
 
 
 @pytest.mark.asyncio
@@ -61,7 +62,6 @@ async def test_generate_question_with_score_feedback():
     ))
     attacker = Attacker(
         llm=mock_llm,
-        temperature=1.0,
         system_prompt="Goal: {objective}",
     )
     output = await attacker.generate_question(
@@ -87,7 +87,6 @@ async def test_generate_question_accumulates_history():
     mock_llm.complete.return_value = _mock_response(_valid_json())
     attacker = Attacker(
         llm=mock_llm,
-        temperature=1.0,
         system_prompt="Goal: {objective}",
     )
 
@@ -119,7 +118,6 @@ async def test_notify_refusal_adds_to_history():
     mock_llm.complete.return_value = _mock_response(_valid_json())
     attacker = Attacker(
         llm=mock_llm,
-        temperature=1.0,
         system_prompt="Goal: {objective}",
     )
 
@@ -154,7 +152,6 @@ async def test_parse_response_handles_markdown_json():
     mock_llm.complete.return_value = _mock_response(wrapped)
     attacker = Attacker(
         llm=mock_llm,
-        temperature=1.0,
         system_prompt="Goal: {objective}",
     )
     output = await attacker.generate_question(
@@ -172,7 +169,6 @@ async def test_parse_response_raises_on_missing_key():
     mock_llm.complete.return_value = _mock_response(bad_json)
     attacker = Attacker(
         llm=mock_llm,
-        temperature=1.0,
         system_prompt="Goal: {objective}",
     )
     with pytest.raises(ValueError, match="missing required keys"):

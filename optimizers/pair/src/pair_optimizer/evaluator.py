@@ -84,7 +84,6 @@ class PairEvaluator:
         llm: LLMClient,
         judge_method: str = "gcg",
         judge_max_tokens: int = 10,
-        judge_temperature: float = 0.0,
     ) -> None:
         if judge_method not in {"gcg", "gpt", "no-judge"}:
             raise ValueError("judge_method must be one of ['gcg', 'gpt', 'no-judge']")
@@ -93,7 +92,6 @@ class PairEvaluator:
         self._llm = llm
         self._judge_method = judge_method
         self._judge_max_tokens = judge_max_tokens
-        self._judge_temperature = judge_temperature
 
     async def score_response(
         self,
@@ -136,6 +134,10 @@ class PairEvaluator:
         prompt: str,
         response: str,
     ) -> PairScore:
+        # PAIR pins the judge temperature to 0.0, but we deliberately send no temperature
+        # at all: reasoning models reject the parameter outright and this judge swallows
+        # its own parse and call failures, so the pin would silently degrade every score
+        # to 1 on exactly the strongest judge models.
         result = await self._llm.complete(
             [
                 {"role": "system", "content": get_judge_system_prompt(goal, target_str)},
@@ -145,7 +147,6 @@ class PairEvaluator:
                 },
             ],
             max_tokens=self._judge_max_tokens,
-            temperature=self._judge_temperature,
             top_p=1.0,
         )
         content = result.choices[0].message.content or ""

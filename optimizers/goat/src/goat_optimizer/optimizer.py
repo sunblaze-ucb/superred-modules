@@ -88,8 +88,6 @@ class GOATOptimizer(Optimizer):
             system prompt (paper main-result configuration). For
             per-attack ablation pass a subset, e.g.
             ``attacks=(HYPOTHETICAL,)``.
-        attacker_temperature: Sampling temperature for the attacker
-            LLM (default 1.0).
         response_observable_names: Observable names recognised as
             target replies on the trajectory (defaults to
             ``response``, ``model_response``, ``assistant_response``).
@@ -115,7 +113,6 @@ class GOATOptimizer(Optimizer):
         max_turns: int = 5,
         max_attempts: int = 10,
         attacks: tuple[Attack, ...] | None = None,
-        attacker_temperature: float = 1.0,
         response_observable_names: Iterable[str] | None = None,
         max_no_response_runs: int = 0,
         use_system_prompt_when_available: bool = True,
@@ -134,7 +131,6 @@ class GOATOptimizer(Optimizer):
         )
         if not self._attacks:
             raise ValueError("attacks must contain at least one Attack")
-        self._attacker_temperature = attacker_temperature
         configured_response_names = (
             tuple(response_observable_names)
             if response_observable_names is not None
@@ -230,7 +226,6 @@ class GOATOptimizer(Optimizer):
             llm=self.llm,
             goal=self._goal.description,
             attacks=self._attacks,
-            temperature=self._attacker_temperature,
             static_context=self._static_context,
         )
         return EventResponse(event=event)

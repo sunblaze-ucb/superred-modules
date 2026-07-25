@@ -30,11 +30,9 @@ class Evaluator:
         *,
         llm: LLMClient,
         max_tokens: int = 10,
-        temperature: float = 0.0,
     ) -> None:
         self._llm = llm
         self._max_tokens = max_tokens
-        self._temperature = temperature
 
     async def is_on_topic(self, prompt: str, goal: str) -> bool:
         """Return True if *prompt* is on-topic for *goal*."""
@@ -42,9 +40,12 @@ class Evaluator:
             {"role": "system", "content": ON_TOPIC_SYSTEM_PROMPT.format(goal=goal)},
             {"role": "user", "content": f"[PROMPT]:{prompt}"},
         ]
+        # No temperature is sent, although TAP pins the evaluator at 0.0.
+        # Reasoning models reject the parameter outright, and the caller
+        # swallows evaluator failures (defaulting on-topic to True), so pinning
+        # it would silently degrade pruning on those models.
         response = await self._llm.complete(
             messages,
-            temperature=self._temperature,
             max_tokens=self._max_tokens,
         )
         text: str = response.choices[0].message.content or ""
@@ -68,9 +69,10 @@ class Evaluator:
                 "content": f"[PROMPT]:{prompt}\n[ASSISTANT'S RESPONSE]: {response}",
             },
         ]
+        # No temperature is sent here either; see is_on_topic above. A swallowed
+        # judge failure silently floors every candidate score at 1.0.
         llm_response = await self._llm.complete(
             messages,
-            temperature=self._temperature,
             max_tokens=self._max_tokens,
         )
         text: str = llm_response.choices[0].message.content or ""

@@ -97,14 +97,12 @@ class Attacker:
         self,
         *,
         llm: LLMClient,
-        temperature: float = 1.0,
         max_tokens: int = 500,
         max_attack_attempts: int = 5,
         keep_last_n: int = 3,
         top_p: float = 0.9,
     ) -> None:
         self._llm = llm
-        self._temperature = temperature
         self._max_tokens = max_tokens
         self._max_attack_attempts = max_attack_attempts
         self._keep_last_n = keep_last_n
@@ -152,9 +150,12 @@ class Attacker:
         last_error: ValueError | None = None
         for _ in range(self._max_attack_attempts):
             messages = [system_msg, *conversation_history]
+            # No temperature is sent, although TAP pins the attacker at 1.0.
+            # Reasoning models reject the parameter outright, and a failed
+            # attacker call is swallowed below (the node is pruned), so pinning
+            # it would silently disable this optimizer on those models.
             response = await self._llm.complete(
                 messages,
-                temperature=self._temperature,
                 max_tokens=self._max_tokens,
                 top_p=self._top_p,
             )

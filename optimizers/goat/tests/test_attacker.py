@@ -44,7 +44,6 @@ def _make_attacker(contents: list[str], *, attacks=(HYPOTHETICAL,)) -> Attacker:
         llm=_fake_llm(contents),
         goal="example goal",
         attacks=attacks,
-        temperature=1.0,
     )
 
 
@@ -82,6 +81,16 @@ class TestAttackerConstruction:
         sys_prompt = attacker.system_prompt
         for attack in ATTACKS:
             assert f"Technique Name: {attack.name}" in sys_prompt
+
+    @pytest.mark.asyncio
+    async def test_no_temperature_is_sent_to_the_llm(self) -> None:
+        """Reasoning models reject the parameter, so it must be absent."""
+        llm = _fake_llm([_good_json(response="hi")])
+        attacker = Attacker(llm=llm, goal="example goal", attacks=(HYPOTHETICAL,))
+
+        await attacker.next_turn(prev_prompt=None, prev_response=None)
+
+        assert "temperature" not in llm.complete.call_args.kwargs
 
 
 # ---------------------------------------------------------------------------

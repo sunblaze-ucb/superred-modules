@@ -56,8 +56,9 @@ class ReplayPlan:
 
     Captures the longest consecutive prefix of successful turns from the
     previous attempt, plus any system-prompt framing that established
-    context. Replaying these on a temperature=0 target reproduces the
-    same target conversation state — equivalent to the paper's
+    context. Replaying these reproduces the same target conversation state
+    as far as the target is deterministic (no temperature is pinned
+    anywhere, so this is approximate) -- equivalent to the paper's
     ``pop(H_T)`` after a refusal but realised across runs rather than
     by mutating the live target.
 
@@ -198,7 +199,6 @@ class Attacker:
         self,
         *,
         llm: LLMClient,
-        temperature: float = 1.0,
         system_prompt: str,
         target_model_id: str | None = None,
         target_system_prompt: str | None = None,
@@ -206,7 +206,6 @@ class Attacker:
         is_replay_attempt: bool = False,
     ) -> None:
         self._llm = llm
-        self._temperature = temperature
         self._system_prompt = system_prompt
         self._target_model_id = target_model_id
         self._target_system_prompt = target_system_prompt
@@ -260,10 +259,11 @@ class Attacker:
             {"role": "user", "content": user_message},
         ]
 
-        response = await self._llm.complete(
-            messages,
-            temperature=self._temperature,
-        )
+        # Temperature is deliberately not sent (the paper samples the attacker
+        # at 1.0): reasoning models reject the parameter outright and the
+        # optimizer catches attacker failures and falls back to a generic
+        # question, so a pinned value would silently disable this attacker.
+        response = await self._llm.complete(messages)
         content = response.choices[0].message.content or ""
         output = self._parse_response(content, require_framing=include_framing)
 
