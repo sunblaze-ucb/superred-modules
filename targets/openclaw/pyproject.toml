@@ -1,0 +1,64 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "superred-target-openclaw"
+version = "0.1.0"
+description = "OpenClaw agent target module for superred"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Rishabh Sinha", email = "rsinha17@terpmail.umd.edu" },
+]
+keywords = [
+    "superred",
+    "red-teaming",
+    "ai-safety",
+    "security",
+    "llm",
+    "target",
+    "agent",
+]
+dependencies = ["superred>=0.1.0", "websockets", "cryptography"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security",
+]
+
+[project.optional-dependencies]
+injection = ["aiohttp"]
+proxy = ["aiohttp"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "aiohttp",
+    "superred-optimizer-demo-prompt-list",
+]
+
+[project.urls]
+Homepage = "https://superred.simonsure.com"
+Documentation = "https://superred.simonsure.com"
+Repository = "https://github.com/RoldSI/superred-modules"
+Issues = "https://github.com/RoldSI/superred-modules/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openclaw_target"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["."]
+markers = [
+    "provider: opt-in tests against a real LLM provider (requires GEMINI_API_KEY)",
+    "controller_e2e: full Controller + real gateway + real provider E2E (requires GEMINI_API_KEY)",
+    "docker: real-container tests (requires Docker daemon) - the production isolation path",
+    "local_gateway: real local `openclaw gateway` CLI tests - fast dev path, no Docker",
+]

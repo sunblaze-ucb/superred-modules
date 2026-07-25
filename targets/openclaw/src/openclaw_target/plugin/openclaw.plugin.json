@@ -1,0 +1,16 @@
+{
+  "id": "superred-injection",
+  "activation": {
+    "onStartup": true
+  },
+  "name": "Superred Injection",
+  "description": "Tool-output injection bridge for superred red-teaming (live tool-result middleware + transcript-poison hooks).",
+  "contracts": {
+    "agentToolResultMiddleware": ["openclaw"]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
