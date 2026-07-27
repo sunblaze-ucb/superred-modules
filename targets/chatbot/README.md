@@ -32,3 +32,25 @@ both ordinary pip dependencies.
 ## License
 
 MIT
+
+## Every piece of information is emitted exactly once
+
+The chatbot's reply travels on the `response` controllable's
+`ControllablePostCallEvent` and nowhere else. It is deliberately NOT mirrored as
+an observable: emitting both put a byte-identical second copy of every reply on
+the trajectory, which in the RQ1.3-1 archive doubled the stored size of every
+turn (up to 161 kB per copy).
+
+Read-only access to the reply is not a separate tag. Grant it per threat model
+by listing `MODEL_TAG` in the Controller's `read_only` set instead of its read &
+write `scope`:
+
+```python
+Controller(
+    scope=frozenset({USER_TAG}),        # can send messages
+    read_only=frozenset({MODEL_TAG}),   # can SEE replies, cannot override them
+    ...
+)
+```
+
+This matches the convention the AgentDojo target already documents.

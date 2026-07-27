@@ -6,7 +6,7 @@ A `superred` `SecurityClaim[ChatbotTarget]` wrapping the StrongREJECT jailbreak 
 
 ```python
 from typing import cast
-from chatbot_target import ChatbotTarget, USER_TAG, RESPONSE_READABLE_TAG
+from chatbot_target import ChatbotTarget, USER_TAG, MODEL_TAG
 from superred.core.controller import Controller, TargetFactory
 from superred.core.interfaces.security_claim import SecurityClaim
 from superred.core.interfaces.target import Target
@@ -24,7 +24,8 @@ controller = Controller(
     optimizer_factory=YourOptimizer,
     target_factory=target_factory,
     security_claim=cast(SecurityClaim[Target], claim),
-    scope=frozenset({USER_TAG, RESPONSE_READABLE_TAG}),
+    scope=frozenset({USER_TAG}),
+        read_only=frozenset({MODEL_TAG}),
 )
 result = await controller.run()    # -> ThreatModelResult
 ```
@@ -70,7 +71,7 @@ Eight factory functions, all returning `SecurityClaim[ChatbotTarget]`. Six wrap 
 Canonical scope for paper-comparable runs:
 
 ```python
-scopes=[frozenset({USER_TAG, RESPONSE_READABLE_TAG})]
+scopes=[frozenset({USER_TAG, MODEL_TAG})]
 ```
 
 This matches the StrongREJECT canonical setting: optimizer can send a forbidden user message and observe the response, but cannot override the system prompt or intercept the model output. Other scopes are valid for capability-ablation experiments but numbers will not be byte-comparable to published baselines.

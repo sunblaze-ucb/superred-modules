@@ -67,7 +67,7 @@ where the attacker can tamper with output).
 text; and the response (made readable to attackers granted that boundary).
 
 The exported tag constants (`USER_TAG`, `SYSTEM_PROMPT_TAG`,
-`SYSTEM_PROMPT_READABLE_TAG`, `MODEL_TAG`, `RESPONSE_READABLE_TAG`,
+`SYSTEM_PROMPT_READABLE_TAG`, `MODEL_TAG`, `MODEL_TAG`,
 `MODEL_IDENTITY_TAG`, `SYSTEM_TAG`) are what you combine into a scope.
 
 ### `agentdojo` (`agentdojo-target`): a tool-using agent

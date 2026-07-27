@@ -105,7 +105,7 @@ def _build_direct_request_optimizer():
 async def test_e2e_against_real_llm_three_standard_behaviors() -> None:
     """Tiny claim (3 standard behaviors) ran end-to-end against the
     configured LITELLM endpoint. Asserts output shape, not ASR values."""
-    from chatbot_target import ChatbotTarget, RESPONSE_READABLE_TAG, USER_TAG  # type: ignore[import-untyped]
+    from chatbot_target import ChatbotTarget, MODEL_TAG, USER_TAG  # type: ignore[import-untyped]
     from superred.core.controller import Controller
 
     from harmbench_claim import harmbench_claim
@@ -144,7 +144,8 @@ async def test_e2e_against_real_llm_three_standard_behaviors() -> None:
         optimizer_factory=DirectRequestOptimizer,
         target_factory=target_factory,
         security_claim=short_claim,
-        scope=frozenset({USER_TAG, RESPONSE_READABLE_TAG}),
+        scope=frozenset({USER_TAG}),
+        read_only=frozenset({MODEL_TAG}),
         max_runs_per_task=1,
         include_feedback=False,
     )
@@ -183,7 +184,7 @@ async def test_e2e_copyright_path_no_judge_call() -> None:
     pipeline (real .pkl load, real spaCy tokenization, real Jaccard)
     works against a live target.
     """
-    from chatbot_target import ChatbotTarget, RESPONSE_READABLE_TAG, USER_TAG  # type: ignore[import-untyped]
+    from chatbot_target import ChatbotTarget, MODEL_TAG, USER_TAG  # type: ignore[import-untyped]
     from superred.core.controller import Controller
     from superred.core.interfaces.security_claim import SecurityClaim
 
@@ -212,7 +213,8 @@ async def test_e2e_copyright_path_no_judge_call() -> None:
         optimizer_factory=DirectRequestOptimizer,
         target_factory=target_factory,
         security_claim=short_claim,
-        scope=frozenset({USER_TAG, RESPONSE_READABLE_TAG}),
+        scope=frozenset({USER_TAG}),
+        read_only=frozenset({MODEL_TAG}),
         max_runs_per_task=1,
         include_feedback=False,
     )
