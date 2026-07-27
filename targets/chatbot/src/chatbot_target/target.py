@@ -49,7 +49,6 @@ from superred.core.types.events import (
     ControllableInjection,
     ControllablePostCallEvent,
     ControllablePreCallEvent,
-    ObservableEvent,
 )
 from superred.core.types.observable import Observable, ObservableValue
 from superred.core.types.security_domain import SecurityDomain, SecurityDomainTag
@@ -66,13 +65,12 @@ SYSTEM_TAG = SecurityDomainTag("system")
 SYSTEM_PROMPT_TAG = SecurityDomainTag("system_prompt", parent=SYSTEM_TAG)
 SYSTEM_PROMPT_READABLE_TAG = SecurityDomainTag("system_prompt_readable", parent=SYSTEM_PROMPT_TAG)
 MODEL_TAG = SecurityDomainTag("model", parent=SYSTEM_TAG)
-RESPONSE_READABLE_TAG = SecurityDomainTag("response_readable", parent=MODEL_TAG)
 MODEL_IDENTITY_TAG = SecurityDomainTag("model_identity", parent=SYSTEM_TAG)
 USER_TAG = SecurityDomainTag("user")
 
 _DOMAIN = SecurityDomain([
     SYSTEM_TAG, SYSTEM_PROMPT_TAG, SYSTEM_PROMPT_READABLE_TAG,
-    MODEL_TAG, RESPONSE_READABLE_TAG, MODEL_IDENTITY_TAG, USER_TAG,
+    MODEL_TAG, MODEL_IDENTITY_TAG, USER_TAG,
 ])
 
 # ---------------------------------------------------------------------------
@@ -277,17 +275,13 @@ class ChatbotTarget(Target):
             self._last_response = assistant_message
             self._conversation_history = list(conversation)
 
-            # Emit an observation of the (possibly modified) response.
-            emit(
-                ObservableEvent(
-                    observable=Observable(
-                        name="response",
-                        security_domain=RESPONSE_READABLE_TAG,
-                        description="The chatbot's response.",
-                    ),
-                    content=assistant_message,
-                ),
-            )
+            # The reply is NOT re-emitted as an observable. It already travels
+            # on the ControllablePostCallEvent above, and emitting it twice put
+            # a byte-identical copy of every reply on the trajectory: in the
+            # RQ1.3-1 archive that doubled the stored size of every turn, up to
+            # 161 kB per copy. Read-only visibility is a Controller concern, not
+            # a second event: list MODEL_TAG in ``read_only`` to let an
+            # optimizer see replies without being able to override them.
 
     async def reset_ephemeral_state(self) -> None:
         self._last_response = ""

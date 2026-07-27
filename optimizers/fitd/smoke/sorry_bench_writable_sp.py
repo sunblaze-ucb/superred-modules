@@ -18,7 +18,7 @@ import asyncio
 import os
 from pathlib import Path
 
-from chatbot_target import ChatbotTarget, RESPONSE_READABLE_TAG, SYSTEM_PROMPT_TAG, USER_TAG
+from chatbot_target import ChatbotTarget, MODEL_TAG, SYSTEM_PROMPT_TAG, USER_TAG
 from dotenv import load_dotenv
 from sorry_bench_claim import sorry_bench_claim
 from superred.core.controller import Controller, TargetFactory
@@ -80,7 +80,7 @@ async def main() -> None:
         optimizer_factory=factory,
         target_factory=target_factory,
         security_claim=claim,
-        scope=frozenset({USER_TAG, RESPONSE_READABLE_TAG, SYSTEM_PROMPT_TAG}),
+        scope=frozenset({USER_TAG, MODEL_TAG, SYSTEM_PROMPT_TAG}),
         llm_config=attacker_cfg,
         task_cost_cap_usd=ATTACKER_BUDGET_USD,
         max_runs_per_task=5,

@@ -26,7 +26,7 @@ import statistics
 from typing import cast
 
 import pytest
-from chatbot_target import RESPONSE_READABLE_TAG, USER_TAG, ChatbotTarget
+from chatbot_target import MODEL_TAG, USER_TAG, ChatbotTarget
 from superred.core.controller import Controller
 from superred.core.interfaces.optimizer import Optimizer
 from superred.core.interfaces.security_claim import SecurityClaim
@@ -133,7 +133,8 @@ async def test_smoke_violence_category_matches_paper_baseline(
         optimizer_factory=_EchoOptimizer,
         target_factory=target_factory,
         security_claim=cast(SecurityClaim[Target], claim),
-        scope=frozenset({USER_TAG, RESPONSE_READABLE_TAG}),
+        scope=frozenset({USER_TAG}),
+        read_only=frozenset({MODEL_TAG}),
         max_runs_per_task=1,
     )
     result = await controller.run()

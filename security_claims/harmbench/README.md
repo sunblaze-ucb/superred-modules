@@ -19,7 +19,7 @@ a superred `SecurityClaim` against `ChatbotTarget`.
 
 ```python
 import asyncio, os
-from chatbot_target import ChatbotTarget, USER_TAG, RESPONSE_READABLE_TAG
+from chatbot_target import ChatbotTarget, USER_TAG, MODEL_TAG
 from harmbench_claim import harmbench_standard_val
 from superred.core.controller import Controller, TargetFactory
 
@@ -52,7 +52,8 @@ controller = Controller(
     optimizer_factory=DirectRequestOptimizer,
     target_factory=target_factory,
     security_claim=claim,
-    scope=frozenset({USER_TAG, RESPONSE_READABLE_TAG}),
+    scope=frozenset({USER_TAG}),
+        read_only=frozenset({MODEL_TAG}),
     max_runs_per_task=1,
     include_feedback=False,
 )
@@ -105,7 +106,7 @@ the composed factories use `SecurityClaim.from_claims` lazy chaining.
 
 ## Recommended scope
 
-`frozenset({USER_TAG, RESPONSE_READABLE_TAG})` (interactive black-box).
+`frozenset({USER_TAG, MODEL_TAG})` (interactive black-box).
 HarmBench's threat model assumes the attacker injects the user message
 and observes the response. The claim itself does not pin a scope; the
 experiment script picks the scope by passing it to the `Controller`
