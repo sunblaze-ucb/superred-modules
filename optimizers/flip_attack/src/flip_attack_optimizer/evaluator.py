@@ -101,12 +101,15 @@ class Evaluator:
         self._last_rating = None
         system_prompt = _ASR_GPT_SYSTEM_TEMPLATE.format(goal)
         user_prompt = f"[PROMPT]:{prompt}\n[ASSISTANT'S RESPONSE]: {response}"
+        # No temperature is sent deliberately. The paper pins the judge to 0.0,
+        # but reasoning models reject the parameter outright and Bedrock Claude
+        # rejects it alongside top_p. The optimizer swallows judge exceptions and
+        # scores 0.0, so a pinned value would silently disable scoring instead.
         result = await self._llm.complete(
             [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.0,
             max_tokens=10,
         )
         raw = result.choices[0].message.content or ""

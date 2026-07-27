@@ -15,7 +15,6 @@ This optimizer keeps the current official runtime defaults:
 - attacker `max_tokens = 500`
 - attacker retries invalid JSON up to `5` times
 - judge `max_tokens = 10`
-- judge `temperature = 0`
 - default judge method is `gcg`
 
 The attacker system prompts, initial user message, target-response feedback
@@ -96,6 +95,13 @@ specific paper row or dataset item.
 The official scripts own target model generation parameters. In SuperRed, the
 target owns its own decoding settings, so this optimizer does not set target
 `temperature`, `top_p`, or target `max_tokens`.
+
+The official code also pins the attacker temperature to `1.0` and the judge
+temperature to `0.0`. This optimizer sends no temperature on either call.
+Reasoning models reject the parameter outright, and both the attacker and the
+judge swallow their own failures, so a pinned temperature would silently disable
+the optimizer on exactly the strongest attacker and judge models. Every other
+generation parameter, including `top_p` and `max_tokens`, is unchanged.
 
 The official implementation depends on FastChat conversation templates. SuperRed
 LLM clients accept OpenAI-style chat messages directly, so this optimizer stores

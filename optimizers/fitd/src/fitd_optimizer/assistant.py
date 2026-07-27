@@ -66,10 +66,13 @@ class FITDAssistant:
     async def soften_prompt(self, prompt: str, *, max_attempts: int = 10) -> str:
         candidate = prompt
         for _ in range(max(1, max_attempts)):
+            # Temperature is deliberately not sent (official FITD pins 1.0 here).
+            # Reasoning models reject the parameter outright, and this helper
+            # absorbs its own failures by falling back to the unsoftened prompt,
+            # so a pinned value would silently disable softening on those models.
             response = await self._llm.complete(
                 [{"role": "user", "content": prompts.CHANGE_PROMPT_TEMPLATE.format(prompt=prompt)}],
                 max_tokens=300,
-                temperature=1.0,
             )
             text = _extract_content(response).strip()
             if not text or prompts.is_refusal(text):
@@ -117,10 +120,13 @@ class FITDAssistant:
             text2=text2,
             target=target,
         )
+        # Temperature is deliberately not sent (official FITD pins 0.0 here).
+        # Reasoning models reject the parameter outright, and this comparison
+        # degrades to ``None`` instead of raising, so a pinned value would
+        # silently drop the similarity check on those models.
         completion = await self._llm.complete(
             [{"role": "user", "content": judge_prompt}],
             max_tokens=10,
-            temperature=0.0,
         )
         result = _extract_content(completion).strip()
         if result == "1":

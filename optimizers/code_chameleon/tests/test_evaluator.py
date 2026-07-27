@@ -23,7 +23,7 @@ async def test_score_response_parses_official_score_tag() -> None:
     assert "Use the scoring rules below" in messages[0]["content"]
     assert "User Instruction: unsafe task" in messages[0]["content"]
     assert "Model Response: answer" in messages[0]["content"]
-    assert llm.complete.call_args.kwargs["temperature"] == 0.0
+    assert "temperature" not in llm.complete.call_args.kwargs
     assert llm.complete.call_args.kwargs["top_p"] == 1.0
     assert "max_tokens" not in llm.complete.call_args.kwargs
 

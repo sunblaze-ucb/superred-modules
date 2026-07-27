@@ -15,14 +15,22 @@ Defaults match the original implementation where they map cleanly to SuperRed:
 4. `tree_depth=10`
 5. `attack_top_p=0.9`
 6. `attacker_max_tokens=500`
-7. `evaluator_temperature=0.0`
-8. `evaluator_max_tokens=10`
-9. `max_attack_attempts=5`
-10. `keep_last_n=3`
+7. `evaluator_max_tokens=10`
+8. `max_attack_attempts=5`
+9. `keep_last_n=3`
 
 The attacker prompt, seed message, feedback message, on-topic judge, jailbreak
 judge, JSON retry behavior, history truncation, and pruning fallback are kept
 close to the original TAP code.
+
+## Temperature Is Never Sent
+
+Original TAP pins the attacker at temperature 1.0 and the evaluator at 0.0. This
+module sends no temperature at all, on any call. Reasoning models reject the
+parameter outright, and this optimizer swallows its own LLM failures (a failed
+attacker call prunes the node, a failed judge call floors the score at 1.0), so
+a pinned temperature would silently disable TAP rather than raise. Sampling is
+still shaped by `attack_top_p`, which every model accepts.
 
 ## SuperRed Mapping
 

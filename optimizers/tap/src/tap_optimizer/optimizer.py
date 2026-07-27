@@ -52,10 +52,8 @@ class TapOptimizer(Optimizer):
         root_nodes: int = 1,
         tree_width: int = 10,
         tree_depth: int = 10,
-        attack_temperature: float = 1.0,
         attack_top_p: float = 0.9,
         attacker_max_tokens: int = 500,
-        evaluator_temperature: float = 0.0,
         evaluator_max_tokens: int = 10,
         max_attack_attempts: int = 5,
         keep_last_n: int = 3,
@@ -69,10 +67,8 @@ class TapOptimizer(Optimizer):
         self._root_nodes = root_nodes
         self._tree_width = tree_width
         self._tree_depth = tree_depth
-        self._attack_temperature = attack_temperature
         self._attack_top_p = attack_top_p
         self._attacker_max_tokens = attacker_max_tokens
-        self._evaluator_temperature = evaluator_temperature
         self._evaluator_max_tokens = evaluator_max_tokens
         self._max_attack_attempts = max_attack_attempts
         self._keep_last_n = keep_last_n
@@ -118,9 +114,12 @@ class TapOptimizer(Optimizer):
             observables=observables,
             max_chars=self._static_context_max_chars,
         )
+        # Neither helper takes a temperature: it is deliberately never sent to
+        # the attacker LLM. Reasoning models reject the parameter, and both
+        # helpers' failures are swallowed here (nodes get pruned, scores floor
+        # at 1.0), so a pinned value would disable TAP without any error.
         self._attacker = Attacker(
             llm=self.llm,
-            temperature=self._attack_temperature,
             max_tokens=self._attacker_max_tokens,
             max_attack_attempts=self._max_attack_attempts,
             keep_last_n=self._keep_last_n,
@@ -129,7 +128,6 @@ class TapOptimizer(Optimizer):
         self._evaluator = Evaluator(
             llm=self.llm,
             max_tokens=self._evaluator_max_tokens,
-            temperature=self._evaluator_temperature,
         )
         self._tree = TapTree(rng=random.Random(self._random_seed))
         self._tree.create_root_nodes(width=self._root_nodes)

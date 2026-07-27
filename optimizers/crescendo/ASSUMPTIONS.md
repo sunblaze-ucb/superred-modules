@@ -209,8 +209,8 @@ Reconstructing the prefix into `_conversation_history` is avoided
 deliberately. Each `assistant` entry there is a JSON blob with
 internal reasoning fields (`last_response_summary`,
 `rationale_behind_jailbreak`); the prior attempt's attacker
-populated them via its own sampled rollout (attacker temperature
-is non-zero by default), we did not record them, and synthesising
+populated them via its own sampled rollout (the attacker LLM
+samples at its provider default), we did not record them, and synthesising
 plausible-looking values would put words in this attacker's mouth
 that it never said. The post-replay attacker can therefore pivot
 off the immediately prior response and the cross-attempt failure

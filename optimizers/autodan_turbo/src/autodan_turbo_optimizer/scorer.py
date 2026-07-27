@@ -35,13 +35,10 @@ class Scorer:
 
     Args:
         llm: Constrained LLM client supplied by the controller.
-        temperature: Forwarded to ``llm.complete``. Paper uses 0.7
-            for the scorer.
     """
 
-    def __init__(self, llm: LLMClient, *, temperature: float = 0.7) -> None:
+    def __init__(self, llm: LLMClient) -> None:
         self._llm = llm
-        self._temperature = temperature
 
     async def score(self, request: str, response: str) -> float:
         """Return a 1.0–10.0 jailbreak-intensity score.
@@ -65,9 +62,11 @@ class Scorer:
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ]
-        result = await self._llm.complete(
-            messages, temperature=self._temperature,
-        )
+        # Temperature is deliberately not specified (the paper pins the
+        # scorer at 0.7): reasoning models reject the parameter
+        # outright, and the optimizer swallows scorer failures, so a
+        # pin would silently disable scoring instead of erroring.
+        result = await self._llm.complete(messages)
         text = result.choices[0].message.content or ""
         return _parse_score(text)
 

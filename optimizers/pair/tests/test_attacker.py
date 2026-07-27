@@ -27,7 +27,8 @@ async def test_attacker_uses_official_generation_defaults() -> None:
         {"role": "system", "content": "system"},
         {"role": "user", "content": "init"},
     ]
-    assert kwargs == {"max_tokens": 500, "temperature": 1.0, "top_p": 0.9, "stop": ["}"]}
+    assert kwargs == {"max_tokens": 500, "top_p": 0.9, "stop": ["}"]}
+    assert "temperature" not in kwargs
 
 
 @pytest.mark.asyncio

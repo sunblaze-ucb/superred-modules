@@ -42,7 +42,7 @@ class TestAttackerFirstTurn:
         mock_llm = AsyncMock()
         payload = json.dumps({"improvement": "Try roleplaying.", "prompt": "You are a pirate..."})
         mock_llm.complete.return_value = _make_completion_response(payload)
-        attacker = Attacker(llm=mock_llm, temperature=0.7)
+        attacker = Attacker(llm=mock_llm)
         history: list[dict[str, str]] = []
 
         proposal = await attacker.generate_prompt(
@@ -116,6 +116,8 @@ class TestAttackerFirstTurn:
         assert ATTACKER_SEED_PROMPT.format(goal="g", target_str="Sure, here is") in history[0]["content"]
         _, kwargs = mock_llm.complete.call_args
         assert kwargs["max_tokens"] == 500
+        assert kwargs["top_p"] == 0.9
+        assert "temperature" not in kwargs
 
     @pytest.mark.asyncio
     async def test_first_turn_passes_system_prompt_with_goal_and_target_string(self) -> None:
@@ -306,7 +308,12 @@ class TestAttackerInit:
     def test_original_defaults(self) -> None:
         mock_llm = AsyncMock()
         attacker = Attacker(llm=mock_llm)
-        assert attacker._temperature == 1.0
         assert attacker._max_tokens == 500
         assert attacker._max_attack_attempts == 5
         assert attacker._keep_last_n == 3
+        assert attacker._top_p == 0.9
+
+    def test_temperature_is_not_a_constructor_parameter(self) -> None:
+        mock_llm = AsyncMock()
+        with pytest.raises(TypeError):
+            Attacker(llm=mock_llm, temperature=1.0)  # type: ignore[call-arg]

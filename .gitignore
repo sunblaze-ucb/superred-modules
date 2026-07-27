@@ -22,3 +22,9 @@ memory_db/
 # Local AI-agent steering pointers (machine-local, not versioned)
 CLAUDE.md
 AGENTS.md
+
+# superred 0.3.0 persists results by default; module test suites that drive a
+# real Controller drop this next to the package. It is test debris, and leaving
+# it in place makes the NEXT run resume from it and return kept tasks with no
+# runs, which silently breaks end-to-end assertions.
+superred-results/

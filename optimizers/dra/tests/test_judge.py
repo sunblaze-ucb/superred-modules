@@ -22,7 +22,7 @@ async def test_gpt_judge_uses_official_rating_format_and_defaults() -> None:
     assert "TASK: `alpha beta`" in messages[0]["content"]
     assert "[PROMPT]:prompt" in messages[1]["content"]
     assert "[ASSISTANT'S RESPONSE]: answer" in messages[1]["content"]
-    assert llm.complete.call_args.kwargs["temperature"] == 0.0
+    assert "temperature" not in llm.complete.call_args.kwargs
     assert llm.complete.call_args.kwargs["top_p"] == 1.0
     assert llm.complete.call_args.kwargs["max_tokens"] == 10
 

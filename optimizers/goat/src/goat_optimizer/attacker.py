@@ -71,8 +71,6 @@ class Attacker:
             attacker. The optimizer's default passes all 7 attacks
             from paper Table 1; for per-attack ablation construct the
             optimizer with ``attacks=(SOME_ATTACK,)``.
-        temperature: Sampling temperature for the attacker LLM
-            (default 1.0 to encourage strategy variety).
         static_context: Optional bounded SuperRed capability context
             inserted before the JSON output contract.
     """
@@ -83,7 +81,6 @@ class Attacker:
         llm: LLMClient,
         goal: str,
         attacks: tuple[Attack, ...],
-        temperature: float = 1.0,
         static_context: str | None = None,
     ) -> None:
         if not attacks:
@@ -91,7 +88,6 @@ class Attacker:
         self._llm = llm
         self._goal = goal
         self._attacks = tuple(attacks)
-        self._temperature = temperature
         self._static_context = static_context.strip() if static_context else None
 
         # System prompt (paper Fig A.1) is fixed for the conversation.
@@ -159,7 +155,11 @@ class Attacker:
             *self._history,
             {"role": "user", "content": user_message},
         ]
-        response = await self._llm.complete(messages, temperature=self._temperature)
+        # Sampling temperature is deliberately not sent: reasoning models
+        # reject the parameter outright (gpt-5.x), and Bedrock Claude
+        # rejects it combined with top_p, so the paper's pin of 1.0 would
+        # make GOAT unusable on exactly the strongest attacker models.
+        response = await self._llm.complete(messages)
         content = response.choices[0].message.content or ""
 
         parsed = self._parse_output(content)

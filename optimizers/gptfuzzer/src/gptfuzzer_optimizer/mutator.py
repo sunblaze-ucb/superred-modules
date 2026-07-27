@@ -18,11 +18,9 @@ class OpenAIMutatorBase:
         self,
         *,
         llm: LLMClient,
-        temperature: float = 1.0,
         max_tokens: int = 512,
     ) -> None:
         self._llm = llm
-        self._temperature = temperature
         self._max_tokens = max_tokens
 
     @property
@@ -36,9 +34,12 @@ class OpenAIMutatorBase:
             prompt = self._with_target_context(prompt, target_context)
         results: list[str] = []
         for _ in range(n):
+            # The paper pins the mutation temperature to 1.0. We deliberately send no
+            # temperature at all: reasoning models reject the parameter outright (gpt-5.x
+            # allows only temperature=1, Bedrock Claude rejects it alongside top_p), so
+            # pinning it would break mutation on exactly the strongest attacker models.
             response = await self._llm.complete(
                 [{"role": "user", "content": prompt}],
-                temperature=self._temperature,
                 max_tokens=self._max_tokens,
             )
             content = response.choices[0].message.content or ""
@@ -100,11 +101,10 @@ class OpenAIMutatorCrossOver(OpenAIMutatorBase):
         self,
         *,
         llm: LLMClient,
-        temperature: float = 1.0,
         max_tokens: int = 512,
         seed: int | None = None,
     ) -> None:
-        super().__init__(llm=llm, temperature=temperature, max_tokens=max_tokens)
+        super().__init__(llm=llm, max_tokens=max_tokens)
         self._rng = random.Random(seed)
 
     def cross_over(self, seed: str, prompt_nodes: Sequence[PromptNode]) -> str:

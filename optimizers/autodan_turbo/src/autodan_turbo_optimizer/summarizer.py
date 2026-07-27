@@ -35,13 +35,10 @@ class Summarizer:
 
     Args:
         llm: Constrained LLM client supplied by the controller.
-        temperature: Forwarded to ``llm.complete``. Paper uses 0.6 for
-            the summarizer.
     """
 
-    def __init__(self, llm: LLMClient, *, temperature: float = 0.6) -> None:
+    def __init__(self, llm: LLMClient) -> None:
         self._llm = llm
-        self._temperature = temperature
 
     async def summarize(
         self,
@@ -77,9 +74,11 @@ class Summarizer:
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ]
-        result = await self._llm.complete(
-            messages, temperature=self._temperature,
-        )
+        # Temperature is deliberately not specified (the paper pins the
+        # summarizer at 0.6): reasoning models reject the parameter
+        # outright, and the optimizer swallows summarizer failures, so
+        # a pin would silently disable strategy learning.
+        result = await self._llm.complete(messages)
         text = result.choices[0].message.content or ""
         return _parse_strategy(text)
 

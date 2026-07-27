@@ -79,8 +79,10 @@ class TestScoring:
         assert "1-10" in system
 
     @pytest.mark.asyncio
-    async def test_score_passes_temperature(self) -> None:
+    async def test_score_sends_no_temperature(self) -> None:
+        # Reasoning models reject the parameter outright, so the
+        # scorer must never send it.
         llm = _llm_returning("Score: 5")
-        scorer = Scorer(llm, temperature=0.3)
+        scorer = Scorer(llm)
         await scorer.score("r", "resp")
-        assert llm.complete.call_args.kwargs["temperature"] == 0.3
+        assert "temperature" not in llm.complete.call_args.kwargs
