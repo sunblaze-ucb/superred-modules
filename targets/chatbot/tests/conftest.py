@@ -18,13 +18,29 @@ from chatbot_target import (
 )
 
 
-def make_litellm_response(content: str) -> MagicMock:
-    """Build a mock litellm ModelResponse."""
+def make_litellm_response(
+    content: str | None,
+    *,
+    finish_reason: str = "stop",
+    reasoning_content: str | None = None,
+    choices: bool = True,
+) -> MagicMock:
+    """Build a mock litellm ModelResponse.
+
+    ``finish_reason`` carries the in-band form of a content-filter block, so it
+    has to be settable; ``choices=False`` builds the shape a provider returns
+    when it produced nothing at all.
+    """
     from litellm import ModelResponse
 
     resp = MagicMock(spec=ModelResponse)
+    if not choices:
+        resp.choices = []
+        return resp
     resp.choices = [MagicMock()]
     resp.choices[0].message.content = content
+    resp.choices[0].message.reasoning_content = reasoning_content
+    resp.choices[0].finish_reason = finish_reason
     return resp
 
 
@@ -32,6 +48,12 @@ def make_litellm_response(content: str) -> MagicMock:
 def target() -> ChatbotTarget:
     """A ChatbotTarget with test credentials."""
     return ChatbotTarget(model="test-model", api_key="sk-test")
+
+
+@pytest.fixture
+def fast_target() -> ChatbotTarget:
+    """A ChatbotTarget whose retry backoff does not sleep, for retry-path tests."""
+    return ChatbotTarget(model="test-model", api_key="sk-test", retry_backoff_s=0.0)
 
 
 @pytest.fixture
