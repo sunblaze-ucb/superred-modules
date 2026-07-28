@@ -108,9 +108,11 @@ class Reflector:
     ) -> ReflectionResult | None:
         """Propose a new instruction from the parent + recent rollouts.
 
-        Returns ``None`` (and logs a warning) on parse failure, so the
-        optimizer can fall back to keeping the parent unchanged for
-        the next attempt without crashing the run.
+        Returns ``None`` (and logs a warning) on parse failure — the LM
+        answered but proposed nothing usable, which is an attacker-model
+        outcome rather than a failure. Provider errors are deliberately
+        NOT caught here: the optimizer classifies, retries and
+        ultimately surfaces them (``GEPAOptimizer._propose_with_retry``).
         """
         side_info = format_reflective_dataset(
             [record.to_sample() for record in rollouts]
@@ -121,9 +123,9 @@ class Reflector:
         )
 
         # Deliberately no ``temperature``: reasoning models reject the
-        # parameter (upstream pins a high one for prompt diversity), and
-        # the optimizer swallows a failed reflection call, so pinning it
-        # would silently disable mutation instead of surfacing an error.
+        # parameter outright (upstream pins a high one for prompt
+        # diversity), which would turn every reflection on those models
+        # into a hard failure.
         response = await self._llm.complete(
             [{"role": "user", "content": prompt}],
         )

@@ -115,6 +115,10 @@ knob still wins over auto-claim. When ``system_prompt`` is not
 writable, behaviour is unchanged: attack ``user_message`` and skip
 read-only ``system_prompt`` PreCalls.
 
+Reflection is what makes each run differ from the last; when it stops
+producing mutations the loop must stop too. See "When Reflection Does
+Not Produce a Mutation".
+
 ``max_no_signal_runs`` (default ``0``, disabled) bounds the
 user-query-only setting's cost: if positive, terminate after that many
 consecutive runs in which neither response nor evaluation was visible.
@@ -156,8 +160,9 @@ To still feed the reflection LM the multi-rollout signal the paper
 relies on, each candidate keeps a bounded ring buffer of its most
 recent rollouts (size 3 — same number as the paper's minibatch).
 When the same parent is re-rolled (e.g. because the previous
-reflection failed to produce a parseable mutation, or because no
-fresh proposal beat it in the pool), the new rollout appends to that
+reflection failed to produce a parseable mutation — bounded, see
+"When Reflection Does Not Produce a Mutation" — or because no fresh
+proposal beat it in the pool), the new rollout appends to that
 history; when the buffer is full the oldest entry is dropped.
 ``Reflector.propose`` then receives every entry in the buffer as the
 side-info dataset, so the meta-prompt sees as much signal as we've
@@ -227,20 +232,72 @@ and GOAT:
   PreCall request, or request matches the injected value).
 * Same ``RunEnd → done`` semantics: ``done=True`` on success
   (``RunEndEvent.evaluation.success``), on
-  ``max_no_signal_runs`` overflow, or on ``max_attempts`` exhaustion;
-  ``done=False`` otherwise.
+  ``max_no_signal_runs`` overflow, on ``max_consecutive_no_mutation``
+  overflow, or on ``max_attempts`` exhaustion; ``done=False``
+  otherwise.
 * Same delegation of success judgement to ``RunEndEvent.evaluation`` —
   no in-loop scorer (matches GOAT's pattern; the paper's evaluation
   metric is exogenous).
 
-## Reflection on Parse Failure
+## When Reflection Does Not Produce a Mutation
 
-If the reflection LM's output does not contain a fenced code block,
-``Reflector.propose`` returns ``None`` and the optimizer logs a warning
-and skips the mutation for that iteration. The next run re-rolls the
-existing best candidate (no new pending proposal stashed), so the
-attempt budget is not burned producing a malformed candidate. This
-matches Crescendo's "scoring failed → fall back" pattern.
+Reflection is the only thing that makes a GEPA run different from the
+one before it. When it produces nothing, the next run re-sends the
+*identical* prompt to the target: full target cost, zero search
+progress, and a recorded result that looks like a legitimate multi-run
+search that failed. The three ways reflection can produce nothing are
+therefore kept apart, and none of them is silent.
+
+**1. Cost cap spent** (``BudgetExhaustedError``). Re-raised untouched
+and never retried — retrying a spent cap would be a cap escape. The
+controller maps it to ``stop_reason="budget_exhausted"``.
+
+**2. The call failed** (provider error, transport error, malformed
+provider response). Retried ``reflection_retries`` times (default 2, so
+3 attempts) with full-jitter exponential backoff, jittered because a
+whole matrix cell retries against one provider at the same instant.
+Retrying stops early once ``reflection_retry_deadline`` seconds
+(default 120) have passed since the first attempt: a single provider
+timeout can itself be minutes long, and retrying into the controller's
+``task_time_cap_s`` would discard the task outright. If every attempt
+failed, ``ReflectionUnavailable`` is raised out of ``on_event`` and the
+controller records ``stop_reason="error"`` with the traceback. A dead
+reflection LM means GEPA never searched; that must not be recorded as a
+target that held.
+
+**3. The LM answered but proposed nothing parseable** (no fenced code
+block — in practice an attacker model declining to improve an attack).
+This is legitimate attacker-model output, not an infrastructure
+failure, so it is not an error. The parent is re-rolled, which is worth
+something: it refreshes the parent's rollout buffer, so the next
+reflection is shown different side-info. Once
+``max_consecutive_no_mutation`` reflections in a row have proposed
+nothing (default 3 = the rollout-history depth, i.e. the buffer has
+fully turned over) the optimizer stops with ``done=True`` and logs why,
+rather than spending the remaining attempts re-sending one prompt. Set
+the knob to 0 to restore unbounded re-rolling.
+
+Failures in classes 1 and 2 are raised at the *next* ``RunStartEvent``
+rather than from the ``RunEndEvent`` that detected them. The controller
+sends ``RunStartEvent`` before it calls the target, so the task still
+ends without paying for another target call, while the just-completed
+run keeps its real evaluation instead of being overwritten by the
+controller's synthetic zero-score error result.
+
+### Why this is not the old behaviour
+
+Until this was fixed the reflection call sat inside a bare
+``except Exception`` that logged and returned. In the RQ1.3-1 first-run
+archive that turned 7,018 reflection failures into invisible ones:
+3,395 were ``BudgetExhaustedError``, and 775 GEPA tasks spent their
+entire \$0.75 attacker cap while not one task was recorded as
+``budget_exhausted``. Separately, 95 multi-run tasks recorded zero
+successful attacker LLM calls (84 of them across all 20 runs) — the
+framework counts a call only after a completion returns, so that is
+proof every reflection attempt raised — and 1,279 multi-run tasks sent
+the target the identical prompt in every run they had, 21,503 target
+runs of pure repetition, all recorded as ordinary score-0 attacker
+failures.
 
 ## One Run = One Rollout, ASR-Style Across Runs
 
