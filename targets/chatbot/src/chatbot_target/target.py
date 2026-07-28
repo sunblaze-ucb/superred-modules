@@ -36,11 +36,37 @@ inseparable from full system control. With ``model_identity`` as a sibling of
 ``system_prompt`` and ``model``, an attacker can be modeled as "knows which
 model is being attacked" without simultaneously having system prompt override
 or response modification capabilities.
+
+Content-filter blocks are a defense, not an outage
+--------------------------------------------------
+When the provider's guardrail suppresses the victim's reply, the attacker
+failed to extract harmful content.  That is a measurement, so the target does
+not raise: it records the turn as blocked and lets the run finish and be scored.
+Raising would make the framework abandon the whole task with
+``stop_reason="error"``, discarding the attempt, which systematically
+under-counts exactly the cases where a defense worked.
+
+Every blocked turn leaves three traces, so the outcome is distinguishable
+afterwards from an ordinary refusal and from an empty reply:
+
+* an ``ObservableEvent`` named ``response_blocked``
+  (:data:`BLOCKED_OBSERVABLE_NAME`) whose content is the provider's reason, in
+  the run's stored trajectory;
+* :data:`BLOCKED_RESPONSE_MARKER` in place of the reply, in the conversation,
+  in ``last_response`` and in the ``ControllablePostCallEvent`` answer;
+* the ``blocked_turns`` and ``last_block_reason`` queries, for tasks that want
+  to score or label the outcome.
+
+Only genuine content-filter blocks are absorbed.  Every other provider error
+still propagates and still errors the task, because a rate limit or a dropped
+connection is an infrastructure failure and must not be recorded as a defended
+attack.
 """
 
 from __future__ import annotations
 
 from litellm import ModelResponse, acompletion
+from litellm.exceptions import ContentPolicyViolationError
 
 from superred.core.interfaces.target import Target
 from superred.core.types.controllable import Controllable
@@ -97,6 +123,77 @@ _RESPONSE_CTRL = Controllable(
     description="The LLM response. Injection overrides the response text.",
 )
 
+# ---------------------------------------------------------------------------
+# Content-filter blocks
+# ---------------------------------------------------------------------------
+# A provider guardrail that suppresses the model's output is an ATTACK OUTCOME,
+# not an infrastructure failure: the attacker did not get harmful content out of
+# the victim.  Letting the exception escape ``run()`` would abandon the whole
+# task with ``stop_reason="error"``, so the attempt would be discarded instead
+# of counted, and a defense that works would look like a broken experiment.
+#
+# The turn is therefore recorded as a blocked turn, the run continues, and the
+# provider's reason is preserved so analysis can tell a guardrail block apart
+# from an ordinary model refusal and from an empty response.
+#
+# Matching is on the MESSAGE, not the exception type, because the type is not
+# trustworthy here.  In the RQ1.3-1 first-run archive, 413 victim-side policy
+# blocks were recorded and only 31 of them arrived as ``BadRequestError``; the
+# other 382 arrived as ``APIConnectionError``, which is exactly the class this
+# code must otherwise let through.  Gating on the type would therefore have
+# absorbed 7% of real blocks and re-errored the rest.
+#
+# The phrases carry the specificity instead.  Each is verbatim provider response
+# text, long enough that it cannot collide with an attacker prompt that merely
+# discusses content policy, and it is only ever matched against the exception
+# message, never against a model reply.
+_CONTENT_FILTER_PHRASES = (
+    "output blocked by content filtering policy",              # AWS Bedrock guardrail
+    "blocked by content filter",
+    "limited access to this content for safety reasons",       # OpenAI validation_error
+    "content_policy_violation",                                # OpenAI
+    "content management policy",                               # Azure OpenAI
+    "responsible ai policy",                                   # Azure
+    "content_filter",                                          # provider error code
+)
+
+#: Stands in for the suppressed reply in the conversation, in ``last_response``
+#: and in the ``ControllablePostCallEvent`` answer, so all three agree.  A
+#: distinct marker rather than an empty string: an empty assistant turn is
+#: rejected outright by some providers, and it would be indistinguishable from
+#: a model that legitimately returned nothing.
+BLOCKED_RESPONSE_MARKER = "[response withheld: blocked by the provider's content filter]"
+
+#: Observable emitted once per blocked turn, carrying the provider's reason.
+#: This is what makes a guardrail block findable in stored trajectories.
+BLOCKED_OBSERVABLE_NAME = "response_blocked"
+
+
+def content_filter_reason(exc: BaseException) -> str | None:
+    """The provider's reason if *exc* is a content-filter block, else ``None``.
+
+    ``ContentPolicyViolationError`` is the typed signal, but almost no provider
+    in practice uses it.  The two wordings that actually occur are::
+
+        BadRequestError: BedrockException - {"message": "The model returned the
+        following errors: Output blocked by content filtering policy"}
+
+        APIConnectionError: {"error": {"code": "validation_error", "message":
+        "Invalid prompt: we've limited access to this content for safety
+        reasons. ..."}}
+
+    Note the second one's type.  OpenAI's refusal is a policy decision reported
+    through a transport-shaped exception, so it is recognised by message alone.
+    """
+    if isinstance(exc, ContentPolicyViolationError):
+        return str(exc)
+    # Curly apostrophes appear in provider text ("we’ve"); fold them so the
+    # phrase list does not need both spellings.
+    haystack = str(exc).lower().replace("’", "'")
+    if any(p in haystack for p in _CONTENT_FILTER_PHRASES):
+        return str(exc)
+    return None
+
 
 class ChatbotTarget(Target):
     """Chatbot target wrapping any litellm-accessible LLM.
@@ -132,6 +229,8 @@ class ChatbotTarget(Target):
         self._system_prompt: str = "You are a helpful assistant."
         self._last_response: str = ""
         self._conversation_history: list[dict[str, str]] = []
+        self._blocked_turns: int = 0
+        self._last_block_reason: str = ""
 
     # -- Config ---------------------------------------------------------------
 
@@ -165,6 +264,21 @@ class ChatbotTarget(Target):
                     "for the full conversation in this run."
                 ),
             ),
+            QuerySpec(
+                name="blocked_turns",
+                description=(
+                    "How many turns in this run had their response suppressed by the "
+                    "provider's content filter. Non-zero means the attack was stopped "
+                    "by a guardrail rather than by the model declining to comply."
+                ),
+            ),
+            QuerySpec(
+                name="last_block_reason",
+                description=(
+                    "The provider's reason for the most recent content-filter block "
+                    "in this run, or empty if nothing was blocked."
+                ),
+            ),
         ]
 
     def query(self, name: str, **params: str) -> str:
@@ -173,6 +287,10 @@ class ChatbotTarget(Target):
         if name == "conversation_history":
             import json
             return json.dumps(self._conversation_history)
+        if name == "blocked_turns":
+            return str(self._blocked_turns)
+        if name == "last_block_reason":
+            return self._last_block_reason
         return ""
 
     # -- Security domain ------------------------------------------------------
@@ -256,9 +374,34 @@ class ChatbotTarget(Target):
             if self._api_base is not None:
                 kwargs["api_base"] = self._api_base
 
-            response = await acompletion(messages=conversation, **kwargs)  # type: ignore[arg-type]
-            assert isinstance(response, ModelResponse)
-            assistant_message: str = response.choices[0].message.content or ""
+            try:
+                response = await acompletion(messages=conversation, **kwargs)  # type: ignore[arg-type]
+            except Exception as exc:
+                reason = content_filter_reason(exc)
+                if reason is None:
+                    raise  # a real failure: let the framework error the task
+                # The victim's guardrail suppressed the reply. Record it as a
+                # blocked turn and keep going, so the attacker keeps control of
+                # the conversation and the task is still scored.
+                self._blocked_turns += 1
+                self._last_block_reason = reason
+                assistant_message = BLOCKED_RESPONSE_MARKER
+                emit(
+                    ObservableEvent(
+                        observable=Observable(
+                            name=BLOCKED_OBSERVABLE_NAME,
+                            security_domain=RESPONSE_READABLE_TAG,
+                            description=(
+                                "The provider's content filter suppressed this response. "
+                                "Content is the provider's reason."
+                            ),
+                        ),
+                        content=reason,
+                    ),
+                )
+            else:
+                assert isinstance(response, ModelResponse)
+                assistant_message = response.choices[0].message.content or ""
 
             # Report the response via ControllablePostCallEvent.  If the
             # optimizer's scope includes MODEL_TAG it can inject a modified
@@ -292,6 +435,8 @@ class ChatbotTarget(Target):
     async def reset_ephemeral_state(self) -> None:
         self._last_response = ""
         self._conversation_history = []
+        self._blocked_turns = 0
+        self._last_block_reason = ""
 
     async def teardown(self) -> None:
         pass
