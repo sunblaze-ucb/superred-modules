@@ -66,7 +66,7 @@ attack.
 from __future__ import annotations
 
 from litellm import ModelResponse, acompletion
-from litellm.exceptions import BadRequestError, ContentPolicyViolationError
+from litellm.exceptions import ContentPolicyViolationError
 
 from superred.core.interfaces.target import Target
 from superred.core.types.controllable import Controllable
@@ -136,18 +136,25 @@ _RESPONSE_CTRL = Controllable(
 # provider's reason is preserved so analysis can tell a guardrail block apart
 # from an ordinary model refusal and from an empty response.
 #
-# Matching is deliberately tight: only a 4xx bad-request family exception whose
-# message carries one of these phrases counts.  Some providers echo the request
-# back in an error body, and an attacker prompt may itself discuss content
-# policy, so a loose match would silently reclassify real infrastructure
-# failures as defended attacks.
+# Matching is on the MESSAGE, not the exception type, because the type is not
+# trustworthy here.  In the RQ1.3-1 first-run archive, 413 victim-side policy
+# blocks were recorded and only 31 of them arrived as ``BadRequestError``; the
+# other 382 arrived as ``APIConnectionError``, which is exactly the class this
+# code must otherwise let through.  Gating on the type would therefore have
+# absorbed 7% of real blocks and re-errored the rest.
+#
+# The phrases carry the specificity instead.  Each is verbatim provider response
+# text, long enough that it cannot collide with an attacker prompt that merely
+# discusses content policy, and it is only ever matched against the exception
+# message, never against a model reply.
 _CONTENT_FILTER_PHRASES = (
-    "content filtering policy",       # AWS Bedrock guardrail
+    "output blocked by content filtering policy",              # AWS Bedrock guardrail
     "blocked by content filter",
-    "content_filter",                 # OpenAI finish_reason / error code
-    "content_policy_violation",       # OpenAI
-    "content management policy",      # Azure OpenAI
-    "responsible ai policy",          # Azure
+    "limited access to this content for safety reasons",       # OpenAI validation_error
+    "content_policy_violation",                                # OpenAI
+    "content management policy",                               # Azure OpenAI
+    "responsible ai policy",                                   # Azure
+    "content_filter",                                          # provider error code
 )
 
 #: Stands in for the suppressed reply in the conversation, in ``last_response``
@@ -165,17 +172,26 @@ BLOCKED_OBSERVABLE_NAME = "response_blocked"
 def content_filter_reason(exc: BaseException) -> str | None:
     """The provider's reason if *exc* is a content-filter block, else ``None``.
 
-    ``ContentPolicyViolationError`` is the typed signal, but several providers
-    do not use it.  AWS Bedrock, the case this was written for, raises a plain
-    ``BadRequestError`` wrapping ``BedrockException - {"message": "The model
-    returned the following errors: Output blocked by content filtering policy"}``.
+    ``ContentPolicyViolationError`` is the typed signal, but almost no provider
+    in practice uses it.  The two wordings that actually occur are::
+
+        BadRequestError: BedrockException - {"message": "The model returned the
+        following errors: Output blocked by content filtering policy"}
+
+        APIConnectionError: {"error": {"code": "validation_error", "message":
+        "Invalid prompt: we've limited access to this content for safety
+        reasons. ..."}}
+
+    Note the second one's type.  OpenAI's refusal is a policy decision reported
+    through a transport-shaped exception, so it is recognised by message alone.
     """
     if isinstance(exc, ContentPolicyViolationError):
         return str(exc)
-    if isinstance(exc, BadRequestError):
-        haystack = str(exc).lower()
-        if any(p in haystack for p in _CONTENT_FILTER_PHRASES):
-            return str(exc)
+    # Curly apostrophes appear in provider text ("we’ve"); fold them so the
+    # phrase list does not need both spellings.
+    haystack = str(exc).lower().replace("’", "'")
+    if any(p in haystack for p in _CONTENT_FILTER_PHRASES):
+        return str(exc)
     return None
 
 

@@ -49,8 +49,23 @@ BEDROCK_BLOCK = (
 )
 
 
+# OpenAI's refusal, verbatim from the archive. It is 382 of the 413 victim-side
+# blocks -- the DOMINANT form -- and it arrives as APIConnectionError, a
+# transport-shaped exception, with no "content filter" wording anywhere.
+OPENAI_BLOCK = (
+    '{"error":{"code":"validation_error","message":"Invalid prompt: we\u2019ve limited '
+    'access to this content for safety reasons. This type of information may be used '
+    'to benefit or to harm people. We are continuously refining our work in this area, '
+    'and you can read more about our approach in our blog post"}}'
+)
+
+
 def _bedrock_block() -> BadRequestError:
     return BadRequestError(message=BEDROCK_BLOCK, model="m", llm_provider="bedrock")
+
+
+def _openai_block() -> APIConnectionError:
+    return APIConnectionError(message=OPENAI_BLOCK, model="m", llm_provider="openai")
 
 
 def _driver(responses, *, turns=1):
@@ -82,6 +97,18 @@ class TestDetector:
     def test_bedrock_bad_request_is_a_block(self) -> None:
         assert content_filter_reason(_bedrock_block()) is not None
 
+    def test_openai_safety_refusal_is_a_block_despite_its_type(self) -> None:
+        # The whole point: this is APIConnectionError, the same class as a real
+        # network failure, and it says nothing about content filtering. Only the
+        # message identifies it. Gating on the exception type would miss 382 of
+        # the 413 victim-side blocks in the archive.
+        assert content_filter_reason(_openai_block()) is not None
+
+    def test_curly_apostrophe_does_not_defeat_the_match(self) -> None:
+        straight = OPENAI_BLOCK.replace("\u2019", "'")
+        assert content_filter_reason(
+            APIConnectionError(message=straight, model="m", llm_provider="openai")) is not None
+
     def test_typed_content_policy_error_is_a_block(self) -> None:
         exc = ContentPolicyViolationError(
             message="content policy violation", model="m", llm_provider="openai",
@@ -101,6 +128,8 @@ class TestDetector:
         RateLimitError(message="Too many tokens, please wait before trying again.",
                        model="m", llm_provider="bedrock"),
         APIConnectionError(message="connection reset", model="m", llm_provider="bedrock"),
+        APIConnectionError(message="litellm.Timeout: Connection timed out after 600s",
+                           model="m", llm_provider="openai"),
         BadRequestError(message="Bedrock is unable to process your request.",
                         model="m", llm_provider="bedrock"),
         BadRequestError(message="A conversation must start with a user message.",
@@ -119,6 +148,22 @@ class TestBlockedRunIsScoredNotErrored:
 
         with m.patch("chatbot_target.target.acompletion", side_effect=_bedrock_block()):
             await target.run(lambda e: None, _driver(None))  # must not raise
+
+    async def test_openai_block_run_completes_and_is_recorded(
+        self, target: ChatbotTarget,
+    ) -> None:
+        import unittest.mock as m
+
+        emitted: list[object] = []
+        with m.patch("chatbot_target.target.acompletion", side_effect=_openai_block()):
+            await target.run(emitted.append, _driver(None))
+        assert target.query("blocked_turns") == "1"
+        assert "safety reasons" in target.query("last_block_reason")
+        assert any(
+            isinstance(e, ObservableEvent)
+            and e.observable.name == BLOCKED_OBSERVABLE_NAME
+            for e in emitted
+        )
 
     async def test_other_provider_errors_still_raise(self, target: ChatbotTarget) -> None:
         import unittest.mock as m
