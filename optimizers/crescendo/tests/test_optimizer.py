@@ -16,12 +16,23 @@ from superred.core.types.events import (
     RunStartEvent,
 )
 from superred.core.types.goal import Goal
+from superred.core.types.llm import BudgetExhaustedError, LLMUsage
 from superred.core.types.observable import Observable, ObservableValue
 from superred.core.types.security_domain import SecurityDomain, SecurityDomainTag
 from superred.core.types.state import ConfigSpec, QuerySpec
 
+from crescendo_optimizer import retry
 from crescendo_optimizer.attacker import AttackerOutput
 from crescendo_optimizer.optimizer import CrescendoOptimizer
+from crescendo_optimizer.retry import DEFAULT_ATTEMPTS, HelperLLMUnavailableError
+
+
+class _NoSleepAsyncio:
+    """Stand-in for the ``asyncio`` module inside ``retry``: skips backoff."""
+
+    @staticmethod
+    async def sleep(_delay: float) -> None:
+        return None
 
 
 def _make_controllable(name: str = "input", tag: str = "user"):
@@ -692,16 +703,127 @@ async def test_secondary_controllable_ignored():
 
 
 @pytest.mark.asyncio
-async def test_attacker_failure_uses_benign_fallback_question():
+async def test_attacker_failure_escapes_instead_of_injecting_filler():
+    """A dead attacker must not be scored as a weak one.
+
+    The optimizer used to substitute a generic benign question here. That
+    question was then sent to the target and scored, so a broken attacker
+    produced a legitimate-looking score of 0.
+    """
     opt = await _init_optimizer()
     ctrl = _make_controllable()
 
     await opt.on_event(_make_run_start())
 
     with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen:
-        mock_gen.side_effect = RuntimeError("attacker unavailable")
+        mock_gen.side_effect = HelperLLMUnavailableError(
+            "Crescendo attacker generation (turn 1) failed on all 3 attempts"
+        )
+        with pytest.raises(HelperLLMUnavailableError):
+            await opt.on_event(_make_pre_call(ctrl))
+
+    assert opt._current_question is None
+    assert not hasattr(opt, "_build_fallback_question")
+
+
+@pytest.mark.asyncio
+async def test_attacker_budget_exhaustion_escapes_on_event():
+    """BudgetExhaustedError reaches the controller, which maps it to
+    stop_reason="budget_exhausted".
+
+    Swallowing it is why the first archive shows 2,299 Crescendo tasks that
+    had spent their entire $0.75 cap yet reported zero budget_exhausted tasks.
+    """
+    opt = await _init_optimizer()
+    ctrl = _make_controllable()
+
+    await opt.on_event(_make_run_start())
+
+    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen:
+        mock_gen.side_effect = BudgetExhaustedError(
+            "Cost cap reached: $0.750131/$0.750000",
+            usage=LLMUsage(calls=214, cost=0.750131),
+        )
+        with pytest.raises(BudgetExhaustedError):
+            await opt.on_event(_make_pre_call(ctrl))
+
+
+@pytest.mark.asyncio
+async def test_refusal_check_budget_exhaustion_escapes_on_event():
+    """Same for the internal refusal check, which runs on every turn."""
+    opt = await _init_optimizer()
+    ctrl = _make_controllable()
+    await opt.on_event(_make_run_start())
+
+    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen:
+        mock_gen.return_value = AttackerOutput(question="Q?", summary="", rationale="r")
+        await opt.on_event(_make_pre_call(ctrl))
+    await opt.on_event(_make_post_call(ctrl, "Some answer"))
+
+    with patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref:
+        mock_ref.side_effect = BudgetExhaustedError(
+            "Cost cap reached: $0.750131/$0.750000",
+            usage=LLMUsage(calls=214, cost=0.750131),
+        )
+        with pytest.raises(BudgetExhaustedError):
+            await opt.on_event(_make_pre_call(ctrl))
+    assert mock_ref.await_count == 1  # never retried
+
+
+@pytest.mark.asyncio
+async def test_scoring_budget_exhaustion_escapes_on_event():
+    """Same for the internal scorer."""
+    opt = await _init_optimizer()
+    ctrl = _make_controllable()
+    await opt.on_event(_make_run_start())
+
+    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen:
+        mock_gen.return_value = AttackerOutput(question="Q?", summary="", rationale="r")
+        await opt.on_event(_make_pre_call(ctrl))
+    await opt.on_event(_make_post_call(ctrl, "Some answer"))
+
+    with patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref, \
+         patch.object(opt._evaluator, "score_response", new_callable=AsyncMock) as mock_score:
+        mock_ref.return_value = False
+        mock_score.side_effect = BudgetExhaustedError(
+            "Cost cap reached: $0.750131/$0.750000",
+            usage=LLMUsage(calls=214, cost=0.750131),
+        )
+        with pytest.raises(BudgetExhaustedError):
+            await opt.on_event(_make_pre_call(ctrl))
+
+
+@pytest.mark.asyncio
+async def test_transient_evaluator_failure_is_retried_then_degraded(monkeypatch):
+    """A transient evaluator failure is retried; a persistent one degrades
+    but is counted, because the internal evaluator cannot change the verdict
+    the security claim's judge records."""
+    monkeypatch.setattr(retry, "asyncio", _NoSleepAsyncio())
+    opt = await _init_optimizer()
+    ctrl = _make_controllable()
+    await opt.on_event(_make_run_start())
+
+    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen:
+        mock_gen.return_value = AttackerOutput(question="Q?", summary="", rationale="r")
+        await opt.on_event(_make_pre_call(ctrl))
+    await opt.on_event(_make_post_call(ctrl, "Some answer"))
+
+    with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as mock_gen, \
+         patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref, \
+         patch.object(opt._evaluator, "score_response", new_callable=AsyncMock) as mock_score:
+        mock_gen.return_value = AttackerOutput(question="Q2?", summary="", rationale="r")
+        # Archive shape: litellm.APIConnectionError from the attacker proxy.
+        mock_ref.side_effect = [
+            ConnectionError("litellm.APIConnectionError: connection error"),
+            False,
+        ]
+        mock_score.side_effect = ConnectionError(
+            "litellm.APIConnectionError: connection error"
+        )
         resp = await opt.on_event(_make_pre_call(ctrl))
 
     assert isinstance(resp, ControllableInjection)
-    assert "test objective" not in resp.value.lower()
-    assert "high-level" in resp.value.lower()
+    assert mock_ref.await_count == 2  # retried once, then succeeded
+    assert mock_score.await_count == DEFAULT_ATTEMPTS
+    assert opt._degraded == {"turn_scoring": 1}
+    assert opt._last_score == 0.0
