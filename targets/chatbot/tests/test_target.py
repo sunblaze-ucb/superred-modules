@@ -782,34 +782,9 @@ class TestTemperature:
         assert "temperature" not in captured_kwargs[0]
 
 
-# ======================================================================
-# Run: LLM response with None content
-# ======================================================================
-
-
-class TestNoneContent:
-    async def test_none_content_becomes_empty_string(self, target: ChatbotTarget) -> None:
-        mock_resp = make_litellm_response("ignored")
-        mock_resp.choices[0].message.content = None
-        user_calls = 0
-
-        async def mock_send_event(event):
-            nonlocal user_calls
-            if isinstance(event, ControllablePreCallEvent):
-                if event.controllable.name == "system_prompt":
-                    return ControllableNoInjection(event=event, controllable=event.controllable)
-                user_calls += 1
-                if user_calls == 1:
-                    return ControllableInjection(
-                        event=event, controllable=event.controllable, value="hi",
-                    )
-                return ControllableNoInjection(event=event, controllable=event.controllable)
-            return ControllableNoInjection(event=event, controllable=event.controllable)
-
-        with patch("chatbot_target.target.acompletion", return_value=mock_resp):
-            await target.run(lambda e: None, mock_send_event)
-
-        assert target.query("last_response") == ""
+# A response with no content used to become the empty string here, which the
+# claims score as a legitimate 0.0 attacker failure. It is now its own outcome;
+# see test_turn_outcomes.py::TestNoContent.
 
 
 # ======================================================================

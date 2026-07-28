@@ -7,9 +7,14 @@ escaped ``run()`` the framework would abandon the task with
 under-counting exactly the cases where a defense worked.
 
 The blocked turn must also stay identifiable afterwards, so these tests pin the
-three traces it leaves: the ``response_blocked`` observable carrying the
-provider's reason, the marker that replaces the reply, and the ``blocked_turns``
-/ ``last_block_reason`` queries.
+traces it leaves: the ``response_blocked`` observable carrying the provider's
+reason, the ``blocked`` turn outcome, and the ``blocked_turns`` /
+``last_block_reason`` queries.
+
+What they equally pin is that none of that is achieved by inventing a reply.
+The victim produced no text, so ``last_response``, the post-call answer and the
+wire conversation carry no text: a stand-in sentence would be scored by the
+judge, read by the attacker and shown back to the victim as its own words.
 """
 
 from __future__ import annotations
@@ -33,6 +38,8 @@ from superred.core.types.events import (
 from chatbot_target import (
     BLOCKED_OBSERVABLE_NAME,
     BLOCKED_RESPONSE_MARKER,
+    OUTCOME_BLOCKED,
+    OUTCOME_EMPTY,
     RESPONSE_READABLE_TAG,
     ChatbotTarget,
     content_filter_reason,
@@ -203,7 +210,12 @@ class TestBlockIsVisibleAfterwards:
         assert target.query("blocked_turns") == "1"
         assert "content filtering policy" in target.query("last_block_reason")
 
-    async def test_marker_replaces_the_reply_everywhere(self, target: ChatbotTarget) -> None:
+    async def test_the_block_is_never_reported_as_victim_text(
+        self, target: ChatbotTarget,
+    ) -> None:
+        # The victim said nothing, so nothing is what the judge scores and what
+        # the attacker is told. Substituting a stand-in sentence would put words
+        # the victim never produced into the measurement path.
         import json
         import unittest.mock as m
 
@@ -219,25 +231,72 @@ class TestBlockIsVisibleAfterwards:
         with m.patch("chatbot_target.target.acompletion", side_effect=_bedrock_block()):
             await target.run(lambda e: None, send_event)
 
-        assert target.query("last_response") == BLOCKED_RESPONSE_MARKER
-        assert posts and posts[0].answer == BLOCKED_RESPONSE_MARKER
+        assert target.query("last_response") == ""
+        assert posts and posts[0].answer == ""
+        # The marker survives only as a rendering in the record, alongside the
+        # null content and the outcome that say what actually happened.
         history = json.loads(target.query("conversation_history"))
-        assert history[-1] == {"role": "assistant", "content": BLOCKED_RESPONSE_MARKER}
+        assert history[-1]["content"] is None
+        assert history[-1]["outcome"] == OUTCOME_BLOCKED
+        assert history[-1]["rendered"] == BLOCKED_RESPONSE_MARKER
 
-    async def test_marker_is_distinguishable_from_an_empty_reply(
+    async def test_the_marker_never_reaches_the_provider(self, target: ChatbotTarget) -> None:
+        # An invented assistant turn is not neutral: the victim would be told it
+        # said it, on every subsequent turn of the conversation.
+        import unittest.mock as m
+
+        sent: list[list[dict]] = []
+        calls = {"n": 0}
+
+        def maybe_block(**kwargs):
+            sent.append(list(kwargs["messages"]))
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise _bedrock_block()
+            return make_litellm_response("second turn")
+
+        with m.patch("chatbot_target.target.acompletion", side_effect=maybe_block):
+            await target.run(lambda e: None, _driver(None, turns=2))
+
+        assert len(sent) == 2
+        assert all(msg["role"] != "assistant" for msg in sent[1])
+
+    async def test_a_block_and_an_empty_reply_stay_distinguishable(
         self, target: ChatbotTarget,
     ) -> None:
-        # An empty response is its own failure mode (the model returned nothing).
-        # A guardrail block must not look like it, or the two get conflated in
-        # analysis.
+        # Both leave last_response empty, deliberately -- neither produced text.
+        # They must still be told apart, or a defense working and a model with
+        # nothing to say are one number in the results.
         import unittest.mock as m
 
         with m.patch("chatbot_target.target.acompletion",
                      return_value=make_litellm_response("")):
             await target.run(lambda e: None, _driver(None))
         assert target.query("last_response") == ""
+        assert target.query("last_turn_outcome") == OUTCOME_EMPTY
         assert target.query("blocked_turns") == "0"
         assert target.query("last_block_reason") == ""
+
+    async def test_an_in_band_block_is_a_block_not_an_empty_reply(
+        self, target: ChatbotTarget,
+    ) -> None:
+        # Some providers do not raise: they return a blank reply and label it on
+        # the choice. That label cannot be forged by attacker text, so it is the
+        # more trustworthy of the two signals.
+        import unittest.mock as m
+
+        emitted: list[object] = []
+        resp = make_litellm_response("", finish_reason="content_filter")
+        with m.patch("chatbot_target.target.acompletion", return_value=resp) as call:
+            await target.run(emitted.append, _driver(None))
+
+        assert call.call_count == 1          # a block is never retried
+        assert target.query("last_turn_outcome") == OUTCOME_BLOCKED
+        assert target.query("blocked_turns") == "1"
+        assert any(
+            isinstance(e, ObservableEvent) and e.observable.name == BLOCKED_OBSERVABLE_NAME
+            for e in emitted
+        )
 
 
 class TestConversationContinues:
