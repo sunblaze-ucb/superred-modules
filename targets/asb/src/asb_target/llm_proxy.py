@@ -91,6 +91,28 @@ def register_proxy_model(model_name: str) -> None:
     MODEL_REGISTRY[model_name] = ProxyLLM
 
 
+def _normalize_tools(tools: list) -> list:
+    """Coerce ASB tool schemas to what the compat gateway strictly requires.
+
+    The gateway validates OpenAI tool schemas strictly: each ``function.parameters``
+    must be a present JSON-schema object. ASB's vendored tools emit ``parameters:
+    None`` (SimulatedTool) or omit it entirely (AttackerTool) -- both tolerated by
+    the real OpenAI API but rejected here (400 "expected 'object'" / "missing
+    'parameters'"). Replace a missing/non-object ``parameters`` with an empty
+    object schema (the tools take no meaningful args; success = tool invocation).
+    """
+    empty = {"type": "object", "properties": {}}
+    fixed = []
+    for tool in tools:
+        t = dict(tool)
+        fn = dict(t.get("function") or {})
+        if not isinstance(fn.get("parameters"), dict):
+            fn["parameters"] = dict(empty)
+        t["function"] = fn
+        fixed.append(t)
+    return fixed
+
+
 class ProxyLLM(GPTLLM):  # type: ignore[misc]  # GPTLLM is Any (vendored, untyped)
     """GPTLLM variant that talks to the litellm proxy for any model id."""
 
@@ -116,15 +138,22 @@ class ProxyLLM(GPTLLM):  # type: ignore[misc]  # GPTLLM is Any (vendored, untype
         )
         if PROXY_CONFIG.request_delay_seconds:
             time.sleep(PROXY_CONFIG.request_delay_seconds)
+        # The compat gateway strictly validates `tools`: a null value is rejected
+        # ("JSON schema ... expected: 'array'"), unlike the real OpenAI API which
+        # tolerates tools=None. ASB passes tools=None on non-tool turns (react agent:
+        # used_tools = self.tools if tool_use else None), so include the field only
+        # when it is a non-empty list.
+        create_kwargs: dict[str, Any] = dict(
+            model=self.model_name,
+            messages=messages,
+            max_tokens=PROXY_CONFIG.max_output_tokens,
+            seed=0,
+            temperature=temperature,
+        )
+        if agent_process.query.tools:
+            create_kwargs["tools"] = _normalize_tools(agent_process.query.tools)
         try:
-            response = self.model.chat.completions.create(
-                model=self.model_name,
-                messages=messages,
-                tools=agent_process.query.tools,
-                max_tokens=PROXY_CONFIG.max_output_tokens,
-                seed=0,
-                temperature=temperature,
-            )
+            response = self.model.chat.completions.create(**create_kwargs)
             response_message = response.choices[0].message.content
             tool_calls = self.parse_tool_calls(response.choices[0].message.tool_calls)
             agent_process.set_response(
