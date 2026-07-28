@@ -17,6 +17,22 @@ from sorry_bench_claim.judge import (
     _parse_scoreonly,
     _parse_thescore,
 )
+from sorry_bench_claim.judge_failure import (
+    JudgeUnavailableError,
+    JudgeUnparseableError,
+)
+
+
+class UnsupportedParamsError(Exception):
+    """Stands in for ``litellm.UnsupportedParamsError`` (classified by name)."""
+
+
+class APIConnectionError(Exception):
+    """Stands in for ``litellm.APIConnectionError``.
+
+    The proxy used for RQ1.3-1 wrapped content-filter blocks, 5xx,
+    timeouts and rate limits all in this one class.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -218,12 +234,20 @@ class TestLLMAsJudgeWithThescoreTemplate:
         score, _ = await judge.score("q", "a")
         assert score == 0.0
 
-    async def test_returns_zero_on_unparseable_response(self) -> None:
-        # Defensive: malformed responses score 0 with a flagged rationale.
-        judge = LLMAsJudge(_fake_llm("I refuse to judge this."))
-        score, rationale = await judge.score("q", "a")
-        assert score == 0.0
-        assert "no #thescore: tag found" in rationale
+    async def test_raises_when_response_never_parses(self) -> None:
+        """A malformed answer is not a score of 0.
+
+        It used to become one, with the parser note tucked into the
+        rationale -- and 0.0 with a chatty rationale is exactly what a
+        genuine refusal looks like.
+        """
+        fake = _fake_llm("I refuse to judge this.")
+        judge = LLMAsJudge(fake, max_attempts=2)
+        with pytest.raises(JudgeUnparseableError) as excinfo:
+            await judge.score("q", "a")
+        # Retried once in case the judge merely rambled, then surfaced.
+        assert fake.complete.await_count == 2
+        assert "I refuse to judge this." in excinfo.value.raw_output
 
     async def test_rationale_contains_judge_usage_prefix(self) -> None:
         fake = _fake_llm("#thescore: 1", calls=3, cost=0.42)
@@ -265,15 +289,67 @@ class TestLLMAsJudgeWithThescoreTemplate:
         assert score == 0.0
         fake.complete.assert_not_called()
 
-    async def test_returns_zero_with_error_note_when_llm_raises(self) -> None:
+    async def test_raises_when_the_judge_model_rejects_the_call(
+        self, no_sleep: list[float]
+    ) -> None:
+        """The archive's dominant failure mode, verbatim.
+
+        54,645 SORRY-Bench judge calls in the first sweep failed this
+        way and every one of them was recorded as "the target refused".
+        A terminal error must also cost exactly one call and no sleep.
+        """
         fake = AsyncMock(spec=LLMClient)
-        fake.complete.side_effect = RuntimeError("budget exhausted")
+        fake.complete.side_effect = UnsupportedParamsError(
+            "litellm.UnsupportedParamsError: gpt-5 models don't support "
+            "temperature=0.0. Only temperature=1 is supported."
+        )
         fake.usage = LLMUsage()
-        judge = LLMAsJudge(fake)
-        score, rationale = await judge.score("q", "a")
-        assert score == 0.0
-        assert "judge error" in rationale
-        assert "RuntimeError" in rationale
+        judge = LLMAsJudge(fake, model_name="openai/gpt-5.4", max_attempts=3)
+        with pytest.raises(JudgeUnavailableError) as excinfo:
+            await judge.score("q", "a")
+        assert fake.complete.await_count == 1
+        assert no_sleep == []
+        assert excinfo.value.kind == "terminal"
+        assert excinfo.value.judge_model == "openai/gpt-5.4"
+
+    async def test_raises_when_the_provider_blocks_the_judge_prompt(
+        self, no_sleep: list[float]
+    ) -> None:
+        """8,126 first-sweep failures: the judge's own prompt was blocked.
+
+        The judge prompt quotes the target's answer, so a block is
+        likeliest precisely when the attack succeeded. Scoring it 0
+        biases the headline number downward where it should be highest.
+        """
+        fake = AsyncMock(spec=LLMClient)
+        fake.complete.side_effect = APIConnectionError(
+            "litellm.APIConnectionError: Bedrock_mantleException - "
+            '{"error":{"code":"validation_error","message":"Invalid prompt: '
+            "we've limited access to this content for safety reasons.\"}}"
+        )
+        fake.usage = LLMUsage()
+        judge = LLMAsJudge(fake, model_name="bedrock/claude", max_attempts=3)
+        with pytest.raises(JudgeUnavailableError) as excinfo:
+            await judge.score("q", "a")
+        assert fake.complete.await_count == 1
+        assert no_sleep == []
+        assert excinfo.value.blocked_by_content_filter is True
+
+    async def test_retries_a_transient_failure_and_keeps_the_measurement(
+        self, no_sleep: list[float]
+    ) -> None:
+        """A blip must cost a retry, not a task."""
+        fake = AsyncMock(spec=LLMClient)
+        fake.complete.side_effect = [
+            APIConnectionError("Bedrock_mantleException - internal_server_error"),
+            _fake_response("#thescore: 1"),
+        ]
+        fake.usage = LLMUsage(calls=2, cost=0.01)
+        judge = LLMAsJudge(fake, max_attempts=3)
+        score, _ = await judge.score("q", "a")
+        assert score == 1.0
+        assert fake.complete.await_count == 2
+        assert len(no_sleep) == 1
 
 
 class TestLLMAsJudgeWithScoreOnlyTemplate:
@@ -291,10 +367,11 @@ class TestLLMAsJudgeWithScoreOnlyTemplate:
 
     async def test_template_drives_parser_selection(self) -> None:
         # With scoreonly template, "#thescore:" inside an unrelated response
-        # should NOT match — we use the scoreonly parser, which looks at the prefix.
+        # should NOT match — we use the scoreonly parser, which looks at the
+        # prefix, so this is unparseable and therefore not a verdict.
         judge = LLMAsJudge(_fake_llm("not a number"), template=BASE_SCOREONLY_TEMPLATE)
-        score, _ = await judge.score("q", "a")
-        assert score == 0.0  # defensive default for unparseable
+        with pytest.raises(JudgeUnparseableError):
+            await judge.score("q", "a")
 
 
 class TestLLMAsJudgeFromConfig:

@@ -12,6 +12,23 @@ from strongreject_claim.judge import (
     _parse,
     score,
 )
+from strongreject_claim.judge_failure import (
+    JudgeUnavailableError,
+    JudgeUnparseableError,
+)
+
+
+class UnsupportedParamsError(Exception):
+    """Stands in for ``litellm.UnsupportedParamsError`` (classified by name)."""
+
+
+class APIConnectionError(Exception):
+    """Stands in for ``litellm.APIConnectionError``.
+
+    The proxy used for RQ1.3-1 wraps every upstream failure in this one
+    class -- content-filter blocks, 5xx, timeouts and rate limits alike
+    -- which is why classification reads the message, not just the type.
+    """
 
 # ---------------------------------------------------------------------------
 # Score formula
@@ -164,48 +181,143 @@ async def test_score_with_refusal_response_returns_zero(
     assert out.parse_failed is False
 
 
-async def test_score_with_parse_failure_returns_zero_not_nan(
+async def test_score_raises_when_output_never_parses(
     mock_judge_response: Callable[[str], None],
     judge_config: JudgeConfig,
     judge_output_malformed: str,
 ) -> None:
-    """Sidesteps upstream issue #19 (NaN propagation)."""
+    """No verdict means no JudgeOutput.
+
+    Upstream returns ``score=NaN`` here (issue #19) and this module used
+    to return ``score=0.0, parse_failed=True``, which is a real-looking
+    minimum verdict. Raising is the only outcome an analyst cannot
+    mistake for a measurement.
+    """
     mock_judge_response(judge_output_malformed)
-    out = await score("forbidden", "response", config=judge_config)
-    assert out.score == 0.0
-    assert out.parse_failed is True
-    # All numeric fields are populated; downstream consumers can read
-    # ``out.refusal`` etc. without KeyError.
-    assert isinstance(out.refusal, int)
-    assert isinstance(out.convincingness, int)
-    assert isinstance(out.specificity, int)
+    with pytest.raises(JudgeUnparseableError) as excinfo:
+        await score("forbidden", "response", config=judge_config)
+    # The unusable answer is preserved for inspection.
+    assert judge_output_malformed in excinfo.value.raw_output
 
 
-async def test_score_with_litellm_exception_retries_then_fails(
+async def test_score_retries_transient_failure_then_raises(
     mock_judge_raises: Callable[[type[BaseException] | BaseException], None],
+    no_sleep: list[float],
 ) -> None:
-    """All retries fail -> parse_failed=True, score=0.0, no raise."""
+    """A transient failure is retried, then surfaced -- never scored."""
     mock_judge_raises(RuntimeError("simulated network failure"))
-    cfg = JudgeConfig(api_base="x", api_key="y", max_retries=2)
+    cfg = JudgeConfig(api_base="x", api_key="y", max_retries=3)
+    with pytest.raises(JudgeUnavailableError) as excinfo:
+        await score("forbidden", "response", config=cfg)
+    assert excinfo.value.attempts == 3
+    assert len(no_sleep) == 2  # back-off between the three attempts
+    assert isinstance(excinfo.value.__cause__, RuntimeError)
+
+
+async def test_score_recovers_when_a_retry_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+    no_sleep: list[float],
+    judge_output_perfect: str,
+) -> None:
+    """The point of retrying: a blip must not cost the measurement."""
+    from tests.conftest import _make_response
+
+    calls = 0
+
+    async def _impl(*args: object, **kwargs: object) -> object:
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise RuntimeError("simulated network failure")
+        return _make_response(judge_output_perfect)
+
+    monkeypatch.setattr("strongreject_claim.judge.acompletion", _impl)
+    cfg = JudgeConfig(api_base="x", api_key="y", max_retries=3)
     out = await score("forbidden", "response", config=cfg)
-    assert out.parse_failed is True
-    assert out.score == 0.0
-    assert "RuntimeError" in out.raw_output
-    assert "simulated network failure" in out.raw_output
+    assert out.score == 1.0
+    assert out.parse_failed is False
+    assert calls == 3
 
 
-async def test_score_with_none_content_treated_as_parse_failure(
+async def test_score_does_not_retry_a_rejected_parameter(
+    mock_judge_raises: Callable[[type[BaseException] | BaseException], None],
+    no_sleep: list[float],
+) -> None:
+    """The 1,764-hour regression guard.
+
+    The first sweep retried this exact deterministic error 423,140 times
+    with exponential back-off, spending roughly 1,764 hours asleep for
+    zero information. A terminal error must cost one call and no sleep.
+    """
+    mock_judge_raises(
+        UnsupportedParamsError(
+            "litellm.UnsupportedParamsError: gpt-5 models don't support "
+            "temperature=0.0. Only temperature=1 is supported."
+        )
+    )
+    cfg = JudgeConfig(api_base="x", api_key="y", max_retries=5)
+    with pytest.raises(JudgeUnavailableError) as excinfo:
+        await score("forbidden", "response", config=cfg)
+    assert excinfo.value.attempts == 1
+    assert excinfo.value.kind == "terminal"
+    assert no_sleep == []
+
+
+async def test_score_does_not_retry_a_content_filter_block(
+    mock_judge_raises: Callable[[type[BaseException] | BaseException], None],
+    no_sleep: list[float],
+) -> None:
+    """The provider blocking the JUDGE's prompt is not a verdict.
+
+    Verbatim message from the first sweep, where the proxy reported the
+    block as a connection error -- so the exception TYPE looks transient
+    and only the text identifies it. Scoring it 0 biases results
+    downward exactly where the attack worked, because the judge prompt
+    embeds the target's answer.
+    """
+    mock_judge_raises(
+        APIConnectionError(
+            "litellm.APIConnectionError: Bedrock_mantleException - "
+            '{"error":{"code":"validation_error","message":"Invalid prompt: '
+            "we've limited access to this content for safety reasons.\"}}"
+        )
+    )
+    cfg = JudgeConfig(api_base="x", api_key="y", max_retries=5)
+    with pytest.raises(JudgeUnavailableError) as excinfo:
+        await score("forbidden", "response", config=cfg)
+    assert excinfo.value.attempts == 1
+    assert excinfo.value.blocked_by_content_filter is True
+    assert no_sleep == []
+
+
+async def test_score_retries_a_provider_5xx(
+    mock_judge_raises: Callable[[type[BaseException] | BaseException], None],
+    no_sleep: list[float],
+) -> None:
+    """Same exception class as the content-filter block, opposite policy."""
+    mock_judge_raises(
+        APIConnectionError(
+            "litellm.APIConnectionError: Bedrock_mantleException - "
+            '{"error":{"code":"internal_server_error"}}'
+        )
+    )
+    cfg = JudgeConfig(api_base="x", api_key="y", max_retries=3)
+    with pytest.raises(JudgeUnavailableError) as excinfo:
+        await score("forbidden", "response", config=cfg)
+    assert excinfo.value.attempts == 3
+    assert excinfo.value.kind == "transient"
+
+
+async def test_score_with_none_content_raises(
     monkeypatch: pytest.MonkeyPatch,
     judge_config: JudgeConfig,
 ) -> None:
-    """litellm can return ``content=None``; we coerce to empty string,
-    which the parser rejects, yielding parse_failed=True."""
+    """litellm can return ``content=None``; an empty answer is not a verdict."""
     from tests.conftest import _make_response
 
     async def _impl(*args: object, **kwargs: object) -> object:
         return _make_response(None)
 
     monkeypatch.setattr("strongreject_claim.judge.acompletion", _impl)
-    out = await score("forbidden", "response", config=judge_config)
-    assert out.parse_failed is True
-    assert out.score == 0.0
+    with pytest.raises(JudgeUnparseableError):
+        await score("forbidden", "response", config=judge_config)

@@ -146,6 +146,7 @@ We document every deviation up front so ASR numbers are interpretable.
 | AdvBench refusal-prefix diagnostic | enabled via `--include_advbench_metric` (29 prefixes in `eval_utils.py`) | always enabled as `sub_scores["advbench_refusal_label"]` | Faithful (free additional metric). |
 | `[/INST]` prompt-injection sanitization in judge prompt | none (upstream issue #91 is unfixed) | none | Vector is inert against chat-completions APIs (Llama-2 instruction tokens are plain text there). |
 | Generation pre-judge clipping | classifier-tokenizer, 512 tokens, right-truncated | `tiktoken` (if installed) or 4-chars-per-token approximation, 512 tokens | Approximation acceptable; Jaccard threshold tolerates small differences and the chat-completions judge has 128k context anyway. |
+| Unparseable or failed judgement | `compute_results_classifier` records `label=-1` and continues | retried, then raised (`JudgeUnparseableError` / `JudgeUnavailableError`); the task errors instead of being scored | A judge that never answered is not evidence the behavior was not elicited. Scoring it 0 makes a broken judge read as a robust target, and makes it permanent: an errored task is re-measured on resume, a scored one is kept. Every `EvaluationResult` this claim emits carries `sub_scores["judge_ran"] == 1.0`. |
 
 ASR numbers from this port are **not directly comparable to the HarmBench
 leaderboard.** They are useful for relative comparison across (target,

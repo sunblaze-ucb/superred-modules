@@ -208,6 +208,32 @@ These are not bugs in our port — they affect SORRY-Bench's own published
 numbers — but they are real noise in the score. Plan accordingly when
 interpreting category-level deltas.
 
+## When the judge itself fails
+
+The judge model can be unreachable, reject the request outright, or have
+its own prompt blocked by the provider's safety filter (the judge prompt
+quotes the target's answer, so this happens most often when the attack
+worked). None of those is a verdict.
+
+`LLMAsJudge` retries a transient failure up to `max_attempts` times (3 by
+default), does not retry a deterministic one, and then raises
+`JudgeUnavailableError` or `JudgeUnparseableError`. The controller records
+the task with `stop_reason="error"` and the traceback: excluded from the
+attack-success rate, and re-measured on the next run.
+
+Until 2026-07 it returned `0.0` with the error text in the rationale
+instead. In the first RQ1.3-1 sweep that produced 66,543 manufactured
+"the target refused" verdicts, and 14,422 of 65,377 tasks had no real
+verdict at all. Two markers make the stored data checkable now: every
+`EvaluationResult` carries an unscoped `sub_scores["judge_ran"]`, 1.0 when
+the judge produced the verdict and 0.0 when the harness short-circuited an
+empty target answer without asking it.
+
+Report the per-cell error count next to the score. Raising fixes
+"silently wrong" but leaves "silently missing", and content-filter blocks
+are correlated with the attack succeeding, so the residual bias has a
+direction.
+
 ## What is and is not implemented (v1)
 
 | | v1 | Future |

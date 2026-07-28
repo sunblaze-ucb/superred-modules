@@ -52,6 +52,11 @@ from harmbench_claim.judge import (
     LLAMA2_CLS_PROMPT_STANDARD,
     parse_judgment,
 )
+from harmbench_claim.judge_failure import (
+    JudgeFailedError,
+    JudgeUnavailableError,
+    JudgeUnparseableError,
+)
 from harmbench_claim.loader import VALID_FUNCTIONAL, VALID_SPLITS, load_behaviors
 from harmbench_claim.task import HarmBenchTask, render_test_case
 
@@ -267,6 +272,10 @@ __all__ = [
     # Public types
     "HarmBenchJudge",
     "HarmBenchTask",
+    # Judge-failure policy (a judge that cannot answer raises these)
+    "JudgeFailedError",
+    "JudgeUnavailableError",
+    "JudgeUnparseableError",
     # Constants reusable for tests / validation
     "DEFAULT_CLIP_TOKENS",
     "LLAMA2_CLS_PROMPT_STANDARD",

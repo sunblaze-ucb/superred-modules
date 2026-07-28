@@ -25,10 +25,11 @@ Differences from upstream ``dsbowen/strong_reject`` ``evaluate.py``:
    ``score=NaN`` and a partial dict on parse failure (see upstream
    issue #19); downstream consumers then ``KeyError`` on missing
    ``"refusal"``/``"convincingness"``/``"specificity"`` keys. Our
-   :class:`JudgeOutput` always carries all four numeric fields, with
-   ``parse_failed=True`` and ``score=0.0`` when the judge output cannot
-   be parsed. ``score`` therefore is always a finite float that the
-   superred ``Controller`` can compare for ``best_score`` ordering.
+   :class:`JudgeOutput` always carries all four numeric fields, and a
+   judge that never produced a parseable rubric raises instead of
+   returning one. ``score`` is therefore always a finite float that the
+   superred ``Controller`` can compare for ``best_score`` ordering, and
+   always one the judge actually gave.
 3. **No silent model fallback.** dsbowen's
    ``_generate_judge_response`` walks a ``("openai/gpt-4o-mini",
    "openai/gpt-3.5-turbo")`` chain. We use a single model, defaulting to
@@ -40,13 +41,14 @@ Differences from upstream ``dsbowen/strong_reject`` ``evaluate.py``:
 
 from __future__ import annotations
 
-import asyncio
 import re
 from dataclasses import dataclass
 from importlib.resources import files
 from typing import Final
 
 from litellm import acompletion
+
+from strongreject_claim.judge_failure import DEFAULT_MAX_ATTEMPTS, run_judge
 
 # ---------------------------------------------------------------------------
 # Pinned judge configuration
@@ -70,10 +72,8 @@ MAX_TOKENS: Final = 1000
 # gpt-5.x answer "gpt-5 models don't support temperature=0. Only temperature=1
 # is supported", and Bedrock Claude ids reject temperature combined with top_p
 # -- so pinning it makes the judge unusable on exactly the strongest models
-# available to evaluate with. This judge retries and then falls back to a fixed
-# low score, which is byte-identical to a real refused-with-minimum-score
-# verdict, so an unusable judge silently reads as "every attack failed".
-# Omitting the parameter uses each provider's default.
+# available to evaluate with. Omitting the parameter uses each provider's
+# default.
 
 # ---------------------------------------------------------------------------
 # Vendored rubric prompt templates
@@ -118,8 +118,10 @@ class JudgeConfig:
             OpenAI directly.
         api_key: API key for the proxy or provider.
         max_retries: Maximum number of attempts (each is one full LLM
-            call) before returning a parse-failed result. Initial
-            attempt counts as 1.
+            call) before the judge gives up and raises. Initial attempt
+            counts as 1. Only transient failures and unparseable answers
+            consume attempts; a terminal failure (rejected parameter,
+            bad credentials, blocked prompt) stops on the first.
         model: LiteLLM judge model identifier. Defaults to :data:`MODEL`
             (the paper-faithful ``openai/gpt-4o-mini``); override it to run
             the rubric judge on a different model (e.g. an AWS Bedrock id
@@ -129,7 +131,7 @@ class JudgeConfig:
 
     api_base: str
     api_key: str
-    max_retries: int = 5
+    max_retries: int = DEFAULT_MAX_ATTEMPTS
     model: str = MODEL
 
 
@@ -146,12 +148,15 @@ class JudgeOutput:
         refusal: 0 or 1 (per rubric question 1).
         convincingness: 1..5 (per rubric question 2).
         specificity: 1..5 (per rubric question 3).
-        raw_output: The judge model's full text response (or the last
-            error text on parse_failed=True), used as ``rationale`` on
-            the resulting EvaluationResult.
-        parse_failed: ``True`` if the parser could not extract all
-            three rubric scores from the judge output. ``score`` is
-            forced to ``0.0`` in that case.
+        raw_output: The judge model's full text response, used as
+            ``rationale`` on the resulting EvaluationResult.
+        parse_failed: LEGACY, always ``False``. It used to mark the
+            fabricated verdict this judge returned when it could not
+            parse the rubric; that verdict no longer exists (the judge
+            raises instead), so nothing sets it. The field and the
+            matching sub-score are kept because the existing results
+            archive is full of ``parse_failed=1.0`` rows that genuinely
+            mean "fabricated", and analysis scripts filter on them.
     """
 
     score: float
@@ -177,11 +182,9 @@ async def score(
 
     Calls ``litellm.acompletion`` with the configured model and the pinned
     ``max_tokens``. No temperature is sent (see the note above
-    :data:`MAX_TOKENS`). Retries up to ``config.max_retries`` attempts with
-    exponential back-off (initial attempt has no delay; subsequent
-    attempts wait 1, 2, 4, ... seconds). Returns ``parse_failed=True``
-    with ``score=0.0`` if every attempt fails or the judge output
-    cannot be parsed.
+    :data:`MAX_TOKENS`). Transient failures and unparseable answers are
+    retried up to ``config.max_retries`` attempts with jittered
+    exponential back-off; terminal failures stop immediately.
 
     The user-prompt template uses literal ``{forbidden_prompt}`` and
     ``{response}`` placeholders. The bundled CSVs contain zero literal
@@ -194,7 +197,15 @@ async def score(
         config: Judge connection configuration.
 
     Returns:
-        A :class:`JudgeOutput` whose ``score`` is in ``[0, 1]``.
+        A :class:`JudgeOutput` whose ``score`` is in ``[0, 1]``, always
+        derived from a rubric the judge actually returned.
+
+    Raises:
+        JudgeUnavailableError: The judge call failed terminally, was
+            blocked by the provider's content filter, or failed
+            transiently on every attempt.
+        JudgeUnparseableError: The judge answered on every attempt but
+            never with a parseable rubric.
     """
     user_message = _RUBRIC_USER_TEMPLATE.format(
         forbidden_prompt=forbidden_prompt,
@@ -205,46 +216,33 @@ async def score(
         {"role": "user", "content": user_message},
     ]
 
-    last_error_text = ""
-    delay = 0.0
-    for attempt in range(1, config.max_retries + 1):
-        if delay > 0:
-            await asyncio.sleep(delay)
-        try:
-            completion = await acompletion(
-                model=config.model,
-                messages=messages,
-                api_base=config.api_base,
-                api_key=config.api_key,
-                max_tokens=MAX_TOKENS,
-            )
-            raw_output = completion.choices[0].message.content or ""
-            parsed = _parse(raw_output)
-            if parsed is not None:
-                refusal, convincingness, specificity = parsed
-                final_score = _compute_score(refusal, convincingness, specificity)
-                return JudgeOutput(
-                    score=final_score,
-                    refusal=refusal,
-                    convincingness=convincingness,
-                    specificity=specificity,
-                    raw_output=raw_output,
-                    parse_failed=False,
-                )
-            last_error_text = (
-                f"attempt {attempt}: parse failure on judge output ({len(raw_output)} chars)"
-            )
-        except Exception as exc:  # noqa: BLE001 -- intentional broad catch with retry
-            last_error_text = f"attempt {attempt}: {type(exc).__name__}: {exc}"
-        delay = 1.0 if delay == 0 else delay * 2
+    async def _call() -> str:
+        completion = await acompletion(
+            model=config.model,
+            messages=messages,
+            api_base=config.api_base,
+            api_key=config.api_key,
+            max_tokens=MAX_TOKENS,
+        )
+        if not completion.choices:
+            raise RuntimeError(f"judge returned no choices ({completion!r})")
+        content: str = completion.choices[0].message.content or ""
+        return content
 
+    parsed, raw_output = await run_judge(
+        call=_call,
+        parse=_parse,
+        judge_model=config.model,
+        max_attempts=config.max_retries,
+    )
+    refusal, convincingness, specificity = parsed
     return JudgeOutput(
-        score=0.0,
-        refusal=1,
-        convincingness=1,
-        specificity=1,
-        raw_output=last_error_text,
-        parse_failed=True,
+        score=_compute_score(refusal, convincingness, specificity),
+        refusal=refusal,
+        convincingness=convincingness,
+        specificity=specificity,
+        raw_output=raw_output,
+        parse_failed=False,
     )
 
 

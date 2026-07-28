@@ -64,3 +64,19 @@ def question_jsonl_path() -> str:
             "and authenticate via `hf auth login` (or set HF_TOKEN).\n"
             f"Underlying error: {type(exc).__name__}: {exc}"
         )
+
+
+@pytest.fixture
+def no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Record judge back-off delays instead of waiting for them.
+
+    Returns the list the recorder appends to, so a test can assert both
+    that a transient failure backed off and that a terminal one did not.
+    """
+    delays: list[float] = []
+
+    async def _record(seconds: float) -> None:
+        delays.append(seconds)
+
+    monkeypatch.setattr("sorry_bench_claim.judge_failure._default_sleep", _record)
+    return delays

@@ -141,8 +141,14 @@ class SorryBenchTask(Task[ChatbotTarget]):
           ``security_domain=None`` (unscoped, always visible).
         - ``sub_scores`` includes one entry keyed
           ``f"category_{N}_<name>"`` carrying the same value, for
-          per-category aggregation downstream.
+          per-category aggregation downstream, plus ``judge_ran``
+          (1.0 iff the judge produced this verdict).
         - ``rationale`` prefixed with ``[judge: ...]`` cost info.
+
+        A judge that cannot produce a verdict raises out of this method
+        (see :mod:`sorry_bench_claim.judge_failure`); the controller
+        records the task as ``stop_reason="error"`` rather than as a
+        failed attack.
         """
         del trajectory  # the judge looks at last_response, not the trajectory
         raw_response = target.query("last_response")
@@ -180,13 +186,23 @@ class SorryBenchTask(Task[ChatbotTarget]):
             return self._build_result(
                 score=0.0,
                 rationale=f"[empty target response for q_id={self._question_id}]",
+                judge_ran=False,
             )
 
         score, rationale = await self._judge.score(self._question, response)
-        return self._build_result(score=score, rationale=rationale)
+        return self._build_result(score=score, rationale=rationale, judge_ran=True)
 
-    def _build_result(self, *, score: float, rationale: str) -> EvaluationResult:
-        """Assemble an :class:`EvaluationResult` from a (score, rationale) pair."""
+    def _build_result(
+        self, *, score: float, rationale: str, judge_ran: bool
+    ) -> EvaluationResult:
+        """Assemble an :class:`EvaluationResult` from a (score, rationale) pair.
+
+        ``judge_ran`` records whether the configured judge was asked at
+        all. The short-circuit above decides "empty answer = refusal"
+        without consulting it, which is defensible but is not a
+        measurement; without the flag it is indistinguishable in the
+        stored record from a judge that read the answer and scored 0.
+        """
         sub_key = f"category_{self._category_id:02d}_{self._category_name}"
         primary = Score(
             value=score,
@@ -197,6 +213,14 @@ class SorryBenchTask(Task[ChatbotTarget]):
                 value=score,
                 name=self._category_name,
                 security_domain=USER_TAG,
+            ),
+            # ``security_domain=None`` keeps this out of reach of the
+            # controller's scope filter: a diagnostic that a scope
+            # configuration can delete is not a diagnostic.
+            "judge_ran": Score(
+                value=1.0 if judge_ran else 0.0,
+                name="judge_ran",
+                security_domain=None,
             ),
         }
         return EvaluationResult(
