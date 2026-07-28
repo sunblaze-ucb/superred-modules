@@ -64,8 +64,8 @@ class Scorer:
         ]
         # Temperature is deliberately not specified (the paper pins the
         # scorer at 0.7): reasoning models reject the parameter
-        # outright, and the optimizer swallows scorer failures, so a
-        # pin would silently disable scoring instead of erroring.
+        # outright and permanently, so a pin would leave every attempt
+        # on those models unscored.
         result = await self._llm.complete(messages)
         text = result.choices[0].message.content or ""
         return _parse_score(text)

@@ -51,10 +51,12 @@ from superred.core.types.events import (
     RunStartEvent,
 )
 from superred.core.types.goal import Goal
+from superred.core.types.llm import BudgetExhaustedError
 from superred.core.types.observable import ObservableValue
 
 from autodan_turbo_optimizer.attacker import Attacker, AttackerOutput
 from autodan_turbo_optimizer.library import StrategyLibrary
+from autodan_turbo_optimizer.retry import retry_transient
 from autodan_turbo_optimizer.scorer import Scorer
 from autodan_turbo_optimizer.summarizer import Summarizer
 
@@ -163,6 +165,10 @@ class AutoDANTurboOptimizer(Optimizer):
         self._stop_due_to_no_signal: bool = False
         self._prev_prompt: str | None = None
         self._prev_score: float = _SEEDED_PREV_SCORE
+        # Scorer health for this task; a task that never scored measured a
+        # degraded attacker, not a weak one.
+        self._scorer_failures: int = 0
+        self._scorer_successes: int = 0
 
         # Per-run state (reset in _reset_run_state).
         self._current_prompt: str = ""
@@ -192,8 +198,8 @@ class AutoDANTurboOptimizer(Optimizer):
         self._library = StrategyLibrary()
         # No temperature is forwarded to the three LLM drivers: the
         # paper's pins (1.0 / 0.7 / 0.6) are rejected outright by
-        # reasoning models, and scorer/summarizer failures are
-        # swallowed, so a pin would silently disable this optimizer.
+        # reasoning models, and that rejection is permanent, so a pin
+        # would fail every call this optimizer makes on those models.
         self._attacker = Attacker(llm_client)
         self._scorer = Scorer(llm_client)
         self._summarizer = Summarizer(llm_client)
@@ -222,6 +228,8 @@ class AutoDANTurboOptimizer(Optimizer):
         self._succeeded = False
         self._consecutive_no_signal_runs = 0
         self._stop_due_to_no_signal = False
+        self._scorer_failures = 0
+        self._scorer_successes = 0
         # Seed the previous-attempt slot with the raw goal as the
         # baseline weak prompt at score=1.0 (upstream's per-request
         # seed). The first scored attempt that beats 1.0 will
@@ -264,6 +272,7 @@ class AutoDANTurboOptimizer(Optimizer):
         return any(c.name == _SYSTEM_PROMPT_NAME for c in controllables)
 
     async def teardown(self) -> None:
+        self._log_scorer_health()
         return None
 
     # ------------------------------------------------------------------
@@ -330,6 +339,19 @@ class AutoDANTurboOptimizer(Optimizer):
             )
 
         if self._injected_this_run:
+            return ControllableNoInjection(
+                event=event, controllable=event.controllable
+            )
+
+        if not self._current_prompt.strip():
+            # Defence in depth: the tag extractor already falls back to the
+            # raw goal, so this needs a blank goal to trigger. Sending a blank
+            # user message costs a victim call and, on Bedrock, the task.
+            logger.error(
+                "AutoDAN-Turbo: attempt %d produced a blank prompt; "
+                "not injecting",
+                self._attempt,
+            )
             return ControllableNoInjection(
                 event=event, controllable=event.controllable
             )
@@ -405,19 +427,15 @@ class AutoDANTurboOptimizer(Optimizer):
                 )
                 self._stop_due_to_no_signal = True
 
-        # Score, then maybe summarize. Both require a response.
+        # Score, then maybe summarize. Both require a response. A run whose
+        # scorer never produced a number stays unscored: `_prev_prompt` and
+        # `_prev_score` keep describing the last attempt that was actually
+        # measured, so the library is never taught from an unmeasured pair.
+        score: float | None = None
         if response is not None:
-            try:
-                score = await self._scorer.score(
-                    self._goal.description, response,
-                )
-            except Exception as exc:  # noqa: BLE001 — defensive: bad LLM output
-                logger.warning(
-                    "AutoDAN-Turbo: scorer failed (%s); using prev_score floor",
-                    exc,
-                )
-                score = self._prev_score
+            score = await self._score_attempt(response)
 
+        if score is not None:
             if (
                 self._prev_prompt is not None
                 and score > self._prev_score
@@ -459,6 +477,60 @@ class AutoDANTurboOptimizer(Optimizer):
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    async def _score_attempt(self, response: str) -> float | None:
+        """Score this attempt, or return ``None`` if the scorer is down.
+
+        The previous behaviour on failure was ``score = self._prev_score``:
+        an unmeasured attempt was recorded as having scored exactly as well
+        as the last measured one. That can never exceed ``_prev_score``, so
+        the strategy library stops growing while the run still looks
+        healthy, and ``_prev_prompt`` advances to a prompt no scorer ever
+        saw. 117 scorer calls failed that way in the archived first run, all
+        of them transient (86 Bedrock internal_server_error, 31 timeouts),
+        which is why the retry comes first and the substitution goes.
+        """
+        assert self._goal is not None
+        assert self._scorer is not None
+        scorer, request = self._scorer, self._goal.description
+        try:
+            score = await retry_transient(
+                lambda: scorer.score(request, response),
+                stage="scorer",
+            )
+        except BudgetExhaustedError:
+            raise
+        except Exception:
+            self._scorer_failures += 1
+            logger.warning(
+                "AutoDAN-Turbo: scorer failed on attempt %d after retries; "
+                "attempt left unscored (%d failed, %d succeeded so far)",
+                self._attempt,
+                self._scorer_failures,
+                self._scorer_successes,
+                exc_info=True,
+            )
+            return None
+        self._scorer_successes += 1
+        return score
+
+    def _log_scorer_health(self) -> None:
+        """Record a task whose search ran without its scoring signal.
+
+        Called from ``teardown``, so it fires whatever ended the task
+        (early stop, attempt budget, cost cap, controller error). The
+        framework verdict comes from the SecurityClaim judge and is
+        unaffected, so this does not error the task. It does mean the cell
+        measured a crippled AutoDAN-Turbo, which analysis must be able to
+        find in the stored per-task logs.
+        """
+        if self._scorer_failures and not self._scorer_successes:
+            logger.error(
+                "AutoDAN-Turbo: the scorer never produced a score in this "
+                "task (%d failures); the strategy library could not grow, so "
+                "this task measured a degraded attacker",
+                self._scorer_failures,
+            )
 
     def _reset_run_state(self) -> None:
         self._current_prompt = ""
@@ -541,17 +613,27 @@ class AutoDANTurboOptimizer(Optimizer):
             {"Strategy": s["Strategy"], "Definition": s["Definition"]}
             for s in self._library.all().values()
         ]
+        summarizer, request = self._summarizer, self._goal.description
         try:
-            descriptor = await self._summarizer.summarize(
-                request=self._goal.description,
-                weak_prompt=weak_prompt,
-                strong_prompt=strong_prompt,
-                existing_strategies=existing,
+            descriptor = await retry_transient(
+                lambda: summarizer.summarize(
+                    request=request,
+                    weak_prompt=weak_prompt,
+                    strong_prompt=strong_prompt,
+                    existing_strategies=existing,
+                ),
+                stage="summarizer",
             )
-        except Exception as exc:  # noqa: BLE001 — defensive: bad LLM output
+        except BudgetExhaustedError:
+            raise
+        except Exception:  # noqa: BLE001 — defensive: bad LLM output
+            # Skipping a library entry loses search signal but invents
+            # nothing, so it stays non-fatal. The traceback is what makes it
+            # findable afterwards; the old log line had none.
             logger.warning(
-                "AutoDAN-Turbo: summarizer failed (%s); skipping library update",
-                exc,
+                "AutoDAN-Turbo: summarizer failed after retries; "
+                "skipping library update",
+                exc_info=True,
             )
             return
 

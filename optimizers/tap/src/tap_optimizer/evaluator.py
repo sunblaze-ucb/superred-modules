@@ -41,9 +41,9 @@ class Evaluator:
             {"role": "user", "content": f"[PROMPT]:{prompt}"},
         ]
         # No temperature is sent, although TAP pins the evaluator at 0.0.
-        # Reasoning models reject the parameter outright, and the caller
-        # swallows evaluator failures (defaulting on-topic to True), so pinning
-        # it would silently degrade pruning on those models.
+        # Reasoning models reject the parameter outright, and that rejection is
+        # permanent, so pinning it would fail every on-topic check on those
+        # models and the optimizer would abandon the task.
         response = await self._llm.complete(
             messages,
             max_tokens=self._max_tokens,
@@ -69,8 +69,9 @@ class Evaluator:
                 "content": f"[PROMPT]:{prompt}\n[ASSISTANT'S RESPONSE]: {response}",
             },
         ]
-        # No temperature is sent here either; see is_on_topic above. A swallowed
-        # judge failure silently floors every candidate score at 1.0.
+        # No temperature is sent here either; see is_on_topic above. A judge
+        # failure that survives its retries floors the candidate at 1.0, which
+        # costs the search a ranking signal.
         llm_response = await self._llm.complete(
             messages,
             max_tokens=self._max_tokens,

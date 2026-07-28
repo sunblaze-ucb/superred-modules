@@ -27,10 +27,48 @@ close to the original TAP code.
 
 Original TAP pins the attacker at temperature 1.0 and the evaluator at 0.0. This
 module sends no temperature at all, on any call. Reasoning models reject the
-parameter outright, and this optimizer swallows its own LLM failures (a failed
-attacker call prunes the node, a failed judge call floors the score at 1.0), so
-a pinned temperature would silently disable TAP rather than raise. Sampling is
-still shaped by `attack_top_p`, which every model accepts.
+parameter outright and permanently, so a pinned temperature would fail every
+attacker call and every on-topic check on exactly the strongest attacker models.
+Sampling is still shaped by `attack_top_p`, which every model accepts.
+
+## Helper Failures Are Classified, Not Swallowed
+
+Original TAP retries its attacker parse and otherwise assumes its helper LLM
+answers. This module has to survive a real provider, so every helper call is
+sorted into one of three classes:
+
+1. `BudgetExhaustedError` (the controller's cost cap) is re-raised untouched.
+2. A transient provider failure (connection, rate limit, service unavailable,
+   internal server error) is retried twice with bounded backoff.
+3. Anything else, and anything that outlives the retries, is raised.
+
+A fourth class is kept deliberately distinct: the attacker model answering, but
+answering uselessly. That is a property of the model under measurement, not of
+the infrastructure, so it never raises.
+
+Consequences that differ from the original code and from this module's own
+earlier behaviour:
+
+- A blank `prompt` in the attacker JSON is a parse failure, so the attacker
+  resamples (up to `max_attack_attempts`) instead of proposing an empty attack.
+  An empty user message is dropped by litellm's Bedrock Converse transform, and
+  the provider then rejects the whole conversation.
+- A depth at which no node produced a prompt raises `AttackerUnavailable` if any
+  of its failures was provider-side. If they were all degenerate attacker output
+  the search simply ends, logged at ERROR: the task stays scoreable so that a
+  weak attacker model keeps its place in the denominator instead of vanishing
+  from the results as an error.
+- A depth at which *every* on-topic check failed raises `AttackerUnavailable`;
+  those failures are always provider-side, because an unparseable evaluator
+  answer is read as "on topic" rather than raised.
+- A single failure of either kind still only costs that node: the surviving
+  branches carry on, and a node whose on-topic check failed is kept, because
+  pruning it would assert a judgement the evaluator never made.
+
+A judge failure that outlives its retries still floors that candidate at 1.0,
+which is TAP's own "not jailbroken" value. It is logged at ERROR. The floor is
+kept because TAP has to rank candidates numerically, and the value never reaches
+the framework verdict, which comes from the SecurityClaim judge.
 
 ## SuperRed Mapping
 

@@ -17,14 +17,17 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from litellm.exceptions import APIConnectionError
 
 from superred.core.channel import EventEnvelope
 from superred.core.types.controllable import Controllable
 from superred.core.types.evaluation import EvaluationResult, Score
+from superred.core.types.llm import BudgetExhaustedError, LLMUsage
 from superred.core.types.events import (
     ControllableInjection,
     ControllableNoInjection,
@@ -39,6 +42,7 @@ from superred.core.types.goal import Goal
 from superred.core.types.observable import Observable
 from superred.core.types.security_domain import SecurityDomainTag
 
+from autodan_turbo_optimizer import retry
 from autodan_turbo_optimizer.attacker import AttackerOutput
 from autodan_turbo_optimizer.optimizer import AutoDANTurboOptimizer
 from autodan_turbo_optimizer.summarizer import StrategyDescriptor
@@ -1298,3 +1302,138 @@ class TestDualChannelAttack:
         )
         assert isinstance(um, ControllableInjection)
         assert um.value == "MAIN"
+
+
+# ---------------------------------------------------------------------------
+# Scorer failure classification
+#
+# The scorer used to fall back to ``score = self._prev_score``: an unmeasured
+# attempt recorded as scoring exactly what the last measured one did. 117
+# scorer calls failed that way in the archived first run, all transient.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _no_retry_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the bounded backoff out of the test runtime."""
+    monkeypatch.setattr(retry, "_BASE_DELAY_SECONDS", 0.0)
+
+
+def _connection_error() -> APIConnectionError:
+    return APIConnectionError(message="boom", llm_provider="bedrock", model="m")
+
+
+async def _run_one_attempt(opt: AutoDANTurboOptimizer, response: str) -> Any:
+    traj = _FakeReadableTrajectory()
+    await _dispatch_event(opt, RunStartEvent(trajectory=traj))
+    await _dispatch_event(
+        opt,
+        ControllablePreCallEvent(controllable=_user_ctrl(), request="r"),
+    )
+    traj.push(ObservableEvent(observable=_response_observable(), content=response))
+    return await _dispatch_event(
+        opt, RunEndEvent(evaluation=None, security_domain=USER_TAG),
+    )
+
+
+class TestScorerFailureClassification:
+    @pytest.mark.asyncio
+    async def test_transient_failure_is_retried_and_the_real_score_used(
+        self,
+    ) -> None:
+        opt = await _init_optimizer(max_attempts=3)
+        _stub_attacker(opt)
+        _stub_summarizer(opt)
+        assert opt._scorer is not None
+        opt._scorer.score = AsyncMock(
+            side_effect=[_connection_error(), _connection_error(), 7.0],
+        )
+
+        await _run_one_attempt(opt, "reply")
+
+        assert opt._scorer.score.await_count == 3
+        assert opt._prev_score == 7.0
+        assert opt._scorer_successes == 1
+        assert opt._scorer_failures == 0
+
+    @pytest.mark.asyncio
+    async def test_persistent_failure_leaves_the_attempt_unscored(self) -> None:
+        opt = await _init_optimizer(max_attempts=3)
+        _stub_attacker(opt)
+        summarizer = _stub_summarizer(opt)
+        assert opt._scorer is not None
+        opt._scorer.score = AsyncMock(side_effect=_connection_error())
+
+        await _run_one_attempt(opt, "reply")
+
+        # No fabricated measurement: prev_* still describe the seeded
+        # raw-goal baseline, not the prompt no scorer ever saw.
+        assert opt._prev_score == 1.0
+        assert opt._prev_prompt == "describe a recipe"
+        assert summarizer.call_count == 0
+        assert opt._scorer_failures == 1
+
+    @pytest.mark.asyncio
+    async def test_budget_exhaustion_escapes_and_is_not_retried(self) -> None:
+        opt = await _init_optimizer(max_attempts=3)
+        _stub_attacker(opt)
+        assert opt._scorer is not None
+        opt._scorer.score = AsyncMock(
+            side_effect=BudgetExhaustedError("budget exhausted", LLMUsage()),
+        )
+
+        with pytest.raises(BudgetExhaustedError):
+            await _run_one_attempt(opt, "reply")
+
+        assert opt._scorer.score.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_a_failed_scorer_never_reports_a_break_score_success(
+        self,
+    ) -> None:
+        opt = await _init_optimizer(max_attempts=1, break_score=1.0)
+        _stub_attacker(opt)
+        _stub_summarizer(opt)
+        assert opt._scorer is not None
+        opt._scorer.score = AsyncMock(side_effect=_connection_error())
+
+        result = await _run_one_attempt(opt, "reply")
+
+        assert isinstance(result, RunEndResponse)
+        assert result.done is True
+        # break_score=1.0 would have been met by the reused prev_score of 1.0.
+        assert opt._succeeded is False
+
+    @pytest.mark.asyncio
+    async def test_a_task_that_never_scored_is_logged_as_degraded(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        opt = await _init_optimizer(max_attempts=1)
+        _stub_attacker(opt)
+        assert opt._scorer is not None
+        opt._scorer.score = AsyncMock(side_effect=_connection_error())
+
+        with caplog.at_level(logging.ERROR):
+            await _run_one_attempt(opt, "reply")
+            await opt.teardown()
+
+        assert "never produced a score" in caplog.text
+
+
+class TestBlankPromptIsNeverInjected:
+    @pytest.mark.asyncio
+    async def test_blank_current_prompt_declines_the_turn(self) -> None:
+        # Defence in depth behind the tag-extraction fallback: an empty user
+        # message is dropped by litellm's Bedrock Converse transform, and the
+        # provider then rejects the whole conversation. 161 autodan_turbo
+        # tasks died that way in the archived first run.
+        opt = await _init_optimizer()
+        _stub_attacker(opt, warm_up="   ")
+
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        response = await _dispatch_event(
+            opt,
+            ControllablePreCallEvent(controllable=_user_ctrl(), request="x"),
+        )
+
+        assert isinstance(response, ControllableNoInjection)
