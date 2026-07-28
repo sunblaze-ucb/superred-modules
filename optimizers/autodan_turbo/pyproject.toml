@@ -22,7 +22,13 @@ keywords = [
     "optimizer",
     "jailbreak",
 ]
-dependencies = ["superred>=0.1.0"]
+dependencies = [
+    "superred>=0.1.0",
+    # Failure classification (retry a transient provider error, raise a
+    # permanent one) needs litellm's exception classes. superred already
+    # pulls litellm in; this states the direct use.
+    "litellm>=1.89.0",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",

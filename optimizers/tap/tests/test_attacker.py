@@ -304,6 +304,60 @@ class TestAttackerJsonParsing:
             )
 
 
+class TestBlankPromptIsAParseFailure:
+    """A blank ``prompt`` is degenerate output, not an attack.
+
+    Injected verbatim it becomes an empty user message; litellm's Bedrock
+    Converse transform drops empty-content messages, so the provider receives
+    a conversation with no user turn and rejects the request outright. That
+    cost 7 tap tasks in the archived first run.
+    """
+
+    @pytest.mark.parametrize("blank", ["", "   ", "\n\t "])
+    def test_parse_rejects_a_blank_prompt(self, blank: str) -> None:
+        payload = json.dumps({"improvement": "none", "prompt": blank})
+
+        with pytest.raises(ValueError, match="blank 'prompt' value"):
+            Attacker._parse_response(payload)
+
+    @pytest.mark.asyncio
+    async def test_generate_prompt_resamples_then_raises(self) -> None:
+        mock_llm = AsyncMock()
+        payload = json.dumps({"improvement": "none", "prompt": ""})
+        mock_llm.complete.return_value = _make_completion_response(payload)
+        attacker = Attacker(llm=mock_llm, max_attack_attempts=3)
+        history: list[dict[str, str]] = []
+
+        with pytest.raises(ValueError, match="blank 'prompt' value"):
+            await attacker.generate_prompt(
+                goal="g",
+                target_str="Sure, here is",
+                conversation_history=history,
+            )
+
+        assert mock_llm.complete.await_count == 3
+
+    @pytest.mark.asyncio
+    async def test_a_later_resample_recovers(self) -> None:
+        mock_llm = AsyncMock()
+        mock_llm.complete.side_effect = [
+            _make_completion_response(json.dumps({"improvement": "n", "prompt": ""})),
+            _make_completion_response(
+                json.dumps({"improvement": "n", "prompt": "real attack"})
+            ),
+        ]
+        attacker = Attacker(llm=mock_llm, max_attack_attempts=3)
+        history: list[dict[str, str]] = []
+
+        proposal = await attacker.generate_prompt(
+            goal="g",
+            target_str="Sure, here is",
+            conversation_history=history,
+        )
+
+        assert proposal.prompt == "real attack"
+
+
 class TestAttackerInit:
     def test_original_defaults(self) -> None:
         mock_llm = AsyncMock()

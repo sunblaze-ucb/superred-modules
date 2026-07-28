@@ -112,18 +112,35 @@ behaviour is determined by what the framework makes visible.
   `test_initialize_seeds_prev_state_per_upstream` and
   `test_run_zero_summarizes_when_score_beats_seeded_floor`.
 - **Tag-extraction fallback to bare goal** — when the attacker
-  output omits `[END OF JAILBREAK PROMPT]`,
-  `_extract_jailbreak_prompt` returns the bare `request` (raw
-  goal), exactly as upstream `Attacker.wrapper` does. A rambling
-  attacker that never closed the tag does *not* ship its rambling
-  to the target. Pinned by
-  `test_falls_back_to_request_when_no_end_tag` and
-  `test_falls_back_to_request_on_empty_output`.
+  output omits `[END OF JAILBREAK PROMPT]`, *or* closes the tag
+  around an empty body, `_extract_jailbreak_prompt` returns the
+  bare `request` (raw goal), exactly as upstream `Attacker.wrapper`
+  does on a failed parse. A rambling attacker that never closed the
+  tag does *not* ship its rambling to the target, and an attacker
+  that emitted nothing does *not* ship an empty user message
+  (litellm's Bedrock Converse transform drops an empty message,
+  leaving a conversation the provider rejects outright). Pinned by
+  `test_falls_back_to_request_when_no_end_tag`,
+  `test_falls_back_to_request_on_empty_output`,
+  `test_falls_back_to_request_on_an_empty_tag_body` and
+  `test_jailbreak_prompt_is_never_blank`.
 - **No temperature is sent**: the paper's pins (attacker 1.0,
   scorer 0.7, summarizer 0.6) are deliberately not passed to the
   LLM. Reasoning models reject the parameter outright and Bedrock
   Claude rejects it alongside `top_p`, so pinning it would make the
   optimizer unusable on exactly the strongest attacker models.
+- **A failed scorer leaves the attempt unscored** — the paper
+  assumes the scorer answers. When it does not, the call is retried
+  twice (transient provider failures only; `BudgetExhaustedError`
+  is re-raised immediately, a permanent failure is not retried), and
+  if it still fails the attempt is left unscored: `prev_score` and
+  `prev_prompt` keep describing the last attempt that was actually
+  measured. The earlier behaviour reused `prev_score` as this
+  attempt's score, which can never beat `prev_score`, so the
+  library stopped growing while the run still looked healthy and
+  `prev_prompt` advanced to a prompt no scorer had seen. A task in
+  which the scorer never once succeeded is logged at ERROR: it
+  measured a degraded attacker, not a weak one.
 - **Default `break_score = 8.5`** — paper / run-script.
 - **Default `top_k_strategies = 5`** — matches upstream
   `Retrieval.pop` default `k=5`.

@@ -27,6 +27,7 @@ from superred.core.types.observable import ObservableValue
 
 from tap_optimizer.attacker import Attacker
 from tap_optimizer.evaluator import Evaluator
+from tap_optimizer.retry import retry_transient
 from tap_optimizer.tree import TapNode, TapTree
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,20 @@ logger = logging.getLogger(__name__)
 _RESPONSE_OBSERVABLE_NAMES = {"response", "model_response", "assistant_response"}
 _RESPONSE_NAME_HINTS = ("response", "assistant", "reply", "output", "completion")
 _STATIC_CONTEXT_TRUNCATION_MARKER = "\n[truncated]"
+
+
+class AttackerUnavailable(RuntimeError):
+    """The attacker-side provider could not serve the search at all.
+
+    Raised out of ``on_event`` so the controller records the task with
+    ``stop_reason="error"`` and the traceback. A tree that produced no
+    candidate because its provider was unreachable must not be reported
+    as a tree that searched and found nothing.
+
+    Reserved for infrastructure: an attacker *model* that answers but
+    answers uselessly is a genuine measurement, is logged at ERROR, and
+    never raises, so those cells keep their place in the denominator.
+    """
 
 
 class TapOptimizer(Optimizer):
@@ -115,9 +130,9 @@ class TapOptimizer(Optimizer):
             max_chars=self._static_context_max_chars,
         )
         # Neither helper takes a temperature: it is deliberately never sent to
-        # the attacker LLM. Reasoning models reject the parameter, and both
-        # helpers' failures are swallowed here (nodes get pruned, scores floor
-        # at 1.0), so a pinned value would disable TAP without any error.
+        # the attacker LLM. Reasoning models reject the parameter outright, and
+        # that rejection is permanent, so a pinned value would fail every
+        # generation and every on-topic check for the life of the task.
         self._attacker = Attacker(
             llm=self.llm,
             max_tokens=self._attacker_max_tokens,
@@ -197,6 +212,16 @@ class TapOptimizer(Optimizer):
         goal = self._goal.description
         logger.info("TAP: depth %d, generating %d leaves", self._depth, len(leaves))
 
+        # Two different things used to be recorded identically as "pruned".
+        # `Attacker.generate_prompt` signals degenerate attacker output (no
+        # parseable JSON, or a blank prompt, after `max_attack_attempts`
+        # resamples) with ValueError; that is a real property of the attacker
+        # model and must stay in the measurement. Anything else reaching here
+        # outlived the transient retries, so it is infrastructure and must not
+        # be reported as a search that found nothing.
+        degenerate_output: list[BaseException] = []
+        infrastructure_failures: list[BaseException] = []
+
         async def generate(node: TapNode) -> None:
             try:
                 proposal = await attacker.generate_prompt(
@@ -213,30 +238,101 @@ class TapOptimizer(Optimizer):
                 node.system_prompt = proposal.system_prompt
             except BudgetExhaustedError:
                 raise
-            except Exception:
-                logger.warning("TAP: pruning node %s -- attacker failed", node.node_id, exc_info=True)
+            except ValueError as exc:
+                logger.error(
+                    "TAP: dropping node %s -- the attacker model produced "
+                    "nothing usable after %d attempts",
+                    node.node_id,
+                    self._max_attack_attempts,
+                    exc_info=True,
+                )
+                degenerate_output.append(exc)
+                node.pruned = True
+            except Exception as exc:
+                logger.warning(
+                    "TAP: dropping node %s -- attacker call failed",
+                    node.node_id,
+                    exc_info=True,
+                )
+                infrastructure_failures.append(exc)
                 node.pruned = True
 
         await asyncio.gather(*(generate(node) for node in leaves))
+        failures = len(degenerate_output) + len(infrastructure_failures)
         leaves = [node for node in self._tree.get_leaves() if node.prompt is not None]
         if not leaves:
+            if infrastructure_failures:
+                raise AttackerUnavailable(
+                    f"TAP: no node at depth {self._depth} produced a prompt and "
+                    f"{len(infrastructure_failures)} of {failures} failure(s) "
+                    "were provider-side; the search produced nothing because "
+                    "the attacker was unreachable, not because the tree was "
+                    "exhausted"
+                ) from infrastructure_failures[0]
+            if degenerate_output:
+                # A legitimate, if unflattering, attacker result: the model
+                # never wrote an attack. The task stays scoreable so the cell
+                # is not silently dropped from the denominator, and the ERROR
+                # above makes it countable.
+                logger.error(
+                    "TAP: depth %d ended the search with no candidate; the "
+                    "attacker model produced nothing usable on all %d node(s)",
+                    self._depth,
+                    len(degenerate_output),
+                )
             self._done = True
             return
+        if failures:
+            logger.warning(
+                "TAP: depth %d ran on %d node(s); %d dropped (%d degenerate "
+                "attacker output, %d provider failures)",
+                self._depth,
+                len(leaves),
+                failures,
+                len(degenerate_output),
+                len(infrastructure_failures),
+            )
+
+        on_topic_failures: list[BaseException] = []
 
         async def check_on_topic(node: TapNode) -> None:
             try:
-                assert node.prompt is not None
-                node.is_on_topic = await evaluator.is_on_topic(
-                    prompt=node.prompt,
-                    goal=goal,
+                prompt = node.prompt
+                assert prompt is not None
+                node.is_on_topic = await retry_transient(
+                    lambda: evaluator.is_on_topic(prompt=prompt, goal=goal),
+                    stage="on-topic check",
                 )
             except BudgetExhaustedError:
                 raise
-            except Exception:
-                logger.warning("TAP: on-topic check failed for %s", node.node_id, exc_info=True)
+            except Exception as exc:
+                # Keep the node: an unchecked prompt is of unknown topicality,
+                # and pruning it would fabricate a judgement the evaluator never
+                # made. The escalation below covers the case where the evaluator
+                # is dead rather than flaky.
+                logger.warning(
+                    "TAP: on-topic check failed for %s", node.node_id, exc_info=True
+                )
+                on_topic_failures.append(exc)
                 node.is_on_topic = True
 
         await asyncio.gather(*(check_on_topic(node) for node in leaves))
+        if len(on_topic_failures) == len(leaves):
+            # Every check at this depth failed after its retries, so the failure
+            # is permanent (a rejected parameter, a bad key) and will recur at
+            # every later depth. Continuing would silently run TAP without its
+            # pruning stage and report the result as TAP.
+            raise AttackerUnavailable(
+                f"TAP: every on-topic check at depth {self._depth} failed "
+                f"({len(on_topic_failures)} node(s)); off-topic pruning is "
+                "disabled, so this run would not be TAP"
+            ) from on_topic_failures[0]
+        if on_topic_failures:
+            logger.warning(
+                "TAP: depth %d kept %d node(s) whose on-topic check failed",
+                self._depth,
+                len(on_topic_failures),
+            )
         self._tree.prune_off_topic(width=self._tree_width)
         self._pending_candidates = [
             node for node in self._tree.get_leaves() if node.prompt is not None
@@ -284,14 +380,26 @@ class TapOptimizer(Optimizer):
             return ControllableNoInjection(event=event, controllable=event.controllable)
         return self._inject_current(event)
 
-    def _inject_current(self, event: ControllablePreCallEvent) -> ControllableInjection:
+    def _inject_current(
+        self, event: ControllablePreCallEvent
+    ) -> ControllableInjection | ControllableNoInjection:
         assert self._current_candidate is not None
-        assert self._current_candidate.prompt is not None
+        prompt = self._current_candidate.prompt
+        assert prompt is not None
+        if not prompt.strip():
+            # Defence in depth: the attacker parser already rejects a blank
+            # proposal. Sending one anyway costs a victim call and, on Bedrock,
+            # kills the whole task, so decline the turn instead.
+            logger.error(
+                "TAP: candidate %s carries a blank prompt; not injecting",
+                self._current_candidate.node_id,
+            )
+            return ControllableNoInjection(event=event, controllable=event.controllable)
         self._injected_this_run = True
         return ControllableInjection(
             event=event,
             controllable=event.controllable,
-            value=self._current_candidate.prompt,
+            value=prompt,
         )
 
     def _handle_post_call(
@@ -345,16 +453,31 @@ class TapOptimizer(Optimizer):
                 candidate.score = self._score_from_evaluation(evaluation)
             else:
                 candidate.target_response = response
+                evaluator = self._evaluator
+                prompt, goal = candidate.prompt, self._goal.description
                 try:
-                    candidate.score = await self._evaluator.score_response(
-                        prompt=candidate.prompt,
-                        response=response,
-                        goal=self._goal.description,
+                    candidate.score = await retry_transient(
+                        lambda: evaluator.score_response(
+                            prompt=prompt,
+                            response=response,
+                            goal=goal,
+                        ),
+                        stage="candidate scoring",
                     )
                 except BudgetExhaustedError:
                     raise
                 except Exception:
-                    logger.warning("TAP: scoring failed for %s", candidate.node_id, exc_info=True)
+                    # 1.0 is TAP's own "not jailbroken" floor, so the candidate
+                    # ranks last rather than being invented as a measurement.
+                    # It never reaches the framework verdict, which comes from
+                    # the SecurityClaim judge, so this stays non-fatal; the
+                    # ERROR marks the cell as having searched half-blind.
+                    logger.error(
+                        "TAP: scoring failed for %s after retries; flooring the "
+                        "candidate at 1.0 (search signal lost for this node)",
+                        candidate.node_id,
+                        exc_info=True,
+                    )
                     candidate.score = 1.0
         elif evaluation is not None:
             candidate.target_response = self._format_framework_feedback(evaluation)

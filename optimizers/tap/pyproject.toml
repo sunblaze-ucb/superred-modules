@@ -14,7 +14,13 @@ authors = [
     { name = "Simon Sure", email = "info@simonsure.com" },
     { name = "Sarthak Munshi", email = "sarthakmunshi@gmail.com" },
 ]
-dependencies = ["superred>=0.1.0"]
+dependencies = [
+    "superred>=0.1.0",
+    # Failure classification (retry a transient provider error, raise a
+    # permanent one) needs litellm's exception classes. superred already
+    # pulls litellm in; this states the direct use.
+    "litellm>=1.89.0",
+]
 
 [project.optional-dependencies]
 test = ["pytest", "pytest-asyncio"]

@@ -365,13 +365,19 @@ def _extract_jailbreak_prompt(text: str, request: str) -> str:
     Falls back to ``request`` (the bare goal) if no END tag is found,
     so a rambling attacker that never closed the tag doesn't ship its
     rambling to the target — same behaviour as upstream.
+
+    A closed but *empty* tag pair is the same kind of parse failure and
+    takes the same fallback. Returning the empty body instead made the
+    optimizer inject an empty user message, which litellm's Bedrock
+    Converse transform drops, leaving a conversation the provider
+    rejects outright: 161 tasks lost that way in the archived first run.
     """
     if _END_TAG not in text:
         return request
     head, _, _ = text.partition(_END_TAG)
     if _START_TAG in head:
         head = head.split(_START_TAG, 1)[1]
-    return head.strip()
+    return head.strip() or request
 
 
 def _extract_system_prompt_override(text: str) -> str | None:

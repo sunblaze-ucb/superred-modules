@@ -1,5 +1,5 @@
 """Tree of Attacks with Pruning (TAP) optimizer for superred."""
 
-from tap_optimizer.optimizer import TapOptimizer
+from tap_optimizer.optimizer import AttackerUnavailable, TapOptimizer
 
-__all__ = ["TapOptimizer"]
+__all__ = ["AttackerUnavailable", "TapOptimizer"]

@@ -59,6 +59,35 @@ class TestExtractJailbreakPrompt:
     def test_falls_back_to_request_on_empty_output(self) -> None:
         assert _extract_jailbreak_prompt("", "the goal") == "the goal"
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "[START OF JAILBREAK PROMPT]\n[END OF JAILBREAK PROMPT]",
+            "[END OF JAILBREAK PROMPT]",
+            "[START OF JAILBREAK PROMPT]\n   \n[END OF JAILBREAK PROMPT]",
+        ],
+        ids=["closed-but-empty", "end-tag-only", "whitespace-body"],
+    )
+    def test_falls_back_to_request_on_an_empty_tag_body(self, text: str) -> None:
+        # A well-formed but empty tag pair is as much a parse failure as a
+        # missing end tag. Returning "" here made the optimizer inject an
+        # empty user message, which cost 161 tasks in the archived first run:
+        # litellm's Bedrock Converse transform drops empty-content messages,
+        # so the provider saw a conversation with no user turn.
+        assert _extract_jailbreak_prompt(text, "the goal") == "the goal"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "[START OF JAILBREAK PROMPT]\n[END OF JAILBREAK PROMPT]",
+            "[END OF JAILBREAK PROMPT]",
+            "ramble with no end tag",
+        ],
+    )
+    def test_jailbreak_prompt_is_never_blank(self, text: str) -> None:
+        # Pins the AttackerOutput.jailbreak_prompt docstring claim.
+        assert _extract_jailbreak_prompt(text, "the goal").strip()
+
 
 # ---------------------------------------------------------------------------
 # warm_up

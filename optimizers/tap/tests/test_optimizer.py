@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from litellm.exceptions import APIConnectionError, UnsupportedParamsError
 
 from superred.core.channel import EventEnvelope
 from superred.core.types.controllable import Controllable
@@ -28,7 +30,8 @@ from superred.core.types.observable import Observable, ObservableValue
 from superred.core.types.security_domain import SecurityDomainTag
 from superred.core.types.trajectory import Trajectory
 
-from tap_optimizer.optimizer import TapOptimizer
+from tap_optimizer import retry
+from tap_optimizer.optimizer import AttackerUnavailable, TapOptimizer
 
 DOMAIN = SecurityDomainTag(name="test")
 
@@ -745,15 +748,21 @@ async def test_depth_exhausted_signals_done() -> None:
 
 
 @pytest.mark.asyncio
-async def test_no_candidate_signals_done_when_attacker_generation_fails() -> None:
+async def test_degenerate_attacker_output_ends_the_search_loudly(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # An attacker model that never emits parseable JSON is a real (if
+    # unflattering) result, so the task stays scoreable and keeps its place in
+    # the denominator. It used to be logged at WARNING as an ordinary prune,
+    # indistinguishable from a search that judged the node unpromising.
     opt = await _init_optimizer(max_attack_attempts=1)
-    bad_attacker_output = "not json"
-    _setup_llm_mock(opt, [
-        bad_attacker_output,
-    ])
+    _setup_llm_mock(opt, ["not json"])
 
-    await _dispatch_event(opt, _make_run_start())
+    with caplog.at_level(logging.ERROR):
+        await _dispatch_event(opt, _make_run_start())
+
     assert opt._done is True
+    assert "produced nothing usable" in caplog.text
 
     result = await _dispatch_event(opt, _make_run_end())
     assert isinstance(result, RunEndResponse)
@@ -791,3 +800,166 @@ async def test_budget_exhaustion_during_response_scoring_propagates() -> None:
 
     with pytest.raises(BudgetExhaustedError):
         await _dispatch_event(opt, _make_run_end())
+
+
+# ---------------------------------------------------------------------------
+# Failure classification: transient vs permanent vs budget
+#
+# Each attacker-side helper call used to be swallowed and replaced by a
+# substitute value (a pruned node, "on topic", score 1.0), so an unreachable
+# provider was recorded as a search decision.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _no_retry_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the bounded backoff out of the test runtime."""
+    monkeypatch.setattr(retry, "_BASE_DELAY_SECONDS", 0.0)
+
+
+def _setup_llm_effects(opt: TapOptimizer, effects: list) -> None:
+    """Drive the attacker LLM with a script of replies and exceptions."""
+    remaining = list(effects)
+
+    async def mock_complete(messages, **kwargs):
+        effect = remaining.pop(0) if remaining else "fallback"
+        if isinstance(effect, BaseException):
+            raise effect
+        return _mock_response(effect)
+
+    opt.llm.complete = AsyncMock(side_effect=mock_complete)
+
+
+def _connection_error() -> APIConnectionError:
+    return APIConnectionError(message="boom", llm_provider="bedrock", model="m")
+
+
+def _unsupported_params_error() -> UnsupportedParamsError:
+    # Verbatim from the archived first run: 8,417 on-topic checks died on this
+    # and were silently recorded as "on topic".
+    return UnsupportedParamsError(
+        status_code=400,
+        message="gpt-5 models don't support temperature=0.0",
+    )
+
+
+@pytest.mark.asyncio
+async def test_transient_attacker_failure_is_retried_then_succeeds() -> None:
+    opt = await _init_optimizer(max_attack_attempts=1)
+    attacker_json = json.dumps({"improvement": "Try", "prompt": "attack prompt"})
+    _setup_llm_effects(opt, [
+        _connection_error(),
+        _connection_error(),
+        attacker_json,
+        "Response: [[YES]]",
+    ])
+
+    await _dispatch_event(opt, _make_run_start())
+
+    assert opt._done is False
+    assert opt._current_candidate is not None
+    assert opt._current_candidate.prompt == "attack prompt"
+
+
+@pytest.mark.asyncio
+async def test_attacker_transient_failure_that_never_clears_raises() -> None:
+    opt = await _init_optimizer(max_attack_attempts=1)
+    _setup_llm_effects(opt, [_connection_error() for _ in range(10)])
+
+    with pytest.raises(AttackerUnavailable, match="provider-side"):
+        await _dispatch_event(opt, _make_run_start())
+
+    # 1 attempt + 2 retries, and no further attacker calls after giving up.
+    assert opt.llm.complete.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_budget_exhaustion_is_never_retried() -> None:
+    opt = await _init_optimizer()
+    opt.llm.complete = AsyncMock(
+        side_effect=BudgetExhaustedError("budget exhausted", LLMUsage())
+    )
+
+    with pytest.raises(BudgetExhaustedError):
+        await _dispatch_event(opt, _make_run_start())
+
+    assert opt.llm.complete.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_partial_generation_failure_keeps_the_surviving_branch() -> None:
+    opt = await _init_optimizer(root_nodes=2, max_attack_attempts=1)
+    attacker_json = json.dumps({"improvement": "Try", "prompt": "attack prompt"})
+    _setup_llm_effects(opt, [
+        attacker_json,
+        _unsupported_params_error(),
+        "Response: [[YES]]",
+    ])
+
+    await _dispatch_event(opt, _make_run_start())
+
+    assert opt._done is False
+    assert opt._current_candidate is not None
+    assert opt._current_candidate.prompt == "attack prompt"
+
+
+@pytest.mark.asyncio
+async def test_every_on_topic_check_failing_raises() -> None:
+    opt = await _init_optimizer()
+    attacker_json = json.dumps({"improvement": "Try", "prompt": "attack prompt"})
+    _setup_llm_effects(opt, [attacker_json, _unsupported_params_error()])
+
+    with pytest.raises(AttackerUnavailable, match="on-topic"):
+        await _dispatch_event(opt, _make_run_start())
+
+
+@pytest.mark.asyncio
+async def test_a_single_on_topic_failure_keeps_the_node() -> None:
+    opt = await _init_optimizer(root_nodes=2)
+    attacker_json = json.dumps({"improvement": "Try", "prompt": "attack prompt"})
+    _setup_llm_effects(opt, [
+        attacker_json,
+        attacker_json,
+        "Response: [[YES]]",
+        _unsupported_params_error(),
+    ])
+
+    await _dispatch_event(opt, _make_run_start())
+
+    # An unchecked prompt is of unknown topicality; pruning it would fabricate
+    # a judgement the evaluator never made.
+    assert opt._done is False
+    assert len(opt._tree.get_leaves()) == 2
+
+
+@pytest.mark.asyncio
+async def test_blank_attacker_prompt_never_reaches_the_target() -> None:
+    # The archived first run lost 7 tap tasks (and 161 autodan_turbo tasks) to
+    # an injected empty user message: the Bedrock Converse transform drops an
+    # empty-content message, and Bedrock rejects the empty conversation.
+    opt = await _init_optimizer(max_attack_attempts=2)
+    _setup_llm_effects(opt, [
+        json.dumps({"improvement": "none", "prompt": ""}),
+        json.dumps({"improvement": "none", "prompt": "   "}),
+    ])
+
+    await _dispatch_event(opt, _make_run_start())
+
+    assert opt._current_candidate is None
+    response = await _dispatch_event(opt, _make_pre_call(_make_controllable()))
+    assert isinstance(response, ControllableNoInjection)
+
+
+@pytest.mark.asyncio
+async def test_blank_prompt_on_a_candidate_is_not_injected() -> None:
+    opt = await _init_optimizer()
+    attacker_json = json.dumps({"improvement": "Try", "prompt": "attack prompt"})
+    _setup_llm_effects(opt, [attacker_json, "Response: [[YES]]"])
+    await _dispatch_event(opt, _make_run_start())
+    assert opt._current_candidate is not None
+    # Defence in depth: bypass the parser guard entirely.
+    opt._current_candidate.prompt = "   "
+
+    response = await _dispatch_event(opt, _make_pre_call(_make_controllable()))
+
+    assert isinstance(response, ControllableNoInjection)
