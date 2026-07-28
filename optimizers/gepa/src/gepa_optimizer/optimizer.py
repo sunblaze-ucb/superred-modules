@@ -43,13 +43,28 @@ scope grants:
   channel is attacked. The explicit ``target_controllable_name``
   constructor knob always wins over auto-claim.
 
+Failed reflection
+-----------------
+
+Reflection is the only thing that makes one run differ from the last,
+so a reflection that produces nothing is never absorbed: the cost cap
+is re-raised, a failing call is retried and then surfaced as
+``ReflectionUnavailable``, and an LM that keeps proposing nothing
+parseable ends the search. Re-sending the identical prompt to the
+target would spend target budget for no search progress and record the
+result as an ordinary failed attack. See ``ASSUMPTIONS.md``, "When
+Reflection Does Not Produce a Mutation".
+
 Refer to ``ASSUMPTIONS.md`` for paper alignment and deliberate
 departures.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import random
+import time
 from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -69,9 +84,10 @@ from superred.core.types.events import (
     RunStartEvent,
 )
 from superred.core.types.goal import Goal
+from superred.core.types.llm import BudgetExhaustedError
 from superred.core.types.observable import ObservableValue
 
-from gepa_optimizer.reflector import Reflector, RolloutRecord
+from gepa_optimizer.reflector import ReflectionResult, Reflector, RolloutRecord
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +111,30 @@ _SYSTEM_PROMPT_NAME = "system_prompt"
 # minibatch size of 3, which is what the reflection LM expects to see
 # in the side-info dataset.
 _ROLLOUT_HISTORY_SIZE = 3
+
+# Base of the exponential backoff between reflection retries, in seconds.
+_REFLECTION_BACKOFF_S = 1.0
+
+
+class ReflectionUnavailable(RuntimeError):
+    """Every attempt to reach the reflection LM failed.
+
+    Raised out of ``on_event`` so the controller ends the task with
+    ``stop_reason="error"`` and the formatted traceback on
+    ``TaskResult.error``. A dead reflection LM means GEPA never searched;
+    recording that as an ordinary score-0 attacker failure would make an
+    infrastructure outage indistinguishable from a target that held.
+    """
+
+
+def _backoff_delay(attempt: int) -> float:
+    """Full-jitter exponential backoff for retry number ``attempt`` (1-based).
+
+    Jittered rather than fixed because a whole matrix cell retries against
+    the same provider at the same moment; synchronised retries turn one
+    rate-limit into a standing wave.
+    """
+    return random.uniform(0.0, _REFLECTION_BACKOFF_S * 2 ** (attempt - 1))
 
 
 @dataclass
@@ -161,6 +201,23 @@ class GEPAOptimizer(Optimizer):
             consecutive runs in which neither response nor evaluation
             was visible. Bounds blind-loop cost in the user-query-only
             setting. Disabled by default (matches GOAT / FlipAttack).
+        max_consecutive_no_mutation: Terminate after this many
+            consecutive reflections that returned no parseable proposal.
+            A re-roll of the same parent is worth something (it refreshes
+            the parent's rollout buffer, so the next reflection sees
+            different side-info), but once the buffer has turned over the
+            reflection LM is being handed input it has already declined;
+            further runs spend target budget for zero search progress.
+            Default 3 = ``_ROLLOUT_HISTORY_SIZE``. Set to 0 to disable.
+        reflection_retries: Extra attempts for a reflection LM call that
+            raises (default 2, so 3 attempts) with jittered exponential
+            backoff. Transient provider errors are the common case and
+            must not cost a task.
+        reflection_retry_deadline: Seconds after the first attempt beyond
+            which no further retry is started (default 120). Guards the
+            task time cap: a provider timeout can itself burn 600 s, and
+            three of those would trip the controller's timeout and
+            discard the task.
     """
 
     def __init__(
@@ -170,12 +227,18 @@ class GEPAOptimizer(Optimizer):
         response_observable_names: Iterable[str] | None = None,
         target_controllable_name: str | None = None,
         max_no_signal_runs: int = 0,
+        max_consecutive_no_mutation: int = _ROLLOUT_HISTORY_SIZE,
+        reflection_retries: int = 2,
+        reflection_retry_deadline: float = 120.0,
     ) -> None:
         super().__init__()
         if max_attempts < 1:
             raise ValueError("max_attempts must be at least 1")
 
         self._max_attempts = max_attempts
+        self._max_consecutive_no_mutation = max(0, max_consecutive_no_mutation)
+        self._reflection_retries = max(0, reflection_retries)
+        self._reflection_retry_deadline = max(0.0, reflection_retry_deadline)
         self._response_observable_names: frozenset[str] = frozenset(
             response_observable_names
             if response_observable_names is not None
@@ -203,6 +266,10 @@ class GEPAOptimizer(Optimizer):
         self._succeeded: bool = False
         self._consecutive_no_signal_runs: int = 0
         self._stop_due_to_no_signal: bool = False
+        self._consecutive_no_mutation: int = 0
+        # A reflection failure detected at RunEnd, re-raised at the next
+        # RunStart — see ``_handle_run_start``.
+        self._pending_failure: BaseException | None = None
 
         # Per-run state (reset in _reset_run_state).
         self._current: _Candidate | None = None
@@ -230,8 +297,8 @@ class GEPAOptimizer(Optimizer):
         self._goal = goal
         # No sampling temperature is sent to the reflection LM: the
         # paper pins a high one for prompt diversity, but reasoning
-        # models reject the parameter, and reflection failures are
-        # swallowed here, so a pin would silently disable mutation.
+        # models reject the parameter outright, which would turn every
+        # reflection into a hard failure on those models.
         self._reflector = Reflector(llm=self.llm)
         self._target_observables = self._extract_static_observables(observables)
         self._target_controllable_name = self._resolve_target_controllable_name(
@@ -243,6 +310,8 @@ class GEPAOptimizer(Optimizer):
         self._succeeded = False
         self._consecutive_no_signal_runs = 0
         self._stop_due_to_no_signal = False
+        self._consecutive_no_mutation = 0
+        self._pending_failure = None
         self._reset_run_state()
 
     async def teardown(self) -> None:
@@ -268,6 +337,16 @@ class GEPAOptimizer(Optimizer):
     # ------------------------------------------------------------------
 
     def _handle_run_start(self, event: RunStartEvent) -> EventResponse:
+        if self._pending_failure is not None:
+            # Reflection died at the end of the previous run. Raise here
+            # rather than there: the controller sends RunStartEvent before
+            # it calls the target, so the task ends without paying for one
+            # more target call, and the previous run's completed
+            # evaluation is already recorded instead of being replaced by
+            # the controller's synthetic zero-score error result.
+            failure = self._pending_failure
+            self._pending_failure = None
+            raise failure
         self._reset_run_state()
         self._current, self._current_is_fresh = self._select_current_candidate()
         return EventResponse(event=event)
@@ -418,7 +497,8 @@ class GEPAOptimizer(Optimizer):
             return RunEndResponse(event=event, done=True)
 
         # Reflect to set up the next run's candidate.
-        await self._reflect_next_candidate()
+        if not await self._reflect_next_candidate():
+            return RunEndResponse(event=event, done=True)
         return RunEndResponse(event=event, done=False)
 
     # ------------------------------------------------------------------
@@ -529,40 +609,140 @@ class GEPAOptimizer(Optimizer):
                 return _SYSTEM_PROMPT_NAME
         return None
 
-    async def _reflect_next_candidate(self) -> None:
-        """Build the side-info dataset and stash a pending proposal."""
+    async def _reflect_next_candidate(self) -> bool:
+        """Build the side-info dataset and stash a pending proposal.
+
+        Returns whether the search may continue. ``False`` stops the task:
+        without a fresh candidate the next run would re-send the identical
+        prompt to the target at full cost, which looks like a legitimate
+        multi-run search but makes no progress at all.
+
+        A reflection call that keeps failing does *not* return ``False`` —
+        it records the exception for ``_handle_run_start`` to raise, so the
+        task is reported as an error rather than as a completed search.
+        """
         assert self._reflector is not None and self._goal is not None
 
         parent = self._best_in_pool()
         if not parent.rolled_out:
             # Seed has not been rolled out yet — defer reflection,
             # next run will roll out the seed first.
-            return
+            return True
 
         # Replay every recent rollout we have for the parent so the
         # reflection LM sees as much signal as we've already paid for.
         rollouts = list(parent.rollouts)
 
         try:
-            result = await self._reflector.propose(
+            result = await self._propose_with_retry(
                 current_instruction=parent.prompt,
                 rollouts=rollouts,
             )
-        except Exception:
+        except (BudgetExhaustedError, ReflectionUnavailable) as exc:
+            # Both end the task, and both must be visible in the recorded
+            # stop_reason: the controller maps BudgetExhaustedError to
+            # "budget_exhausted" and anything else to "error".
             logger.warning(
-                "GEPA: reflection LM call failed; skipping mutation this iteration",
+                "GEPA: reflection ended the task at attempt %d (%s)",
+                self._attempt,
+                type(exc).__name__,
                 exc_info=True,
             )
-            return
+            self._pending_failure = exc
+            return True
 
         if result is None:
-            return
+            # The reflection LM answered but proposed nothing parseable —
+            # a legitimate attacker-model outcome (typically a refusal to
+            # improve the attack), not an infrastructure failure. Re-roll
+            # the parent so its rollout buffer turns over and the next
+            # reflection sees different side-info, but bound it.
+            self._consecutive_no_mutation += 1
+            if (
+                self._max_consecutive_no_mutation > 0
+                and self._consecutive_no_mutation >= self._max_consecutive_no_mutation
+            ):
+                logger.warning(
+                    "GEPA: reflection LM proposed no parseable mutation %d times "
+                    "in a row after attempt %d; stopping instead of re-sending "
+                    "the identical prompt for the remaining %d attempts",
+                    self._consecutive_no_mutation,
+                    self._attempt,
+                    self._max_attempts - self._attempt,
+                )
+                return False
+            return True
 
+        self._consecutive_no_mutation = 0
         parent_idx = self._pool.index(parent)
         self._pending = _Candidate(
             prompt=result.new_instruction,
             parent_idx=parent_idx,
         )
+        return True
+
+    async def _propose_with_retry(
+        self,
+        *,
+        current_instruction: str,
+        rollouts: list[RolloutRecord],
+    ) -> ReflectionResult | None:
+        """Call the reflection LM, retrying a failing call a bounded number of times.
+
+        Returns the proposal, or ``None`` when the LM answered but its
+        output held no parseable instruction.
+
+        Raises:
+            BudgetExhaustedError: The attacker's cost cap is spent. Never
+                retried (retrying is a cap escape) and never converted:
+                the controller turns it into
+                ``stop_reason="budget_exhausted"``.
+            ReflectionUnavailable: Every attempt raised.
+        """
+        assert self._reflector is not None
+
+        deadline = time.monotonic() + self._reflection_retry_deadline
+        max_attempts = self._reflection_retries + 1
+        last_error: BaseException | None = None
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return await self._reflector.propose(
+                    current_instruction=current_instruction,
+                    rollouts=rollouts,
+                )
+            except BudgetExhaustedError:
+                raise
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "GEPA: reflection LM call failed (attempt %d/%d)",
+                    attempt,
+                    max_attempts,
+                    exc_info=True,
+                )
+                if attempt == max_attempts:
+                    break
+                delay = _backoff_delay(attempt)
+                if time.monotonic() + delay >= deadline:
+                    # A slow failure (a provider timeout is minutes, not
+                    # seconds) has already spent the retry window; sleeping
+                    # on would risk the controller's task timeout, which
+                    # discards the task outright.
+                    logger.warning(
+                        "GEPA: reflection retry deadline (%.1fs) reached after "
+                        "attempt %d; not retrying further",
+                        self._reflection_retry_deadline,
+                        attempt,
+                    )
+                    break
+                await asyncio.sleep(delay)
+
+        assert last_error is not None
+        raise ReflectionUnavailable(
+            f"GEPA reflection LM unreachable: "
+            f"{type(last_error).__name__}: {last_error}"
+        ) from last_error
 
 
-__all__ = ["GEPAOptimizer"]
+__all__ = ["GEPAOptimizer", "ReflectionUnavailable"]

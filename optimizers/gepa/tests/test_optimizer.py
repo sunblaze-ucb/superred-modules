@@ -11,8 +11,8 @@ Covers:
 * Early-stop on ``RunEndEvent.evaluation.success``.
 * ``max_attempts`` exhaustion.
 * All four adversarial information-access settings.
-* Reflection LM parse failure leaves the next run with no pending
-  proposal (parent re-rolls instead of crashing).
+* Reflection failure is loud: budget re-raised, transient retried,
+  persistent surfaced, repeated no-mutation ends the search.
 * End-to-end ChatbotTarget-style integration shape.
 """
 
@@ -38,10 +38,12 @@ from superred.core.types.events import (
     RunStartEvent,
 )
 from superred.core.types.goal import Goal
+from superred.core.types.llm import BudgetExhaustedError, LLMUsage
 from superred.core.types.observable import Observable
 from superred.core.types.security_domain import SecurityDomainTag
 
-from gepa_optimizer.optimizer import GEPAOptimizer
+import gepa_optimizer.optimizer
+from gepa_optimizer.optimizer import GEPAOptimizer, ReflectionUnavailable
 from gepa_optimizer.reflector import ReflectionResult
 
 
@@ -108,11 +110,31 @@ async def _init_optimizer(
     *,
     max_attempts: int = 5,
     max_no_signal_runs: int = 0,
+    max_consecutive_no_mutation: int = 0,
+    reflection_retry_deadline: float = 120.0,
 ) -> GEPAOptimizer:
+    # ``max_consecutive_no_mutation`` defaults to *disabled* here so the
+    # tests that stub reflection out with ``propose -> None`` keep
+    # exercising the re-roll path they were written for; the shipped
+    # default is covered in ``TestReflectionFailureIsLoud``.
     opt = GEPAOptimizer(
         max_attempts=max_attempts,
         max_no_signal_runs=max_no_signal_runs,
+        max_consecutive_no_mutation=max_consecutive_no_mutation,
+        reflection_retry_deadline=reflection_retry_deadline,
     )
+    await opt.initialize(
+        goal=Goal(description="achieve target X"),
+        controllables=[_user_ctrl()],
+        observables=[],
+        llm_client=_empty_llm(),
+    )
+    return opt
+
+
+async def _init_shipped_defaults(*, max_attempts: int = 20) -> GEPAOptimizer:
+    """Same optimizer with every failure-handling knob left at its default."""
+    opt = GEPAOptimizer(max_attempts=max_attempts)
     await opt.initialize(
         goal=Goal(description="achieve target X"),
         controllables=[_user_ctrl()],
@@ -210,8 +232,13 @@ class TestRunStart:
         opt = await _init_optimizer()
         # Manually plant a pending mutation to verify selection rule.
         await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
-        # Roll out the seed first.
-        await _roll_out_one(opt, eval_=_failure_eval(0.2))
+        # Roll out the seed first. Reflection is stubbed out: an
+        # unstubbed reflection call now fails the task instead of being
+        # swallowed.
+        with patch.object(
+            opt._reflector, "propose", new=AsyncMock(return_value=None),
+        ):
+            await _roll_out_one(opt, eval_=_failure_eval(0.2))
 
         # After RunEnd, reflection should have set up a pending proposal,
         # but tests patch reflection — emulate by setting it directly.
@@ -593,6 +620,11 @@ class TestReflectionFailure:
 
     @pytest.mark.asyncio
     async def test_reflection_exception_does_not_crash_run_end(self) -> None:
+        """RunEnd itself survives so the completed run keeps its evaluation.
+
+        The failure is not swallowed: it is held for the next RunStart
+        (see ``TestReflectionFailureIsLoud``).
+        """
         opt = await _init_optimizer(max_attempts=3)
         with patch.object(
             opt._reflector, "propose",
@@ -602,6 +634,7 @@ class TestReflectionFailure:
         assert isinstance(end, RunEndResponse)
         assert end.done is False
         assert opt._pending is None
+        assert isinstance(opt._pending_failure, ReflectionUnavailable)
 
     @pytest.mark.asyncio
     async def test_next_run_re_rolls_seed_when_no_pending(self) -> None:
@@ -613,6 +646,278 @@ class TestReflectionFailure:
             await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         assert opt._current is opt._pool[0]
         assert opt._current_is_fresh is False
+
+
+# ---------------------------------------------------------------------------
+# Reflection failure must be loud, never a silent re-roll
+#
+# Regression cover for the RQ1.3-1 first-run archive, where GEPA's bare
+# ``except`` around the reflection call turned three different failures
+# into the same recorded outcome — a completed multi-run search that
+# scored 0:
+#
+# * 3,395 of GEPA's 7,018 swallowed exceptions were BudgetExhaustedError.
+#   775 GEPA tasks spent their entire $0.75 attacker cap yet not one was
+#   recorded as ``stop_reason="budget_exhausted"`` (763 "done", 12
+#   "error").
+# * 95 multi-run tasks recorded ZERO successful attacker LLM calls (84 of
+#   them across all 20 runs). The framework counts a call only after a
+#   completion returns, so calls==0 over 20 runs means every one of the
+#   19 reflection attempts raised and was swallowed, and the identical
+#   seed prompt was re-sent to the target 20 times.
+# ---------------------------------------------------------------------------
+
+
+def _api_connection_error() -> Exception:
+    """The archive's most common transient reflection failure, verbatim."""
+    import litellm
+
+    return litellm.exceptions.APIConnectionError(
+        message=(
+            'litellm.APIConnectionError: Bedrock_mantleException - {"error":'
+            '{"code":"internal_server_error","message":"The server had an '
+            'error while processing your request. Sorry about that!",'
+            '"param":null,"type":"server_error"}}'
+        ),
+        llm_provider="bedrock_mantle",
+        model="openai.gpt-5.4",
+    )
+
+
+def _budget_exhausted() -> BudgetExhaustedError:
+    return BudgetExhaustedError(
+        "LLM budget exhausted: $0.7502 spent of $0.7500 cap",
+        LLMUsage(calls=41, cost=0.7502),
+    )
+
+
+class _FailingLLM:
+    """LLMClient stub that mirrors the framework's call accounting.
+
+    ``superred.core.llm.LLMClient`` increments its counter only after the
+    provider call returns, so a call that raises is never counted. That
+    is what makes ``calls == 0`` over a multi-run task proof that every
+    reflection attempt raised.
+    """
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(self, *_a: Any, **_k: Any) -> Any:
+        # The framework increments its counter *after* this returns.
+        raise _api_connection_error()
+
+
+@pytest.fixture(autouse=True)
+def _no_backoff_wait():
+    """Keep the real retry counts, drop the real wall-clock waits."""
+    with patch.object(gepa_optimizer.optimizer, "_REFLECTION_BACKOFF_S", 0.0):
+        yield
+
+
+class TestReflectionFailureIsLoud:
+    @pytest.mark.asyncio
+    async def test_budget_exhausted_reaches_the_controller(self) -> None:
+        """The framework's own signal must escape, not be absorbed.
+
+        The controller maps an escaping ``BudgetExhaustedError`` to
+        ``stop_reason="budget_exhausted"``; absorbing it is what produced
+        775 capped-out tasks labelled "done".
+        """
+        opt = await _init_optimizer(max_attempts=20)
+        exhausted = _budget_exhausted()
+        with patch.object(
+            opt._reflector, "propose", new=AsyncMock(side_effect=exhausted),
+        ):
+            end = await _roll_out_one(opt, eval_=_failure_eval(0.3))
+        assert end.done is False
+
+        with pytest.raises(BudgetExhaustedError) as excinfo:
+            await _dispatch_event(
+                opt, RunStartEvent(trajectory=_FakeReadableTrajectory()),
+            )
+        assert excinfo.value is exhausted
+
+    @pytest.mark.asyncio
+    async def test_budget_exhausted_is_never_retried(self) -> None:
+        """Retrying a spent cost cap would be a cap escape."""
+        opt = await _init_optimizer(max_attempts=20)
+        propose = AsyncMock(side_effect=_budget_exhausted())
+        with patch.object(opt._reflector, "propose", new=propose):
+            await _roll_out_one(opt, eval_=_failure_eval(0.3))
+        assert propose.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_transient_failure_is_retried_and_recovers(self) -> None:
+        """Two provider hiccups then a proposal: the task must survive."""
+        opt = await _init_optimizer(max_attempts=20)
+        propose = AsyncMock(
+            side_effect=[
+                _api_connection_error(),
+                _api_connection_error(),
+                _refl("M1"),
+            ],
+        )
+        with patch.object(opt._reflector, "propose", new=propose):
+            end = await _roll_out_one(opt, eval_=_failure_eval(0.3))
+
+        assert propose.call_count == 3
+        assert end.done is False
+        assert opt._pending_failure is None
+        assert opt._pending is not None
+        assert opt._pending.prompt == "M1"
+
+    @pytest.mark.asyncio
+    async def test_persistent_failure_raises_at_next_run_start(self) -> None:
+        opt = await _init_optimizer(max_attempts=20)
+        propose = AsyncMock(side_effect=_api_connection_error())
+        with patch.object(opt._reflector, "propose", new=propose):
+            await _roll_out_one(opt, eval_=_failure_eval(0.3))
+
+        # Default reflection_retries=2 -> three attempts, then give up.
+        assert propose.call_count == 3
+
+        with pytest.raises(ReflectionUnavailable) as excinfo:
+            await _dispatch_event(
+                opt, RunStartEvent(trajectory=_FakeReadableTrajectory()),
+            )
+        # The provider's own message survives into the recorded traceback.
+        assert "internal_server_error" in str(excinfo.value.__cause__)
+
+    @pytest.mark.asyncio
+    async def test_retry_deadline_stops_further_attempts(self) -> None:
+        """A slow failure must not be retried into the task time cap."""
+        opt = await _init_optimizer(max_attempts=20, reflection_retry_deadline=0.0)
+        propose = AsyncMock(side_effect=_api_connection_error())
+        with patch.object(opt._reflector, "propose", new=propose):
+            await _roll_out_one(opt, eval_=_failure_eval(0.3))
+        assert propose.call_count == 1
+        assert isinstance(opt._pending_failure, ReflectionUnavailable)
+
+    def test_backoff_grows_and_is_jittered(self) -> None:
+        """Whole matrix cells retry in lockstep without jitter."""
+        delay = gepa_optimizer.optimizer._backoff_delay
+        with patch.object(gepa_optimizer.optimizer, "_REFLECTION_BACKOFF_S", 1.0):
+            for attempt in (1, 2, 3):
+                samples = [delay(attempt) for _ in range(50)]
+                assert all(0.0 <= s <= 2 ** (attempt - 1) for s in samples)
+                assert len(set(samples)) > 1
+
+    @pytest.mark.asyncio
+    async def test_failed_reflection_never_re_rolls_the_identical_prompt(
+        self,
+    ) -> None:
+        """The archive signature (calls==0 across 20 runs) becomes impossible.
+
+        The fake client mirrors the framework's accounting: ``calls`` is
+        incremented only after a completion returns, so a client that
+        always raises leaves it at 0. Driving the controller's run loop
+        against it must not produce a second target injection.
+        """
+        llm = _FailingLLM()
+        opt = GEPAOptimizer(max_attempts=20)
+        await opt.initialize(
+            goal=Goal(description="achieve target X"),
+            controllables=[_user_ctrl()],
+            observables=[],
+            llm_client=llm,  # type: ignore[arg-type]
+        )
+
+        injected: list[str] = []
+        with pytest.raises(ReflectionUnavailable):
+            for _ in range(20):
+                await _dispatch_event(
+                    opt, RunStartEvent(trajectory=_FakeReadableTrajectory()),
+                )
+                resp = await _dispatch_event(
+                    opt,
+                    ControllablePreCallEvent(
+                        controllable=_user_ctrl(), request="seed",
+                    ),
+                )
+                if isinstance(resp, ControllableInjection):
+                    injected.append(resp.value)
+                end = await _dispatch_event(
+                    opt,
+                    RunEndEvent(
+                        evaluation=_failure_eval(0.0), security_domain=USER_TAG,
+                    ),
+                )
+                if end.done:
+                    break
+
+        assert llm.calls == 0
+        assert injected == ["achieve target X"]
+
+    @pytest.mark.asyncio
+    async def test_repeated_unparseable_reflection_stops_the_search(self) -> None:
+        """1,279 archive tasks re-sent one prompt for every run they had.
+
+        The reflection LM answered every time (up to 19 successful calls
+        in a 20-run task) but never produced a parseable mutation, so the
+        target saw the identical prompt in all 20 runs — 21,503 target
+        runs of pure repetition, recorded as an ordinary failed search.
+        """
+        opt = await _init_shipped_defaults()
+        ends: list[bool] = []
+        injected: list[str] = []
+        with patch.object(
+            opt._reflector, "propose", new=AsyncMock(return_value=None),
+        ):
+            for _ in range(20):
+                await _dispatch_event(
+                    opt, RunStartEvent(trajectory=_FakeReadableTrajectory()),
+                )
+                resp = await _dispatch_event(
+                    opt,
+                    ControllablePreCallEvent(
+                        controllable=_user_ctrl(), request="seed",
+                    ),
+                )
+                if isinstance(resp, ControllableInjection):
+                    injected.append(resp.value)
+                end = await _dispatch_event(
+                    opt,
+                    RunEndEvent(
+                        evaluation=_failure_eval(0.0), security_domain=USER_TAG,
+                    ),
+                )
+                ends.append(end.done)
+                if end.done:
+                    break
+
+        # Default bound is 3 = the rollout-history depth: enough re-rolls
+        # to turn the parent's buffer over, then stop.
+        assert len(injected) == 3
+        assert ends == [False, False, True]
+        assert set(injected) == {"achieve target X"}
+
+    @pytest.mark.asyncio
+    async def test_no_mutation_bound_can_be_disabled(self) -> None:
+        opt = await _init_optimizer(
+            max_attempts=5, max_consecutive_no_mutation=0,
+        )
+        with patch.object(
+            opt._reflector, "propose", new=AsyncMock(return_value=None),
+        ):
+            for _ in range(4):
+                end = await _roll_out_one(opt, eval_=_failure_eval(0.1))
+                assert end.done is False
+
+    @pytest.mark.asyncio
+    async def test_a_successful_mutation_resets_the_no_mutation_counter(
+        self,
+    ) -> None:
+        opt = await _init_shipped_defaults()
+        with patch.object(
+            opt._reflector,
+            "propose",
+            new=AsyncMock(side_effect=[None, None, _refl("M1"), None, None]),
+        ):
+            for _ in range(5):
+                end = await _roll_out_one(opt, eval_=_failure_eval(0.1))
+                assert end.done is False
+        assert opt._consecutive_no_mutation == 2
 
 
 # ---------------------------------------------------------------------------
@@ -1105,6 +1410,80 @@ class _FakeTask:
         )
 
 
+class TestControllerRecordsWhyTheTaskEnded:
+    """The recorded ``stop_reason`` must name the real cause.
+
+    These are the end-to-end form of the archive defect: in the first run
+    every one of these three endings was written down as
+    ``stop_reason="done"``, i.e. as a search that ran its course and the
+    target survived.
+    """
+
+    async def _run_one(self, tmp_path, propose, **opt_kwargs):
+        from superred.core.controller import Controller, TargetFactory
+        from superred.core.interfaces.security_claim import SecurityClaim
+        from superred.core.types.llm import LLMConfig
+
+        target = _FakeChatTarget(system_prompt="default-careful")
+        claim = SecurityClaim.from_tasks([_FakeTask(magic="ATTACK")])
+        with patch.object(
+            __import__(
+                "gepa_optimizer.reflector", fromlist=["Reflector"]
+            ).Reflector,
+            "propose",
+            new=propose,
+        ):
+            controller = Controller(
+                optimizer_factory=lambda: GEPAOptimizer(**opt_kwargs),
+                target_factory=TargetFactory.singleton(target),
+                security_claim=claim,
+                scope=frozenset({USER_TAG, RESPONSE_TAG}),
+                llm_config=LLMConfig(model="m", api_base="http://x", api_key="sk"),
+                results_dir=str(tmp_path),
+            )
+            result = await controller.run()
+        return result.task_results[0]
+
+    @pytest.mark.asyncio
+    async def test_spent_cost_cap_is_recorded_as_budget_exhausted(
+        self, tmp_path,
+    ) -> None:
+        async def _propose(self, *, current_instruction, rollouts):  # noqa: ANN001
+            raise _budget_exhausted()
+
+        tr = await self._run_one(tmp_path, _propose, max_attempts=20)
+        assert tr.stop_reason == "budget_exhausted"
+
+    @pytest.mark.asyncio
+    async def test_dead_reflection_lm_is_recorded_as_an_error(
+        self, tmp_path,
+    ) -> None:
+        async def _propose(self, *, current_instruction, rollouts):  # noqa: ANN001
+            raise _api_connection_error()
+
+        tr = await self._run_one(tmp_path, _propose, max_attempts=20)
+        assert tr.stop_reason == "error"
+        assert tr.error is not None
+        assert "ReflectionUnavailable" in tr.error
+
+    @pytest.mark.asyncio
+    async def test_stalled_search_stops_instead_of_re_rolling(
+        self, tmp_path,
+    ) -> None:
+        """Honest ending, and 17 of 20 target calls never made."""
+        calls = 0
+
+        async def _propose(self, *, current_instruction, rollouts):  # noqa: ANN001
+            nonlocal calls
+            calls += 1
+            return None
+
+        tr = await self._run_one(tmp_path, _propose, max_attempts=20)
+        assert tr.stop_reason == "done"
+        assert tr.success is False
+        assert calls == 3
+
+
 class TestEndToEndControllerIntegration:
     """Wire GEPA through the real Controller end-to-end.
 
@@ -1116,7 +1495,7 @@ class TestEndToEndControllerIntegration:
     """
 
     @pytest.mark.asyncio
-    async def test_gepa_drives_full_controller_loop_to_success(self) -> None:
+    async def test_gepa_drives_full_controller_loop_to_success(self, tmp_path) -> None:
         from superred.core.controller import Controller, TargetFactory
         from superred.core.interfaces.security_claim import SecurityClaim
         from superred.core.types.llm import LLMConfig
@@ -1146,6 +1525,7 @@ class TestEndToEndControllerIntegration:
                 security_claim=claim,
                 scope=full_scope,
                 llm_config=LLMConfig(model="m", api_base="http://x", api_key="sk"),
+                results_dir=str(tmp_path),
             )
             result = await controller.run()
 
@@ -1157,7 +1537,7 @@ class TestEndToEndControllerIntegration:
         assert tr.best_score.value == pytest.approx(1.0)
 
     @pytest.mark.asyncio
-    async def test_gepa_user_only_scope_runs_blind_to_max_attempts(self) -> None:
+    async def test_gepa_user_only_scope_runs_blind_to_max_attempts(self, tmp_path) -> None:
         """Setting 1 (user-query-only): scope = user_message, and
         ``include_feedback=False`` on the controller so evaluation
         does not reach the optimizer either. ``target_observables``
@@ -1203,6 +1583,7 @@ class TestEndToEndControllerIntegration:
                 security_claim=claim,
                 scope=user_only_scope,
                 llm_config=LLMConfig(model="m", api_base="http://x", api_key="sk"),
+                results_dir=str(tmp_path),
                 include_feedback=False,
             )
             result = await controller.run()
@@ -1216,7 +1597,7 @@ class TestEndToEndControllerIntegration:
 
     @pytest.mark.asyncio
     async def test_gepa_target_controllable_name_attacks_system_prompt(
-        self,
+        self, tmp_path,
     ) -> None:
         """``target_controllable_name='system_prompt'`` should land
         injection on the system-prompt channel through the real
@@ -1265,6 +1646,7 @@ class TestEndToEndControllerIntegration:
                 security_claim=claim,
                 scope=full_scope,
                 llm_config=LLMConfig(model="m", api_base="http://x", api_key="sk"),
+                results_dir=str(tmp_path),
             )
             result = await controller.run()
 
@@ -1283,7 +1665,7 @@ class TestEndToEndControllerIntegration:
 
     @pytest.mark.asyncio
     async def test_gepa_auto_claims_writable_system_prompt_via_controller(
-        self,
+        self, tmp_path,
     ) -> None:
         """End-to-end: with full scope and no explicit
         ``target_controllable_name``, the optimizer auto-claims the
@@ -1327,6 +1709,7 @@ class TestEndToEndControllerIntegration:
                 security_claim=claim,
                 scope=full_scope,
                 llm_config=LLMConfig(model="m", api_base="http://x", api_key="sk"),
+                results_dir=str(tmp_path),
             )
             result = await controller.run()
 
