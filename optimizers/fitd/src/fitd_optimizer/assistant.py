@@ -16,6 +16,40 @@ class FITDJudgeResult:
     raw: str
 
 
+class PromptTransformationRefused(ValueError):
+    """The attacker model did not return a usable FITD escalation ladder.
+
+    Raised by :meth:`FITDAssistant.generate_prompt_sequence` once every retry
+    is spent without a parseable ``Step 1..N`` ladder. Subclasses
+    :class:`ValueError` so the original ``ValueError`` contract still holds.
+
+    Every underlying ``complete`` call has already *succeeded* when this is
+    raised (a transient API error or budget exhaustion would have propagated
+    out of the loop as itself). It therefore records the attacker model
+    refusing or failing its *own* meta-task -- a real measurement of attacker
+    capability, not an infrastructure fault. The per-cause counts are carried
+    so the outcome is diagnosable from logs without re-deriving it.
+    """
+
+    def __init__(
+        self, *, refusals: int, parse_failures: int, empties: int, attempts: int
+    ) -> None:
+        self.refusals = refusals
+        self.parse_failures = parse_failures
+        self.empties = empties
+        self.attempts = attempts
+        super().__init__(
+            "FITD prompt transformation failed after all retry attempts "
+            f"({self.cause_summary()})"
+        )
+
+    def cause_summary(self) -> str:
+        return (
+            f"attempts={self.attempts}, refusals={self.refusals}, "
+            f"parse_failures={self.parse_failures}, empties={self.empties}"
+        )
+
+
 class FITDAssistant:
     """Wraps the official FITD helper prompts around SuperRed's LLM client."""
 
@@ -43,6 +77,9 @@ class FITDAssistant:
             user_prompt = f"{self._static_context}\n\n{user_prompt}"
 
         attempts = max(1, max_attempts)
+        refusals = 0
+        parse_failures = 0
+        empties = 0
         for _ in range(attempts):
             response = await self._llm.complete(
                 [
@@ -54,14 +91,31 @@ class FITDAssistant:
                 ]
             )
             text = _extract_content(response)
-            if prompts.is_refusal(text):
+            if not text.strip():
+                empties += 1
                 continue
+            # Parsing is the authority for what counts as a usable ladder. The
+            # earlier version short-circuited on ``is_refusal`` *before* parsing,
+            # which discarded compliant ladders whose first line merely opened
+            # with a refusal-shaped preamble (e.g. "I understand. **Step 1**:
+            # ..."); the start-anchored refusal regex matched them and a valid
+            # transformation was thrown away. Try to parse first, and only
+            # classify a *non-parseable* output as a refusal (for the counts).
             try:
                 steps = parse_transformation_steps(text, expected_steps=level)
             except ValueError:
+                if prompts.is_refusal(text):
+                    refusals += 1
+                else:
+                    parse_failures += 1
                 continue
             return [benign_prompt, *steps, target_prompt]
-        raise ValueError("FITD prompt transformation failed after all retry attempts")
+        raise PromptTransformationRefused(
+            refusals=refusals,
+            parse_failures=parse_failures,
+            empties=empties,
+            attempts=attempts,
+        )
 
     async def soften_prompt(self, prompt: str, *, max_attempts: int = 10) -> str:
         candidate = prompt

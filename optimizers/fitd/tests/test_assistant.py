@@ -20,21 +20,80 @@ def test_parse_transformation_steps_rejects_missing_step() -> None:
 async def test_prompt_generation_raises_after_invalid_retries() -> None:
     from unittest.mock import AsyncMock
 
-    from fitd_optimizer.assistant import FITDAssistant
+    from fitd_optimizer.assistant import FITDAssistant, PromptTransformationRefused
     from tests.conftest import mock_response
 
     llm = AsyncMock()
     llm.complete.return_value = mock_response("not step formatted")
     assistant = FITDAssistant(llm)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(PromptTransformationRefused) as excinfo:
         await assistant.generate_prompt_sequence(
             target_prompt="target",
             benign_prompt="benign",
             level=1,
             max_attempts=2,
         )
+    # Unparseable-but-not-refusing output is counted as a parse failure, not a
+    # refusal, so the cause is diagnosable from the raised exception.
+    assert excinfo.value.parse_failures == 2
+    assert excinfo.value.refusals == 0
+    assert excinfo.value.empties == 0
+    assert isinstance(excinfo.value, ValueError)  # backward-compatible contract
     assert llm.complete.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_prompt_generation_accepts_ladder_with_refusal_shaped_preamble() -> None:
+    # A compliant ladder that merely opens with a refusal-shaped preamble
+    # ("I understand. ...") parses into the official Step 1..N format and must
+    # be accepted. The old order short-circuited on ``is_refusal`` before
+    # parsing and threw such ladders away, inflating the false-refusal count.
+    from unittest.mock import AsyncMock
+
+    from fitd_optimizer.assistant import FITDAssistant
+    from tests.conftest import mock_response
+
+    llm = AsyncMock()
+    llm.complete.return_value = mock_response("I understand. **Step 1**: gentle bridge")
+    assistant = FITDAssistant(llm)
+
+    sequence = await assistant.generate_prompt_sequence(
+        target_prompt="target",
+        benign_prompt="benign",
+        level=1,
+        max_attempts=3,
+    )
+
+    assert sequence == ["benign", "gentle bridge", "target"]
+    assert llm.complete.await_count == 1  # accepted on the first try, not retried
+
+
+@pytest.mark.asyncio
+async def test_prompt_generation_counts_genuine_refusals_and_empties() -> None:
+    from unittest.mock import AsyncMock
+
+    from fitd_optimizer.assistant import FITDAssistant, PromptTransformationRefused
+    from tests.conftest import mock_response
+
+    llm = AsyncMock()
+    llm.complete.side_effect = [
+        mock_response("I can't help with that."),
+        mock_response(""),
+    ]
+    assistant = FITDAssistant(llm)
+
+    with pytest.raises(PromptTransformationRefused) as excinfo:
+        await assistant.generate_prompt_sequence(
+            target_prompt="target",
+            benign_prompt="benign",
+            level=1,
+            max_attempts=2,
+        )
+    assert excinfo.value.refusals == 1
+    assert excinfo.value.empties == 1
+    assert excinfo.value.parse_failures == 0
+    assert "refusals=1" in str(excinfo.value)
 
 
 @pytest.mark.asyncio
