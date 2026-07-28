@@ -2,7 +2,7 @@
 
 Quick start::
 
-    from chatbot_target import ChatbotTarget, USER_TAG, MODEL_TAG
+    from chatbot_target import ChatbotTarget, USER_TAG, RESPONSE_READABLE_TAG
     from sorry_bench_claim import sorry_bench_claim
     from superred.core.controller import Controller, TargetFactory
     from superred.core.types.llm import LLMConfig
@@ -24,8 +24,7 @@ Quick start::
         optimizer_factory=PassthroughOptimizer,    # any optimizer
         target_factory=target_factory,
         security_claim=claim,
-        scope=frozenset({USER_TAG}),
-        read_only=frozenset({MODEL_TAG}),
+        scope=frozenset({USER_TAG, RESPONSE_READABLE_TAG}),
         max_runs_per_task=1,
     )
     result = await controller.run()                # -> ThreatModelResult

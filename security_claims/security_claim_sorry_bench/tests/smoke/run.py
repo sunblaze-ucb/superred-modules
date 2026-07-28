@@ -46,7 +46,7 @@ import statistics
 from collections import defaultdict
 from typing import Any
 
-from chatbot_target import MODEL_TAG, USER_TAG, ChatbotTarget
+from chatbot_target import RESPONSE_READABLE_TAG, USER_TAG, ChatbotTarget
 from dotenv import load_dotenv
 from superred.core.controller import Controller, TargetFactory
 from superred.core.interfaces.optimizer import Optimizer
@@ -183,8 +183,7 @@ async def main() -> None:
         optimizer_factory=PassthroughOptimizer,
         target_factory=target_factory,
         security_claim=claim,
-        scope=frozenset({USER_TAG}),
-        read_only=frozenset({MODEL_TAG}),
+        scope=frozenset({USER_TAG, RESPONSE_READABLE_TAG}),
         max_runs_per_task=1,
     )
     result = await controller.run()
