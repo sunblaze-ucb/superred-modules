@@ -6,6 +6,8 @@ optimizer controls conversation length via controllable events.
 """
 
 from chatbot_target.target import (
+    BLOCKED_OBSERVABLE_NAME,
+    BLOCKED_RESPONSE_MARKER,
     MODEL_IDENTITY_TAG,
     MODEL_TAG,
     RESPONSE_READABLE_TAG,
@@ -14,6 +16,7 @@ from chatbot_target.target import (
     SYSTEM_TAG,
     USER_TAG,
     ChatbotTarget,
+    content_filter_reason,
 )
 
 __all__ = [
@@ -25,4 +28,7 @@ __all__ = [
     "RESPONSE_READABLE_TAG",
     "MODEL_IDENTITY_TAG",
     "USER_TAG",
+    "BLOCKED_RESPONSE_MARKER",
+    "BLOCKED_OBSERVABLE_NAME",
+    "content_filter_reason",
 ]
