@@ -25,6 +25,7 @@ from superred.core.types.security_domain import SecurityDomainTag, scope_include
 from chatbot_target import (
     MODEL_IDENTITY_TAG,
     MODEL_TAG,
+    RESPONSE_READABLE_TAG,
     SYSTEM_PROMPT_READABLE_TAG,
     SYSTEM_PROMPT_TAG,
     SYSTEM_TAG,
@@ -57,6 +58,9 @@ class TestSecurityDomain:
     def test_model_parent_is_system(self) -> None:
         assert MODEL_TAG.parent is SYSTEM_TAG
 
+    def test_response_readable_parent_is_model(self) -> None:
+        assert RESPONSE_READABLE_TAG.parent is MODEL_TAG
+
     def test_model_identity_parent_is_system(self) -> None:
         assert MODEL_IDENTITY_TAG.parent is SYSTEM_TAG
 
@@ -67,14 +71,12 @@ class TestSecurityDomain:
         combos = target.security_domain.distinct_combinations()
         # 2-tree forest: system tree has 6 tags, user tree has 1 tag.
         # Antichains of subtree at system_prompt: 3 ({}, {system_prompt_readable}, {system_prompt}).
-        # Antichains of subtree at model: 2 ({}, {model}). The former
-        # `response_readable` child is gone: read-only access to the reply is a
-        # Controller concern (list MODEL_TAG in `read_only`), not a second tag.
+        # Antichains of subtree at model: 3 ({}, {response_readable}, {model}).
         # Antichains of subtree at model_identity: 2 ({}, {model_identity}).
-        # System antichains: 3 * 2 * 2 + 1 (the {system} element itself) = 13.
+        # System antichains: 3 * 3 * 2 + 1 (the {system} element itself) = 19.
         # User antichains: 2 ({}, {user}).
-        # Total: 13 * 2 = 26.
-        assert len(combos) == 26
+        # Total: 19 * 2 = 38.
+        assert len(combos) == 38
 
     def test_system_prompt_includes_readable(self) -> None:
         assert scope_includes(frozenset({SYSTEM_PROMPT_TAG}), SYSTEM_PROMPT_READABLE_TAG)
@@ -86,23 +88,26 @@ class TestSecurityDomain:
         assert scope_includes(frozenset({SYSTEM_TAG}), SYSTEM_PROMPT_TAG)
         assert scope_includes(frozenset({SYSTEM_TAG}), SYSTEM_PROMPT_READABLE_TAG)
         assert scope_includes(frozenset({SYSTEM_TAG}), MODEL_TAG)
-        assert scope_includes(frozenset({SYSTEM_TAG}), MODEL_TAG)
+        assert scope_includes(frozenset({SYSTEM_TAG}), RESPONSE_READABLE_TAG)
         assert scope_includes(frozenset({SYSTEM_TAG}), MODEL_IDENTITY_TAG)
 
     def test_model_includes_response_readable(self) -> None:
-        assert scope_includes(frozenset({MODEL_TAG}), MODEL_TAG)
+        assert scope_includes(frozenset({MODEL_TAG}), RESPONSE_READABLE_TAG)
+
+    def test_response_readable_does_not_include_model(self) -> None:
+        assert not scope_includes(frozenset({RESPONSE_READABLE_TAG}), MODEL_TAG)
 
     def test_model_identity_is_independent_of_model(self) -> None:
         # model_identity is a sibling of model, not a descendant.
         assert not scope_includes(frozenset({MODEL_TAG}), MODEL_IDENTITY_TAG)
         assert not scope_includes(frozenset({MODEL_IDENTITY_TAG}), MODEL_TAG)
-        assert not scope_includes(frozenset({MODEL_IDENTITY_TAG}), MODEL_TAG)
+        assert not scope_includes(frozenset({MODEL_IDENTITY_TAG}), RESPONSE_READABLE_TAG)
         assert not scope_includes(frozenset({MODEL_IDENTITY_TAG}), SYSTEM_PROMPT_TAG)
 
     def test_user_does_not_include_system_children(self) -> None:
         assert not scope_includes(frozenset({USER_TAG}), SYSTEM_PROMPT_TAG)
         assert not scope_includes(frozenset({USER_TAG}), MODEL_TAG)
-        assert not scope_includes(frozenset({USER_TAG}), MODEL_TAG)
+        assert not scope_includes(frozenset({USER_TAG}), RESPONSE_READABLE_TAG)
         assert not scope_includes(frozenset({USER_TAG}), SYSTEM_PROMPT_READABLE_TAG)
         assert not scope_includes(frozenset({USER_TAG}), MODEL_IDENTITY_TAG)
 
@@ -266,15 +271,10 @@ class TestRunSingleTurn:
         with patch("chatbot_target.target.acompletion", return_value=mock_resp):
             await target.run(emitted.append, mock_send_event)
 
-        # The reply is emitted exactly ONCE, on its controllable's PostCall
-        # event. It is deliberately NOT mirrored as an observable: doing both
-        # put a byte-identical copy of every reply on the trajectory.
-        response_obs = [
-            e
-            for e in emitted
-            if isinstance(e, ObservableEvent) and e.observable.name == "response"
-        ]
-        assert response_obs == []
+        obs_events = [e for e in emitted if isinstance(e, ObservableEvent)]
+        assert len(obs_events) == 1
+        assert obs_events[0].observable.security_domain is RESPONSE_READABLE_TAG
+        assert obs_events[0].content == "Response text"
 
     async def test_postcall_carries_request_and_answer(self, target: ChatbotTarget) -> None:
         mock_resp = make_litellm_response("LLM answer")
@@ -435,8 +435,8 @@ class TestResponseModification:
 
         assert target.query("last_response") == "Original response"
 
-    async def test_modified_response_is_the_delivered_one(self, target: ChatbotTarget) -> None:
-        """An injected response replaces the model's, and is not re-emitted."""
+    async def test_modified_response_in_observable(self, target: ChatbotTarget) -> None:
+        """The ObservableEvent emits the modified response, not the original."""
         mock_resp = make_litellm_response("Original")
         emitted: list[object] = []
 
@@ -459,12 +459,9 @@ class TestResponseModification:
         with patch("chatbot_target.target.acompletion", return_value=mock_resp):
             await target.run(emitted.append, mock_send_event)
 
-        assert target.query("last_response") == "Replaced"
-        assert [
-            e
-            for e in emitted
-            if isinstance(e, ObservableEvent) and e.observable.name == "response"
-        ] == []
+        obs_events = [e for e in emitted if isinstance(e, ObservableEvent)]
+        assert len(obs_events) == 1
+        assert obs_events[0].content == "Replaced"
 
     async def test_modified_response_in_next_llm_call(self, target: ChatbotTarget) -> None:
         """In multi-turn, the modified response is what the LLM sees in history."""

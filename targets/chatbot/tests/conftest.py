@@ -9,6 +9,7 @@ import pytest
 from chatbot_target import (
     MODEL_IDENTITY_TAG,
     MODEL_TAG,
+    RESPONSE_READABLE_TAG,
     SYSTEM_PROMPT_READABLE_TAG,
     SYSTEM_PROMPT_TAG,
     SYSTEM_TAG,
