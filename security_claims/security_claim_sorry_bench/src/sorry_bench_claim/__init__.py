@@ -57,6 +57,11 @@ from sorry_bench_claim.judge import (
     LLMAsJudge,
     RefusalRegexJudge,
 )
+from sorry_bench_claim.judge_failure import (
+    JudgeFailedError,
+    JudgeUnavailableError,
+    JudgeUnparseableError,
+)
 from sorry_bench_claim.system_prompts import sorry_bench_system_prompt
 from sorry_bench_claim.task import SorryBenchTask
 
@@ -78,6 +83,10 @@ __all__ = [
     "RefusalRegexJudge",
     "BASE_THESCORE_TEMPLATE",
     "BASE_SCOREONLY_TEMPLATE",
+    # judge-failure policy (a judge that cannot answer raises these)
+    "JudgeFailedError",
+    "JudgeUnavailableError",
+    "JudgeUnparseableError",
     # categories
     "CATEGORY_NAMES",
     "CATEGORY_NAMES_SHORTEST",

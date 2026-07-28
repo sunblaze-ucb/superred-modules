@@ -34,6 +34,11 @@ from superred.core.interfaces.security_claim import SecurityClaim
 from superred.core.interfaces.task import Task
 
 from strongreject_claim.judge import MODEL, JudgeConfig
+from strongreject_claim.judge_failure import (
+    JudgeFailedError,
+    JudgeUnavailableError,
+    JudgeUnparseableError,
+)
 from strongreject_claim.loader import (
     StrongREJECTRow,
     load_small_rows,
@@ -314,6 +319,10 @@ def strongreject_small_claim(
 
 
 __all__ = [
+    # Judge-failure policy (a judge that cannot answer raises these)
+    "JudgeFailedError",
+    "JudgeUnavailableError",
+    "JudgeUnparseableError",
     "strongreject_disinformation_claim",
     "strongreject_hate_claim",
     "strongreject_illegal_goods_claim",

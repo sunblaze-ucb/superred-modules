@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
+from harmbench_claim.judge_failure import JudgeUnavailableError, JudgeUnparseableError
 from harmbench_claim.task import HarmBenchTask
 
 from .conftest import StubChatbotTarget, fake_row
@@ -83,18 +84,55 @@ async def test_evaluate_contextual_passes_context_to_judge(stub_judge_yes) -> No
 
 
 @pytest.mark.asyncio
-async def test_evaluate_judge_parse_error_returns_failure(stub_judge_yes) -> None:
-    """If the judge can't be parsed we return success=False rather than crash."""
-    stub_judge_yes.judge.side_effect = RuntimeError("unparseable judge output: 'Maybe.'")
+async def test_evaluate_propagates_an_unparseable_judge(stub_judge_yes) -> None:
+    """A judge that never answered produces no EvaluationResult.
+
+    It used to produce success=False with primary_score=0.0, which reads
+    downstream as "the target refused" -- a broken judge scored as a
+    robust target. The controller now records stop_reason="error" with
+    the traceback, excludes the task from the ASR denominator, and
+    re-measures it on resume.
+    """
+    stub_judge_yes.judge.side_effect = JudgeUnparseableError(
+        judge_model="openai/gpt-4o-mini", attempts=3, raw_output="Maybe.",
+    )
     target = StubChatbotTarget(last_response="Sure")
     row = fake_row()
     task = HarmBenchTask(row=row, judge=stub_judge_yes)
 
+    with pytest.raises(JudgeUnparseableError):
+        await task.evaluate(trajectory=None, target=target)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_evaluate_propagates_an_unavailable_judge(stub_judge_yes) -> None:
+    """The cross-claim invariant, asserted at the Task boundary."""
+    stub_judge_yes.judge.side_effect = JudgeUnavailableError(
+        judge_model="openai/gpt-5.4",
+        attempts=1,
+        kind="terminal",
+        detail="UnsupportedParamsError: temperature=0.0 not supported",
+    )
+    target = StubChatbotTarget(last_response="Sure")
+    task = HarmBenchTask(row=fake_row(), judge=stub_judge_yes)
+
+    with pytest.raises(JudgeUnavailableError):
+        await task.evaluate(trajectory=None, target=target)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_evaluate_marks_that_a_judge_produced_the_verdict(stub_judge_yes) -> None:
+    """``judge_ran`` is always 1.0, and that is the assertion.
+
+    Unscoped so the controller's scope filter cannot remove it.
+    """
+    target = StubChatbotTarget(last_response="Sure")
+    task = HarmBenchTask(row=fake_row(), judge=stub_judge_yes)
+
     result = await task.evaluate(trajectory=None, target=target)  # type: ignore[arg-type]
 
-    assert result.success is False
-    assert result.primary_score.value == 0.0
-    assert "judge_parse_error" in result.rationale
+    assert result.sub_scores["judge_ran"].value == 1.0
+    assert result.sub_scores["judge_ran"].security_domain is None
 
 
 # ------------------------------------------------------------------
@@ -144,8 +182,12 @@ async def test_evaluate_copyright_miss(stub_judge_no) -> None:
 
 
 @pytest.mark.asyncio
-async def test_evaluate_copyright_error_falls_back(stub_judge_yes) -> None:
-    """Missing pkl or bad tags should not blow up the run."""
+async def test_evaluate_copyright_error_propagates(stub_judge_yes) -> None:
+    """A missing reference pickle is an environment fault, not a refusal.
+
+    It used to be scored 0.0 with the error tucked into the rationale,
+    which is indistinguishable from a target that reproduced nothing.
+    """
     target = StubChatbotTarget(last_response="x")
     row = fake_row(
         behavior_id="cp_bad",
@@ -158,8 +200,5 @@ async def test_evaluate_copyright_error_falls_back(stub_judge_yes) -> None:
         "harmbench_claim.task.evaluate_copyright",
         side_effect=ValueError("test error"),
     ):
-        result = await task.evaluate(trajectory=None, target=target)  # type: ignore[arg-type]
-
-    assert result.success is False
-    assert result.primary_score.value == 0.0
-    assert "hash_check error" in result.rationale
+        with pytest.raises(ValueError, match="test error"):
+            await task.evaluate(trajectory=None, target=target)  # type: ignore[arg-type]

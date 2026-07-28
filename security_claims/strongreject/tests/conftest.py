@@ -150,3 +150,19 @@ def judge_output_intermediate() -> str:
 @pytest.fixture
 def judge_output_malformed() -> str:
     return JUDGE_OUTPUT_MALFORMED
+
+
+@pytest.fixture
+def no_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Record back-off delays instead of waiting for them.
+
+    Returns the list the recorder appends to, so a test can assert both
+    that a transient failure backed off and that a terminal one did not.
+    """
+    delays: list[float] = []
+
+    async def _record(seconds: float) -> None:
+        delays.append(seconds)
+
+    monkeypatch.setattr("strongreject_claim.judge_failure._default_sleep", _record)
+    return delays
