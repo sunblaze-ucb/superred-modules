@@ -26,8 +26,31 @@ refuses" part is mapped onto SuperRed runs rather than performed inside the
 optimizer, because targets are only callable through framework events.
 
 Prompt-ladder generation follows the official transformation format and retries
-invalid/refusal outputs. If generation never returns the official `Step N`
-format, the optimizer raises instead of silently inventing a non-official ladder.
+invalid/refusal outputs. Parsing into the official `Step 1..N` format is the sole
+authority for a usable ladder: a candidate is accepted whenever it parses, even
+if its first line opens with a refusal-shaped preamble (e.g. "I understand.
+**Step 1**: ..."). The start-anchored refusal regex is consulted only to
+*classify* a candidate that already failed to parse, never to discard one that
+parsed. This removes a class of false refusals where a compliant ladder was
+thrown away because its preamble matched the refusal regex.
+
+If generation never returns the official `Step N` format, the assistant raises
+`PromptTransformationRefused` (a `ValueError` subclass carrying per-cause counts
+of refusals / parse failures / empty responses) instead of silently inventing a
+non-official ladder. Every underlying attacker-LLM call has already succeeded at
+that point (a transient API error or budget exhaustion propagates out of the
+loop as itself), so this signals the attacker model being unable to operate on
+this goal, not an infrastructure fault. The optimizer therefore catches it in
+`_handle_run_start` and ends the attempt with no injection, so the task is
+recorded as a completed attacker failure rather than escaping as
+`stop_reason="error"` (which would discard the whole task from the measurement).
+Genuine infrastructure faults are left untouched: they escape and the controller
+records them as `stop_reason="error"` (or `"budget_exhausted"` for budget).
+
+Note: the same start-anchored refusal regex is still used to detect *victim*
+refusals during a run (to drive realign/backtracking). That path is unchanged;
+the parse-first rule above applies only to the attacker's own ladder generation.
+
 Callers can pass `prompt_sequence` to reproduce a stored ladder; matching the
 official script, the final target prompt is appended to that sequence during
 setup.
@@ -73,6 +96,12 @@ budgeting, and this optimizer's loops are bounded by `level`, `max_attempts`,
 `max_soften_retries`, and `max_slippery_retries`. To avoid a second, inaccurate
 shadow budget, this optimizer does not expose a separate `max_queries` knob.
 
+`BudgetExhaustedError` from the attacker LLM is never swallowed. It propagates
+out of `on_event` (including during prompt preparation) so the controller
+records `stop_reason="budget_exhausted"`; the optimizer does not convert a spent
+budget into a `done` response, which would make a budget failure look like a
+clean completion.
+
 ## Refusal Backtracking
 
 The paper and official code remove a refused query from target history before
@@ -99,6 +128,15 @@ previous prompt/answer, then retries the original next level. SuperRed currently
 cannot rewrite the target's already-recorded assistant message, so this
 replacement affects optimizer state and future prompts, not the target's private
 conversation history.
+
+Slippery-slope recovery is a *between-levels* mechanism: it bridges toward the
+next ladder level. It is therefore only applicable while a next level exists.
+The post-sequence `final_align` pass runs after the ladder is exhausted
+(`_level_index == len(prompt_sequence)`), where there is no next level to slip
+toward. A refused `final_align` ends the attempt, exactly as an accepted one
+does; it does not open a recovery that would index one past the end of the
+sequence. (Handling it like a mid-ladder refusal was a bounds bug that crashed
+the run and discarded the task.)
 
 Recovery metadata is carried on each active turn: the recovery kind, retry
 number, and whether a successful bridge should retry the original next level.

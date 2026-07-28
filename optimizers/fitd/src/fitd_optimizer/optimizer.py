@@ -22,10 +22,9 @@ from superred.core.types.events import (
 )
 from superred.core.types.evaluation import EvaluationResult
 from superred.core.types.goal import Goal
-from superred.core.types.llm import BudgetExhaustedError
 from superred.core.types.observable import ObservableValue
 
-from fitd_optimizer.assistant import FITDAssistant
+from fitd_optimizer.assistant import FITDAssistant, PromptTransformationRefused
 from fitd_optimizer.prompts import (
     SYSTEM_PROMPT_EXTENSION,
     build_align_prompt,
@@ -142,7 +141,6 @@ class FITDOptimizer(Optimizer):
         self._attempt = 0
         self._succeeded = False
         self._attempt_done = False
-        self._budget_exhausted = False
         self._prompt_sequence: list[str] = []
         self._level_index = 0
         self._last_level_prompt: str | None = None
@@ -192,11 +190,24 @@ class FITDOptimizer(Optimizer):
     async def _handle_run_start(self, event: RunStartEvent) -> EventResponse:
         self._reset_run_state(clear_attempt_state=False)
         if not self._prompt_sequence:
+            # BudgetExhaustedError is deliberately NOT caught here: it must
+            # escape on_event so the controller records
+            # stop_reason="budget_exhausted" rather than a fabricated "done".
             try:
                 self._prompt_sequence = await self._prepare_prompt_sequence()
-            except BudgetExhaustedError:
-                logger.info("FITD: attacker LLM budget exhausted during prompt preparation")
-                self._budget_exhausted = True
+            except PromptTransformationRefused as exc:
+                # The attacker model could not (or would not) turn this goal
+                # into the FITD escalation ladder. Every helper call succeeded,
+                # so this is the attacker refusing its own meta-task -- a real
+                # measurement of attacker capability, not an infrastructure
+                # fault. Record it as a completed attacker failure (no injection
+                # is ever mounted) instead of letting it escape as
+                # stop_reason="error", which would discard the whole task.
+                logger.info(
+                    "FITD: attacker LLM did not yield a usable prompt ladder "
+                    "(%s); ending attempt without an injection",
+                    exc.cause_summary(),
+                )
                 self._attempt_done = True
         return EventResponse(event=event)
 
@@ -267,7 +278,7 @@ class FITDOptimizer(Optimizer):
         ):
             await self._apply_local_success_judge(self._last_response)
 
-        if self._succeeded or self._budget_exhausted:
+        if self._succeeded:
             return RunEndResponse(event=event, done=True)
 
         if self._attempt_done and self._pending_recovery is not None and self._attempt + 1 < self._max_attempts:
@@ -473,6 +484,20 @@ class FITDOptimizer(Optimizer):
                 level_prompt=softened,
                 recovery_attempt=turn.recovery_attempt + 1,
             )
+        elif self._level_index >= len(self._prompt_sequence):
+            # The ladder is exhausted: this is a refused ``final_align`` (the
+            # post-sequence realignment pass, emitted by ``_next_turn`` only
+            # once every level has been consumed and ``_level_index`` has
+            # reached ``len(_prompt_sequence)``). There is no further level to
+            # slip toward, and the slippery/align recovery below stores
+            # ``level_index=self._level_index``; the resulting bridge turn,
+            # when accepted, indexes ``_prompt_sequence[self._level_index]`` in
+            # ``_accept_intermediate_recovery`` -- one past the end -- raising
+            # IndexError and discarding the whole task. Escalation is already
+            # complete, so end the attempt here instead of fabricating a next
+            # level. (A refused ``final_align`` is terminal just like an
+            # accepted one, which sets ``_attempt_done`` at line ~402.)
+            self._pending_recovery = None
         elif self._last_level_prompt is not None and self._last_response is not None:
             if (
                 turn.recovery_kind == "slippery"
@@ -590,7 +615,6 @@ class FITDOptimizer(Optimizer):
         self._awaiting_response = False
         if clear_attempt_state:
             self._attempt_done = False
-            self._budget_exhausted = False
             self._prompt_sequence = []
             self._level_index = 0
             self._last_level_prompt = None

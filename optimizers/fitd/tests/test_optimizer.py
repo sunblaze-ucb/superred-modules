@@ -616,7 +616,11 @@ async def test_prompt_preparation_uses_helper_llm_without_shadow_query_counter()
 
 
 @pytest.mark.asyncio
-async def test_budget_exhaustion_during_prompt_preparation_stops_cleanly() -> None:
+async def test_budget_exhaustion_during_prompt_preparation_reraises() -> None:
+    # Budget exhaustion during ladder preparation must escape on_event so the
+    # controller records stop_reason="budget_exhausted". Swallowing it into a
+    # done=True response would mislabel a spent budget as a clean completion,
+    # making a budget failure indistinguishable from a real attacker attempt.
     from superred.core.types.llm import BudgetExhaustedError, LLMUsage
 
     llm = AsyncMock()
@@ -629,11 +633,87 @@ async def test_budget_exhaustion_during_prompt_preparation_stops_cleanly() -> No
         llm_client=llm,
     )
 
+    with pytest.raises(BudgetExhaustedError):
+        await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+
+
+@pytest.mark.asyncio
+async def test_transformation_refusal_records_attacker_failure_not_error() -> None:
+    # When the attacker model refuses/fails its own ladder-building meta-task,
+    # every helper call has still succeeded -- this is a real measurement of the
+    # attacker's capability, not an infrastructure fault. It must be recorded as
+    # a completed attacker failure (no injection), NOT escape as an exception
+    # that the controller turns into stop_reason="error" and discards the task.
+    llm = AsyncMock()
+    llm.complete.return_value = mock_response("I'm sorry, I can't help with that.")
+    opt = FITDOptimizer(benign_prompt="benign", level=1)
+    await opt.initialize(
+        goal=Goal(description="final harmful goal"),
+        controllables=[make_controllable()],
+        observables=[],
+        llm_client=llm,
+    )
+
+    # Must not raise: the refusal is caught and turned into a clean termination.
     await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
     pre = await dispatch_event(opt,
         ControllablePreCallEvent(controllable=make_controllable(), request="original")
     )
-    end = await dispatch_event(opt, RunEndEvent(evaluation=None, security_domain=USER_TAG))
+    end = await dispatch_event(opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG))
 
     assert isinstance(pre, ControllableNoInjection)
+    assert end.done is True
+    assert opt._succeeded is False
+
+
+@pytest.mark.asyncio
+async def test_refused_final_align_ends_attempt_without_indexerror() -> None:
+    # Regression for the IndexError at ``_accept_intermediate_recovery``: a
+    # refused ``final_align`` (emitted only once the ladder is exhausted, when
+    # ``_level_index == len(_prompt_sequence)``) must NOT spawn a slippery/align
+    # recovery. Before the fix it did, and the recovery's bridge turn indexed
+    # ``_prompt_sequence[_level_index]`` one past the end on the next run,
+    # crashing 10 tasks and discarding them as stop_reason="error".
+    llm = AsyncMock()
+    llm.complete.return_value = mock_response("Yes")  # would drive detect_align -> slippery
+    opt = await init_optimizer(llm=llm, prompt_sequence=["b1", "b2"], max_attempts=5)
+    await dispatch_event(opt, RunStartEvent(trajectory=FakeReadableTrajectory()))
+
+    async def accept(request_hint: str, answer: str) -> None:
+        pre = await dispatch_event(opt,
+            ControllablePreCallEvent(controllable=make_controllable(), request=request_hint)
+        )
+        assert isinstance(pre, ControllableInjection)
+        await dispatch_event(opt,
+            ControllablePostCallEvent(
+                controllable=make_controllable("response", MODEL_TAG),
+                request=pre.value,
+                answer=answer,
+            )
+        )
+
+    # Walk the whole ladder: b1 (initial), b2 (polish), final harmful goal (polish).
+    await accept("original", "answer one")
+    await accept("second", "answer two")
+    await accept("third", "answer three")
+
+    # Next turn is the post-sequence final_align; the target refuses it.
+    final_align = await dispatch_event(opt,
+        ControllablePreCallEvent(controllable=make_controllable(), request="final align")
+    )
+    assert isinstance(final_align, ControllableInjection)
+    assert "Rewrite the response" in final_align.value
+    await dispatch_event(opt,
+        ControllablePostCallEvent(
+            controllable=make_controllable("response", MODEL_TAG),
+            request=final_align.value,
+            answer="I'm sorry, I can't help with that.",
+        )
+    )
+
+    end = await dispatch_event(opt, RunEndEvent(evaluation=failure_eval(), security_domain=USER_TAG))
+
+    # The exhausted ladder is terminal: no recovery is planned and the task
+    # stops here instead of continuing into a next run that would IndexError.
+    assert opt._pending_recovery is None
     assert end.done is True
