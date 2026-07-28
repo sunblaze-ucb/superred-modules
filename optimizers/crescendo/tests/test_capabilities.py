@@ -32,6 +32,7 @@ from superred.core.types.security_domain import SecurityDomainTag
 
 from crescendo_optimizer.attacker import AttackerOutput, ReplayPlan, TurnRecord
 from crescendo_optimizer.optimizer import CrescendoOptimizer
+from crescendo_optimizer.retry import HelperLLMUnavailableError
 
 
 def _ctrl(name: str, tag: str = "user") -> Controllable:
@@ -101,7 +102,9 @@ async def test_system_prompt_event_first_does_not_lock_primary():
     """
     sp_ctrl = _ctrl("system_prompt", tag="system_prompt")
     um_ctrl = _ctrl("user_message", tag="user")
-    opt = await _make_optimizer(controllables=[sp_ctrl, um_ctrl], observables=[])
+    # Only user_message is in scope, so system_prompt is not writable and no
+    # eager attacker call fires for it.
+    opt = await _make_optimizer(controllables=[um_ctrl], observables=[])
     await opt.on_event(_run_start())
 
     # System prompt PreCall arrives first; not writable in scope (no
@@ -229,29 +232,26 @@ async def test_system_prompt_pretext_lift_eager_q1_caching():
 
 
 @pytest.mark.asyncio
-async def test_system_prompt_writable_but_attacker_returns_no_framing():
-    """If the attacker fails to produce a framing, system_prompt event
-    falls back to NoInjection (task-configured prompt is preserved).
-    The user_message turn 1 then generates Q1 via a fresh attacker call."""
+async def test_system_prompt_writable_but_attacker_fails_raises():
+    """A failed eager attacker call is surfaced, not absorbed.
+
+    Silently dropping to NoInjection would run the whole attempt without
+    capability (c) while the results still claim the system_prompt scope,
+    i.e. a measurement of a capability that was never exercised.
+    """
     sp = _ctrl("system_prompt", tag="system_prompt")
     um = _ctrl("user_message", tag="user")
     opt = await _make_optimizer(controllables=[sp, um], observables=[])
     await opt.on_event(_run_start())
 
     with patch.object(opt._attacker, "generate_question", new_callable=AsyncMock) as gen:
-        # First call: attacker raises (simulating malformed output / parse error)
-        gen.side_effect = [
-            ValueError("framing missing"),
-            AttackerOutput(question="Q1 fallback", summary="", rationale="r"),
-        ]
-        sp_resp = await opt.on_event(_pre_call(sp))
-        assert isinstance(sp_resp, ControllableNoInjection)
-        # Q1 is NOT cached
-        assert opt._pending_q1 is None
+        gen.side_effect = HelperLLMUnavailableError(
+            "Crescendo attacker generation (turn 1) failed on all 3 attempts"
+        )
+        with pytest.raises(HelperLLMUnavailableError):
+            await opt.on_event(_pre_call(sp))
 
-        um_resp = await opt.on_event(_pre_call(um))
-        assert isinstance(um_resp, ControllableInjection)
-        assert um_resp.value == "Q1 fallback"
+    assert opt._pending_q1 is None
 
 
 @pytest.mark.asyncio

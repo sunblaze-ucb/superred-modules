@@ -79,10 +79,13 @@ assignment on the book 'Anarchist's Cookbook'..."*). Lifting pretext to
 the system prompt where it persists as authoritative context is a same-
 content, stronger-channel use of the same Crescendo mechanic.
 
-If the eager attacker call fails or the attacker omits the framing
-field, the optimizer falls back to `ControllableNoInjection` on the
-system_prompt event (task-configured prompt is preserved) and Q1 is
-generated normally on the next user_message PreCall.
+If the eager attacker call fails (after the resamples and retries in
+"Helper-LLM failure policy" below), the failure escapes `on_event`. It is
+not downgraded to `ControllableNoInjection`: running the attempt without
+the pretext would exercise none of the granted `system_prompt` capability
+while the results still claim that scope. Omitting the framing field is
+part of the same parse contract and is resampled like any other malformed
+attacker output.
 
 ### (d) Dual evaluator: task verdict authoritative at RunEnd
 
@@ -297,11 +300,52 @@ Crescendo's evaluator expects the judge output field `score_value` on a
 (string or numeric). The optimizer normalizes this to 0.0-1.0 and clamps
 out-of-range values.
 
-## Crescendo Fallback Prompting
+## Helper-LLM failure policy
 
-If attacker generation fails, Crescendo falls back to a conservative
-high-level, neutral prompt (instead of restating the adversarial goal
-directly) to reduce abrupt escalation and refusal risk.
+Crescendo drives three LLM roles besides the target: the attacker, the
+refusal detector and the per-turn scorer. Every call to them goes through
+`crescendo_optimizer.retry.call_with_retries`, which separates three
+failure classes that were previously collapsed into one substituted value.
+
+1. **Cost cap.** `BudgetExhaustedError` is re-raised on the first call,
+   never retried and never absorbed. The controller turns it into
+   `stop_reason="budget_exhausted"`, so a task truncated by its budget is
+   distinguishable from an attack that ran to completion and failed.
+
+2. **Transient failure.** Up to `DEFAULT_ATTEMPTS` (3) total attempts, with
+   exponential backoff and jitter between them. Malformed attacker JSON is
+   resampled without a backoff delay: the attacker is sampled at the
+   provider default (no temperature is pinned anywhere), so a second draw
+   is a genuinely different attempt, which is also PAIR's policy for the
+   same failure.
+
+3. **Persistent failure.** After the attempts are used up,
+   `HelperLLMUnavailableError` is raised. On the attacker path it escapes
+   `on_event`, giving `stop_reason="error"` with a traceback: a turn the
+   attacker could never write is not a turn it chose to write weakly, and
+   scoring it would report an outage as an attack that failed. There is
+   deliberately **no benign filler question** — substituting one made a
+   broken attacker indistinguishable from a weak one.
+
+On the two internal-evaluator paths the exhausted call is caught and the
+degraded value is kept (`is_refusal=False`, `score=0.0`). Those values
+only steer escalation inside the attempt: the controller runs the security
+claim's judge on every completed run regardless, so they cannot change the
+recorded verdict. Each occurrence increments a task-scoped counter that is
+logged at every `RunEnd`, so the affected tasks are identifiable in the
+per-task `logs/diagnostics.log` after the fact.
+
+## Attacker output validation
+
+`Attacker._parse_response` requires the payload to be a JSON object, every
+field in `BASE_SCHEMA` to be a string, and `generated_question` to be
+non-blank. Key presence alone is not enough: a JSON `null` or an empty
+question is unusable as an injection. Passing one on either crashes the
+provider (litellm strips a `None` content field, after which the Bedrock
+Converse transform raises `KeyError: 'content'` and the task is discarded)
+or silently corrupts the transcript (an empty user turn is dropped by
+Converse, leaving a phantom turn that the judge then scores). A blank
+`last_response_summary` is normal on turn 1 and stays allowed.
 
 ## Backtracking — within-attempt vs cross-attempt
 

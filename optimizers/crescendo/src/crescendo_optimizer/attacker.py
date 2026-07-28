@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from superred.core.llm import LLMClient
 
 from crescendo_optimizer.prompts import BASE_SCHEMA, FRAMING_FIELD
+from crescendo_optimizer.retry import DEFAULT_ATTEMPTS, call_with_retries
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +205,7 @@ class Attacker:
         target_system_prompt: str | None = None,
         previous_failures: Sequence[FailureRecord] | None = None,
         is_replay_attempt: bool = False,
+        max_samples: int = DEFAULT_ATTEMPTS,
     ) -> None:
         self._llm = llm
         self._system_prompt = system_prompt
@@ -211,6 +213,7 @@ class Attacker:
         self._target_system_prompt = target_system_prompt
         self._previous_failures: tuple[FailureRecord, ...] = tuple(previous_failures or ())
         self._is_replay_attempt = is_replay_attempt
+        self._max_samples = max_samples
         self._conversation_history: list[dict[str, str]] = []
         self._refused_questions: list[str] = []
 
@@ -259,19 +262,23 @@ class Attacker:
             {"role": "user", "content": user_message},
         ]
 
-        # Temperature is deliberately not sent (the paper samples the attacker
-        # at 1.0): reasoning models reject the parameter outright and the
-        # optimizer catches attacker failures and falls back to a generic
-        # question, so a pinned value would silently disable this attacker.
-        response = await self._llm.complete(messages)
-        content = response.choices[0].message.content or ""
-        output = self._parse_response(content, require_framing=include_framing)
+        async def _sample() -> AttackerOutput:
+            # Temperature is deliberately not sent (the paper samples the
+            # attacker at 1.0): reasoning models reject the parameter
+            # outright. Not pinning it is also what makes a resample useful --
+            # each attempt is an independent draw from the attacker model.
+            response = await self._llm.complete(messages)
+            content = response.choices[0].message.content or ""
+            output = self._parse_response(content, require_framing=include_framing)
 
-        # Only commit to history after successful parse
-        self._conversation_history.append({"role": "user", "content": user_message})
-        self._conversation_history.append({"role": "assistant", "content": content})
+            # Only commit to history after successful parse
+            self._conversation_history.append({"role": "user", "content": user_message})
+            self._conversation_history.append({"role": "assistant", "content": content})
+            return output
 
-        return output
+        return await call_with_retries(
+            _sample, stage=f"attacker generation (turn {turn})", attempts=self._max_samples,
+        )
 
     def notify_refusal(self, refused_question: str) -> None:
         """Add refusal feedback to the attacker's conversation history."""
@@ -339,8 +346,15 @@ class Attacker:
     def _parse_response(content: str, *, require_framing: bool) -> AttackerOutput:
         """Parse the attacker LLM's JSON response.
 
-        Raises ValueError if required keys are missing or, when
-        ``require_framing=True``, if the framing field is missing/empty.
+        Raises ValueError if the payload is not a JSON object, if a required
+        key is missing, if a required value is not a string, if
+        ``generated_question`` is blank, or -- when ``require_framing=True`` --
+        if the framing field is missing/empty.
+
+        Presence of a key is not enough: a JSON ``null`` or an empty
+        ``generated_question`` is unusable as an injection, and passing it on
+        turns an attacker-output problem into a target-side crash or a phantom
+        turn in the transcript.
         """
         cleaned = content.strip()
         md_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", cleaned, re.DOTALL)
@@ -354,9 +368,29 @@ class Attacker:
                 f"Failed to parse attacker response as JSON: {content[:200]!r}"
             ) from exc
 
+        if not isinstance(data, dict):
+            raise ValueError(
+                f"Attacker response is not a JSON object (got {type(data).__name__})"
+            )
+
         missing = set(BASE_SCHEMA) - set(data.keys())
         if missing:
             raise ValueError(f"Attacker response missing required keys: {missing}")
+
+        # Every base field is annotated ``str`` on AttackerOutput and summary /
+        # rationale are rendered back into later meta-prompts, so all three are
+        # type-checked; only the injected question must additionally be
+        # non-blank (an empty summary on turn 1 is normal and harmless).
+        for field in BASE_SCHEMA:
+            if not isinstance(data[field], str):
+                raise ValueError(
+                    f"Attacker response field {field!r} must be a string "
+                    f"(got {type(data[field]).__name__})"
+                )
+        if not data["generated_question"].strip():
+            raise ValueError(
+                "Attacker response 'generated_question' is empty; nothing to inject"
+            )
 
         framing: str | None = None
         if require_framing:

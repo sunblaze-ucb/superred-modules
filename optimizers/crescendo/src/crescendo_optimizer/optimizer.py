@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections import Counter
 
 from superred.core.interfaces.optimizer import Optimizer
 from superred.core.llm import LLMClient
@@ -31,6 +32,7 @@ from crescendo_optimizer.attacker import (
 )
 from crescendo_optimizer.evaluator import Evaluator
 from crescendo_optimizer.prompts import get_variant, get_variant_count
+from crescendo_optimizer.retry import HelperLLMUnavailableError, call_with_retries
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +186,12 @@ class CrescendoOptimizer(Optimizer):
         self._variant_index: int = 0
         self._succeeded: bool = False
 
+        # Task-scoped tally of internal-evaluator calls that fell back to a
+        # degraded value after exhausting retries. Logged at every RunEnd so a
+        # re-run's per-task diagnostics log says which runs were measured with
+        # a partly blind escalation loop.
+        self._degraded: Counter[str] = Counter()
+
     async def initialize(
         self,
         goal: Goal,
@@ -294,22 +302,19 @@ class CrescendoOptimizer(Optimizer):
             )
             return ControllableNoInjection(event=event, controllable=event.controllable)
 
-        try:
-            output = await self._attacker_generate(turn=1, include_framing=True)
-        except Exception:
-            logger.warning(
-                "Crescendo: eager attacker call (with framing) failed; "
-                "falling back to NoInjection on system_prompt",
-                exc_info=True,
-            )
-            return ControllableNoInjection(event=event, controllable=event.controllable)
+        # No handler: the attacker already resampled and retried internally, so
+        # a failure here is persistent. Letting it escape gives the controller
+        # stop_reason="error"/"budget_exhausted" with a traceback. Silently
+        # dropping to NoInjection would run the attempt without capability (c)
+        # while the results still claim the system_prompt scope.
+        output = await self._attacker_generate(turn=1, include_framing=True)
 
+        # _parse_response guarantees a non-empty framing when require_framing
+        # is set; this only fires if that contract is ever broken.
         if output.framing is None:
-            logger.warning(
-                "Crescendo: attacker returned no framing despite include_framing=True; "
-                "falling back to NoInjection on system_prompt",
+            raise HelperLLMUnavailableError(
+                "Crescendo attacker returned no framing despite include_framing=True"
             )
-            return ControllableNoInjection(event=event, controllable=event.controllable)
 
         self._pending_q1 = output.question
         self._attempt_framing = output.framing
@@ -371,16 +376,13 @@ class CrescendoOptimizer(Optimizer):
             question = self._pending_q1
             self._pending_q1 = None
         else:
-            try:
-                output = await self._attacker_generate(
-                    turn=self._turn + 1, include_framing=False,
-                )
-                question = output.question
-            except Exception:
-                logger.warning(
-                    "Crescendo: attacker failed at turn %d", self._turn + 1, exc_info=True,
-                )
-                question = self._build_fallback_question()
+            # No handler: see _handle_system_prompt_pre_call. A turn the
+            # attacker could not write is not an attacker that chose a weak
+            # turn, and must not be scored as one.
+            output = await self._attacker_generate(
+                turn=self._turn + 1, include_framing=False,
+            )
+            question = output.question
 
         self._current_question = question
         self._current_pre_request = event.request
@@ -438,6 +440,14 @@ class CrescendoOptimizer(Optimizer):
         return ControllableNoInjection(event=event, controllable=event.controllable)
 
     def _handle_run_end(self, event: RunEndEvent) -> RunEndResponse:
+        if self._degraded:
+            logger.warning(
+                "Crescendo: internal evaluator degraded during this task "
+                "(cumulative counts: %s); escalation decisions in the affected "
+                "turns were made blind",
+                dict(self._degraded),
+            )
+
         # Apply task-judge verdict (authoritative) before deciding next step.
         task_rationale: str | None = None
         internal_was_success = self._succeeded
@@ -683,17 +693,6 @@ class CrescendoOptimizer(Optimizer):
                 source, self._turn, self._max_turns,
             )
 
-    def _build_fallback_question(self) -> str:
-        """Conservative prompt when attacker generation fails."""
-        if self._last_response:
-            return (
-                "Could you expand on one point from your previous answer with a "
-                "high-level, neutral explanation?"
-            )
-        return (
-            "Could you provide a high-level, neutral background overview of this topic?"
-        )
-
     def _get_response_from_trajectory(self) -> str | None:
         """Best-effort recovery of assistant response from filtered trajectory."""
         if self._trajectory is None:
@@ -715,10 +714,22 @@ class CrescendoOptimizer(Optimizer):
         assert self._attacker is not None
         assert self._evaluator is not None
 
+        evaluator = self._evaluator
         try:
-            is_refusal = await self._evaluator.is_refusal(answer)
-        except Exception:
-            logger.warning("Crescendo: refusal check failed", exc_info=True)
+            is_refusal = await call_with_retries(
+                lambda: evaluator.is_refusal(answer), stage="refusal check",
+            )
+        except HelperLLMUnavailableError:
+            # Kept degraded rather than fatal: the internal evaluator only
+            # steers escalation within the attempt. The recorded verdict comes
+            # from the security claim's judge, which the controller runs on
+            # every completed run regardless of this value. Counted so the
+            # affected runs can be filtered out afterwards.
+            logger.warning(
+                "Crescendo: refusal check unavailable after retries; "
+                "assuming non-refusal", exc_info=True,
+            )
+            self._degraded["refusal_check"] += 1
             is_refusal = False
 
         if is_refusal and self._backtrack_count < self._max_backtracks:
@@ -733,14 +744,22 @@ class CrescendoOptimizer(Optimizer):
 
         self._last_response = answer
 
+        goal_description = self._goal.description
         try:
-            score, rationale = await self._evaluator.score_response(
-                response=answer,
-                goal=self._goal.description,
+            score, rationale = await call_with_retries(
+                lambda: evaluator.score_response(
+                    response=answer, goal=goal_description,
+                ),
+                stage="turn scoring",
             )
-        except Exception:
-            logger.warning("Crescendo: scoring failed", exc_info=True)
-            score, rationale = 0.0, "Scoring failed"
+        except HelperLLMUnavailableError:
+            # Degraded, not fatal, for the same reason as the refusal check.
+            logger.warning(
+                "Crescendo: turn scoring unavailable after retries; "
+                "treating the turn as score 0", exc_info=True,
+            )
+            self._degraded["turn_scoring"] += 1
+            score, rationale = 0.0, "Scoring unavailable"
         self._last_score = score
         self._last_rationale = rationale
         self._turn += 1
