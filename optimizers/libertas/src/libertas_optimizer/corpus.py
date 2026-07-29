@@ -60,6 +60,7 @@ GOAL_MARKERS: tuple[str, ...] = tuple(
             "{user_input/query}",
             "{user_input}",
             "{𝔲𝔰𝔢𝔯_𝓺𝓾𝓮𝓻𝔂}",
+            "<VARIABLE Z = ________>",
             "<user_query>",
         },
         key=len,
@@ -127,7 +128,20 @@ _SYSTEM_DELIVERY_HINTS = (
     "system prompt generator",
 )
 
-_TOP_LEVEL_HEADING = re.compile(r"(?m)^# ([^\r\n]*)(?:\r\n|\n|\r|$)")
+_SOURCE_HEADING_LEVELS: dict[str, tuple[int, ...]] = {
+    "AMAZON.mkd": (1, 2),
+    "GOOGLE.mkd": (1, 2),
+    "GRAYSWAN.mkd": (2,),
+    "META.mkd": (1, 2),
+    "NVIDIA.mkd": (2,),
+    "PERPLEXITY.mkd": (2,),
+}
+
+
+def _heading_pattern(source_file: str) -> re.Pattern[str]:
+    levels = _SOURCE_HEADING_LEVELS.get(source_file, (1,))
+    prefixes = "|".join(re.escape("#" * level) for level in sorted(levels, reverse=True))
+    return re.compile(rf"(?m)^(?:{prefixes}) ([^\r\n]*)(?:\r\n|\n|\r|$)")
 
 
 @dataclass(frozen=True)
@@ -170,15 +184,23 @@ def _manifest_entry(source_file: str) -> ManifestFile:
     raise KeyError(f"{source_file!r} is not in the pinned L1B3RT4S manifest")
 
 
-@cache
 def load_source_bytes(source_file: str) -> bytes:
-    """Return the exact bundled bytes for an upstream root file."""
+    """Return freshly verified bundled bytes for an upstream root file."""
 
     entry = _manifest_entry(source_file)
     if not entry["bundled"] or entry["stored_path"] is None:
         reason = entry["reason"] or "not bundled"
         raise ValueError(f"{source_file!r} is recorded but unavailable: {reason}")
     content = _data_root().joinpath("upstream", entry["stored_path"]).read_bytes()
+    if len(content) != entry["size"]:
+        raise ValueError(
+            f"{source_file}: size {len(content)} does not match manifest {entry['size']}"
+        )
+    actual_hash = hashlib.sha256(content).hexdigest()
+    if actual_hash != entry["sha256"]:
+        raise ValueError(
+            f"{source_file}: sha256 {actual_hash} does not match manifest {entry['sha256']}"
+        )
     return content
 
 
@@ -188,9 +210,7 @@ def verify_bundled_corpus() -> list[str]:
     manifest = load_manifest()
     errors: list[str] = []
     if manifest["repository"] != UPSTREAM_REPOSITORY:
-        errors.append(
-            f"repository mismatch: {manifest['repository']!r} != {UPSTREAM_REPOSITORY!r}"
-        )
+        errors.append(f"repository mismatch: {manifest['repository']!r} != {UPSTREAM_REPOSITORY!r}")
     if manifest["commit"] != UPSTREAM_COMMIT:
         errors.append(f"commit mismatch: {manifest['commit']!r} != {UPSTREAM_COMMIT!r}")
 
@@ -256,7 +276,7 @@ def _split_source(source_file: str) -> tuple[PromptTemplate, ...]:
     # upstream parity and can erase the very token sequence under test.
     text = raw_bytes.decode("utf-8", errors="strict")
     provider = SOURCE_PROVIDERS.get(source_file)
-    matches = list(_TOP_LEVEL_HEADING.finditer(text))
+    matches = list(_heading_pattern(source_file).finditer(text))
     sections: list[tuple[int, str | None, str]] = []
 
     if not matches:
@@ -269,11 +289,7 @@ def _split_source(source_file: str) -> tuple[PromptTemplate, ...]:
             sections.append((section_index, None, preamble))
             section_index += 1
         for match_index, match in enumerate(matches):
-            end = (
-                matches[match_index + 1].start()
-                if match_index + 1 < len(matches)
-                else len(text)
-            )
+            end = matches[match_index + 1].start() if match_index + 1 < len(matches) else len(text)
             body = text[match.end() : end]
             if not body:
                 continue
@@ -284,7 +300,11 @@ def _split_source(source_file: str) -> tuple[PromptTemplate, ...]:
     for section_index, heading, body in sections:
         body_bytes = body.encode("utf-8")
         digest = hashlib.sha256(body_bytes).hexdigest()
-        markers = tuple(marker for marker in GOAL_MARKERS if marker in body)
+        markers = tuple(
+            marker
+            for marker in GOAL_MARKERS
+            if marker in body and not (marker == "<user_query>" and "</user_query>" in body)
+        )
         templates.append(
             PromptTemplate(
                 id=_template_id(source_file, section_index, digest),
@@ -301,7 +321,6 @@ def _split_source(source_file: str) -> tuple[PromptTemplate, ...]:
     return tuple(templates)
 
 
-@cache
 def _templates_for_source(source_file: str) -> tuple[PromptTemplate, ...]:
     return _split_source(source_file)
 
@@ -351,10 +370,8 @@ def render_prompt(
     """Insert a goal while preserving every other upstream code point."""
 
     if template.goal_markers:
-        rendered = template.raw_template
-        for marker in template.goal_markers:
-            rendered = rendered.replace(marker, goal)
-        return rendered
+        marker_pattern = re.compile("|".join(re.escape(marker) for marker in template.goal_markers))
+        return marker_pattern.sub(lambda _match: goal, template.raw_template)
 
     if not append_untemplated:
         raise ValueError(

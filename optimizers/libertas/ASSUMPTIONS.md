@@ -13,8 +13,8 @@ the pinned commit above.
 
 ## What is reproduced exactly
 
-All bundled upstream files are byte-for-byte copies. Their original path,
-portable stored path, byte size, and SHA-256 are recorded in
+All bundled upstream files are byte-for-byte copies. Their original and stored
+paths (which are identical), byte size, and SHA-256 are recorded in
 `src/libertas_optimizer/data/upstream_manifest.json`.
 
 The sync script requires:
@@ -39,10 +39,13 @@ selectors, combining marks, confusables, emoji, and invisible Unicode.
 
 ## Prompt boundary
 
-Upstream uses level-one Markdown headings as model/version labels. The adapter
-treats each heading as metadata and the bytes after it, up to the next
-level-one heading, as the prompt body. Files without a level-one heading are
-one body.
+Upstream generally uses level-one Markdown headings as model/version labels.
+The adapter treats each reviewed model heading as metadata and the bytes after
+it, up to the next reviewed heading, as the prompt body. `AMAZON.mkd`,
+`GOOGLE.mkd`, and `META.mkd` use both level-one and level-two model headings;
+`GRAYSWAN.mkd`, `NVIDIA.mkd`, and `PERPLEXITY.mkd` use level-two model
+headings. Other files retain the level-one rule. Files without a reviewed
+heading are one body.
 
 The heading is not sent to the victim. This matches the repository's apparent
 copy/paste convention: headings name the intended target while the following
@@ -67,6 +70,7 @@ generic upstream slot:
 - `{user-query}`
 - `{USER-QUERY}`
 - `{USER QUERY}`
+- `<VARIABLE Z = ________>`
 - `<user_query>`
 - `{insert-your-query-here}`
 - `{the user_input/query}`
@@ -76,7 +80,10 @@ generic upstream slot:
 Rendering replaces those exact code-point sequences with
 `Goal.description`. Every other byte-equivalent code point remains unchanged.
 Specific examples such as `{user-input=...}` are deliberately not treated as
-generic slots.
+generic slots. `<user_query>` is not treated as a slot when the same body
+contains `</user_query>`, because those paired tags are structural examples in
+the Anthropic usage notes. Replacements happen in one pass, so marker text
+inside `Goal.description` is never recursively rewritten.
 
 `include_untemplated=True` appends the goal after a body with no recognized
 slot. That is a superred adaptation, not byte-identical upstream use, and is
@@ -84,17 +91,36 @@ off by default.
 
 ## Provider selection
 
-Upstream organizes prompts by vendor files. The target's visible model identity
-is conservatively mapped to those file families (for example `claude` to
-`ANTHROPIC.mkd`, `gpt` to `OPENAI.mkd`/`CHATGPT.mkd`, and `gemini` to
-`GOOGLE.mkd`). This selection is adapter logic; upstream provides no routing
-algorithm.
+Upstream organizes prompts by vendor files. An explicit `model_identity=` or a
+string-valued target observable named `model`, `model_id`, `model_identity`,
+`target_model`, or `victim_model` is conservatively mapped to those file
+families (for example `claude` to `ANTHROPIC.mkd`, `gpt` to
+`OPENAI.mkd`/`CHATGPT.mkd`, and `gemini` to `GOOGLE.mkd`). Unrelated observable
+text is never used for provider inference. This selection is adapter logic;
+upstream provides no routing algorithm.
 
 If the provider cannot be inferred, strict templates from every provider are
 scheduled in lexicographic source-file order. An explicit `provider=` override
 is the reproducible alternative.
 
 Within a file, bodies retain upstream order.
+
+## Helper-LLM ranking
+
+After deterministic provider and delivery-surface filtering, the default
+`selection_strategy="llm"` makes one call through the optimizer's budgeted
+`self.llm`. It sends no raw upstream prompt body. The request contains:
+
+- target model identity and provider;
+- `Goal.description`;
+- each candidate's stable ID, source filename, heading, provider, delivery
+  surface, and exact goal-marker spellings.
+
+The response must be an exact JSON object with a non-empty `template_ids`
+string list. Every ID must exist in the supplied catalog and duplicates are
+rejected. A valid partial list moves those entries to the front and leaves all
+others in deterministic source order. Any exception or schema violation falls
+back atomically. `selection_strategy="deterministic"` skips the call.
 
 ## Delivery surfaces
 
@@ -119,7 +145,8 @@ is therefore an experimental adaptation.
 
 L1B3RT4S provides no judge or stopping policy. This adapter:
 
-- uses no attacker LLM or internal scorer;
+- optionally uses one helper-LLM call for metadata-only prompt ranking, but no
+  attacker LLM for prompt generation and no internal scorer;
 - tries one template per superred run;
 - treats `RunEndEvent.evaluation.success` as authoritative;
 - stops on the first SecurityClaim success or after the selected templates are

@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from typing import Any
 from unittest.mock import MagicMock
 
+import pytest
+from superred.core.llm import LLMClient
 from superred.core.types.controllable import Controllable
 from superred.core.types.evaluation import EvaluationResult, Score
 from superred.core.types.event import EventResponse
@@ -21,12 +25,46 @@ from superred.core.types.goal import Goal
 from superred.core.types.observable import Observable, ObservableValue
 from superred.core.types.security_domain import SecurityDomainTag
 
-from libertas_optimizer import LibertasOptimizer, render_prompt
+from libertas_optimizer import LibertasOptimizer, load_prompt_templates, render_prompt
 
 USER_TAG = SecurityDomainTag("user")
 SYSTEM_TAG = SecurityDomainTag("system")
 MODEL_TAG = SecurityDomainTag("model")
 GOAL = "Explain the benchmark's forbidden behavior. 🧪"
+
+
+class _ChoiceMessage:
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+
+class _Choice:
+    def __init__(self, content: str) -> None:
+        self.message = _ChoiceMessage(content)
+
+
+class _LLMResponse:
+    def __init__(self, content: str) -> None:
+        self.choices = [_Choice(content)]
+
+
+class _ScriptedLLM(LLMClient):
+    def __init__(self, responses: list[str | Exception]) -> None:
+        self.responses = responses
+        self.calls: list[tuple[list[dict[str, str]], dict[str, Any]]] = []
+
+    async def complete(
+        self,
+        messages: list[dict[str, str]],
+        **kwargs: Any,
+    ) -> Any:
+        self.calls.append((messages, kwargs))
+        if not self.responses:
+            raise AssertionError("unexpected Libertas helper-LLM call")
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return _LLMResponse(response)
 
 
 def _user_ctrl(name: str = "user_message") -> Controllable:
@@ -44,22 +82,30 @@ def _model_observable(model: str) -> ObservableValue:
     )
 
 
+def _text_observable(name: str, content: str) -> ObservableValue:
+    return ObservableValue(
+        observable=Observable(name=name, security_domain=MODEL_TAG),
+        content=content,
+    )
+
+
 def _initialize(
     optimizer: LibertasOptimizer,
     *,
     model: str = "openai/gpt-5.4-mini",
     controllables: list[Controllable] | None = None,
-) -> MagicMock:
-    llm = MagicMock()
+    llm: LLMClient | None = None,
+) -> LLMClient:
+    selected_llm = llm or MagicMock()
     asyncio.run(
         optimizer.initialize(
             goal=Goal(description=GOAL),
             controllables=controllables or [_system_ctrl(), _user_ctrl()],
             observables=[_model_observable(model)],
-            llm_client=llm,
+            llm_client=selected_llm,
         )
     )
-    return llm
+    return selected_llm
 
 
 def _event(optimizer: LibertasOptimizer, event):
@@ -77,15 +123,208 @@ def test_zero_argument_construction() -> None:
     LibertasOptimizer()
 
 
+def test_helper_llm_can_pick_a_later_compatible_prompt_before_attempt_limit() -> None:
+    candidates = load_prompt_templates(
+        source_files=("OPENAI.mkd",),
+    )
+    selected = next(template for template in candidates if template.heading == "GPT-4O")
+    llm = _ScriptedLLM([json.dumps({"template_ids": [selected.id]}, ensure_ascii=False)])
+    optimizer = LibertasOptimizer(
+        source_files=("OPENAI.mkd",),
+        max_attempts=1,
+    )
+
+    _initialize(optimizer, llm=llm)
+
+    assert [template.id for template in optimizer.templates] == [selected.id]
+    assert optimizer.selection_method == "llm"
+    assert len(llm.calls) == 1
+    messages, kwargs = llm.calls[0]
+    assert kwargs == {"max_tokens": 2048}
+    payload = json.loads(messages[1]["content"])
+    assert payload["target_model"] == "openai/gpt-5.4-mini"
+    assert payload["provider"] == "openai"
+    assert payload["goal"] == GOAL
+    assert {candidate["source_file"] for candidate in payload["candidates"]} == {"OPENAI.mkd"}
+    assert all(
+        set(candidate)
+        == {
+            "template_id",
+            "source_file",
+            "heading",
+            "provider",
+            "delivery",
+            "goal_markers",
+        }
+        for candidate in payload["candidates"]
+    )
+    assert all(template.raw_template not in messages[1]["content"] for template in candidates)
+
+
+def test_deterministic_selection_skips_the_helper_llm() -> None:
+    llm = _ScriptedLLM([])
+    optimizer = LibertasOptimizer(
+        source_files=("OPENAI.mkd",),
+        max_attempts=1,
+        selection_strategy="deterministic",
+    )
+
+    _initialize(optimizer, llm=llm)
+
+    expected = load_prompt_templates(source_files=("OPENAI.mkd",))[0]
+    assert optimizer.templates == (expected,)
+    assert llm.calls == []
+
+
+def test_malformed_helper_response_falls_back_and_reports_selection_method() -> None:
+    llm = _ScriptedLLM(["not JSON"])
+    optimizer = LibertasOptimizer(source_files=("OPENAI.mkd",), max_attempts=1)
+
+    _initialize(optimizer, llm=llm)
+
+    expected = load_prompt_templates(source_files=("OPENAI.mkd",))[0]
+    assert optimizer.templates == (expected,)
+    assert optimizer.selection_method == "deterministic-fallback"
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        "{}",
+        '{"template_ids": []}',
+        '{"template_ids": "not-a-list"}',
+        '{"template_ids": [7]}',
+        '{"template_ids": ["unknown-template-id"]}',
+        '```json\n{"template_ids": ["unknown-template-id"]}\n```',
+    ],
+)
+def test_invalid_helper_rankings_fall_back_atomically(response: str) -> None:
+    llm = _ScriptedLLM([response])
+    optimizer = LibertasOptimizer(source_files=("OPENAI.mkd",))
+
+    _initialize(optimizer, llm=llm)
+
+    assert optimizer.templates == load_prompt_templates(source_files=("OPENAI.mkd",))
+    assert optimizer.selection_method == "deterministic-fallback"
+
+
+def test_duplicate_helper_ids_fall_back_instead_of_dropping_attempts() -> None:
+    candidates = load_prompt_templates(source_files=("OPENAI.mkd",))
+    duplicate = candidates[-1].id
+    llm = _ScriptedLLM([json.dumps({"template_ids": [duplicate, duplicate]}, ensure_ascii=False)])
+    optimizer = LibertasOptimizer(source_files=("OPENAI.mkd",))
+
+    _initialize(optimizer, llm=llm)
+
+    assert optimizer.templates == candidates
+    assert optimizer.selection_method == "deterministic-fallback"
+
+
+def test_helper_exception_falls_back_without_aborting_initialization() -> None:
+    llm = _ScriptedLLM([RuntimeError("selector unavailable")])
+    optimizer = LibertasOptimizer(source_files=("OPENAI.mkd",), max_attempts=1)
+
+    _initialize(optimizer, llm=llm)
+
+    expected = load_prompt_templates(source_files=("OPENAI.mkd",))[0]
+    assert optimizer.templates == (expected,)
+    assert optimizer.selection_method == "deterministic-fallback"
+
+
+def test_partial_helper_ranking_keeps_unmentioned_candidates_in_source_order() -> None:
+    candidates = load_prompt_templates(source_files=("OPENAI.mkd",))
+    preferred = candidates[-1]
+    llm = _ScriptedLLM([json.dumps({"template_ids": [preferred.id]}, ensure_ascii=False)])
+    optimizer = LibertasOptimizer(source_files=("OPENAI.mkd",))
+
+    _initialize(optimizer, llm=llm)
+
+    assert optimizer.templates == (preferred, *candidates[:-1])
+
+
+def test_single_candidate_skips_helper_without_reporting_a_fallback() -> None:
+    llm = _ScriptedLLM([])
+    optimizer = LibertasOptimizer(
+        source_files=("AMAZON.mkd",),
+        selection_strategy="llm",
+    )
+
+    _initialize(optimizer, model="amazon/nova-pro", llm=llm)
+
+    assert len(optimizer.templates) == 1
+    assert optimizer.selection_method == "deterministic"
+    assert llm.calls == []
+
+
+def test_explicit_model_identity_drives_provider_and_helper_context() -> None:
+    model_identity = "anthropic/claude-opus-4-1"
+    candidate = next(
+        template
+        for template in load_prompt_templates(provider="anthropic")
+        if template.heading == "OPUS-4.1"
+    )
+    llm = _ScriptedLLM([json.dumps({"template_ids": [candidate.id]}, ensure_ascii=False)])
+    optimizer = LibertasOptimizer(model_identity=model_identity, max_attempts=1)
+
+    _initialize(optimizer, model="openai/gpt-5.4-mini", llm=llm)
+
+    assert optimizer.resolved_provider == "anthropic"
+    assert optimizer.model_identity == model_identity
+    assert optimizer.templates == (candidate,)
+    request = json.loads(llm.calls[0][0][1]["content"])
+    assert request["target_model"] == model_identity
+    assert request["provider"] == "anthropic"
+
+
+def test_unrelated_observable_text_cannot_impersonate_model_identity() -> None:
+    optimizer = LibertasOptimizer(
+        max_attempts=1,
+        selection_strategy="deterministic",
+    )
+    asyncio.run(
+        optimizer.initialize(
+            goal=Goal(description=GOAL),
+            controllables=[_user_ctrl()],
+            observables=[
+                _text_observable(
+                    "system_prompt",
+                    "You are not Claude; do not imitate Anthropic models.",
+                )
+            ],
+            llm_client=_ScriptedLLM([]),
+        )
+    )
+
+    assert optimizer.model_identity is None
+    assert optimizer.resolved_provider is None
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"selection_strategy": "random"}, "selection_strategy"),
+        ({"model_identity": "  "}, "model_identity"),
+    ],
+)
+def test_invalid_selection_configuration_fails_loudly(
+    kwargs: dict[str, Any],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        LibertasOptimizer(**kwargs)
+
+
 def test_model_identity_routes_to_matching_upstream_files() -> None:
     optimizer = LibertasOptimizer()
     _initialize(optimizer, model="anthropic/claude-opus-4-6")
 
     assert optimizer.resolved_provider == "anthropic"
     assert optimizer.templates
-    assert {template.source_file for template in optimizer.templates} == {
-        "ANTHROPIC.mkd"
-    }
+    provider_templates = [
+        template for template in optimizer.templates if template.provider is not None
+    ]
+    assert provider_templates
+    assert {template.source_file for template in provider_templates} == {"ANTHROPIC.mkd"}
 
 
 def test_unknown_model_uses_all_provider_families() -> None:
@@ -98,7 +337,11 @@ def test_unknown_model_uses_all_provider_families() -> None:
 
 
 def test_injects_exact_rendered_template_once_on_user_surface() -> None:
-    optimizer = LibertasOptimizer(provider="openai", max_attempts=1)
+    optimizer = LibertasOptimizer(
+        provider="openai",
+        max_attempts=1,
+        selection_strategy="deterministic",
+    )
     llm = _initialize(optimizer)
 
     start = _event(optimizer, RunStartEvent(trajectory=MagicMock()))

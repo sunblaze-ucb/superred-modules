@@ -4,7 +4,7 @@
   "files": [
     {
       "source_path": "!SHORTCUTS.json",
-      "stored_path": "SHORTCUTS.json",
+      "stored_path": "!SHORTCUTS.json",
       "sha256": "4e7d85f8e6908f44e640fdc67c1a7b84b81364f415a364e5341b6744dffa195f",
       "size": 10859,
       "bundled": true,
@@ -12,7 +12,7 @@
     },
     {
       "source_path": "#MOTHERLOAD.txt",
-      "stored_path": "MOTHERLOAD.txt",
+      "stored_path": "#MOTHERLOAD.txt",
       "sha256": "f7cd56aa3d2b80167f54362b2d5c6f8aba8be6a979933e5453a3a2289b7e8518",
       "size": 2239,
       "bundled": true,
@@ -20,7 +20,7 @@
     },
     {
       "source_path": "*SPECIAL_TOKENS.json",
-      "stored_path": "SPECIAL_TOKENS.json",
+      "stored_path": "*SPECIAL_TOKENS.json",
       "sha256": "c289f90a879b09831d4fd2933f57f46deea55a0f9b987a6003adf3a8d0948453",
       "size": 55437,
       "bundled": true,
@@ -28,7 +28,7 @@
     },
     {
       "source_path": "-MISCELLANEOUS-.mkd",
-      "stored_path": "MISCELLANEOUS.mkd",
+      "stored_path": "-MISCELLANEOUS-.mkd",
       "sha256": "5178be705fdefb0389cc9c9b7019d94fbbd028044682276ec147187ff70cf169",
       "size": 20327,
       "bundled": true,
@@ -276,7 +276,7 @@
     },
     {
       "source_path": "README.md",
-      "stored_path": "UPSTREAM_README.md",
+      "stored_path": "README.md",
       "sha256": "81831d196e37c0bce05797257861946de5cdac28ab79af46df78e94da2f9219e",
       "size": 24071,
       "bundled": true,

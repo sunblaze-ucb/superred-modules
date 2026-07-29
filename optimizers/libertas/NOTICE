@@ -6,13 +6,24 @@ This package adapts and redistributes prompt-corpus material from:
   L1B3RT4S
   https://github.com/elder-plinius/L1B3RT4S
   pinned commit 64960b783249d36f76a48a33103cc4b168332b9b
-  authored/maintained by Pliny the Prompter (elder-plinius)
+  maintained by Pliny the Prompter (elder-plinius)
 
 The upstream repository is licensed under the GNU Affero General Public
 License, version 3. The upstream LICENSE file is reproduced as this package's
 LICENSE file. The bundled prompt corpus remains under that license.
 
-The superred event adapter, provider routing, corpus verifier, tests, and
-documentation were written for the superred project. This independently
-installable combined package is distributed as AGPL-3.0-only so the copied and
-adapted upstream material is not represented as MIT-licensed.
+Some upstream files identify or reproduce prompts associated with third-party
+model providers. Copyright in those materials remains with the respective
+rights holders; this notice does not claim that elder-plinius authored or owns
+every quoted entry.
+
+Superred adapter and integration code:
+Copyright (C) 2026 Simon Sure.
+
+This work was modified for the superred project on 29 July 2026. The
+modifications include the event adapter, provider/model routing, metadata-only
+helper-LLM ranking, corpus verifier, packaging, tests, and documentation.
+
+This independently installable combined package is distributed as
+AGPL-3.0-only so the copied and adapted upstream material is not represented as
+MIT-licensed.

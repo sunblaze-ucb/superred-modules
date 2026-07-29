@@ -18,14 +18,6 @@ from pathlib import Path
 PINNED_COMMIT = "64960b783249d36f76a48a33103cc4b168332b9b"
 REPOSITORY = "https://github.com/elder-plinius/L1B3RT4S"
 
-STORED_NAMES = {
-    "!SHORTCUTS.json": "SHORTCUTS.json",
-    "#MOTHERLOAD.txt": "MOTHERLOAD.txt",
-    "*SPECIAL_TOKENS.json": "SPECIAL_TOKENS.json",
-    "-MISCELLANEOUS-.mkd": "MISCELLANEOUS.mkd",
-    "README.md": "UPSTREAM_README.md",
-}
-
 OMITTED = {
     "LICENSE": "copied to the module root as LICENSE instead of package data",
 }
@@ -70,7 +62,7 @@ def main() -> None:
         content = (checkout / source_path).read_bytes()
         omitted_reason = OMITTED.get(source_path)
         bundled = omitted_reason is None
-        stored_path = STORED_NAMES.get(source_path, source_path) if bundled else None
+        stored_path = source_path if bundled else None
         if stored_path is not None:
             expected_stored.add(stored_path)
             (upstream_root / stored_path).write_bytes(content)
