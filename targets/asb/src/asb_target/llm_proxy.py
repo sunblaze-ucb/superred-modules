@@ -13,7 +13,9 @@ of ``GPTLLM.process`` with these changes, all documented in ASSUMPTIONS.md:
 4. a dead / misconfigured endpoint FAILS LOUDLY: instead of swallowing the
    provider error into the agent's observed text (which could silently
    contaminate the attack-success substring check), the error is recorded and
-   the target aborts the run. Transient rate-limit errors stay tolerated.
+   the target aborts the run. Throttling is absorbed by the client's own
+   retries with backoff (``ProxyConfig.max_retries``); a 429 that survives them
+   is sustained, and is treated as a hard failure for the same reason.
 
 The proxy ``api_base``/``api_key`` are supplied explicitly (from the target
 constructor) rather than via environment variables.
@@ -56,6 +58,11 @@ class ProxyConfig:
     api_key: str | None = None
     request_delay_seconds: float = 2.0
     max_output_tokens: int = 1024
+    #: How many times the OpenAI client retries a throttled or transiently
+    #: failed call before giving up. The SDK backs off exponentially and
+    #: honours Retry-After. Its own default is 2, which is thin for a sweep
+    #: running many cells at once against one gateway.
+    max_retries: int = 6
     #: Hard failures (connection/auth/status/bad-request/unexpected) seen since
     #: the last reset. The target resets this before each run and aborts the run
     #: if it is non-empty afterwards.
@@ -176,7 +183,7 @@ class ProxyLLM(GPTLLM):  # type: ignore[misc]  # GPTLLM is Any (vendored, untype
             kwargs["base_url"] = self.config.api_base
         if self.config.api_key:
             kwargs["api_key"] = self.config.api_key
-        self.model = OpenAI(**kwargs)
+        self.model = OpenAI(max_retries=self.config.max_retries, **kwargs)
         self.tokenizer = None
 
     def process(self, agent_process: Any, temperature: float = 0.0) -> None:
@@ -214,8 +221,14 @@ class ProxyLLM(GPTLLM):  # type: ignore[misc]  # GPTLLM is Any (vendored, untype
                 Response(response_message=response_message, tool_calls=tool_calls)
             )
         except openai.RateLimitError as e:
-            # Transient: tolerated (do not abort the run), but no raw text leaks.
-            self.logger.log(f"proxy rate limit: {e}\n", level="executing")
+            # The client already retried with backoff (config.max_retries), so
+            # reaching here means SUSTAINED throttling. Upstream this port used
+            # to tolerate it, which is worse than it sounds: the agent's turn
+            # silently becomes the marker text and the run is then SCORED on a
+            # transcript the model never produced. Record a hard failure so the
+            # run aborts and the task simply re-runs later. See ASSUMPTIONS G.1.
+            self.logger.log(f"proxy rate limit after retries: {e}\n", level="executing")
+            self.config.record_failure(f"{type(e).__name__}: {e}")
             agent_process.set_response(Response(response_message=PROXY_ERROR_MARKER))
         except (
             openai.APIConnectionError,

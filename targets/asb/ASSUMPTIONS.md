@@ -53,7 +53,14 @@ infrastructure**. Specific attacks are an attacker's concern, not the target's.
   aborts the run with a `RuntimeError`, instead of swallowing the provider
   error text into the agent transcript (which could silently contaminate the
   attack-success substring check). Only a neutral marker reaches the
-  transcript. Transient rate-limit errors stay tolerated (ASB-faithful).
+  transcript. **Throttling is retried, then fatal.** The OpenAI client retries a
+  429 with exponential backoff and Retry-After (`ProxyConfig.max_retries`,
+  default 6, above the SDK's own 2 because a sweep runs many cells against one
+  gateway). A 429 that survives those retries is sustained, and is recorded as
+  a hard failure like any other. This port previously TOLERATED it, which is
+  worse than it sounds: the agent's turn silently became the neutral marker and
+  the run was then scored on a transcript the model never produced. Failing
+  costs only time, because the task is simply re-run.
 
 ## C. Injection model (the core adaptation)
 
