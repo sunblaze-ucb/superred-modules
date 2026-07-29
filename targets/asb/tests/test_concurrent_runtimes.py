@@ -224,17 +224,43 @@ async def test_scheduler_survives_a_raising_request() -> None:
 
 
 async def test_teardown_stops_the_thread_and_is_idempotent() -> None:
-    """Each target must reclaim its own scheduler thread."""
+    """Each target must reclaim its own scheduler thread, PROMPTLY.
+
+    An experiment builds one target per task, so teardown runs tens of
+    thousands of times. Waiting out the scheduler's 1s queue timeout each time
+    would cost hours of pure waiting across a matrix, so stop() wakes the
+    queue instead of sleeping.
+    """
     t = _target("model-solo")
     runtime = t._ensure_runtime()  # noqa: SLF001 - asserting on owned lifecycle
     assert runtime.scheduler.thread.is_alive()
 
+    started = time.monotonic()
     await t.teardown()
+    elapsed = time.monotonic() - started
     runtime.scheduler.thread.join(timeout=5)
     assert not runtime.scheduler.thread.is_alive()
+    assert elapsed < 0.5, f"teardown waited out the queue timeout ({elapsed:.2f}s)"
 
     await t.teardown()  # second call must be a no-op, not an error
     runtime.stop()
+
+
+async def test_no_thread_or_runtime_accumulation_over_many_cycles() -> None:
+    """Build/teardown at experiment scale must not accumulate anything."""
+    from asb_target.runtime import _LIVE_RUNTIMES
+
+    threads = []
+    for _ in range(25):
+        t = _target("model-churn")
+        threads.append(t._ensure_runtime().scheduler.thread)  # noqa: SLF001
+        await t.teardown()
+    # Every scheduler thread this created must be gone. (active_count() is not
+    # the right measure: asyncio's default executor grows its own pool as
+    # to_thread is used, which is not our leak.)
+    alive = [th for th in threads if th.is_alive()]
+    assert not alive, f"{len(alive)} of {len(threads)} scheduler threads are still alive"
+    assert not _LIVE_RUNTIMES, f"runtimes still tracked after teardown: {len(_LIVE_RUNTIMES)}"
 
 
 async def test_each_target_gets_its_own_runtime_objects() -> None:

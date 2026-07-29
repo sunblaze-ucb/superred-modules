@@ -238,17 +238,21 @@ infrastructure**. Specific attacks are an attacker's concern, not the target's.
   agent per target at a time. Scheduler threads stay daemons and a process-exit
   hook stops any runtime whose owner did not.
 
-  Three deviations from the verbatim vendored code implement this, each marked
+  Five deviations from the verbatim vendored code implement this, each marked
   in place: (i) `BaseQueue` holds its queue per instance, with `default()`
   preserving the shared-queue behaviour for any caller that supplies none;
-  (ii) `FIFOScheduler` takes its queue as an argument; and (iii) the scheduler
-  loop no longer lets an exception kill its thread, because a dead scheduler
-  hangs its agent forever, which was survivable when a run owned its process
-  and is not now. A fourth, `_Kernel` in `runtime.py`, replaces
-  `LLMKernel`'s constructor: `LLMKernel` resolves the model through the global
-  `MODEL_REGISTRY` and passes only `llm_name`/`log_mode`, leaving nowhere to
-  inject this runtime's `ProxyConfig`. Its dispatch body is reproduced exactly.
-  At one runtime per process all four are behaviour-identical to upstream.
+  (ii) `FIFOScheduler` takes its queue as an argument; (iii) the scheduler loop
+  no longer lets an exception kill its thread, because a dead scheduler hangs
+  its agent forever, which was survivable when a run owned its process and is
+  not now; (iv) `FIFOScheduler.stop()` wakes the queue with a sentinel instead
+  of waiting out its 1s read timeout, because a superred run tears a scheduler
+  down once PER TASK and that second, paid 43,000 times, is hours of pure
+  waiting (measured: 1.010s -> 0.005s per cycle); and (v) `_Kernel` in
+  `runtime.py` replaces `LLMKernel`'s constructor, since `LLMKernel` resolves
+  the model through the global `MODEL_REGISTRY` and passes only
+  `llm_name`/`log_mode`, leaving nowhere to inject this runtime's
+  `ProxyConfig`. Its dispatch body is reproduced exactly. At one runtime per
+  process all five are behaviour-identical to upstream.
 
   **Request pacing is now per runtime, not per process.** ASB's inter-call
   delay (`request_delay_seconds`, upstream's hardcoded `time.sleep(2)`) used to

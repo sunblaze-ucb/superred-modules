@@ -10,6 +10,11 @@ import time
 
 from pyopenagi.queues.llm_request_queue import LLMRequestQueue
 
+#: Pushed by stop() to wake the blocking queue read at once. Without it, stop()
+#: waits out the 1s get_message timeout, and a superred experiment tears a
+#: scheduler down once PER TASK (tens of thousands of times).
+_STOP = object()
+
 class FIFOScheduler(BaseScheduler):
     def __init__(self, llm, log_mode, llm_request_queue=None):
         super().__init__(llm, log_mode)
@@ -31,6 +36,8 @@ class FIFOScheduler(BaseScheduler):
                 """
                 # agent_process = self.agent_process_queue.get(block=True, timeout=1)
                 agent_process = self.llm_request_queue.get_message()
+                if agent_process is _STOP:  # wake-up from stop(); re-check active
+                    continue
                 # print("Get the request")
                 agent_process.set_status("executing")
                 self.logger.log(f"{agent_process.agent_name} is executing. \n", "execute")
@@ -47,6 +54,22 @@ class FIFOScheduler(BaseScheduler):
                 # share a process. Unblock the request with a recorded failure
                 # instead, and keep serving.
                 self._fail_request(agent_process, e)
+
+    def stop(self):
+        """Stop the thread promptly.
+
+        superred port deviation (ASSUMPTIONS.md G.1): the base class only flips
+        ``active`` and joins, so the thread sleeps out its 1s queue timeout
+        first. A superred run builds and tears down one scheduler per task, so
+        that second is paid tens of thousands of times. Waking the queue makes
+        teardown immediate; the loop re-checks ``active`` and exits.
+        """
+        self.active = False
+        try:
+            self.llm_request_queue.add_message(_STOP)
+        except BaseException:  # noqa: BLE001 - fall back to the timeout
+            pass
+        self.thread.join()
 
     def _fail_request(self, agent_process, error):
         """Unblock a request whose execution raised, and record the failure."""
