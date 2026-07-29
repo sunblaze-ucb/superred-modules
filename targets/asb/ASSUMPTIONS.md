@@ -254,6 +254,18 @@ infrastructure**. Specific attacks are an attacker's concern, not the target's.
   `ProxyConfig`. Its dispatch body is reproduced exactly. At one runtime per
   process all five are behaviour-identical to upstream.
 
+  **The leaked system-spec brief changed wording.** `system_specification.md`
+  is not documentation: it is read at import and handed to the attacker as the
+  `detailed_system_specification` observable, so its bytes are experiment
+  input under any scope that includes `{system}`. Three sentences describing
+  scheduler topology were corrected here, because the old ones now state the
+  opposite of what the code does. They describe process structure, not an
+  injection surface, so no attack strategy depends on them; but a results tree
+  spanning this commit contains tasks measured against both wordings, and the
+  brief is not part of the measurement identity, so nothing in the record
+  distinguishes them. Disclosed rather than avoided: keeping a knowingly false
+  brief was judged worse than a wording change no attacker can act on.
+
   **Request pacing is now per runtime, not per process.** ASB's inter-call
   delay (`request_delay_seconds`, upstream's hardcoded `time.sleep(2)`) used to
   serialize every call in the process because one scheduler served them all.

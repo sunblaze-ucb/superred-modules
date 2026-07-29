@@ -55,21 +55,27 @@ class FIFOScheduler(BaseScheduler):
                 # instead, and keep serving.
                 self._fail_request(agent_process, e)
 
-    def stop(self):
-        """Stop the thread promptly.
+    def stop(self, timeout=None):
+        """Stop the thread promptly, waiting at most *timeout* for it.
 
-        superred port deviation (ASSUMPTIONS.md G.1): the base class only flips
-        ``active`` and joins, so the thread sleeps out its 1s queue timeout
-        first. A superred run builds and tears down one scheduler per task, so
-        that second is paid tens of thousands of times. Waking the queue makes
-        teardown immediate; the loop re-checks ``active`` and exits.
+        superred port deviation (ASSUMPTIONS.md G.1), for two reasons. The base
+        class only flips ``active`` and joins, so the thread first sleeps out
+        its 1s queue timeout; a superred run tears down one scheduler per task,
+        so that second is paid tens of thousands of times. Waking the queue
+        makes the common case immediate.
+
+        And the join is now bounded. If the thread is inside a request, it
+        cannot return until that request does, which for a real provider is up
+        to the client's read timeout. Blocking teardown for minutes would stall
+        the slot; the thread is a daemon and exits on its own once the call
+        returns, because ``active`` is already False.
         """
         self.active = False
         try:
             self.llm_request_queue.add_message(_STOP)
         except BaseException:  # noqa: BLE001 - fall back to the timeout
             pass
-        self.thread.join()
+        self.thread.join(timeout)
 
     def _fail_request(self, agent_process, error):
         """Unblock a request whose execution raised, and record the failure."""

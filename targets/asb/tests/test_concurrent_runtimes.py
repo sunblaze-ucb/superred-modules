@@ -284,3 +284,97 @@ async def test_each_target_gets_its_own_runtime_objects() -> None:
     finally:
         await a.teardown()
         await b.teardown()
+
+
+async def test_closing_a_queue_releases_pending_and_later_messages() -> None:
+    """A queue with no scheduler must release its waiters, not hold them.
+
+    An ASB request has no timeout: ``BaseAgent.listen`` spins until a response
+    appears. Anything left in a queue whose scheduler has gone therefore hangs
+    its caller for the life of the process.
+    """
+    from pyopenagi.queues.llm_request_queue import LLMRequestQueue
+
+    released = []
+    q = LLMRequestQueue()
+    q.on_unservable = released.append
+
+    q.add_message("already-queued")
+    q.close()
+    assert released == ["already-queued"], "a pending message was left stranded"
+
+    q.add_message("arrived-after-close")
+    assert released == ["already-queued", "arrived-after-close"], (
+        "a message added after close was swallowed instead of released"
+    )
+    assert q.is_empty()
+
+
+async def test_teardown_mid_run_returns_promptly_and_frees_the_agent() -> None:
+    """The realistic path: a cancelled run, then teardown underneath it.
+
+    A task cancelled by a wall-clock cap keeps running, because the agent is in
+    a thread and asyncio cancellation does not stop threads. The controller
+    then tears the target down. Two things must hold: teardown must not block
+    on the in-flight call (that would stall the slot for as long as the
+    provider takes), and the agent must afterwards unwind rather than wait on a
+    queue nobody serves.
+    """
+    from pyopenagi.utils.chat_template import Response
+
+    from asb_target import llm_proxy
+    from asb_target import runtime as runtime_mod
+
+    reached = threading.Event()
+    hold = threading.Event()
+    finished = threading.Event()
+
+    def fake_process(self, agent_process, temperature: float = 0.0):  # type: ignore[no-untyped-def]
+        if not reached.is_set():
+            reached.set()
+            hold.wait(timeout=30)  # keep the call in flight across the teardown
+        agent_process.set_status("executing")
+        agent_process.set_start_time(time.time())
+        if getattr(agent_process.query, "message_return_type", "text") == "json":
+            resp = Response(response_message=json.dumps(_PLAN), tool_calls=None)
+        else:
+            resp = Response(response_message="step done", tool_calls=[{"name": "sys_monitor"}])
+        agent_process.set_response(resp)
+        agent_process.set_status("done")
+        agent_process.set_end_time(time.time())
+
+    original_run = runtime_mod.SuperredReactAgent.run
+
+    def run_and_flag(self):  # type: ignore[no-untyped-def]
+        try:
+            return original_run(self)
+        except BaseException:  # noqa: BLE001 - unwinding by any route still counts
+            raise
+        finally:
+            finished.set()  # the agent thread actually returned
+
+    llm_proxy.ProxyLLM.process = fake_process  # type: ignore[method-assign]
+    runtime_mod.SuperredReactAgent.run = run_and_flag  # type: ignore[method-assign]
+    try:
+        t = _configured("model-inflight", "MARKER-INFLIGHT")
+        task = asyncio.ensure_future(t.run(lambda e: None, _decline_all))
+        assert await asyncio.to_thread(reached.wait, 15), "the run never reached the LLM"
+
+        task.cancel()  # exactly what a wall-clock cap does
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        started = time.monotonic()
+        await asyncio.wait_for(t.teardown(), timeout=30)
+        elapsed = time.monotonic() - started
+        assert elapsed < 10, (
+            f"teardown blocked {elapsed:.1f}s on the in-flight call; it must not "
+            f"wait out a provider timeout"
+        )
+
+        hold.set()  # the call returns into a torn-down runtime
+        assert await asyncio.to_thread(finished.wait, 30), (
+            "the agent thread never returned: it is waiting on a queue nobody serves"
+        )
+    finally:
+        runtime_mod.SuperredReactAgent.run = original_run  # type: ignore[method-assign]

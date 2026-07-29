@@ -56,7 +56,12 @@ from asb_target.controllables import (
     opi_tool_observation_ctrl,
     tool_catalogue_call_ctrl,
 )
-from asb_target.llm_proxy import ProxyConfig, ProxyLLM, register_proxy_model
+from asb_target.llm_proxy import (
+    PROXY_ERROR_MARKER,
+    ProxyConfig,
+    ProxyLLM,
+    register_proxy_model,
+)
 from asb_target.memory_store import MemoryStore
 from asb_target.observables import (
     agent_model_output_observable,
@@ -73,7 +78,7 @@ from aios.scheduler.fifo_scheduler import FIFOScheduler  # noqa: E402
 from pyopenagi.agents.agent_process import AgentProcessFactory  # noqa: E402
 from pyopenagi.agents.react_agent_attack import ReactAgentAttack  # noqa: E402
 from pyopenagi.queues.llm_request_queue import LLMRequestQueue  # noqa: E402
-from pyopenagi.utils.chat_template import Query  # noqa: E402
+from pyopenagi.utils.chat_template import Query, Response  # noqa: E402
 
 #: A response handler the agent (in a worker thread) calls to fire an event on
 #: the asyncio loop and block for the attacker's response.
@@ -196,21 +201,66 @@ class AsbRuntime:
     _stopped: bool = False
 
     def stop(self) -> None:
-        """Stop the scheduler thread. Idempotent, never raises."""
+        """Stop the scheduler and release anything still waiting. Idempotent.
+
+        Closing the queue is not optional cleanup, it is the safety property.
+        An ASB request has no timeout (``BaseAgent.listen`` spins until a
+        response appears), so a request left in a queue with no scheduler hangs
+        its caller forever. A run CAN outlive its scheduler: the agent executes
+        in a thread, ``asyncio`` cancellation does not stop threads, so a task
+        cancelled by a wall-clock cap keeps running while the controller tears
+        its target down. Closing releases that agent with a recorded failure
+        instead of stranding a thread for the life of the process.
+        """
         if self._stopped:
             return
         self._stopped = True
         with _LIVE_RUNTIMES_LOCK:
             _LIVE_RUNTIMES.discard(self)
         try:
-            self.scheduler.stop()
+            self.scheduler.stop(timeout=_SCHEDULER_JOIN_TIMEOUT_S)
+        except Exception:  # noqa: BLE001 - best-effort teardown
+            pass
+        try:
+            self.queue.close()
         except Exception:  # noqa: BLE001 - best-effort teardown
             pass
 
 
+#: How long teardown waits for the scheduler thread. It only matters when a
+#: request is in flight, which cannot be interrupted; the thread is a daemon and
+#: exits by itself once that call returns. Waiting longer would stall the slot.
+_SCHEDULER_JOIN_TIMEOUT_S = 5.0
+
 #: Live runtimes, so process exit can stop any the owner failed to.
 _LIVE_RUNTIMES: set[AsbRuntime] = set()
 _LIVE_RUNTIMES_LOCK = threading.Lock()
+
+
+def _release_stranded_request(proxy: ProxyConfig) -> Callable[[Any], None]:
+    """Complete a request nobody will ever serve, so its caller unwinds.
+
+    The agent waits on ``agent_process`` with no timeout, so a response is the
+    only thing that frees it. Give it the same neutral marker a provider error
+    gets, so no raw text reaches the scored transcript, and record the reason.
+    """
+
+    def release(agent_process: Any) -> None:
+        if agent_process is None or not hasattr(agent_process, "set_response"):
+            return  # the scheduler's own stop sentinel, not a request
+        proxy.record_failure("RuntimeStopped: the ASB runtime was torn down mid-request")
+        if agent_process.get_response() is None:
+            agent_process.set_response(Response(response_message=PROXY_ERROR_MARKER))
+        now = time.time()
+        # A released request must look like one that ran and failed, not one
+        # that never started: query_loop computes `start_time - created_time`
+        # unconditionally, and a missing start time crashes the agent thread.
+        if agent_process.get_start_time() is None:
+            agent_process.set_start_time(now)
+        agent_process.set_end_time(now)
+        agent_process.set_status("done")
+
+    return release
 
 
 def new_asb_runtime(
@@ -238,6 +288,7 @@ def new_asb_runtime(
     register_proxy_model(model)
     kernel = _Kernel(ProxyLLM(llm_name=model, log_mode="console", config=proxy))
     queue = LLMRequestQueue()
+    queue.on_unservable = _release_stranded_request(proxy)
     scheduler = FIFOScheduler(llm=kernel, log_mode="console", llm_request_queue=queue)
     scheduler.thread.daemon = True  # never block process exit on the scheduler
     scheduler.start()
