@@ -39,6 +39,7 @@ detail. This page is the plain-language tour.
 | GEPA | single-turn, many rounds | yes (reflect + rewrite) | An AI reflects on feedback and rewrites the prompt |
 | GOAT | multi-turn | yes (drives conversation) | An attacker AI converses, picking tactics each turn |
 | GPTFuzzer | single-turn, many queries | yes (mutate templates) | Fuzz-tests known jailbreak templates by mutating them |
+| Libertas | single-turn, many prompts | no (pinned corpus) | Replays Pliny's model-specific L1B3RT4S prompts byte-faithfully |
 | Many-Shot | single-turn | optional | Floods a long fake conversation of compliant examples |
 | PAIR | multi-turn refinement | yes (write + self-score) | An AI rewrites its prompt from the last response |
 | PoisonedRAG | single-turn | optional | Corrupts retrieved context so RAG answers with a planted wrong answer |
@@ -151,6 +152,17 @@ search to decide which templates to mutate next based on what has been paying
 off. Uses an LLM only to mutate templates; scores responses with the project's
 trained classifier. Single-turn; large default query budget. See `ASSUMPTIONS.md`
 for the citation.
+
+### Libertas (`superred-optimizer-libertas`)
+
+Replays the model-specific jailbreak prompts from Pliny's L1B3RT4S corpus,
+routing to the matching vendor family from the target's model identity and
+trying one prompt per run. The upstream files are pinned by commit and preserved
+byte-for-byte—including combining marks, variation selectors, confusables, and
+invisible Unicode—and strict mode changes only an explicit upstream goal
+placeholder. No attacker LLM or internal judge. Because the upstream corpus is
+AGPL-3.0, this independently installable module is also AGPL-3.0-only. See its
+`README.md` and `ASSUMPTIONS.md` for the exact parity boundary.
 
 ### Many-Shot Jailbreaking (`superred-optimizer-many-shot`)
 
