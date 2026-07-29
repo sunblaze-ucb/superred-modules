@@ -11,20 +11,26 @@ import time
 from pyopenagi.queues.llm_request_queue import LLMRequestQueue
 
 class FIFOScheduler(BaseScheduler):
-    def __init__(self, llm, log_mode):
+    def __init__(self, llm, log_mode, llm_request_queue=None):
         super().__init__(llm, log_mode)
         self.agent_process_queue = Queue()
+        # superred port deviation (ASSUMPTIONS.md G.1): the queue is supplied
+        # rather than taken from the class, so this scheduler serves only the
+        # requests of its own runtime. Omitting it selects the shared queue,
+        # which is upstream behaviour.
+        self.llm_request_queue = llm_request_queue or LLMRequestQueue.default()
 
 
     def run(self):
         while self.active:
+            agent_process = None
             try:
                 """
                 wait 1 second between each iteration at the minimum
                 if there is nothing received in a second, it will raise Empty
                 """
                 # agent_process = self.agent_process_queue.get(block=True, timeout=1)
-                agent_process = LLMRequestQueue.get_message()
+                agent_process = self.llm_request_queue.get_message()
                 # print("Get the request")
                 agent_process.set_status("executing")
                 self.logger.log(f"{agent_process.agent_name} is executing. \n", "execute")
@@ -32,6 +38,33 @@ class FIFOScheduler(BaseScheduler):
                 self.execute_request(agent_process)
             except Empty:
                 pass
+            except BaseException as e:  # noqa: BLE001
+                # superred port deviation (ASSUMPTIONS.md G.1): upstream let an
+                # exception here kill the scheduler thread. The waiting agent
+                # spins in `listen()` until a response appears, so a dead
+                # scheduler hangs that agent FOREVER -- survivable when the
+                # process was one run, unacceptable now that several runtimes
+                # share a process. Unblock the request with a recorded failure
+                # instead, and keep serving.
+                self._fail_request(agent_process, e)
+
+    def _fail_request(self, agent_process, error):
+        """Unblock a request whose execution raised, and record the failure."""
+        try:
+            from pyopenagi.utils.chat_template import Response
+
+            failure = f"{type(error).__name__}: {error}"
+            recorder = getattr(self.llm, "record_scheduler_failure", None)
+            if callable(recorder):
+                recorder(failure)
+            if agent_process is None:  # the queue read itself failed
+                return
+            if agent_process.get_response() is None:
+                agent_process.set_response(Response(response_message="[proxy-error]"))
+            agent_process.set_end_time(time.time())
+            agent_process.set_status("done")
+        except BaseException:  # noqa: BLE001 - never let the loop die
+            pass
 
     def execute_request(self, agent_process):
         self.llm.address_request(

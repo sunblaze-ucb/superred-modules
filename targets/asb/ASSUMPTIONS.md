@@ -220,19 +220,48 @@ infrastructure**. Specific attacks are an attacker's concern, not the target's.
 
 ## G. Execution model
 
-- **G.1 `concurrency=1`, single Controller per process**: ASB uses a
-  process-global `LLMRequestQueue` drained by one `FIFOScheduler` thread, plus
-  other process globals (the singleton kernel/scheduler `_RUNTIME` and the
-  proxy `PROXY_CONFIG`). `concurrency=1` serializes tasks within one Controller,
-  and only ONE ASB Controller may run per process: sweep multiple ASB threat
-  models sequentially, not via a concurrent `asyncio.gather` of ASB Controllers
-  (they would race on the shared globals). The scheduler thread is a daemon,
-  stopped at process exit.
+- **G.1 `concurrency=1` per target, but any number of targets per process**:
+  ASB drives its agent through an `LLMRequestQueue` drained by a
+  `FIFOScheduler` thread. Upstream both are process-wide (the queue is a CLASS
+  attribute, the kernel a singleton), which makes two ASB targets in one
+  process **silently wrong**: a queued request names no model, so whichever
+  scheduler pops it answers with ITS kernel's model, and provider failures pile
+  into one shared list that cannot say which run they belong to. Worse,
+  building a second runtime for a different model STOPS the first one's
+  scheduler, leaving its in-flight request with no consumer and its agent
+  spinning in `listen()` forever. This port therefore moves every piece of that
+  state onto an instance: `AsbRuntime` owns the queue, the scheduler thread,
+  the kernel and the `ProxyConfig` (credentials, pacing, failure record), and
+  each `AsbTarget` builds exactly one on first run and stops it in `teardown`.
+  Several ASB Controllers can then run concurrently in one process, including
+  under `superred.run_all`. `concurrency=1` still holds WITHIN a target: one
+  agent per target at a time. Scheduler threads stay daemons and a process-exit
+  hook stops any runtime whose owner did not.
+
+  Three deviations from the verbatim vendored code implement this, each marked
+  in place: (i) `BaseQueue` holds its queue per instance, with `default()`
+  preserving the shared-queue behaviour for any caller that supplies none;
+  (ii) `FIFOScheduler` takes its queue as an argument; and (iii) the scheduler
+  loop no longer lets an exception kill its thread, because a dead scheduler
+  hangs its agent forever, which was survivable when a run owned its process
+  and is not now. A fourth, `_Kernel` in `runtime.py`, replaces
+  `LLMKernel`'s constructor: `LLMKernel` resolves the model through the global
+  `MODEL_REGISTRY` and passes only `llm_name`/`log_mode`, leaving nowhere to
+  inject this runtime's `ProxyConfig`. Its dispatch body is reproduced exactly.
+  At one runtime per process all four are behaviour-identical to upstream.
+
+  **Request pacing is now per runtime, not per process.** ASB's inter-call
+  delay (`request_delay_seconds`, upstream's hardcoded `time.sleep(2)`) used to
+  serialize every call in the process because one scheduler served them all.
+  With N runtimes the effective request rate is N times higher, so gateway rate
+  limits, not the code, bound concurrency. Size `run_all(concurrency=)` against
+  the provider's limits.
 - **G.1a** ASB's `AgentProcessFactory` hands out pids from a pool of 10000 and
   never reclaims them on the agent path, so a long experiment with one factory
   would exhaust the pool and crash. The target builds a **fresh
-  `AgentProcessFactory` per run** (requests still flow through the global
-  queue), keeping the per-run pid count tiny.
+  `AgentProcessFactory` per run**, keeping the per-run pid count tiny. The
+  factory only mints pids; a request is served by the scheduler that owns the
+  queue it was submitted to, never by whichever factory created it.
 - **G.2** The model is a **construction concern** (constructor arg), not a
   config slot. Generation settings (seed 0, temperature 0, the pinned token
   cap) are fixed per experiment.

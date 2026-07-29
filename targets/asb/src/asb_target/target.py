@@ -19,7 +19,7 @@ Lifecycle:
 4. ``query``                 : post-run readers for the claim.
 5. ``reset_ephemeral_state`` : reset per-run state; the durable memory store
    and per-task config are preserved.
-6. ``teardown``              : no-op (the process-singleton scheduler is kept).
+6. ``teardown``              : stop this target's own scheduler thread.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import threading
 from typing import Any
 
 from superred.core.interfaces.target import Target
@@ -39,7 +40,6 @@ from superred.core.types.state import ConfigSpec, QuerySpec
 from asb_target._vendor import ensure_vendor_on_path
 from asb_target.config_specs import CONFIG_SPEC_NAMES, CONFIG_SPECS
 from asb_target.controllables import CONTROLLABLES
-from asb_target.llm_proxy import reset_failures, take_failures
 from asb_target.memory_store import DEFAULT_EMBED_MODEL, EmbedFn, MemoryStore
 from asb_target.observables import (
     DETAILED_SYSTEM_SPECIFICATION_OBS,
@@ -50,9 +50,10 @@ from asb_target.observables import (
 from asb_target.query_specs import QUERY_SPEC_NAMES, QUERY_SPECS
 from asb_target.runtime import (
     AsbArgs,
+    AsbRuntime,
     SuperredReactAgent,
-    get_asb_runtime,
     new_agent_process_factory,
+    new_asb_runtime,
 )
 from asb_target.security_tags import DOMAIN
 from asb_target.system_specification import DETAILED_SYSTEM_SPECIFICATION
@@ -103,6 +104,11 @@ class AsbTarget(Target):
         self._api_key = api_key
         self._request_delay_seconds = request_delay_seconds
         self._max_output_tokens = max_output_tokens
+        # This target's own ASB runtime (queue + scheduler + kernel), built on
+        # first run and stopped in teardown. Owning one per target instance is
+        # what lets several targets run concurrently in a single process.
+        self._runtime: AsbRuntime | None = None
+        self._runtime_lock = threading.Lock()
         # The embedder may live behind a different gateway than the chat model
         # (e.g. the chat model on a proxy that serves no /embeddings route, the
         # embedder on the real OpenAI API). Inherit the chat credentials unless
@@ -110,9 +116,7 @@ class AsbTarget(Target):
         eb = api_base if embed_api_base is _EMBED_INHERIT else embed_api_base
         ek = api_key if embed_api_key is _EMBED_INHERIT else embed_api_key
         # Durable per-task memory store (survives reset_ephemeral_state).
-        self._memory = MemoryStore(
-            embed_model=embed_model, api_base=eb, api_key=ek, embed=embed
-        )
+        self._memory = MemoryStore(embed_model=embed_model, api_base=eb, api_key=ek, embed=embed)
         # Per-task config (set via set_config).
         self._agent_name = ""
         self._user_prompt = ""
@@ -219,14 +223,7 @@ class AsbTarget(Target):
             future = asyncio.run_coroutine_threadsafe(_send(event), loop)
             return future.result(timeout=180)
 
-        # Build/start the process-singleton kernel + scheduler (side-effect only).
-        get_asb_runtime(
-            model=self._model,
-            api_base=self._api_base,
-            api_key=self._api_key,
-            request_delay_seconds=self._request_delay_seconds,
-            max_output_tokens=self._max_output_tokens,
-        )
+        runtime = self._ensure_runtime()
 
         attacker_tool = {k: self._attacker_tool.get(k, "") for k in _ATTACKER_TOOL_KEYS}
         args = AsbArgs(llm_name=self._model, tools_info_path=_NORMAL_TOOLS_PATH)
@@ -241,11 +238,12 @@ class AsbTarget(Target):
             memory=self._memory,
             memory_mode=self._memory_mode,
             force_attacker_tool=self._force_attacker_tool,
+            llm_request_queue=runtime.queue,
         )
 
-        reset_failures()
+        runtime.proxy.reset_failures()
         result = await asyncio.to_thread(agent.run)
-        failures = take_failures()
+        failures = runtime.proxy.take_failures()
         if failures:
             # Dead / misconfigured endpoint: fail loudly rather than scoring a
             # contaminated transcript (no provider text leaked into the trace).
@@ -272,11 +270,27 @@ class AsbTarget(Target):
         self._reset_run_state()
 
     async def teardown(self) -> None:
-        # The process-singleton scheduler is shared across tasks; it is stopped
-        # at process exit (atexit) in runtime.py, not here.
-        pass
+        # This target owns its runtime, so it stops its own scheduler thread.
+        # Leaving it to process exit would leak one thread per target.
+        with self._runtime_lock:
+            runtime, self._runtime = self._runtime, None
+        if runtime is not None:
+            await asyncio.to_thread(runtime.stop)
 
     # -- Internals ------------------------------------------------------------
+
+    def _ensure_runtime(self) -> AsbRuntime:
+        """This target's runtime, built and started on first use."""
+        with self._runtime_lock:
+            if self._runtime is None:
+                self._runtime = new_asb_runtime(
+                    model=self._model,
+                    api_base=self._api_base,
+                    api_key=self._api_key,
+                    request_delay_seconds=self._request_delay_seconds,
+                    max_output_tokens=self._max_output_tokens,
+                )
+            return self._runtime
 
     def _normalized_agent_name(self) -> str:
         name = self._agent_name

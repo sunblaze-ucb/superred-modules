@@ -47,6 +47,12 @@ class BaseAgent:
 
         self.agent_process_factory = agent_process_factory
 
+        # superred port: the queue this agent submits LLM requests to. Defaults
+        # to the shared queue (upstream behaviour); the superred runtime
+        # replaces it with its own so several runtimes can coexist in one
+        # process without their requests being answered by each other's kernel.
+        self.llm_request_queue = LLMRequestQueue.default()
+
         self.tool_list = dict()
         self.tools = []
         # self.load_tools(self.tool_names)
@@ -225,7 +231,7 @@ class BaseAgent:
             # reinitialize agent status
             agent_process.set_created_time(current_time)
             agent_process.set_response(None)
-            LLMRequestQueue.add_message(agent_process)
+            self.llm_request_queue.add_message(agent_process)
 
             thread.start()
             thread.join()

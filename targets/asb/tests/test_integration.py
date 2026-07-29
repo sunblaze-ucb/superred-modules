@@ -627,7 +627,7 @@ async def test_catalogue_edit_events_fire_once_and_declining_leaves_clean() -> N
 # ---------------------------------------------------------------------------
 
 
-async def test_detailed_spec_delivered_to_optimizer_through_real_controller() -> None:
+async def test_detailed_spec_delivered_to_optimizer_through_real_controller(tmp_path) -> None:  # type: ignore[no-untyped-def]
     """End-to-end through a real superred Controller: a capture-optimizer records
     the observables handed to its ``initialize()``, and the leaked
     ``detailed_system_specification`` brief must be among them under a ``{system}``
@@ -686,6 +686,10 @@ async def test_detailed_spec_delivered_to_optimizer_through_real_controller() ->
         security_claim=SecurityClaim.from_tasks([_CaptureTask()]),
         scope=frozenset({SYSTEM_TAG}),
         max_runs_per_task=1,
+        # A Controller persists to ./superred-results unless told otherwise, and
+        # then RESUMES that completed task on the next run: without an isolated
+        # results dir this test passes once and fails every time after.
+        results_dir=tmp_path / "results",
     )
     result = await controller.run()
 

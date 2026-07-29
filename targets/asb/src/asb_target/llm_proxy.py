@@ -21,6 +21,7 @@ constructor) rather than via environment variables.
 
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -42,22 +43,50 @@ PROXY_ERROR_MARKER = "[proxy-error]"
 
 
 @dataclass
-class _ProxyConfig:
+class ProxyConfig:
+    """Credentials, pacing and failure record for ONE :class:`ProxyLLM`.
+
+    Each ASB runtime owns one of these, so two runtimes in a process never
+    read each other's credentials nor attribute each other's provider errors.
+    The failure list is mutated from the scheduler thread and read from the
+    target's thread, so it is lock-guarded.
+    """
+
     api_base: str | None = None
     api_key: str | None = None
     request_delay_seconds: float = 2.0
     max_output_tokens: int = 1024
     #: Hard failures (connection/auth/status/bad-request/unexpected) seen since
     #: the last reset. The target resets this before each run and aborts the run
-    #: if it is non-empty afterwards. This is process-global, so it is per-run
-    #: safe only with a single in-process ASB Controller (the target's
-    #: serial-by-design model, ASSUMPTIONS G.1); two concurrently-gathered ASB
-    #: Controllers would race on it (run ASB threat models sequentially).
+    #: if it is non-empty afterwards.
     failures: list[str] = field(default_factory=list)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
+
+    def record_failure(self, message: str) -> None:
+        """Record one hard failure (called from the scheduler thread)."""
+        with self._lock:
+            self.failures.append(message)
+
+    def reset_failures(self) -> None:
+        """Clear the recorded hard failures (called before a run)."""
+        with self._lock:
+            self.failures.clear()
+
+    def take_failures(self) -> list[str]:
+        """Return and clear the recorded hard failures (called after a run)."""
+        with self._lock:
+            failures = list(self.failures)
+            self.failures.clear()
+            return failures
 
 
-#: Process-wide proxy configuration, set by the target before the kernel builds.
-PROXY_CONFIG = _ProxyConfig()
+#: Backwards-compatible alias for the pre-per-instance name.
+_ProxyConfig = ProxyConfig
+
+#: Fallback configuration for a :class:`ProxyLLM` built without one (e.g. via
+#: ``MODEL_REGISTRY``). The superred target always supplies its own, so this is
+#: only reached by code that constructs an ``LLMKernel`` directly.
+PROXY_CONFIG = ProxyConfig()
 
 
 def configure_proxy(
@@ -66,24 +95,27 @@ def configure_proxy(
     api_key: str | None,
     request_delay_seconds: float = 2.0,
     max_output_tokens: int = 1024,
+    config: ProxyConfig | None = None,
 ) -> None:
-    """Set the proxy credentials, inter-call delay, and output-token cap."""
-    PROXY_CONFIG.api_base = api_base
-    PROXY_CONFIG.api_key = api_key
-    PROXY_CONFIG.request_delay_seconds = request_delay_seconds
-    PROXY_CONFIG.max_output_tokens = max_output_tokens
+    """Set the proxy credentials, inter-call delay, and output-token cap.
+
+    Applies to *config* when given, otherwise to the module fallback.
+    """
+    target = config if config is not None else PROXY_CONFIG
+    target.api_base = api_base
+    target.api_key = api_key
+    target.request_delay_seconds = request_delay_seconds
+    target.max_output_tokens = max_output_tokens
 
 
-def reset_failures() -> None:
+def reset_failures(config: ProxyConfig | None = None) -> None:
     """Clear the recorded hard-failure list (called by the target before a run)."""
-    PROXY_CONFIG.failures.clear()
+    (config if config is not None else PROXY_CONFIG).reset_failures()
 
 
-def take_failures() -> list[str]:
+def take_failures(config: ProxyConfig | None = None) -> list[str]:
     """Return and clear the recorded hard failures (called after a run)."""
-    failures = list(PROXY_CONFIG.failures)
-    PROXY_CONFIG.failures.clear()
-    return failures
+    return (config if config is not None else PROXY_CONFIG).take_failures()
 
 
 def register_proxy_model(model_name: str) -> None:
@@ -114,14 +146,36 @@ def _normalize_tools(tools: list) -> list:
 
 
 class ProxyLLM(GPTLLM):  # type: ignore[misc]  # GPTLLM is Any (vendored, untyped)
-    """GPTLLM variant that talks to the litellm proxy for any model id."""
+    """GPTLLM variant that talks to the litellm proxy for any model id.
+
+    Its :class:`ProxyConfig` is bound to the INSTANCE, so two of these can be
+    alive at once with different credentials, pacing and failure records.
+    """
+
+    def __init__(
+        self,
+        llm_name: str,
+        max_gpu_memory: dict[str, Any] | None = None,
+        eval_device: str | None = None,
+        max_new_tokens: int = 1024,
+        log_mode: str = "console",
+        config: ProxyConfig | None = None,
+    ) -> None:
+        # BaseLLM.__init__ calls load_llm_and_tokenizer(), which needs the
+        # config, so bind it BEFORE delegating.
+        self.config = config if config is not None else PROXY_CONFIG
+        super().__init__(llm_name, max_gpu_memory, eval_device, max_new_tokens, log_mode)
+
+    def record_scheduler_failure(self, message: str) -> None:
+        """Record a failure raised outside :meth:`process` (scheduler hook)."""
+        self.config.record_failure(message)
 
     def load_llm_and_tokenizer(self) -> None:
         kwargs: dict[str, Any] = {}
-        if PROXY_CONFIG.api_base:
-            kwargs["base_url"] = PROXY_CONFIG.api_base
-        if PROXY_CONFIG.api_key:
-            kwargs["api_key"] = PROXY_CONFIG.api_key
+        if self.config.api_base:
+            kwargs["base_url"] = self.config.api_base
+        if self.config.api_key:
+            kwargs["api_key"] = self.config.api_key
         self.model = OpenAI(**kwargs)
         self.tokenizer = None
 
@@ -136,8 +190,8 @@ class ProxyLLM(GPTLLM):  # type: ignore[misc]  # GPTLLM is Any (vendored, untype
             f"{agent_process.agent_name} is switched to executing.\n",
             level="executing",
         )
-        if PROXY_CONFIG.request_delay_seconds:
-            time.sleep(PROXY_CONFIG.request_delay_seconds)
+        if self.config.request_delay_seconds:
+            time.sleep(self.config.request_delay_seconds)
         # The compat gateway strictly validates `tools`: a null value is rejected
         # ("JSON schema ... expected: 'array'"), unlike the real OpenAI API which
         # tolerates tools=None. ASB passes tools=None on non-tool turns (react agent:
@@ -146,7 +200,7 @@ class ProxyLLM(GPTLLM):  # type: ignore[misc]  # GPTLLM is Any (vendored, untype
         create_kwargs: dict[str, Any] = dict(
             model=self.model_name,
             messages=messages,
-            max_tokens=PROXY_CONFIG.max_output_tokens,
+            max_tokens=self.config.max_output_tokens,
             seed=0,
             temperature=temperature,
         )
@@ -170,10 +224,10 @@ class ProxyLLM(GPTLLM):  # type: ignore[misc]  # GPTLLM is Any (vendored, untype
         ) as e:
             # Dead / misconfigured endpoint: record a hard failure (the target
             # aborts the run) and put only a neutral marker in the transcript.
-            PROXY_CONFIG.failures.append(f"{type(e).__name__}: {e}")
+            self.config.record_failure(f"{type(e).__name__}: {e}")
             agent_process.set_response(Response(response_message=PROXY_ERROR_MARKER))
         except Exception as e:  # noqa: BLE001 - mirror upstream catch-all, but loud
-            PROXY_CONFIG.failures.append(f"{type(e).__name__}: {e}")
+            self.config.record_failure(f"{type(e).__name__}: {e}")
             agent_process.set_response(Response(response_message=PROXY_ERROR_MARKER))
         agent_process.set_status("done")
         agent_process.set_end_time(time.time())
@@ -181,6 +235,7 @@ class ProxyLLM(GPTLLM):  # type: ignore[misc]  # GPTLLM is Any (vendored, untype
 
 __all__ = [
     "ProxyLLM",
+    "ProxyConfig",
     "PROXY_CONFIG",
     "PROXY_ERROR_MARKER",
     "configure_proxy",
