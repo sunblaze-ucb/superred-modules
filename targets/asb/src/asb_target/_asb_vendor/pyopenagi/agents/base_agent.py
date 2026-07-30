@@ -47,11 +47,9 @@ class BaseAgent:
 
         self.agent_process_factory = agent_process_factory
 
-        # superred port: the queue this agent submits LLM requests to. Defaults
-        # to the shared queue (upstream behaviour); the superred runtime
-        # replaces it with its own so several runtimes can coexist in one
-        # process without their requests being answered by each other's kernel.
-        self.llm_request_queue = LLMRequestQueue.default()
+        # superred port: the queue this agent submits LLM requests to, set by
+        # the owning runtime so only that runtime's scheduler serves them.
+        self.llm_request_queue = None
 
         self.tool_list = dict()
         self.tools = []

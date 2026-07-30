@@ -34,7 +34,6 @@ ensure_vendor_on_path()
 
 import openai  # noqa: E402  (vendored path must be set first)
 from aios.llm_core.llm_classes.gpt_llm import GPTLLM  # noqa: E402
-from aios.llm_core.llm_classes.model_registry import MODEL_REGISTRY  # noqa: E402
 from openai import OpenAI  # noqa: E402
 from pyopenagi.utils.chat_template import Response  # noqa: E402
 
@@ -87,49 +86,6 @@ class ProxyConfig:
             return failures
 
 
-#: Backwards-compatible alias for the pre-per-instance name.
-_ProxyConfig = ProxyConfig
-
-#: Fallback configuration for a :class:`ProxyLLM` built without one (e.g. via
-#: ``MODEL_REGISTRY``). The superred target always supplies its own, so this is
-#: only reached by code that constructs an ``LLMKernel`` directly.
-PROXY_CONFIG = ProxyConfig()
-
-
-def configure_proxy(
-    *,
-    api_base: str | None,
-    api_key: str | None,
-    request_delay_seconds: float = 2.0,
-    max_output_tokens: int = 1024,
-    config: ProxyConfig | None = None,
-) -> None:
-    """Set the proxy credentials, inter-call delay, and output-token cap.
-
-    Applies to *config* when given, otherwise to the module fallback.
-    """
-    target = config if config is not None else PROXY_CONFIG
-    target.api_base = api_base
-    target.api_key = api_key
-    target.request_delay_seconds = request_delay_seconds
-    target.max_output_tokens = max_output_tokens
-
-
-def reset_failures(config: ProxyConfig | None = None) -> None:
-    """Clear the recorded hard-failure list (called by the target before a run)."""
-    (config if config is not None else PROXY_CONFIG).reset_failures()
-
-
-def take_failures(config: ProxyConfig | None = None) -> list[str]:
-    """Return and clear the recorded hard failures (called after a run)."""
-    return (config if config is not None else PROXY_CONFIG).take_failures()
-
-
-def register_proxy_model(model_name: str) -> None:
-    """Route *model_name* through :class:`ProxyLLM` in the kernel registry."""
-    MODEL_REGISTRY[model_name] = ProxyLLM
-
-
 def _normalize_tools(tools: list) -> list:
     """Coerce ASB tool schemas to what the compat gateway strictly requires.
 
@@ -159,23 +115,12 @@ class ProxyLLM(GPTLLM):  # type: ignore[misc]  # GPTLLM is Any (vendored, untype
     alive at once with different credentials, pacing and failure records.
     """
 
-    def __init__(
-        self,
-        llm_name: str,
-        max_gpu_memory: dict[str, Any] | None = None,
-        eval_device: str | None = None,
-        max_new_tokens: int = 1024,
-        log_mode: str = "console",
-        config: ProxyConfig | None = None,
-    ) -> None:
+    def __init__(self, llm_name: str, config: ProxyConfig, log_mode: str = "console") -> None:
         # BaseLLM.__init__ calls load_llm_and_tokenizer(), which needs the
-        # config, so bind it BEFORE delegating.
-        self.config = config if config is not None else PROXY_CONFIG
-        super().__init__(llm_name, max_gpu_memory, eval_device, max_new_tokens, log_mode)
-
-    def record_scheduler_failure(self, message: str) -> None:
-        """Record a failure raised outside :meth:`process` (scheduler hook)."""
-        self.config.record_failure(message)
+        # config, so bind it BEFORE delegating. The local-model arguments
+        # GPTLLM accepts are unused here (every model is served over HTTP).
+        self.config = config
+        super().__init__(llm_name, None, None, 1024, log_mode)
 
     def load_llm_and_tokenizer(self) -> None:
         kwargs: dict[str, Any] = {}
@@ -249,10 +194,5 @@ class ProxyLLM(GPTLLM):  # type: ignore[misc]  # GPTLLM is Any (vendored, untype
 __all__ = [
     "ProxyLLM",
     "ProxyConfig",
-    "PROXY_CONFIG",
     "PROXY_ERROR_MARKER",
-    "configure_proxy",
-    "reset_failures",
-    "take_failures",
-    "register_proxy_model",
 ]

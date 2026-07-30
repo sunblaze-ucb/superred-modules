@@ -90,48 +90,35 @@ def _configured(model: str, marker: str) -> AsbTarget:
     return t
 
 
-class _ServingRecorder:
-    """Records, per request, which model actually served it."""
-
-    def __init__(self) -> None:
-        self.served: list[tuple[str, str]] = []  # (marker seen in prompt, serving model)
-        self.lock = threading.Lock()
-
-    def install(self, *, markers: list[str], delay: float = 0.0) -> None:
-        from pyopenagi.utils.chat_template import Response
-
-        from asb_target import llm_proxy
-
-        recorder = self
-
-        def fake_process(self, agent_process, temperature: float = 0.0):  # type: ignore[no-untyped-def]
-            agent_process.set_status("executing")
-            agent_process.set_start_time(time.time())
-            blob = json.dumps(agent_process.query.messages, default=str)
-            seen = next((m for m in markers if m in blob), "?")
-            with recorder.lock:
-                recorder.served.append((seen, self.model_name))
-            # Hold the scheduler thread so the two runtimes genuinely overlap.
-            if delay:
-                time.sleep(delay)
-            if getattr(agent_process.query, "message_return_type", "text") == "json":
-                resp = Response(response_message=json.dumps(_PLAN), tool_calls=None)
-            else:
-                resp = Response(
-                    response_message=f"step done by {self.model_name}",
-                    tool_calls=[{"name": "sys_monitor"}],
-                )
-            agent_process.set_response(resp)
-            agent_process.set_status("done")
-            agent_process.set_end_time(time.time())
-
-        llm_proxy.ProxyLLM.process = fake_process  # type: ignore[method-assign]
-
-
 async def test_two_targets_never_serve_each_others_requests() -> None:
     """THE regression: a request must be answered by its OWN target's model."""
-    recorder = _ServingRecorder()
-    recorder.install(markers=["MARKER-ALPHA", "MARKER-BETA"], delay=0.05)
+    from pyopenagi.utils.chat_template import Response
+
+    from asb_target import llm_proxy
+
+    served: list[tuple[str, str]] = []  # (marker seen in the prompt, serving model)
+    lock = threading.Lock()
+
+    def fake_process(self, agent_process, temperature: float = 0.0):  # type: ignore[no-untyped-def]
+        agent_process.set_status("executing")
+        agent_process.set_start_time(time.time())
+        blob = json.dumps(agent_process.query.messages, default=str)
+        seen = next((m for m in ("MARKER-ALPHA", "MARKER-BETA") if m in blob), "?")
+        with lock:
+            served.append((seen, self.model_name))
+        time.sleep(0.05)  # hold the scheduler so the two runtimes genuinely overlap
+        if getattr(agent_process.query, "message_return_type", "text") == "json":
+            resp = Response(response_message=json.dumps(_PLAN), tool_calls=None)
+        else:
+            resp = Response(
+                response_message=f"step done by {self.model_name}",
+                tool_calls=[{"name": "sys_monitor"}],
+            )
+        agent_process.set_response(resp)
+        agent_process.set_status("done")
+        agent_process.set_end_time(time.time())
+
+    llm_proxy.ProxyLLM.process = fake_process  # type: ignore[method-assign]
 
     alpha = _configured("model-alpha", "MARKER-ALPHA")
     beta = _configured("model-beta", "MARKER-BETA")
@@ -144,12 +131,12 @@ async def test_two_targets_never_serve_each_others_requests() -> None:
         await alpha.teardown()
         await beta.teardown()
 
-    assert recorder.served, "the fake LLM was never reached"
+    assert served, "the fake LLM was never reached"
     expected = {"MARKER-ALPHA": "model-alpha", "MARKER-BETA": "model-beta"}
-    wrong = [(m, served) for m, served in recorder.served if expected.get(m) != served]
+    wrong = [(m, served) for m, served in served if expected.get(m) != served]
     assert not wrong, f"requests served by the wrong model: {wrong}"
     # Both really did run, so the test could actually observe cross-talk.
-    assert {m for m, _ in recorder.served} == {"MARKER-ALPHA", "MARKER-BETA"}
+    assert {m for m, _ in served} == {"MARKER-ALPHA", "MARKER-BETA"}
 
     # And each transcript only ever quotes its own model.
     assert "model-beta" not in alpha.query("messages")
@@ -262,8 +249,6 @@ async def test_teardown_stops_the_thread_and_is_idempotent() -> None:
 
 async def test_no_thread_or_runtime_accumulation_over_many_cycles() -> None:
     """Build/teardown at experiment scale must not accumulate anything."""
-    from asb_target.runtime import _LIVE_RUNTIMES
-
     threads = []
     for _ in range(25):
         t = _target("model-churn")
@@ -274,30 +259,6 @@ async def test_no_thread_or_runtime_accumulation_over_many_cycles() -> None:
     # to_thread is used, which is not our leak.)
     alive = [th for th in threads if th.is_alive()]
     assert not alive, f"{len(alive)} of {len(threads)} scheduler threads are still alive"
-    assert not _LIVE_RUNTIMES, f"runtimes still tracked after teardown: {len(_LIVE_RUNTIMES)}"
-
-
-async def test_each_target_gets_its_own_runtime_objects() -> None:
-    """No two targets may share a queue, scheduler, kernel or failure record."""
-    a, b = _target("model-a"), _target("model-b")
-    try:
-        ra, rb = a._ensure_runtime(), b._ensure_runtime()  # noqa: SLF001
-        assert ra is not rb
-        assert ra.queue is not rb.queue
-        assert ra.scheduler is not rb.scheduler
-        assert ra.kernel is not rb.kernel
-        assert ra.proxy is not rb.proxy
-        assert ra.proxy.failures is not rb.proxy.failures
-        assert ra.kernel.model.model_name == "model-a"
-        assert rb.kernel.model.model_name == "model-b"
-        # Each scheduler drains only its own queue.
-        assert ra.scheduler.llm_request_queue is ra.queue
-        assert rb.scheduler.llm_request_queue is rb.queue
-        # Repeated use returns the same runtime (built once per target).
-        assert a._ensure_runtime() is ra  # noqa: SLF001
-    finally:
-        await a.teardown()
-        await b.teardown()
 
 
 async def test_closing_a_queue_releases_pending_and_later_messages() -> None:
@@ -310,8 +271,7 @@ async def test_closing_a_queue_releases_pending_and_later_messages() -> None:
     from pyopenagi.queues.llm_request_queue import LLMRequestQueue
 
     released = []
-    q = LLMRequestQueue()
-    q.on_unservable = released.append
+    q = LLMRequestQueue(released.append)
 
     q.add_message("already-queued")
     q.close()

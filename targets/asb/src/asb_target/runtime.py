@@ -27,11 +27,9 @@ runtime). See ``ASSUMPTIONS.md``.
 
 from __future__ import annotations
 
-import atexit
 import copy
 import json
 import re
-import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -56,12 +54,7 @@ from asb_target.controllables import (
     opi_tool_observation_ctrl,
     tool_catalogue_call_ctrl,
 )
-from asb_target.llm_proxy import (
-    PROXY_ERROR_MARKER,
-    ProxyConfig,
-    ProxyLLM,
-    register_proxy_model,
-)
+from asb_target.llm_proxy import PROXY_ERROR_MARKER, ProxyConfig, ProxyLLM
 from asb_target.memory_store import MemoryStore
 from asb_target.observables import (
     agent_model_output_observable,
@@ -172,17 +165,8 @@ class _Kernel:
     def address_request(self, agent_process: Any, temperature: float = 0.0) -> None:
         self.model.address_request(agent_process, temperature)
 
-    def address_request_list(self, agent_process: Any, temperature: float = 0.0) -> None:
-        self.model.address_request_list(agent_process, temperature)
 
-    def record_scheduler_failure(self, message: str) -> None:
-        """Forward a scheduler-level failure to the LLM's failure record."""
-        recorder = getattr(self.model, "record_scheduler_failure", None)
-        if callable(recorder):
-            recorder(message)
-
-
-@dataclass(eq=False)  # identity semantics: runtimes are held in a set
+@dataclass
 class AsbRuntime:
     """One ASB execution context: a queue, a scheduler thread, a kernel.
 
@@ -215,8 +199,6 @@ class AsbRuntime:
         if self._stopped:
             return
         self._stopped = True
-        with _LIVE_RUNTIMES_LOCK:
-            _LIVE_RUNTIMES.discard(self)
         try:
             self.scheduler.stop(timeout=_SCHEDULER_JOIN_TIMEOUT_S)
         except Exception:  # noqa: BLE001 - best-effort teardown
@@ -231,10 +213,6 @@ class AsbRuntime:
 #: request is in flight, which cannot be interrupted; the thread is a daemon and
 #: exits by itself once that call returns. Waiting longer would stall the slot.
 _SCHEDULER_JOIN_TIMEOUT_S = 5.0
-
-#: Live runtimes, so process exit can stop any the owner failed to.
-_LIVE_RUNTIMES: set[AsbRuntime] = set()
-_LIVE_RUNTIMES_LOCK = threading.Lock()
 
 
 def _release_stranded_request(proxy: ProxyConfig) -> Callable[[Any], None]:
@@ -283,19 +261,12 @@ def new_asb_runtime(
         request_delay_seconds=request_delay_seconds,
         max_output_tokens=max_output_tokens,
     )
-    # Keep the registry entry so anything that still builds an LLMKernel
-    # directly resolves this model to ProxyLLM (idempotent: always this class).
-    register_proxy_model(model)
     kernel = _Kernel(ProxyLLM(llm_name=model, log_mode="console", config=proxy))
-    queue = LLMRequestQueue()
-    queue.on_unservable = _release_stranded_request(proxy)
+    queue = LLMRequestQueue(_release_stranded_request(proxy))
     scheduler = FIFOScheduler(llm=kernel, log_mode="console", llm_request_queue=queue)
     scheduler.thread.daemon = True  # never block process exit on the scheduler
     scheduler.start()
-    runtime = AsbRuntime(model=model, kernel=kernel, scheduler=scheduler, queue=queue, proxy=proxy)
-    with _LIVE_RUNTIMES_LOCK:
-        _LIVE_RUNTIMES.add(runtime)
-    return runtime
+    return AsbRuntime(model=model, kernel=kernel, scheduler=scheduler, queue=queue, proxy=proxy)
 
 
 def new_agent_process_factory() -> Any:
@@ -310,15 +281,6 @@ def new_agent_process_factory() -> Any:
     which scheduler serves it.
     """
     return AgentProcessFactory()
-
-
-@atexit.register
-def _stop_all_runtimes() -> None:  # pragma: no cover - process teardown
-    """Stop any runtime whose owner did not tear it down."""
-    with _LIVE_RUNTIMES_LOCK:
-        runtimes = list(_LIVE_RUNTIMES)
-    for runtime in runtimes:
-        runtime.stop()
 
 
 # ---------------------------------------------------------------------------
