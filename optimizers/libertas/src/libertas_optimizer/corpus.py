@@ -60,8 +60,15 @@ GOAL_MARKERS: tuple[str, ...] = tuple(
             "{user_input/query}",
             "{user_input}",
             "{𝔲𝔰𝔢𝔯_𝓺𝓾𝓮𝓻𝔂}",
+            "(insert-your-query-here)",
+            "[*insert-prompt-here*]",
+            "[*insert-your-encoded-prompt-here*]",
+            "[*insert-your-prompt-here*]",
+            "[Z]",
             "<VARIABLE Z = ________>",
+            "<|user-query|>",
             "<user_query>",
+            "{INPUT}",
         },
         key=len,
         reverse=True,
@@ -136,6 +143,17 @@ _SOURCE_HEADING_LEVELS: dict[str, tuple[int, ...]] = {
     "NVIDIA.mkd": (2,),
     "PERPLEXITY.mkd": (2,),
 }
+
+_GOAL_ASSIGNMENT_PATTERN = re.compile(
+    r"(?:(?P<braced_z>\{Z\})[ \t]*[=:]|"
+    r"(?P<other_z><VARIABLE Z|\{Variable Z\}|[Vv]ariable[ \t]+Z|(?<![\w}])Z)"
+    r"[ \t]*=)[ \t]*"
+)
+_PREDICTIVE_REASONING_SLOT = "<VARIABLE Z = ________>"
+# This file concatenates many heavily obfuscated payloads without parseable
+# prompt boundaries. A coincidental plain ``Z=`` must not make the entire file
+# one runnable prompt.
+_ASSIGNMENT_INFERENCE_EXCLUDED_SOURCES = frozenset({"GROK-MEGA.mkd"})
 
 
 def _heading_pattern(source_file: str) -> re.Pattern[str]:
@@ -300,11 +318,20 @@ def _split_source(source_file: str) -> tuple[PromptTemplate, ...]:
     for section_index, heading, body in sections:
         body_bytes = body.encode("utf-8")
         digest = hashlib.sha256(body_bytes).hexdigest()
-        markers = tuple(
+        direct_markers = tuple(
             marker
             for marker in GOAL_MARKERS
             if marker in body and not (marker == "<user_query>" and "</user_query>" in body)
         )
+        assignment_markers = (
+            ()
+            if source_file in _ASSIGNMENT_INFERENCE_EXCLUDED_SOURCES
+            else tuple(
+                match.group("braced_z") or match.group("other_z")
+                for match in _GOAL_ASSIGNMENT_PATTERN.finditer(body)
+            )
+        )
+        markers = tuple(dict.fromkeys((*direct_markers, *assignment_markers)))
         templates.append(
             PromptTemplate(
                 id=_template_id(source_file, section_index, digest),
@@ -370,8 +397,30 @@ def render_prompt(
     """Insert a goal while preserving every other upstream code point."""
 
     if template.goal_markers:
-        marker_pattern = re.compile("|".join(re.escape(marker) for marker in template.goal_markers))
-        return marker_pattern.sub(lambda _match: goal, template.raw_template)
+        if _PREDICTIVE_REASONING_SLOT in template.goal_markers:
+            replacement = f"<VARIABLE Z = {goal}>"
+            return template.raw_template.replace(_PREDICTIVE_REASONING_SLOT, replacement)
+
+        assignment = _last_goal_assignment(template.raw_template)
+        if assignment is not None:
+            value_start, value_end = assignment
+            return (
+                template.raw_template[:value_start]
+                + goal
+                + template.raw_template[value_end:]
+            )
+
+        if "{Z}" in template.goal_markers:
+            # A standalone ``{Z}`` can be a direct slot, but when an explicit
+            # user-input marker is also present it supplies the value and
+            # ``{Z}`` remains a reference.
+            direct_markers = tuple(
+                marker for marker in template.goal_markers if marker != "{Z}"
+            )
+            if direct_markers:
+                return _replace_markers_once(template.raw_template, direct_markers, goal)
+
+        return _replace_markers_once(template.raw_template, template.goal_markers, goal)
 
     if not append_untemplated:
         raise ValueError(
@@ -381,6 +430,80 @@ def render_prompt(
 
     separator = "" if template.raw_template.endswith(("\n", "\r")) else "\n"
     return f"{template.raw_template}{separator}{goal}"
+
+
+def _replace_markers_once(text: str, markers: tuple[str, ...], goal: str) -> str:
+    """Replace exact direct-input markers without rewriting marker text in the goal."""
+
+    marker_pattern = re.compile("|".join(re.escape(marker) for marker in markers))
+    return marker_pattern.sub(lambda _match: goal, text)
+
+
+def _last_goal_assignment(text: str) -> tuple[int, int] | None:
+    """Return the value span of the final upstream variable-Z assignment.
+
+    L1B3RT4S uses ``{Z}`` as an indirection variable. Earlier occurrences
+    explain how the prompt should use that variable; the final assignment is
+    the copy/paste input surface. The corpus also spells that variable as
+    ``{Variable Z}``, ``variable Z``, or plain ``Z``. Upstream represents its
+    value with braced, parenthesized, bracketed, plain, and occasionally blank
+    or unbalanced examples, so the boundary logic deliberately mirrors those
+    observed forms.
+    """
+
+    matches = tuple(_GOAL_ASSIGNMENT_PATTERN.finditer(text))
+    if not matches:
+        return None
+
+    final_match = matches[-1]
+    value_start = final_match.end()
+    if value_start == len(text) or text[value_start] in "\r\n":
+        return value_start, value_start
+
+    if final_match.group("other_z") == "<VARIABLE Z":
+        closing_angle = text.find(">", value_start)
+        if closing_angle >= 0:
+            return value_start, closing_angle
+
+    opener = text[value_start]
+    closer = {"{": "}", "(": ")", "[": "]"}.get(opener)
+    if closer is not None:
+        value_end = _balanced_value_end(text, value_start, opener, closer)
+        if value_end is not None:
+            return value_start, value_end
+
+    # A few pinned entries have malformed parentheses/braces. Their final
+    # assignment still occupies one physical line before an output sentinel.
+    line_ends = [
+        index
+        for separator in ("\r", "\n")
+        if (index := text.find(separator, value_start)) >= 0
+    ]
+    for sentinel in ("[START", "<START", "<|/START"):
+        sentinel_index = text.find(sentinel, value_start + 1)
+        if sentinel_index >= 0:
+            line_ends.append(sentinel_index)
+    return value_start, min(line_ends, default=len(text))
+
+
+def _balanced_value_end(
+    text: str,
+    start: int,
+    opener: str,
+    closer: str,
+) -> int | None:
+    """Return one past a balanced delimited value, or ``None`` if malformed."""
+
+    depth = 0
+    for index in range(start, len(text)):
+        character = text[index]
+        if character == opener:
+            depth += 1
+        elif character == closer:
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    return None
 
 
 _PROVIDER_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (

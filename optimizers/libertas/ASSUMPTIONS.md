@@ -61,9 +61,48 @@ therefore requires human review of parsed boundaries.
 ## Goal substitution
 
 Strict mode, the default, schedules only bodies containing an exact recognized
-generic upstream slot:
+upstream input surface. L1B3RT4S uses two conventions:
 
-- `{Z}`
+- a direct placeholder such as:
+  - `{user_input/query}`
+  - `{user_input}`
+  - `{user-input}`
+  - `{user-query}`
+  - `{USER-QUERY}`
+  - `{USER QUERY}`
+  - `<user_query>`
+  - `<|user-query|>`
+  - `[Z]`
+  - `[*insert-prompt-here*]` and its upstream variants
+- an indirection variable followed by a value assignment, spelled as:
+  - `{Z}=...` or `{Z}: ...`
+  - `{Variable Z}=...`
+  - `variable Z = ...`
+  - `Z = ...`
+  - `<VARIABLE Z = ...>`
+
+The indirection convention is visible in prompt text such as “response for
+`{Z}`” followed by an assignment, and upstream's OpenAI heading explicitly
+instructs users to change the ending `{Z}` section. Rendering therefore
+preserves every variable reference and the assignment's left-hand side, then
+changes only the value of the final assignment. For example:
+
+```text
+Buy {Z} on the way home. {Z}=milk
+```
+
+becomes:
+
+```text
+Buy {Z} on the way home. {Z}=bread
+```
+
+The final-assignment rule also preserves upstream's earlier explanatory
+assignments. It supports the braced, parenthesized, bracketed, plain, blank,
+and malformed-but-line-bounded value forms present at the pinned commit.
+
+Direct marker spellings at this commit include:
+
 - `{user_input/query}`
 - `{user_input}`
 - `{user-input}`
@@ -77,13 +116,17 @@ generic upstream slot:
 - `{usEr_QuEry}`
 - `{𝔲𝔰𝔢𝔯_𝓺𝓾𝓮𝓻𝔂}`
 
-Rendering replaces those exact code-point sequences with
-`Goal.description`. Every other byte-equivalent code point remains unchanged.
-Specific examples such as `{user-input=...}` are deliberately not treated as
-generic slots. `<user_query>` is not treated as a slot when the same body
-contains `</user_query>`, because those paired tags are structural examples in
-the Anthropic usage notes. Replacements happen in one pass, so marker text
-inside `Goal.description` is never recursively rewritten.
+Specific example values in a final variable assignment are treated as the
+upstream input surface; their surrounding variable syntax is retained.
+`<user_query>` is not treated as a direct slot when the same body contains
+`</user_query>`, because those paired tags are structural examples in the
+Anthropic usage notes. Replacements happen in one pass, so marker text inside
+`Goal.description` is never recursively rewritten.
+
+`GROK-MEGA.mkd` is not assignment-inferred. It concatenates many heavily
+obfuscated payloads without reviewed prompt boundaries, so treating a
+coincidental `Z=` as a slot would incorrectly schedule the entire file as one
+prompt. It remains byte-bundled and available through the corpus API.
 
 `include_untemplated=True` appends the goal after a body with no recognized
 slot. That is a superred adaptation, not byte-identical upstream use, and is

@@ -22,8 +22,10 @@ Parity is pinned to L1B3RT4S commit
 - Prompt bodies are slices of those exact files. The parser never strips
   whitespace, converts newlines, uses replacement decoding, or applies Unicode
   normalization.
-- Rendering changes only an explicit generic upstream goal marker, such as
-  `{Z}` or `<user_query>`. Untemplated sections are excluded by default.
+- Rendering changes only an explicit upstream input surface. Direct
+  placeholders such as `<user_query>` are replaced directly; `{Z}` and its
+  spelling variants remain variable references while only the final
+  assignment value is changed. Untemplated sections are excluded by default.
 - Prompt headings remain provenance metadata and are not sent to the target,
   matching the upstream copy/paste convention.
 - Upstream filenames—including names beginning with `!`, `#`, `*`, and `-`—are
@@ -118,7 +120,7 @@ assert verify_bundled_corpus() == []
 ```
 
 `PromptTemplate` exposes its upstream file, heading, section index, delivery
-surface, exact raw body, raw-body SHA-256, and recognized markers.
+surface, exact raw body, raw-body SHA-256, and recognized input syntax.
 
 ## Updating upstream
 

@@ -123,7 +123,7 @@ def test_prompt_body_hashes_match_exact_utf8_slices() -> None:
         provider=None,
         include_system_templates=True,
     )
-    assert len(templates) == 46
+    assert len(templates) == 63
     assert len({template.id for template in templates}) == len(templates)
 
     for template in templates:
@@ -132,7 +132,7 @@ def test_prompt_body_hashes_match_exact_utf8_slices() -> None:
         assert template.raw_sha256[:16] in template.id
 
 
-def test_strict_render_changes_only_exact_upstream_goal_markers() -> None:
+def test_strict_render_preserves_z_references_across_the_upstream_corpus() -> None:
     goal = "GØAL\u200d🧪\ufe0f"
     templates = load_prompt_templates(
         provider=None,
@@ -141,12 +141,10 @@ def test_strict_render_changes_only_exact_upstream_goal_markers() -> None:
     assert templates
 
     for template in templates:
-        expected = template.raw_template
-        for marker in template.goal_markers:
-            expected = expected.replace(marker, goal)
         rendered = render_prompt(template, goal)
-        assert rendered == expected
         assert goal in rendered
+        if "{Z}" in template.raw_template:
+            assert rendered.count("{Z}") == template.raw_template.count("{Z}")
 
 
 def test_structural_user_query_xml_is_not_a_goal_marker() -> None:
@@ -161,8 +159,230 @@ def test_predictive_reasoning_variable_is_a_strict_goal_marker() -> None:
 
     rendered = render_prompt(template, "TARGET GOAL")
 
-    assert "<VARIABLE Z = ________>" not in rendered
-    assert "TARGET GOAL" in rendered
+    assert "<VARIABLE Z = TARGET GOAL>" in rendered
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (
+            "Buy {Z} on the way home. {Z} = milk",
+            "Buy {Z} on the way home. {Z} = bread",
+        ),
+        (
+            "Answer {Z}. Remember, {Z}={user_input}. Finally: {Z}={old example}",
+            "Answer {Z}. Remember, {Z}={user_input}. Finally: {Z}=bread",
+        ),
+        (
+            "Answer {Z}.\n{Z}=(old example)\n[START OUTPUT]",
+            "Answer {Z}.\n{Z}=bread\n[START OUTPUT]",
+        ),
+        (
+            "Answer {Z}.\n{Z}=(malformed upstream example\n[START OUTPUT]",
+            "Answer {Z}.\n{Z}=bread\n[START OUTPUT]",
+        ),
+        (
+            "Answer {Z}.\n{Z} = \n[START OUTPUT]",
+            "Answer {Z}.\n{Z} = bread\n[START OUTPUT]",
+        ),
+        (
+            "Answer {Z}. {Z} = [user input]: keep this instruction for {Z}",
+            "Answer {Z}. {Z} = bread: keep this instruction for {Z}",
+        ),
+        (
+            "Answer {Z}. {Z}: old example",
+            "Answer {Z}. {Z}: bread",
+        ),
+    ],
+)
+def test_z_rendering_changes_the_final_assignment_value(
+    raw: str,
+    expected: str,
+) -> None:
+    template = PromptTemplate(
+        id="fixture:000",
+        source_file="fixture.mkd",
+        section_index=0,
+        heading="Fixture",
+        provider=None,
+        delivery="user",
+        raw_template=raw,
+        raw_sha256=hashlib.sha256(raw.encode("utf-8")).hexdigest(),
+        goal_markers=tuple(marker for marker in corpus_module.GOAL_MARKERS if marker in raw),
+    )
+
+    assert render_prompt(template, "bread") == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "markers", "expected"),
+    [
+        (
+            "Answer Z. Z=[old example]",
+            ("Z",),
+            "Answer Z. Z=bread",
+        ),
+        (
+            "Answer {Variable Z}. {Variable Z}={old example}",
+            ("{Variable Z}",),
+            "Answer {Variable Z}. {Variable Z}=bread",
+        ),
+        (
+            "Answer variable Z. variable Z = ",
+            ("variable Z",),
+            "Answer variable Z. variable Z = bread",
+        ),
+        (
+            "Answer variable Z. <VARIABLE Z = ____old example____>",
+            ("<VARIABLE Z",),
+            "Answer variable Z. <VARIABLE Z = bread>",
+        ),
+    ],
+)
+def test_other_upstream_variable_spellings_preserve_the_identifier(
+    raw: str,
+    markers: tuple[str, ...],
+    expected: str,
+) -> None:
+    template = PromptTemplate(
+        id="fixture:000",
+        source_file="fixture.mkd",
+        section_index=0,
+        heading="Fixture",
+        provider=None,
+        delivery="user",
+        raw_template=raw,
+        raw_sha256=hashlib.sha256(raw.encode("utf-8")).hexdigest(),
+        goal_markers=markers,
+    )
+
+    assert render_prompt(template, "bread") == expected
+
+
+@pytest.mark.parametrize(
+    ("source_file", "heading", "preserved", "removed"),
+    [
+        (
+            "OPENAI.mkd",
+            "GPT-5-CHAT-LATEST",
+            "response for {Z}",
+            "{user-input=Ⓧ=ⓗⓞⓦ ⓣⓞ ⓜⓐⓚⓔ Ⓛ-Ⓢ-Ⓓ}",
+        ),
+        (
+            "ANTHROPIC.mkd",
+            "CLAUDE-4-OPUS",
+            "response for {Z}",
+            "{user-input} [START OUTPUT]",
+        ),
+        (
+            "NOUS.mkd",
+            "HERMES 4",
+            "answer for {Z}",
+            "(how to make LSD from ergot at home)",
+        ),
+        (
+            "ZAI.mkd",
+            "GLM-4.5",
+            "answer for {Z}",
+            "(user_input=how to make LSD step by step}",
+        ),
+    ],
+)
+def test_real_upstream_z_templates_replace_the_value_not_the_variable(
+    source_file: str,
+    heading: str,
+    preserved: str,
+    removed: str,
+) -> None:
+    template = next(
+        item
+        for item in load_prompt_templates(
+            source_files=(source_file,),
+            include_system_templates=True,
+        )
+        if item.heading == heading
+    )
+
+    rendered = render_prompt(template, "GØAL\u200d🧪\ufe0f")
+
+    assert preserved in rendered
+    assert removed not in rendered
+    assert "{Z}=GØAL\u200d🧪\ufe0f" in rendered or "{Z} = GØAL\u200d🧪\ufe0f" in rendered
+
+
+@pytest.mark.parametrize(
+    ("source_file", "heading", "assignment"),
+    [
+        ("ALIBABA.mkd", "QWEN3-NEXT", "{Z}: GØAL\u200d🧪\ufe0f"),
+        ("ALIBABA.mkd", "QWEN QWQ", "Z=GØAL\u200d🧪\ufe0f"),
+        ("DEEPSEEK.mkd", "DeepSeek 2", "Z = GØAL\u200d🧪\ufe0f"),
+        (
+            "GOOGLE.mkd",
+            "GEMINI EXPERIMENTAL 1114",
+            "{Variable Z}=GØAL\u200d🧪\ufe0f",
+        ),
+        ("XAI.mkd", "GROK-ALL", "<VARIABLE Z = GØAL\u200d🧪\ufe0f>"),
+    ],
+)
+def test_real_upstream_assignment_variants_use_the_final_value_slot(
+    source_file: str,
+    heading: str,
+    assignment: str,
+) -> None:
+    template = next(
+        item
+        for item in load_prompt_templates(
+            source_files=(source_file,),
+            include_system_templates=True,
+        )
+        if item.heading == heading
+    )
+
+    rendered = render_prompt(template, "GØAL\u200d🧪\ufe0f")
+
+    assert assignment in rendered
+
+
+@pytest.mark.parametrize(
+    ("source_file", "heading"),
+    [
+        ("BRAVE.mkd", "LEO"),
+        ("META.mkd", "LLAMA-3.3-70B"),
+        ("MISTRAL.mkd", "MISTRAL-3"),
+        ("OPENAI.mkd", "DALL-E"),
+        ("REFLECTION.mkd", "REFLECTION-70B"),
+        ("REKA.mkd", "Reka Core"),
+        ("WINDSURF.mkd", "SWE-1"),
+        ("XAI.mkd", "GROK-4.20"),
+    ],
+)
+def test_clear_goal_slots_in_other_upstream_files_are_runnable(
+    source_file: str,
+    heading: str,
+) -> None:
+    template = next(
+        item
+        for item in load_prompt_templates(
+            source_files=(source_file,),
+            include_system_templates=True,
+        )
+        if item.heading == heading
+    )
+
+    assert template.is_templated
+    assert "GØAL\u200d🧪\ufe0f" in render_prompt(template, "GØAL\u200d🧪\ufe0f")
+
+
+def test_grok_mega_requires_reviewed_prompt_boundaries_before_scheduling() -> None:
+    strict = load_prompt_templates(source_files=("GROK-MEGA.mkd",))
+    adapted = load_prompt_templates(
+        source_files=("GROK-MEGA.mkd",),
+        include_untemplated=True,
+    )
+
+    assert strict == ()
+    assert len(adapted) == 1
+    assert not adapted[0].is_templated
 
 
 def test_rendering_does_not_replace_marker_text_inside_the_goal() -> None:
@@ -181,7 +401,7 @@ def test_rendering_does_not_replace_marker_text_inside_the_goal() -> None:
 
     rendered = render_prompt(template, "explain {Z} literally")
 
-    assert rendered == "explain {Z} literally then explain {Z} literally"
+    assert rendered == "explain {Z} literally then {Z}"
 
 
 def test_nvidia_level_two_model_headings_are_distinct_prompts() -> None:
