@@ -61,7 +61,11 @@ packages = ["src/asb_target"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-addopts = "--strict-markers"
+# The live markers cost money and need credentials. They are deselected by
+# default so a plain `pytest` is always free and offline, even on a machine
+# that has LITELLM_API_KEY set (which anyone running the experiments does).
+# Select them explicitly with `pytest -m live`.
+addopts = "--strict-markers -m 'not live and not faithfulness_upstream'"
 testpaths = ["tests"]
 markers = [
     "faithfulness: offline faithfulness checks (no network)",

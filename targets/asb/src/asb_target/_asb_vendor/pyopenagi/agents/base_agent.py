@@ -47,6 +47,10 @@ class BaseAgent:
 
         self.agent_process_factory = agent_process_factory
 
+        # superred port: the queue this agent submits LLM requests to, set by
+        # the owning runtime so only that runtime's scheduler serves them.
+        self.llm_request_queue = None
+
         self.tool_list = dict()
         self.tools = []
         # self.load_tools(self.tool_names)
@@ -225,7 +229,7 @@ class BaseAgent:
             # reinitialize agent status
             agent_process.set_created_time(current_time)
             agent_process.set_response(None)
-            LLMRequestQueue.add_message(agent_process)
+            self.llm_request_queue.add_message(agent_process)
 
             thread.start()
             thread.join()

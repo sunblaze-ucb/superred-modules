@@ -6,7 +6,7 @@
 
 **Abstract.** This is a plan-then-execute agent designed to solve open-ended tasks by first generating a structured workflow plan in JSON format, then calling tools to execute that plan step-by-step. It is a faithful port of the Agent Security Bench (ASB) system, a published red-teaming benchmark for tool-using agents. The agent runs in a worker thread against an LLM proxy and exposes four separate injection surfaces where an attacker can compromise the agent's behavior, each aligned to a distinct trust boundary.
 
-**Specific.** The system implements `SuperredReactAgent`, a subclass of ASB's vendored `ReactAgentAttack`. It runs under a process-singleton scheduler (`FIFOScheduler`) that manages LLM requests through a global queue, routing all inference through a configurable litellm proxy (default: `gpt-4o-mini`). The agent operates across ten professional-domain scenarios, each with two simulated tools (twenty tools total). Four injection surfaces target: the user-input channel (Direct Prompt Injection / DPI), system scaffolding (Plan-of-Thought / PoT backdoor), tool observations (Observation Prompt Injection / OPI), and a durable memory store (Memory Poisoning / MP). The target performs no injection by default; with no attacker every run is clean and upstream-faithful.
+**Specific.** The system implements `SuperredReactAgent`, a subclass of ASB's vendored `ReactAgentAttack`. It runs under its own scheduler (`FIFOScheduler`) that manages LLM requests through its own queue, routing all inference through a configurable litellm proxy (default: `gpt-4o-mini`). The agent operates across ten professional-domain scenarios, each with two simulated tools (twenty tools total). Four injection surfaces target: the user-input channel (Direct Prompt Injection / DPI), system scaffolding (Plan-of-Thought / PoT backdoor), tool observations (Observation Prompt Injection / OPI), and a durable memory store (Memory Poisoning / MP). The target performs no injection by default; with no attacker every run is clean and upstream-faithful.
 
 **Examples.**
 - A financial-analyst agent receives a task like "Recommend a portfolio allocation" with tools `market_data_api` and `portfolio_manager`; DPI appends malicious instructions to the user task; PoT injects a false example plan; OPI corrupts what `market_data_api` returns; MP plants a prior workflow in the memory retrieval so the agent copies a bad pattern.
@@ -14,11 +14,11 @@
 
 ## 2. System Architecture
 
-**Abstract.** The target is built in layers: a process-singleton AIOS LLM kernel and scheduler (shared across all runs in a process), a per-run `SuperredReactAgent` instance that drives the planning and tool-calling loop in a worker thread, a durable in-process memory store that survives between runs, and an event-synchronization bridge that translates superred controllable injection into the agent's internal logic.
+**Abstract.** The target is built in layers: an AIOS LLM kernel and scheduler owned by this target, a per-run `SuperredReactAgent` instance that drives the planning and tool-calling loop in a worker thread, a durable in-process memory store that survives between runs, and an event-synchronization bridge that translates superred controllable injection into the agent's internal logic.
 
 **Specific.** The architecture has five key components:
 
-1. **Process-singleton kernel + scheduler** (`get_asb_runtime()` in `runtime.py`): Built once per process, this holds an `LLMKernel` (wrapping litellm) and a `FIFOScheduler` thread that drains a global `LLMRequestQueue`. The scheduler is a daemon thread stopped at process exit. If the model changes, the old scheduler is stopped and a new one started; otherwise it is reused. Target concurrency is locked to 1 since the scheduler is process-global.
+1. **Per-target kernel + scheduler** (`new_asb_runtime()` in `runtime.py`): Built on this target's first run, this holds a kernel (wrapping litellm) and a `FIFOScheduler` thread that drains this target's own `LLMRequestQueue`. The scheduler is a daemon thread, stopped when the target is torn down. Target concurrency is 1: one agent runs at a time within a target.
 
 2. **Event-to-injection bridge** (`await_event` callback): The agent runs in a worker thread and calls `await_event(ControllablePreCallEvent(...))` to fire an event on the asyncio loop and block for the attacker's response. A thread-safe `asyncio.run_coroutine_threadsafe` bridges the worker thread to the asyncio event loop, with a 180-second timeout.
 

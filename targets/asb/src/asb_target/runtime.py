@@ -1,11 +1,17 @@
-"""ASB runtime bridge: a process-singleton AIOS kernel/scheduler and an
-event-interposing agent subclass.
+"""ASB runtime bridge: a self-contained scheduler and an event-interposing
+agent subclass.
 
-ASB drives its agent through a process-global ``LLMRequestQueue`` consumed by
-a background ``FIFOScheduler`` thread, so there is one kernel/scheduler per
-process (the target is ``concurrency=1``). :func:`get_asb_runtime` lazily
-builds and starts that singleton; the LLM is routed through the litellm proxy
-via :mod:`asb_target.llm_proxy`.
+ASB drives its agent through an ``LLMRequestQueue`` consumed by a background
+``FIFOScheduler`` thread. Upstream that queue is a CLASS attribute and the LLM
+a process singleton, which makes two ASB runtimes in one process silently
+wrong: a queued request names no model, so whichever scheduler pops it answers
+with ITS model, and provider failures land in one shared list that cannot say
+which run they belong to. :class:`AsbRuntime` moves all of it (queue,
+scheduler, LLM, credentials, failure record) onto an instance, so a superred
+``AsbTarget`` owns exactly one and any number of targets run concurrently
+without interfering. :func:`new_asb_runtime` builds and starts one; the LLM is
+routed through the litellm proxy via :mod:`asb_target.llm_proxy`. See
+ASSUMPTIONS.md G.1.
 
 :class:`SuperredReactAgent` re-implements ASB's plan-then-execute ``run`` with
 the four injection sites driven by superred ``ControllablePreCallEvent`` s
@@ -21,11 +27,9 @@ runtime). See ``ASSUMPTIONS.md``.
 
 from __future__ import annotations
 
-import atexit
 import copy
 import json
 import re
-import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -50,7 +54,7 @@ from asb_target.controllables import (
     opi_tool_observation_ctrl,
     tool_catalogue_call_ctrl,
 )
-from asb_target.llm_proxy import configure_proxy, register_proxy_model
+from asb_target.llm_proxy import PROXY_ERROR_MARKER, ProxyConfig, ProxyLLM
 from asb_target.memory_store import MemoryStore
 from asb_target.observables import (
     agent_model_output_observable,
@@ -63,11 +67,11 @@ from asb_target.tool_boundary import tool_boundary_tag
 
 ensure_vendor_on_path()
 
-from aios.llm_core.llms import LLMKernel  # noqa: E402
 from aios.scheduler.fifo_scheduler import FIFOScheduler  # noqa: E402
 from pyopenagi.agents.agent_process import AgentProcessFactory  # noqa: E402
 from pyopenagi.agents.react_agent_attack import ReactAgentAttack  # noqa: E402
-from pyopenagi.utils.chat_template import Query  # noqa: E402
+from pyopenagi.queues.llm_request_queue import LLMRequestQueue  # noqa: E402
+from pyopenagi.utils.chat_template import Query, Response  # noqa: E402
 
 #: A response handler the agent (in a worker thread) calls to fire an event on
 #: the asyncio loop and block for the attacker's response.
@@ -138,15 +142,117 @@ class AsbArgs:
 
 
 # ---------------------------------------------------------------------------
-# Process-singleton kernel + scheduler (ASB's queue is global)
+# Per-instance runtime
 # ---------------------------------------------------------------------------
 
 
+
 @dataclass
-class _Runtime:
+class AsbRuntime:
+    """One ASB execution context: a queue, a scheduler thread, an LLM.
+
+    Every piece of state ASB used to keep on the process lives here instead,
+    so several runtimes can be alive at once (different models, different
+    credentials, independent failure records) without cross-talk. A superred
+    ``AsbTarget`` owns exactly one, built lazily on first run and stopped in
+    ``teardown``.
+    """
+
     model: str
-    kernel: Any
+    llm: Any
     scheduler: Any
+    queue: Any
+    proxy: ProxyConfig
+    _stopped: bool = False
+
+    def stop(self) -> None:
+        """Stop the scheduler and release anything still waiting. Idempotent.
+
+        Closing the queue is not optional cleanup, it is the safety property.
+        An ASB request has no timeout (``BaseAgent.listen`` spins until a
+        response appears), so a request left in a queue with no scheduler hangs
+        its caller forever. A run CAN outlive its scheduler: the agent executes
+        in a thread, ``asyncio`` cancellation does not stop threads, so a task
+        cancelled by a wall-clock cap keeps running while the controller tears
+        its target down. Closing releases that agent with a recorded failure
+        instead of stranding a thread for the life of the process.
+        """
+        if self._stopped:
+            return
+        self._stopped = True
+        try:
+            # Not scheduler.stop(): its join is unbounded, and a thread inside a
+            # request cannot return until that request does, which against a real
+            # provider is up to the client's read timeout. The thread is a daemon
+            # and exits by itself once the call returns, because active is False.
+            self.scheduler.active = False
+            self.scheduler.thread.join(_SCHEDULER_JOIN_TIMEOUT_S)
+        except Exception:  # noqa: BLE001 - best-effort teardown
+            pass
+        try:
+            self.queue.close()
+        except Exception:  # noqa: BLE001 - best-effort teardown
+            pass
+
+
+#: How long teardown waits for the scheduler thread. It only matters when a
+#: request is in flight, which cannot be interrupted; the thread is a daemon and
+#: exits by itself once that call returns. Waiting longer would stall the slot.
+_SCHEDULER_JOIN_TIMEOUT_S = 5.0
+
+
+def _release_stranded_request(proxy: ProxyConfig) -> Callable[[Any], None]:
+    """Complete a request nobody will ever serve, so its caller unwinds.
+
+    The agent waits on ``agent_process`` with no timeout, so a response is the
+    only thing that frees it. Give it the same neutral marker a provider error
+    gets, so no raw text reaches the scored transcript, and record the reason.
+    """
+
+    def release(agent_process: Any) -> None:
+        if agent_process is None or not hasattr(agent_process, "set_response"):
+            return  # the scheduler's own stop sentinel, not a request
+        proxy.record_failure("RuntimeStopped: the ASB runtime was torn down mid-request")
+        if agent_process.get_response() is None:
+            agent_process.set_response(Response(response_message=PROXY_ERROR_MARKER))
+        now = time.time()
+        # A released request must look like one that ran and failed, not one
+        # that never started: query_loop computes `start_time - created_time`
+        # unconditionally, and a missing start time crashes the agent thread.
+        if agent_process.get_start_time() is None:
+            agent_process.set_start_time(now)
+        agent_process.set_end_time(now)
+        agent_process.set_status("done")
+
+    return release
+
+
+def new_asb_runtime(
+    *,
+    model: str,
+    api_base: str | None,
+    api_key: str | None,
+    request_delay_seconds: float,
+    max_output_tokens: int,
+) -> AsbRuntime:
+    """Build and start an independent ASB runtime.
+
+    Nothing here is shared with any other runtime: its own request queue, its
+    own scheduler thread, its own ``ProxyLLM`` and its own credentials, pacing
+    and failure record. ``max_output_tokens`` pins the generation cap.
+    """
+    proxy = ProxyConfig(
+        api_base=api_base,
+        api_key=api_key,
+        request_delay_seconds=request_delay_seconds,
+        max_output_tokens=max_output_tokens,
+    )
+    llm = ProxyLLM(llm_name=model, config=proxy)
+    queue = LLMRequestQueue(_release_stranded_request(proxy))
+    scheduler = FIFOScheduler(llm=llm, log_mode="console", llm_request_queue=queue)
+    scheduler.thread.daemon = True  # never block process exit on the scheduler
+    scheduler.start()
+    return AsbRuntime(model=model, llm=llm, scheduler=scheduler, queue=queue, proxy=proxy)
 
 
 def new_agent_process_factory() -> Any:
@@ -156,64 +262,11 @@ def new_agent_process_factory() -> Any:
     (``deactivate_agent_process`` is not called on the agent path), so reusing
     one factory across a long experiment exhausts the pool and crashes on an
     empty ``heappop``. A fresh factory per run keeps the per-run pid count tiny.
-    Requests still flow through the process-global ``LLMRequestQueue`` (a
-    class-level queue), so the shared singleton scheduler drains them regardless
-    of which factory created them.
+    The factory only mints pids; requests flow through the queue the agent is
+    given (its runtime's), so which factory created a request does not affect
+    which scheduler serves it.
     """
     return AgentProcessFactory()
-
-
-_RUNTIME: _Runtime | None = None
-_RUNTIME_LOCK = threading.Lock()
-
-
-def get_asb_runtime(
-    *,
-    model: str,
-    api_base: str | None,
-    api_key: str | None,
-    request_delay_seconds: float,
-    max_output_tokens: int,
-) -> _Runtime:
-    """Return the started singleton runtime, (re)building it if the model changed.
-
-    ASB uses a process-global request queue + one scheduler thread, so only a
-    single runtime can exist. Rebuilding for a new model stops the old
-    scheduler first. ``max_output_tokens`` pins the generation cap.
-    """
-    global _RUNTIME
-    with _RUNTIME_LOCK:
-        configure_proxy(
-            api_base=api_base,
-            api_key=api_key,
-            request_delay_seconds=request_delay_seconds,
-            max_output_tokens=max_output_tokens,
-        )
-        if _RUNTIME is not None and _RUNTIME.model == model:
-            return _RUNTIME
-        if _RUNTIME is not None:  # model changed: stop the old scheduler
-            try:
-                _RUNTIME.scheduler.stop()
-            except Exception:  # noqa: BLE001 - best-effort teardown
-                pass
-        register_proxy_model(model)
-        kernel = LLMKernel(llm_name=model, log_mode="console")
-        scheduler = FIFOScheduler(llm=kernel, log_mode="console")
-        scheduler.thread.daemon = True  # never block process exit on the scheduler
-        scheduler.start()
-        _RUNTIME = _Runtime(model=model, kernel=kernel, scheduler=scheduler)
-        return _RUNTIME
-
-
-@atexit.register
-def _stop_runtime() -> None:  # pragma: no cover - process teardown
-    global _RUNTIME
-    if _RUNTIME is not None:
-        try:
-            _RUNTIME.scheduler.stop()
-        except Exception:  # noqa: BLE001
-            pass
-        _RUNTIME = None
 
 
 # ---------------------------------------------------------------------------
@@ -253,6 +306,7 @@ class SuperredReactAgent(ReactAgentAttack):  # type: ignore[misc]  # base is Any
         memory_mode: bool,
         force_attacker_tool: bool = False,
         log_mode: str = "console",
+        llm_request_queue: Any = None,
     ) -> None:
         super().__init__(
             agent_name=agent_name,
@@ -264,6 +318,11 @@ class SuperredReactAgent(ReactAgentAttack):  # type: ignore[misc]  # base is Any
             vector_db=None,
             agg=attacker_tool.get("Aggressive", "False"),
         )
+        # Submit LLM requests to THIS runtime's queue, so only this runtime's
+        # scheduler (and therefore only this runtime's model) serves them.
+        # Omitting it leaves the shared default queue, i.e. upstream behaviour.
+        if llm_request_queue is not None:
+            self.llm_request_queue = llm_request_queue
         self.workflow_mode = "automatic"  # bare runtime: always automatic planning
         self._await_event = await_event
         self._emit = emit
@@ -786,8 +845,9 @@ def _extract_workflow(record: str) -> str:
 
 __all__ = [
     "AsbArgs",
+    "AsbRuntime",
     "SuperredReactAgent",
-    "get_asb_runtime",
+    "new_asb_runtime",
     "new_agent_process_factory",
     "SyncEventHandler",
     "EmitHandler",

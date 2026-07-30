@@ -53,7 +53,14 @@ infrastructure**. Specific attacks are an attacker's concern, not the target's.
   aborts the run with a `RuntimeError`, instead of swallowing the provider
   error text into the agent transcript (which could silently contaminate the
   attack-success substring check). Only a neutral marker reaches the
-  transcript. Transient rate-limit errors stay tolerated (ASB-faithful).
+  transcript. **Throttling is retried, then fatal.** The OpenAI client retries a
+  429 with exponential backoff and Retry-After (`ProxyConfig.max_retries`,
+  default 6, above the SDK's own 2 because a sweep runs many cells against one
+  gateway). A 429 that survives those retries is sustained, and is recorded as
+  a hard failure like any other. This port previously TOLERATED it, which is
+  worse than it sounds: the agent's turn silently became the neutral marker and
+  the run was then scored on a transcript the model never produced. Failing
+  costs only time, because the task is simply re-run.
 
 ## C. Injection model (the core adaptation)
 
@@ -220,19 +227,68 @@ infrastructure**. Specific attacks are an attacker's concern, not the target's.
 
 ## G. Execution model
 
-- **G.1 `concurrency=1`, single Controller per process**: ASB uses a
-  process-global `LLMRequestQueue` drained by one `FIFOScheduler` thread, plus
-  other process globals (the singleton kernel/scheduler `_RUNTIME` and the
-  proxy `PROXY_CONFIG`). `concurrency=1` serializes tasks within one Controller,
-  and only ONE ASB Controller may run per process: sweep multiple ASB threat
-  models sequentially, not via a concurrent `asyncio.gather` of ASB Controllers
-  (they would race on the shared globals). The scheduler thread is a daemon,
-  stopped at process exit.
+- **G.1 `concurrency=1` per target, but any number of targets per process**:
+  ASB drives its agent through an `LLMRequestQueue` drained by a
+  `FIFOScheduler` thread. Upstream both are process-wide (the queue is a CLASS
+  attribute, the kernel a singleton), which makes two ASB targets in one
+  process **silently wrong**: a queued request names no model, so whichever
+  scheduler pops it answers with ITS kernel's model, and provider failures pile
+  into one shared list that cannot say which run they belong to. Worse,
+  building a second runtime for a different model STOPS the first one's
+  scheduler, leaving its in-flight request with no consumer and its agent
+  spinning in `listen()` forever. This port therefore moves every piece of that
+  state onto an instance: `AsbRuntime` owns the queue, the scheduler thread,
+  the kernel and the `ProxyConfig` (credentials, pacing, failure record), and
+  each `AsbTarget` builds exactly one on first run and stops it in `teardown`.
+  Several ASB Controllers can then run concurrently in one process, including
+  under `superred.run_all`. `concurrency=1` still holds WITHIN a target: one
+  agent per target at a time. Scheduler threads stay daemons and a process-exit
+  hook stops any runtime whose owner did not.
+
+  Four deviations from the verbatim vendored code implement this, each marked
+  in place: (i) `BaseQueue` holds its queue per instance and gains `close()`,
+  which hands every message a stopped runtime can no longer serve to an
+  `on_unservable` hook, because a request has no timeout and would otherwise
+  hang its caller for the life of the process; (ii) `FIFOScheduler` takes its
+  queue as an argument; (iii) the scheduler loop releases a request whose
+  execution raised instead of letting the exception kill the thread, since a
+  dead scheduler hangs its agent the same way; and (iv) the queue's idle poll
+  drops from 1s to 0.05s, the value the sibling `rr_scheduler` in this same
+  vendored tree already uses, because a superred run stops one scheduler PER
+  TASK and that idle wait is what teardown costs (measured 1.010s to 0.054s
+  per build-and-teardown cycle). At one runtime per process all four are
+  behaviour-identical to upstream.
+
+  Nothing replaces `LLMKernel`: it is simply not used. Its constructor
+  resolves the model through the global `MODEL_REGISTRY` and passes only
+  `llm_name`/`log_mode`, leaving nowhere to inject a per-instance config, and
+  its `address_request` only forwards to the LLM's own. The runtime hands the
+  `ProxyLLM` to the scheduler directly.
+
+  **The leaked system-spec brief changed wording.** `system_specification.md`
+  is not documentation: it is read at import and handed to the attacker as the
+  `detailed_system_specification` observable, so its bytes are experiment
+  input under any scope that includes `{system}`. Three sentences describing
+  scheduler topology were corrected here, because the old ones now state the
+  opposite of what the code does. They describe process structure, not an
+  injection surface, so no attack strategy depends on them; but a results tree
+  spanning this commit contains tasks measured against both wordings, and the
+  brief is not part of the measurement identity, so nothing in the record
+  distinguishes them. Disclosed rather than avoided: keeping a knowingly false
+  brief was judged worse than a wording change no attacker can act on.
+
+  **Request pacing is now per runtime, not per process.** ASB's inter-call
+  delay (`request_delay_seconds`, upstream's hardcoded `time.sleep(2)`) used to
+  serialize every call in the process because one scheduler served them all.
+  With N runtimes the effective request rate is N times higher, so gateway rate
+  limits, not the code, bound concurrency. Size `run_all(concurrency=)` against
+  the provider's limits.
 - **G.1a** ASB's `AgentProcessFactory` hands out pids from a pool of 10000 and
   never reclaims them on the agent path, so a long experiment with one factory
   would exhaust the pool and crash. The target builds a **fresh
-  `AgentProcessFactory` per run** (requests still flow through the global
-  queue), keeping the per-run pid count tiny.
+  `AgentProcessFactory` per run**, keeping the per-run pid count tiny. The
+  factory only mints pids; a request is served by the scheduler that owns the
+  queue it was submitted to, never by whichever factory created it.
 - **G.2** The model is a **construction concern** (constructor arg), not a
   config slot. Generation settings (seed 0, temperature 0, the pinned token
   cap) are fixed per experiment.

@@ -44,8 +44,9 @@ _ATTACKER = {
 
 class _FakeLLM:
     """Configurable fake mirroring test_integration's: a fixed json plan plus a
-    per-step tool call. An optional ``hook`` runs inside ``process`` so a test
-    can record a proxy failure or seed a tolerated marker."""
+    per-step tool call. An optional ``hook`` runs inside ``process``, receiving
+    the ProxyLLM instance, so a test can record a proxy failure on THAT
+    instance's config (as real ``process`` does) or seed a tolerated marker."""
 
     plan: list[dict] = []
     step_tools: list[str] = []
@@ -69,7 +70,7 @@ class _FakeLLM:
             agent_process.set_status("executing")
             agent_process.set_start_time(time.time())
             if cls.hook is not None:
-                cls.hook()
+                cls.hook(self)
             mrt = getattr(agent_process.query, "message_return_type", "text")
             if mrt == "json":
                 resp = Response(response_message=json.dumps(cls.plan), tool_calls=None)
@@ -129,10 +130,11 @@ async def test_recorded_proxy_failure_aborts_run_and_hides_marker() -> None:
     # branch real ProxyLLM.process takes on a dead/misconfigured endpoint). The
     # run must abort with RuntimeError, and the neutral PROXY_ERROR_MARKER text
     # must never reach the scored message trace.
-    from asb_target.llm_proxy import PROXY_CONFIG, PROXY_ERROR_MARKER
+    from asb_target.llm_proxy import PROXY_ERROR_MARKER
 
-    def record_failure() -> None:
-        PROXY_CONFIG.failures.append(f"APIConnectionError: dead endpoint {PROXY_ERROR_MARKER}")
+    def record_failure(llm) -> None:  # type: ignore[no-untyped-def]
+        # Record on the failing LLM's own config, exactly as real process does.
+        llm.config.record_failure(f"APIConnectionError: dead endpoint {PROXY_ERROR_MARKER}")
 
     _FakeLLM.configure(
         plan=[
@@ -156,13 +158,12 @@ async def test_recorded_proxy_failure_aborts_run_and_hides_marker() -> None:
 async def test_tolerated_rate_limit_does_not_abort_run() -> None:
     # A tolerated rate-limit leaves the marker in a response but records NO hard
     # failure, so the run completes normally (distinct branch from the abort).
-    from asb_target.llm_proxy import PROXY_CONFIG
+    seen_marker_but_no_failure: dict = {"called": False, "config": None}
 
-    seen_marker_but_no_failure = {"called": False}
-
-    def tolerated() -> None:
-        # rate-limit path records nothing in PROXY_CONFIG.failures
+    def tolerated(llm) -> None:  # type: ignore[no-untyped-def]
+        # rate-limit path records nothing on the LLM's failure list
         seen_marker_but_no_failure["called"] = True
+        seen_marker_but_no_failure["config"] = llm.config
 
     _FakeLLM.configure(
         plan=[
@@ -177,7 +178,8 @@ async def test_tolerated_rate_limit_does_not_abort_run() -> None:
     # No RuntimeError: an empty failure list does not abort.
     await t.run(lambda e: None, _decline_all)
     assert seen_marker_but_no_failure["called"]
-    assert PROXY_CONFIG.failures == []  # nothing recorded -> no abort
+    # nothing recorded on the runtime's own failure list -> no abort
+    assert seen_marker_but_no_failure["config"].failures == []
     assert t.query("workflow_failure") == "0"  # the run actually ran to completion
 
 

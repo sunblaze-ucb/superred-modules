@@ -13,7 +13,9 @@ of ``GPTLLM.process`` with these changes, all documented in ASSUMPTIONS.md:
 4. a dead / misconfigured endpoint FAILS LOUDLY: instead of swallowing the
    provider error into the agent's observed text (which could silently
    contaminate the attack-success substring check), the error is recorded and
-   the target aborts the run. Transient rate-limit errors stay tolerated.
+   the target aborts the run. Throttling is absorbed by the client's own
+   retries with backoff (``ProxyConfig.max_retries``); a 429 that survives them
+   is sustained, and is treated as a hard failure for the same reason.
 
 The proxy ``api_base``/``api_key`` are supplied explicitly (from the target
 constructor) rather than via environment variables.
@@ -21,6 +23,7 @@ constructor) rather than via environment variables.
 
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -31,7 +34,6 @@ ensure_vendor_on_path()
 
 import openai  # noqa: E402  (vendored path must be set first)
 from aios.llm_core.llm_classes.gpt_llm import GPTLLM  # noqa: E402
-from aios.llm_core.llm_classes.model_registry import MODEL_REGISTRY  # noqa: E402
 from openai import OpenAI  # noqa: E402
 from pyopenagi.utils.chat_template import Response  # noqa: E402
 
@@ -42,53 +44,46 @@ PROXY_ERROR_MARKER = "[proxy-error]"
 
 
 @dataclass
-class _ProxyConfig:
+class ProxyConfig:
+    """Credentials, pacing and failure record for ONE :class:`ProxyLLM`.
+
+    Each ASB runtime owns one of these, so two runtimes in a process never
+    read each other's credentials nor attribute each other's provider errors.
+    The failure list is mutated from the scheduler thread and read from the
+    target's thread, so it is lock-guarded.
+    """
+
     api_base: str | None = None
     api_key: str | None = None
     request_delay_seconds: float = 2.0
     max_output_tokens: int = 1024
+    #: How many times the OpenAI client retries a throttled or transiently
+    #: failed call before giving up. The SDK backs off exponentially and
+    #: honours Retry-After. Its own default is 2, which is thin for a sweep
+    #: running many cells at once against one gateway.
+    max_retries: int = 6
     #: Hard failures (connection/auth/status/bad-request/unexpected) seen since
     #: the last reset. The target resets this before each run and aborts the run
-    #: if it is non-empty afterwards. This is process-global, so it is per-run
-    #: safe only with a single in-process ASB Controller (the target's
-    #: serial-by-design model, ASSUMPTIONS G.1); two concurrently-gathered ASB
-    #: Controllers would race on it (run ASB threat models sequentially).
+    #: if it is non-empty afterwards.
     failures: list[str] = field(default_factory=list)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
+    def record_failure(self, message: str) -> None:
+        """Record one hard failure (called from the scheduler thread)."""
+        with self._lock:
+            self.failures.append(message)
 
-#: Process-wide proxy configuration, set by the target before the kernel builds.
-PROXY_CONFIG = _ProxyConfig()
+    def reset_failures(self) -> None:
+        """Clear the recorded hard failures (called before a run)."""
+        with self._lock:
+            self.failures.clear()
 
-
-def configure_proxy(
-    *,
-    api_base: str | None,
-    api_key: str | None,
-    request_delay_seconds: float = 2.0,
-    max_output_tokens: int = 1024,
-) -> None:
-    """Set the proxy credentials, inter-call delay, and output-token cap."""
-    PROXY_CONFIG.api_base = api_base
-    PROXY_CONFIG.api_key = api_key
-    PROXY_CONFIG.request_delay_seconds = request_delay_seconds
-    PROXY_CONFIG.max_output_tokens = max_output_tokens
-
-
-def reset_failures() -> None:
-    """Clear the recorded hard-failure list (called by the target before a run)."""
-    PROXY_CONFIG.failures.clear()
-
-
-def take_failures() -> list[str]:
-    """Return and clear the recorded hard failures (called after a run)."""
-    failures = list(PROXY_CONFIG.failures)
-    PROXY_CONFIG.failures.clear()
-    return failures
-
-
-def register_proxy_model(model_name: str) -> None:
-    """Route *model_name* through :class:`ProxyLLM` in the kernel registry."""
-    MODEL_REGISTRY[model_name] = ProxyLLM
+    def take_failures(self) -> list[str]:
+        """Return and clear the recorded hard failures (called after a run)."""
+        with self._lock:
+            failures = list(self.failures)
+            self.failures.clear()
+            return failures
 
 
 def _normalize_tools(tools: list) -> list:
@@ -114,15 +109,26 @@ def _normalize_tools(tools: list) -> list:
 
 
 class ProxyLLM(GPTLLM):  # type: ignore[misc]  # GPTLLM is Any (vendored, untyped)
-    """GPTLLM variant that talks to the litellm proxy for any model id."""
+    """GPTLLM variant that talks to the litellm proxy for any model id.
+
+    Its :class:`ProxyConfig` is bound to the INSTANCE, so two of these can be
+    alive at once with different credentials, pacing and failure records.
+    """
+
+    def __init__(self, llm_name: str, config: ProxyConfig, log_mode: str = "console") -> None:
+        # BaseLLM.__init__ calls load_llm_and_tokenizer(), which needs the
+        # config, so bind it BEFORE delegating. The local-model arguments
+        # GPTLLM accepts are unused here (every model is served over HTTP).
+        self.config = config
+        super().__init__(llm_name, None, None, 1024, log_mode)
 
     def load_llm_and_tokenizer(self) -> None:
         kwargs: dict[str, Any] = {}
-        if PROXY_CONFIG.api_base:
-            kwargs["base_url"] = PROXY_CONFIG.api_base
-        if PROXY_CONFIG.api_key:
-            kwargs["api_key"] = PROXY_CONFIG.api_key
-        self.model = OpenAI(**kwargs)
+        if self.config.api_base:
+            kwargs["base_url"] = self.config.api_base
+        if self.config.api_key:
+            kwargs["api_key"] = self.config.api_key
+        self.model = OpenAI(max_retries=self.config.max_retries, **kwargs)
         self.tokenizer = None
 
     def process(self, agent_process: Any, temperature: float = 0.0) -> None:
@@ -136,8 +142,8 @@ class ProxyLLM(GPTLLM):  # type: ignore[misc]  # GPTLLM is Any (vendored, untype
             f"{agent_process.agent_name} is switched to executing.\n",
             level="executing",
         )
-        if PROXY_CONFIG.request_delay_seconds:
-            time.sleep(PROXY_CONFIG.request_delay_seconds)
+        if self.config.request_delay_seconds:
+            time.sleep(self.config.request_delay_seconds)
         # The compat gateway strictly validates `tools`: a null value is rejected
         # ("JSON schema ... expected: 'array'"), unlike the real OpenAI API which
         # tolerates tools=None. ASB passes tools=None on non-tool turns (react agent:
@@ -146,7 +152,7 @@ class ProxyLLM(GPTLLM):  # type: ignore[misc]  # GPTLLM is Any (vendored, untype
         create_kwargs: dict[str, Any] = dict(
             model=self.model_name,
             messages=messages,
-            max_tokens=PROXY_CONFIG.max_output_tokens,
+            max_tokens=self.config.max_output_tokens,
             seed=0,
             temperature=temperature,
         )
@@ -160,8 +166,14 @@ class ProxyLLM(GPTLLM):  # type: ignore[misc]  # GPTLLM is Any (vendored, untype
                 Response(response_message=response_message, tool_calls=tool_calls)
             )
         except openai.RateLimitError as e:
-            # Transient: tolerated (do not abort the run), but no raw text leaks.
-            self.logger.log(f"proxy rate limit: {e}\n", level="executing")
+            # The client already retried with backoff (config.max_retries), so
+            # reaching here means SUSTAINED throttling. Upstream this port used
+            # to tolerate it, which is worse than it sounds: the agent's turn
+            # silently becomes the marker text and the run is then SCORED on a
+            # transcript the model never produced. Record a hard failure so the
+            # run aborts and the task simply re-runs later. See ASSUMPTIONS G.1.
+            self.logger.log(f"proxy rate limit after retries: {e}\n", level="executing")
+            self.config.record_failure(f"{type(e).__name__}: {e}")
             agent_process.set_response(Response(response_message=PROXY_ERROR_MARKER))
         except (
             openai.APIConnectionError,
@@ -170,10 +182,10 @@ class ProxyLLM(GPTLLM):  # type: ignore[misc]  # GPTLLM is Any (vendored, untype
         ) as e:
             # Dead / misconfigured endpoint: record a hard failure (the target
             # aborts the run) and put only a neutral marker in the transcript.
-            PROXY_CONFIG.failures.append(f"{type(e).__name__}: {e}")
+            self.config.record_failure(f"{type(e).__name__}: {e}")
             agent_process.set_response(Response(response_message=PROXY_ERROR_MARKER))
         except Exception as e:  # noqa: BLE001 - mirror upstream catch-all, but loud
-            PROXY_CONFIG.failures.append(f"{type(e).__name__}: {e}")
+            self.config.record_failure(f"{type(e).__name__}: {e}")
             agent_process.set_response(Response(response_message=PROXY_ERROR_MARKER))
         agent_process.set_status("done")
         agent_process.set_end_time(time.time())
@@ -181,10 +193,6 @@ class ProxyLLM(GPTLLM):  # type: ignore[misc]  # GPTLLM is Any (vendored, untype
 
 __all__ = [
     "ProxyLLM",
-    "PROXY_CONFIG",
+    "ProxyConfig",
     "PROXY_ERROR_MARKER",
-    "configure_proxy",
-    "reset_failures",
-    "take_failures",
-    "register_proxy_model",
 ]
