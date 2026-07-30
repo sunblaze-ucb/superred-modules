@@ -50,7 +50,9 @@ class BaseQueue:
             self._release(message)
 
     def get_message(self):
-        return self._queue.get(block=True, timeout=1)
+        # 0.05s, as the sibling rr_scheduler already uses: a superred run stops
+        # one scheduler PER TASK, and the idle wait is what teardown costs.
+        return self._queue.get(block=True, timeout=0.05)
 
     def is_empty(self):
         return self._queue.empty()

@@ -1,17 +1,17 @@
-"""ASB runtime bridge: a self-contained AIOS kernel/scheduler and an
-event-interposing agent subclass.
+"""ASB runtime bridge: a self-contained scheduler and an event-interposing
+agent subclass.
 
 ASB drives its agent through an ``LLMRequestQueue`` consumed by a background
-``FIFOScheduler`` thread. Upstream that queue is a CLASS attribute and the
-kernel a process singleton, which makes two ASB runtimes in one process
-silently wrong: a queued request names no model, so whichever scheduler pops
-it answers with ITS kernel's model, and provider failures land in one shared
-list that cannot say which run they belong to. :class:`AsbRuntime` moves all
-of it (queue, scheduler, kernel, credentials, failure record) onto an
-instance, so a superred ``AsbTarget`` owns exactly one and any number of
-targets run concurrently in a process without interfering.
-:func:`new_asb_runtime` builds and starts one; the LLM is routed through the
-litellm proxy via :mod:`asb_target.llm_proxy`. See ASSUMPTIONS.md G.1.
+``FIFOScheduler`` thread. Upstream that queue is a CLASS attribute and the LLM
+a process singleton, which makes two ASB runtimes in one process silently
+wrong: a queued request names no model, so whichever scheduler pops it answers
+with ITS model, and provider failures land in one shared list that cannot say
+which run they belong to. :class:`AsbRuntime` moves all of it (queue,
+scheduler, LLM, credentials, failure record) onto an instance, so a superred
+``AsbTarget`` owns exactly one and any number of targets run concurrently
+without interfering. :func:`new_asb_runtime` builds and starts one; the LLM is
+routed through the litellm proxy via :mod:`asb_target.llm_proxy`. See
+ASSUMPTIONS.md G.1.
 
 :class:`SuperredReactAgent` re-implements ASB's plan-then-execute ``run`` with
 the four injection sites driven by superred ``ControllablePreCallEvent`` s
@@ -142,33 +142,14 @@ class AsbArgs:
 
 
 # ---------------------------------------------------------------------------
-# Per-instance kernel + scheduler
+# Per-instance runtime
 # ---------------------------------------------------------------------------
 
-
-class _Kernel:
-    """The dispatch half of ``aios.llm_core.llms.LLMKernel``, with an
-    explicitly-constructed LLM.
-
-    ``LLMKernel.__init__`` looks the model up in the process-global
-    ``MODEL_REGISTRY`` and constructs it with only ``llm_name``/``log_mode``,
-    which leaves nowhere to inject this runtime's :class:`ProxyConfig`; two
-    runtimes on the same model would then share one configuration. Its body,
-    for an API-served model, is exactly "pick a class, build it, delegate
-    ``address_request``", so building the LLM here and delegating identically
-    is faithful and per-instance. See ASSUMPTIONS.md G.1.
-    """
-
-    def __init__(self, llm: Any) -> None:
-        self.model = llm
-
-    def address_request(self, agent_process: Any, temperature: float = 0.0) -> None:
-        self.model.address_request(agent_process, temperature)
 
 
 @dataclass
 class AsbRuntime:
-    """One ASB execution context: a queue, a scheduler thread, a kernel.
+    """One ASB execution context: a queue, a scheduler thread, an LLM.
 
     Every piece of state ASB used to keep on the process lives here instead,
     so several runtimes can be alive at once (different models, different
@@ -178,7 +159,7 @@ class AsbRuntime:
     """
 
     model: str
-    kernel: Any
+    llm: Any
     scheduler: Any
     queue: Any
     proxy: ProxyConfig
@@ -200,7 +181,12 @@ class AsbRuntime:
             return
         self._stopped = True
         try:
-            self.scheduler.stop(timeout=_SCHEDULER_JOIN_TIMEOUT_S)
+            # Not scheduler.stop(): its join is unbounded, and a thread inside a
+            # request cannot return until that request does, which against a real
+            # provider is up to the client's read timeout. The thread is a daemon
+            # and exits by itself once the call returns, because active is False.
+            self.scheduler.active = False
+            self.scheduler.thread.join(_SCHEDULER_JOIN_TIMEOUT_S)
         except Exception:  # noqa: BLE001 - best-effort teardown
             pass
         try:
@@ -261,12 +247,12 @@ def new_asb_runtime(
         request_delay_seconds=request_delay_seconds,
         max_output_tokens=max_output_tokens,
     )
-    kernel = _Kernel(ProxyLLM(llm_name=model, log_mode="console", config=proxy))
+    llm = ProxyLLM(llm_name=model, config=proxy)
     queue = LLMRequestQueue(_release_stranded_request(proxy))
-    scheduler = FIFOScheduler(llm=kernel, log_mode="console", llm_request_queue=queue)
+    scheduler = FIFOScheduler(llm=llm, log_mode="console", llm_request_queue=queue)
     scheduler.thread.daemon = True  # never block process exit on the scheduler
     scheduler.start()
-    return AsbRuntime(model=model, kernel=kernel, scheduler=scheduler, queue=queue, proxy=proxy)
+    return AsbRuntime(model=model, llm=llm, scheduler=scheduler, queue=queue, proxy=proxy)
 
 
 def new_agent_process_factory() -> Any:

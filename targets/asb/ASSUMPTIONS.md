@@ -245,21 +245,25 @@ infrastructure**. Specific attacks are an attacker's concern, not the target's.
   agent per target at a time. Scheduler threads stay daemons and a process-exit
   hook stops any runtime whose owner did not.
 
-  Five deviations from the verbatim vendored code implement this, each marked
-  in place: (i) `BaseQueue` holds its queue per instance, with `default()`
-  preserving the shared-queue behaviour for any caller that supplies none;
-  (ii) `FIFOScheduler` takes its queue as an argument; (iii) the scheduler loop
-  no longer lets an exception kill its thread, because a dead scheduler hangs
-  its agent forever, which was survivable when a run owned its process and is
-  not now; (iv) `FIFOScheduler.stop()` wakes the queue with a sentinel instead
-  of waiting out its 1s read timeout, because a superred run tears a scheduler
-  down once PER TASK and that second, paid 43,000 times, is hours of pure
-  waiting (measured: 1.010s -> 0.005s per cycle); and (v) `_Kernel` in
-  `runtime.py` replaces `LLMKernel`'s constructor, since `LLMKernel` resolves
-  the model through the global `MODEL_REGISTRY` and passes only
-  `llm_name`/`log_mode`, leaving nowhere to inject this runtime's
-  `ProxyConfig`. Its dispatch body is reproduced exactly. At one runtime per
-  process all five are behaviour-identical to upstream.
+  Four deviations from the verbatim vendored code implement this, each marked
+  in place: (i) `BaseQueue` holds its queue per instance and gains `close()`,
+  which hands every message a stopped runtime can no longer serve to an
+  `on_unservable` hook, because a request has no timeout and would otherwise
+  hang its caller for the life of the process; (ii) `FIFOScheduler` takes its
+  queue as an argument; (iii) the scheduler loop releases a request whose
+  execution raised instead of letting the exception kill the thread, since a
+  dead scheduler hangs its agent the same way; and (iv) the queue's idle poll
+  drops from 1s to 0.05s, the value the sibling `rr_scheduler` in this same
+  vendored tree already uses, because a superred run stops one scheduler PER
+  TASK and that idle wait is what teardown costs (measured 1.010s to 0.054s
+  per build-and-teardown cycle). At one runtime per process all four are
+  behaviour-identical to upstream.
+
+  Nothing replaces `LLMKernel`: it is simply not used. Its constructor
+  resolves the model through the global `MODEL_REGISTRY` and passes only
+  `llm_name`/`log_mode`, leaving nowhere to inject a per-instance config, and
+  its `address_request` only forwards to the LLM's own. The runtime hands the
+  `ProxyLLM` to the scheduler directly.
 
   **The leaked system-spec brief changed wording.** `system_specification.md`
   is not documentation: it is read at import and handed to the attacker as the
