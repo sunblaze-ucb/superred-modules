@@ -46,8 +46,7 @@ class RoBERTaPredictor:
     padding/truncation to 512 tokens, run the sequence classifier, softmax
     logits, and return the argmax class IDs.
 
-    The model is loaded lazily on first use. Call :meth:`load` explicitly to
-    pull that failure forward to process start (see :meth:`load`).
+    The model is loaded lazily on first use.
     """
 
     def __init__(self, path: str = DEFAULT_GPTFUZZ_MODEL, *, device: str | None = None) -> None:
@@ -57,17 +56,6 @@ class RoBERTaPredictor:
         self._model: Any | None = None
         self._tokenizer: Any | None = None
         self._torch: Any | None = None
-
-    def load(self) -> None:
-        """Load weights now, raising :class:`PredictorUnavailableError` on failure.
-
-        A scorer that can never load is an operator error, not a runtime
-        condition: the model id is wrong, the host has no Hub access, or the
-        installed ``transformers`` cannot read the model's config. Calling this
-        once before a sweep surfaces that at startup instead of leaving every
-        task to discover it on its own.
-        """
-        self._ensure_loaded()
 
     def predict(self, responses: list[str]) -> list[int]:
         self._ensure_loaded()
@@ -175,17 +163,11 @@ class FallbackPredictor:
         self._primary = primary
         self._fallback = fallback if fallback is not None else RefusalStringPredictor()
         self._fallback_active = False
-        self._fallback_reason: str | None = None
 
     @property
     def fallback_active(self) -> bool:
         """True once the primary predictor has failed and been given up on."""
         return self._fallback_active
-
-    @property
-    def fallback_reason(self) -> str | None:
-        """Why the fallback is active, or ``None`` while the primary works."""
-        return self._fallback_reason
 
     def predict(self, responses: list[str]) -> list[int]:
         if self._fallback_active:
@@ -194,13 +176,12 @@ class FallbackPredictor:
             return self._primary.predict(responses)
         except Exception as exc:  # noqa: BLE001 - see class docstring
             self._fallback_active = True
-            self._fallback_reason = f"{type(exc).__name__}: {exc}"
             logger.warning(
                 "GPTFuzzer: the official RoBERTa scorer failed (%s). Every "
                 "response in this task is now scored by the refusal-string "
                 "fallback, which is weaker. Set allow_predictor_fallback=False "
                 "to fail the task instead of degrading.",
-                self._fallback_reason,
+                f"{type(exc).__name__}: {exc}",
                 exc_info=exc,
             )
             return self._fallback.predict(responses)

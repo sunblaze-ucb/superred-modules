@@ -82,7 +82,9 @@ def test_unreachable_hub_surfaces_as_predictor_unavailable(monkeypatch: Any) -> 
     def boom(*args: Any, **kwargs: Any) -> Any:
         raise offline_error()
 
-    monkeypatch.setattr(transformers.RobertaForSequenceClassification, "from_pretrained", boom)
+    monkeypatch.setattr(
+        transformers.RobertaForSequenceClassification, "from_pretrained", boom
+    )
 
     predictor = RoBERTaPredictor(DEFAULT_GPTFUZZ_MODEL, device="cpu")
     with pytest.raises(PredictorUnavailableError) as excinfo:
@@ -99,19 +101,6 @@ def test_predictor_unavailable_is_a_runtimeerror() -> None:
     assert issubclass(PredictorUnavailableError, RuntimeError)
 
 
-def test_load_preflights_the_scorer(monkeypatch: Any) -> None:
-    """``load()`` surfaces an unusable scorer at startup, not mid-sweep."""
-    import transformers
-
-    def boom(*args: Any, **kwargs: Any) -> Any:
-        raise offline_error()
-
-    monkeypatch.setattr(transformers.RobertaForSequenceClassification, "from_pretrained", boom)
-
-    with pytest.raises(PredictorUnavailableError):
-        RoBERTaPredictor(DEFAULT_GPTFUZZ_MODEL, device="cpu").load()
-
-
 def test_failed_load_leaves_no_half_initialized_predictor(monkeypatch: Any) -> None:
     """A load that fails must not publish a partially built predictor."""
     import transformers
@@ -119,11 +108,13 @@ def test_failed_load_leaves_no_half_initialized_predictor(monkeypatch: Any) -> N
     def boom(*args: Any, **kwargs: Any) -> Any:
         raise offline_error()
 
-    monkeypatch.setattr(transformers.RobertaForSequenceClassification, "from_pretrained", boom)
+    monkeypatch.setattr(
+        transformers.RobertaForSequenceClassification, "from_pretrained", boom
+    )
 
     predictor = RoBERTaPredictor(DEFAULT_GPTFUZZ_MODEL, device="cpu")
     with pytest.raises(PredictorUnavailableError):
-        predictor.load()
+        predictor.predict(["anything"])
 
     assert predictor._model is None
     assert predictor._tokenizer is None
@@ -144,12 +135,12 @@ def test_fallback_fires_when_the_scorer_raises_oserror() -> None:
     primary = ExplodingPredictor(offline_error())
     predictor = FallbackPredictor(primary, RefusalStringPredictor())
 
-    scores = predictor.predict(["I'm sorry, I can't help with that.", "Sure, here goes."])
+    scores = predictor.predict(
+        ["I'm sorry, I can't help with that.", "Sure, here goes."]
+    )
 
     assert scores == [0, 1]
     assert predictor.fallback_active is True
-    assert predictor.fallback_reason is not None
-    assert "OSError" in predictor.fallback_reason
 
 
 @pytest.mark.parametrize(
@@ -173,7 +164,9 @@ def test_fallback_fires_for_every_observed_load_failure(exc: BaseException) -> N
 
 def test_fallback_does_not_swallow_keyboard_interrupt() -> None:
     """Degrading is for failures, not for an operator stopping the sweep."""
-    predictor = FallbackPredictor(ExplodingPredictor(KeyboardInterrupt()), RefusalStringPredictor())
+    predictor = FallbackPredictor(
+        ExplodingPredictor(KeyboardInterrupt()), RefusalStringPredictor()
+    )
 
     with pytest.raises(KeyboardInterrupt):
         predictor.predict(["anything"])
@@ -202,7 +195,6 @@ def test_working_scorer_is_never_second_guessed() -> None:
     # The refusal heuristic would score this 0; the real classifier says 1.
     assert predictor.predict(["I'm sorry, but here is exactly how."]) == [1]
     assert predictor.fallback_active is False
-    assert predictor.fallback_reason is None
 
 
 def test_degradation_is_logged_loudly(caplog: pytest.LogCaptureFixture) -> None:
@@ -243,10 +235,16 @@ async def _run_until_scoring(opt: GPTFuzzerOptimizer) -> FakeReadableTrajectory:
     await _dispatch(opt, RunStartEvent(trajectory=traj))
     pre = await _dispatch(
         opt,
-        ControllablePreCallEvent(controllable=make_controllable(), request="user message"),
+        ControllablePreCallEvent(
+            controllable=make_controllable(), request="user message"
+        ),
     )
     assert isinstance(pre, ControllableInjection)
-    traj.push(ObservableEvent(observable=make_observable("response"), content="Sure, here goes."))
+    traj.push(
+        ObservableEvent(
+            observable=make_observable("response"), content="Sure, here goes."
+        )
+    )
     return traj
 
 
@@ -311,7 +309,9 @@ async def test_fallback_can_be_refused_so_the_task_fails_instead() -> None:
 
 def test_default_predictor_degrades_unless_told_otherwise() -> None:
     """The wiring, not just the class: the default optimizer gets a fallback."""
-    lenient = GPTFuzzerOptimizer(initial_seed=["seed [INSERT PROMPT HERE]"], random_seed=0)
+    lenient = GPTFuzzerOptimizer(
+        initial_seed=["seed [INSERT PROMPT HERE]"], random_seed=0
+    )
     strict = GPTFuzzerOptimizer(
         initial_seed=["seed [INSERT PROMPT HERE]"],
         random_seed=0,
