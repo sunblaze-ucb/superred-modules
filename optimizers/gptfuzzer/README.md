@@ -27,9 +27,20 @@ pip install superred-optimizer-gptfuzzer
 ```
 
 The classifier weights are downloaded lazily on the first response-visible run.
-If the weights or dependencies are unavailable, the optimizer can fall back to a
-lightweight refusal-string classifier; set `allow_predictor_fallback=False` to
-require the official model and fail fast instead.
+If the weights or dependencies are unavailable, the optimizer falls back to a
+lightweight refusal-string classifier and logs a warning; set
+`allow_predictor_fallback=False` to require the official model and fail the task
+instead.
+
+The fallback is scoped to one task, so a host that can never reach the weights
+would quietly degrade every task rather than fail. Check the scorer once before
+a sweep:
+
+```python
+from gptfuzzer_optimizer import RoBERTaPredictor
+
+RoBERTaPredictor().load()  # raises PredictorUnavailableError if unusable
+```
 
 ## Usage
 
