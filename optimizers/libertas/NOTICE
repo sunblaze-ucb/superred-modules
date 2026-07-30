@@ -18,7 +18,7 @@ rights holders; this notice does not claim that elder-plinius authored or owns
 every quoted entry.
 
 Superred adapter and integration code:
-Copyright (C) 2026 Simon Sure.
+Copyright (C) 2026 Sarthak Munshi.
 
 This work was modified for the superred project on 29 July 2026. The
 modifications include the event adapter, provider/model routing, metadata-only
