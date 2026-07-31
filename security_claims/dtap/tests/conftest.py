@@ -118,6 +118,7 @@ class FakeDtapTarget:
             for name in (
                 cfg.ACTIVE_MCP_SERVERS,
                 cfg.ENV_INJECTION_CONFIG,
+                cfg.ENV_INJECTION_TEMPLATES,
                 cfg.SYSTEM_PROMPT,
                 cfg.USER_PROMPT,
                 cfg.TASK_DIR,

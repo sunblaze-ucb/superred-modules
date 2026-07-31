@@ -144,3 +144,17 @@ re-expressing one per-task config as one `Task`. The scoring predicates
   mocked (a fake `dtap_scaffold.judge_runner` module; stub targets). Live Docker /
   LLM integration is exercised by `@pytest.mark.docker` / `@pytest.mark.live` tests
   in the target packages, skipped where those resources are absent.
+
+## F. Per-task env-injection templates (target-private routing, not attack replay)
+
+`parse_task_config` reads `Attack.attack_turns[].attack_steps[type=environment]` into
+`TaskConfig.env_injection_templates` = `{server: {injection_mcp_tool, kwargs, content_field}}`,
+passed to the target via the `env_injection_templates` config slot (added to
+`REQUIRED_CONFIG_SLOTS`). This is the ONLY use of `attack_turns`, and it is deliberately
+NOT an attack replay: the goal stays the byte-identical `malicious_goal`, and nothing is
+injected on the target's behalf. The template exists solely so the target can splice a
+generic attacker's plain-text `env_inject` payload into the pinned content field (see
+`dtap_scaffold` ASSUMPTIONS J). `content_field` is resolved from a corpus-derived allowlist
+of free-text field names; the first environment step per server wins; a step whose inject
+tool exposes no allowlisted content field contributes no template (that server stays
+structured-only). Benign tasks and tasks with no environment step yield `{}`.

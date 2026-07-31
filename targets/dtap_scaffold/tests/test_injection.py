@@ -210,3 +210,34 @@ def test_parse_oversized_int_is_empty():
     """A >4300-digit integer literal makes json.loads raise a bare ValueError (CPython
     int-string-conversion limit), not a JSONDecodeError; the parser must still return []."""
     assert _parse_injection_calls("1" * 4301) == []
+
+
+def test_build_env_injection_splices_content_into_template() -> None:
+    from dtap_scaffold.injection import build_env_injection
+
+    tmpl = {
+        "injection_mcp_tool": "gmail-injection:inject_email",
+        "kwargs": {"from_email": "a@x", "to_email": "v@y", "subject": "s", "body": "REF"},
+        "content_field": "body",
+    }
+    out = build_env_injection("EVIL PAYLOAD", tmpl)
+    assert out is not None
+    d = json.loads(out)
+    assert d["injection_mcp_tool"] == "gmail-injection:inject_email"
+    assert d["kwargs"]["body"] == "EVIL PAYLOAD"  # content spliced
+    assert d["kwargs"]["to_email"] == "v@y"  # routing carried verbatim
+
+
+def test_build_env_injection_structured_value_passes_through() -> None:
+    from dtap_scaffold.injection import build_env_injection
+
+    structured = json.dumps({"injection_mcp_tool": "s:t", "kwargs": {"k": "v"}})
+    assert build_env_injection(structured, None) == structured  # unchanged
+
+
+def test_build_env_injection_no_template_or_empty_writes_nothing() -> None:
+    from dtap_scaffold.injection import build_env_injection
+
+    assert build_env_injection("bare string", None) is None  # no template -> baseline
+    tmpl = {"injection_mcp_tool": "s:t", "kwargs": {}, "content_field": "body"}
+    assert build_env_injection("   ", tmpl) is None  # empty payload writes nothing

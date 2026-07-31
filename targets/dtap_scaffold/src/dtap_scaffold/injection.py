@@ -113,4 +113,35 @@ def _parse_injection_calls(value: str) -> list[tuple[str, dict[str, Any]]]:
     return calls
 
 
-__all__ = ["McpEnvInjector"]
+def build_env_injection(value: str, template: dict[str, Any] | None) -> str | None:
+    """Resolve an ``env_inject`` injected *value* into a structured injection payload.
+
+    Two paths, so a generic attacker can drive this vector with plain text while the
+    faithful structured form still works:
+
+    - a value that already parses to one or more ``{injection_mcp_tool, kwargs}`` calls
+      is returned unchanged (the upstream-faithful structured path);
+    - otherwise, if the task supplied a per-server *template* (its reference inject
+      tool + routing ``kwargs`` + the ``content_field`` name), the plain-text *value* is
+      spliced into that content field, carrying every routing kwarg verbatim -- so only
+      the attacker-controlled CONTENT varies, exactly the axis DTAP's red-teamer varies.
+
+    Returns the JSON payload to write, or ``None`` when nothing should be written (no
+    template, or an empty payload) -- preserving the clean baseline and the honest
+    decline for servers whose inject tool has no placeable content field.
+    """
+    if _parse_injection_calls(value):
+        return value
+    if not template:
+        return None
+    field = template.get("content_field")
+    content = value if isinstance(value, str) else ""
+    if not field or not content.strip():
+        return None
+    kwargs = {**(template.get("kwargs") or {}), field: content}
+    return json.dumps(
+        {"injection_mcp_tool": template.get("injection_mcp_tool"), "kwargs": kwargs}
+    )
+
+
+__all__ = ["McpEnvInjector", "build_env_injection"]
