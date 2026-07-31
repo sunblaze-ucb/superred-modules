@@ -79,7 +79,9 @@ def _read_ctrl(name: str = "read__slack__get_webpage") -> Controllable:
             "Per-read injection point. ControllablePostCallEvent answer carries "
             "the legitimate tool return."
         ),
-        value_type="json",
+        # A read/content surface consumes the injected value as a raw string
+        # (see agentdojo runtime_wrapper), so its truthful value_type is text.
+        value_type="text",
     )
 
 
@@ -418,7 +420,9 @@ class TestPromptFallback:
         }
 
     @pytest.mark.asyncio
-    async def test_prompt_channels_skipped_when_content_surface_is_planned(self) -> None:
+    async def test_prompt_channels_skipped_when_content_surface_is_planned(
+        self,
+    ) -> None:
         opt = await _init_optimizer(controllables=[_user_ctrl(), _read_ctrl()])
         await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
@@ -509,7 +513,9 @@ class TestRolloutContext:
         assert rollout.target_observables == {"model_identity": "gpt-4o"}
 
     @pytest.mark.asyncio
-    async def test_explicit_response_allowlist_disables_response_heuristics(self) -> None:
+    async def test_explicit_response_allowlist_disables_response_heuristics(
+        self,
+    ) -> None:
         opt = await _init_optimizer(
             controllables=[_read_ctrl()],
             max_attempts=2,
@@ -727,7 +733,9 @@ class TestAcceptance:
         for idx, score in enumerate((0.1, 0.2, 0.3), start=1):
             candidate = type(opt._pool[0])(prompt=f"candidate {idx}", rolled_out=True)
             candidate.rollouts.append(
-                RolloutRecord(goal="achieve target X", prompt=candidate.prompt, score=score)
+                RolloutRecord(
+                    goal="achieve target X", prompt=candidate.prompt, score=score
+                )
             )
             opt._pool.append(candidate)
 
@@ -748,12 +756,16 @@ class TestDoneSemantics:
         propose = AsyncMock(return_value=None)
 
         with patch.object(opt._reflector, "propose", new=propose):
-            await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+            await _dispatch_event(
+                opt, RunStartEvent(trajectory=_FakeReadableTrajectory())
+            )
             end_1 = await _dispatch_event(
                 opt,
                 RunEndEvent(evaluation=None, security_domain=USER_TAG),
             )
-            await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+            await _dispatch_event(
+                opt, RunStartEvent(trajectory=_FakeReadableTrajectory())
+            )
             end_2 = await _dispatch_event(
                 opt,
                 RunEndEvent(evaluation=None, security_domain=USER_TAG),

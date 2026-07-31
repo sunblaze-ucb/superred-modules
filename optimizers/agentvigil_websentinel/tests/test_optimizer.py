@@ -900,6 +900,10 @@ async def test_content_controllable_description_and_value_type_are_detection_sig
     opt = await init_optimizer(controllables=[ctrl])
     await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
+    # Description + value_type ARE detection signals: this IS recognised as an
+    # agent content surface.
+    assert opt._is_agent_content_surface(ctrl) is True
+
     resp = await dispatch_event(
         opt,
         ControllablePostCallEvent(
@@ -909,8 +913,11 @@ async def test_content_controllable_description_and_value_type_are_detection_sig
         ),
     )
 
-    assert isinstance(resp, ControllableInjection)
-    assert "document chunk" in resp.value
+    # ... but emission is schema-gated: a json surface consumes a parsed schema,
+    # not a raw string, so injecting one would silently write nothing. Decline it
+    # (rather than record a no-op as a scored attack) and hold out for a free-text
+    # surface. A value_type="html"/"text" content surface still injects (below).
+    assert isinstance(resp, ControllableNoInjection)
 
 
 @pytest.mark.asyncio

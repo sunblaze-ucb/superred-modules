@@ -59,7 +59,10 @@ _HTML_SURFACE_HINTS = (
     "screenshot",
     "interactive_elements",
 )
-_READ_PREFIXES = ("read__", "tool_call:", "tool:", "skill_call:", "skill:")
+_READ_PREFIXES = ("read__", "tool_call:", "tool:", "skill_call:", "skill:", "env_tool:")
+# A surface that consumes an unstructured string (vs a parsed schema). EIA plants
+# an HTML document string, so a json-typed surface would silently discard it.
+_FREE_TEXT_VALUE_TYPES = frozenset({"", "text", "str", "string", "html", "markdown"})
 _WEB_TOOL_HINTS = ("webpage", "browser", "html", "page", "url", "site")
 _PRIVACY_TYPE_HINTS = ("privacy_type", "pii_type", "risk_type", "detail_risk_type")
 _TARGET_SECRET_HINTS = ("target_secret", "secret", "pii_value", "private_value")
@@ -380,6 +383,11 @@ class EIAAgentOptimizer(Optimizer):
         content: str,
     ) -> ControllableInjection | ControllableNoInjection:
         if self._payload is None:
+            return ControllableNoInjection(event=event, controllable=event.controllable)
+        # The EIA payload is an HTML document string; a schema-typed surface would
+        # discard it. Decline non-free-text surfaces so the run is not scored as an
+        # executed injection that silently wrote nothing.
+        if event.controllable.value_type.lower() not in _FREE_TEXT_VALUE_TYPES:
             return ControllableNoInjection(event=event, controllable=event.controllable)
         if (
             self._max_environment_injections_per_run is not None

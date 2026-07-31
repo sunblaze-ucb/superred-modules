@@ -71,8 +71,20 @@ _CATALOG_TOOL_HINTS: tuple[str, ...] = (
     "tool",
     "web",
 )
+_FREE_TEXT_VALUE_TYPES = frozenset({"", "text", "str", "string", "html", "markdown"})
+
+
+def _accepts_free_text(controllable: Controllable) -> bool:
+    """True if the surface consumes an unstructured string (vs a parsed schema).
+
+    A schema-typed content surface (e.g. DTAP's ``env_inject:<server>`` json
+    vector) silently discards a bare payload; injecting it is a no-op that is
+    nonetheless recorded as a scored attack, so gate emission on this.
+    """
+    return controllable.value_type.lower() in _FREE_TEXT_VALUE_TYPES
+
+
 _CONTENT_SURFACE_HINTS: tuple[str, ...] = (
-    "answer carries",
     "content",
     "document",
     "external",
@@ -284,7 +296,9 @@ class GEPAAgenticOptimizer(Optimizer):
         self._current, self._current_is_fresh = self._select_current_candidate()
         self._planned_content_surfaces = self._choose_content_surfaces()
         self._planned_content_surface = (
-            self._planned_content_surfaces[0] if self._planned_content_surfaces else None
+            self._planned_content_surfaces[0]
+            if self._planned_content_surfaces
+            else None
         )
         if self._planned_content_surface is not None:
             self._selection_reason = (
@@ -308,10 +322,7 @@ class GEPAAgenticOptimizer(Optimizer):
             return ControllableNoInjection(event=event, controllable=event.controllable)
 
         name = event.controllable.name
-        if (
-            self._target_controllable_name is None
-            and name == _TOOL_CATALOG_REWRITE_DOC
-        ):
+        if self._target_controllable_name is None and name == _TOOL_CATALOG_REWRITE_DOC:
             return self._maybe_inject_tool_catalog_rewrite(event)
 
         if self._target_controllable_name is not None:
@@ -333,6 +344,8 @@ class GEPAAgenticOptimizer(Optimizer):
         elif event.controllable != self._primary_pre_controllable:
             return ControllableNoInjection(event=event, controllable=event.controllable)
 
+        if not _accepts_free_text(event.controllable):
+            return ControllableNoInjection(event=event, controllable=event.controllable)
         self._last_pre_request = event.request
         self._last_injected_value = self._current.prompt
         surface_type = "system_prompt" if name == _SYSTEM_PROMPT_NAME else "user_prompt"
@@ -378,6 +391,12 @@ class GEPAAgenticOptimizer(Optimizer):
             self._selection_reason = (
                 f"runtime-discovered compatible content PostCall surface {name!r}"
             )
+
+        if should_inject and not _accepts_free_text(event.controllable):
+            # Schema-typed surface: a raw string is discarded. Decline WITHOUT
+            # spending the per-run content budget so a free-text surface (e.g.
+            # env_tool) later in the run can still be injected.
+            should_inject = False
 
         if not should_inject:
             self._maybe_pair_post_call_response(event)
@@ -583,7 +602,9 @@ class GEPAAgenticOptimizer(Optimizer):
             return None
         out: dict[str, Any] = dict(self._selected_surface)
         if len(self._injected_surfaces) > 1:
-            out["all_injected_surfaces"] = [dict(item) for item in self._injected_surfaces]
+            out["all_injected_surfaces"] = [
+                dict(item) for item in self._injected_surfaces
+            ]
         return out
 
     def _record_observed_surface(
@@ -592,7 +613,9 @@ class GEPAAgenticOptimizer(Optimizer):
         event_kind: str,
         content: str = "",
     ) -> _SurfaceClassification:
-        classification = self._classify_surface(controllable, event_kind, content=content)
+        classification = self._classify_surface(
+            controllable, event_kind, content=content
+        )
         key = f"{event_kind}:{controllable.name}"
         if key not in self._observed_surface_names:
             self._observed_surface_names.add(key)
@@ -650,7 +673,9 @@ class GEPAAgenticOptimizer(Optimizer):
                 )
             if _looks_like_environment_content(content):
                 return _SurfaceClassification(
-                    "content_postcall", 0.7, "runtime content looks like HTML/environment data"
+                    "content_postcall",
+                    0.7,
+                    "runtime content looks like HTML/environment data",
                 )
         return _SurfaceClassification("unknown", 0.0, "no content/prompt signal")
 
@@ -783,7 +808,7 @@ class GEPAAgenticOptimizer(Optimizer):
 
     def _add_agent_observation(self, text: str) -> None:
         if len(text) > _MAX_AGENT_OBSERVATION_CHARS:
-            text = f"{text[: _MAX_AGENT_OBSERVATION_CHARS].rstrip()}..."
+            text = f"{text[:_MAX_AGENT_OBSERVATION_CHARS].rstrip()}..."
         self._agent_observations.append(text)
         if len(self._agent_observations) > _MAX_AGENT_OBSERVATIONS:
             self._agent_observations = self._agent_observations[
@@ -821,8 +846,10 @@ class GEPAAgenticOptimizer(Optimizer):
 
     @staticmethod
     def _is_user_prompt(name: str) -> bool:
-        normalized = name.lower()
-        return normalized in _USER_PROMPT_NAMES or "user" in normalized
+        # Exact reserved-name match only. A bare ``"user" in name`` substring test
+        # misclassifies PostCall content surfaces whose node key is "user"
+        # (e.g. DTAP ``env_tool:atlassian.user``) as a prompt channel.
+        return name.lower() in _USER_PROMPT_NAMES
 
     @staticmethod
     def _stringify_content(content: Any) -> str:
@@ -880,7 +907,9 @@ def _iter_tool_entries(content: Any) -> Iterable[dict[str, str]]:
                 if isinstance(name, str) and name.strip():
                     yield {
                         "name": name.strip(),
-                        "description": _stringify_value(item.get("description")).strip(),
+                        "description": _stringify_value(
+                            item.get("description")
+                        ).strip(),
                     }
     elif isinstance(content, Mapping):
         for name, description in content.items():

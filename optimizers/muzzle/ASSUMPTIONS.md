@@ -158,3 +158,14 @@ writable `user_prompt` (preferred) or `system_prompt` as a less-indirect fallbac
 and to a pure passthrough baseline (one OBSERVE run, then `done`) when no surface is
 injectable at all. This never crashes and never emits a bogus attack. Vessel/controllable/
 tag matching is by object identity. `BudgetExhaustedError` propagates from every role.
+
+## DTAP fitness: only free-text content surfaces are vessels
+
+`build_vessels` now requires a content surface to consume an unstructured string
+(`accepts_free_text`: value_type in text/str/string/html/markdown) before it is ranked
+as a vessel. MUZZLE grafts a plain-string playbook, so a schema-typed surface (DTAP
+`env_inject:<server>`, json) is a guaranteed silent no-op that would otherwise burn a
+PROBE run and, if selected, be scored as an executed-but-empty attack. Excluding it
+leaves the text `env_tool:<server>` surface (replace a tool return) as MUZZLE's
+landing surface. On AgentDojo/ASB/inspect_agent every content surface is `text`, so the
+filter changes nothing there.

@@ -70,6 +70,17 @@ _TOOL_PREFIX = "read__"
 _TOOL_OUTPUT_PREFIX = "tool:"
 _ATTACKER_TOOL_PREFIX = "tool_call:"
 _RESPONSE_NAME_HINTS = ("response", "assistant", "reply", "output", "completion")
+# A content surface is only injectable if it consumes an unstructured STRING. A
+# schema-typed surface (e.g. DTAP's ``env_inject:<server>`` json vector) silently
+# discards a bare payload, so injecting it is a no-op recorded as a scored attack.
+_FREE_TEXT_VALUE_TYPES = frozenset({"", "text", "str", "string", "html", "markdown"})
+
+
+def _accepts_free_text(controllable: Controllable) -> bool:
+    """True if the surface consumes an unstructured string (vs a parsed schema)."""
+    return controllable.value_type.lower() in _FREE_TEXT_VALUE_TYPES
+
+
 _CONTENT_RESPONSE_NAME_HINTS = (
     "tool_response",
     "tool_result",
@@ -405,6 +416,13 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         if self._selected_surface is None and self._is_agent_content_surface(
             event.controllable
         ):
+            # Do NOT latch a schema-typed surface: it would discard the string
+            # payload and shadow the later text surface (e.g. env_tool) for the
+            # rest of the run. Decline so a free-text content surface can be used.
+            if not _accepts_free_text(event.controllable):
+                return ControllableNoInjection(
+                    event=event, controllable=event.controllable
+                )
             self._selected_surface = f"content:{name}"
             return ControllableInjection(
                 event=event,

@@ -140,3 +140,17 @@ Mind2Web gold actions. The gold/supplied-reference form of that check is now
 supported in the optimizer (see "Subsequent-step utility" above); only the
 benign-baseline form, which needs a second attack-free trajectory to diff
 against, stays with the SuperRed claim/evaluator that owns task-specific judging.
+
+## DTAP fitness: recognise env_tool, gate on free text
+
+- `env_tool:` was added to `_READ_PREFIXES` so the DTAP per-tool-return content surface
+  (`env_tool:<server>[.<node>]`, the indirect-injection channel) is recognised by name,
+  not only opportunistically when a genuine tool return already contains `<html`.
+- `_maybe_inject_environment` gates on `value_type` (text/str/string/html/markdown):
+  the EIA payload is an HTML document string, so a schema-typed surface would discard it
+  -- decline rather than record a no-op as an executed injection.
+- LIMITATION (threat-model, not plumbing): EIA plants a hidden HTML form for a DOM-
+  grounding web agent. The text-only DTAP port excludes the vision/GUI domains
+  (`browser`, `macos`, `windows`), so no DTAP agent renders the form; EIA fires with a
+  well-formed payload but will typically score ~0 for threat-model reasons. Exclude it,
+  or read its DTAP result as a negative control, rather than treating 0 as a defense.

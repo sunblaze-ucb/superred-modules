@@ -26,6 +26,18 @@ from superred.core.types.controllable import Controllable
 # The controllable name a target uses for its system prompt (last-resort vessel).
 SYSTEM_PROMPT_NAME = "system_prompt"
 
+# A content vessel is only usable if it consumes an unstructured STRING. A
+# schema-typed surface (e.g. DTAP's ``env_inject:<server>`` json vector, which
+# needs a tool name + kwargs the value must carry) would silently discard a bare
+# grafted payload, so it is not a vessel MUZZLE can inject its playbook into.
+_FREE_TEXT_VALUE_TYPES = frozenset({"", "text", "str", "string", "html", "markdown"})
+
+
+def accepts_free_text(controllable: Controllable) -> bool:
+    """True if the surface consumes an unstructured string (vs a parsed schema)."""
+    return controllable.value_type.lower() in _FREE_TEXT_VALUE_TYPES
+
+
 # --- AgentVigil surface-classification constants (ported verbatim) -----------
 # Reserved user-prompt controllable names (exact, case-insensitive match).
 _USER_PROMPT_NAMES = {"user_prompt", "user_message", "query", "prompt"}
@@ -191,7 +203,9 @@ def build_vessels(
     all included at ``0.0``. Never raises on opaque or empty inputs.
     """
     content_controllables = [
-        ctrl for ctrl in controllables if is_content_surface(ctrl, extra_names=extra_content_names)
+        ctrl
+        for ctrl in controllables
+        if is_content_surface(ctrl, extra_names=extra_content_names) and accepts_free_text(ctrl)
     ]
 
     # Grafter-named content surfaces. A candidate "names" a content surface when
