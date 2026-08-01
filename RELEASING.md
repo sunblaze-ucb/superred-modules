@@ -92,8 +92,10 @@ publisher on PyPI.
 Before a module's first release, make sure it has:
 
 - a `superred-<kind>-<name>` dist name,
-- a `LICENSE` file (MIT, matching the `superred` framework) plus `license = "MIT"`
-  and `license-files = ["LICENSE"]` in `pyproject.toml`,
+- a `LICENSE` file matching the package's actual licensing obligations, plus
+  matching `license` and `license-files` metadata in `pyproject.toml`; modules
+  are normally MIT like the `superred` framework, but copied copyleft material
+  must remain isolated in its own package and use a compatible license,
 - `authors = [{ name = "<your name>", email = "<your email>" }]` — list the
   people who actually wrote the module, not a placeholder (e.g.
   `superred-optimizer-goat` credits both of its authors),

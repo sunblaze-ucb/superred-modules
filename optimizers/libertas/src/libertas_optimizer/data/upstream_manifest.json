@@ -1,0 +1,358 @@
+{
+  "repository": "https://github.com/elder-plinius/L1B3RT4S",
+  "commit": "64960b783249d36f76a48a33103cc4b168332b9b",
+  "files": [
+    {
+      "source_path": "!SHORTCUTS.json",
+      "stored_path": "!SHORTCUTS.json",
+      "sha256": "4e7d85f8e6908f44e640fdc67c1a7b84b81364f415a364e5341b6744dffa195f",
+      "size": 10859,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "#MOTHERLOAD.txt",
+      "stored_path": "#MOTHERLOAD.txt",
+      "sha256": "f7cd56aa3d2b80167f54362b2d5c6f8aba8be6a979933e5453a3a2289b7e8518",
+      "size": 2239,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "*SPECIAL_TOKENS.json",
+      "stored_path": "_SPECIAL_TOKENS.json",
+      "sha256": "c289f90a879b09831d4fd2933f57f46deea55a0f9b987a6003adf3a8d0948453",
+      "size": 55437,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "-MISCELLANEOUS-.mkd",
+      "stored_path": "-MISCELLANEOUS-.mkd",
+      "sha256": "5178be705fdefb0389cc9c9b7019d94fbbd028044682276ec147187ff70cf169",
+      "size": 20327,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "1337.mkd",
+      "stored_path": "1337.mkd",
+      "sha256": "0b517a7c343471e4513b50f16a94471f819d58e6f05b2bc027ba49a0f9acc77c",
+      "size": 35,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "AAA.mkd",
+      "stored_path": "AAA.mkd",
+      "sha256": "6d755bd12a5e291c1075045e301326ebeea8430c091e55d9abb1eff3d2331ce2",
+      "size": 147,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "ALIBABA.mkd",
+      "stored_path": "ALIBABA.mkd",
+      "sha256": "406c46b20f052f19bb85c884e2625bf3cf080e9cbb6bd734d00c4eeaaaae75d1",
+      "size": 6178,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "AMAZON.mkd",
+      "stored_path": "AMAZON.mkd",
+      "sha256": "82869d2ffa36021ae7a8bbb0cd50517b36bfb99f38ea4005c6602a4121276dee",
+      "size": 981,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "ANTHROPIC.mkd",
+      "stored_path": "ANTHROPIC.mkd",
+      "sha256": "876d574d8b8fe841a90464b494351fc15596a38259fce66cf19770b47e92328a",
+      "size": 35290,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "APPLE.mkd",
+      "stored_path": "APPLE.mkd",
+      "sha256": "dcbaaf7063090cf1d6a01244d795c55df5e68b80d9dc70cc4949c55b641ce70a",
+      "size": 889,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "BRAVE.mkd",
+      "stored_path": "BRAVE.mkd",
+      "sha256": "a20f472bf06dbdf0b648ee9ed33e6b732debf069b9ff72793a1457e3d0f95431",
+      "size": 1645,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "CHATGPT.mkd",
+      "stored_path": "CHATGPT.mkd",
+      "sha256": "6bbea4d7a58ab114616bc1425ec623b278506801f4f25ce9b0fe4418d0a87200",
+      "size": 897,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "COHERE.mkd",
+      "stored_path": "COHERE.mkd",
+      "sha256": "0b3b0cee8f34914993f0495a20de29e5a3f517f2f09d4181182a86c2ceb57c43",
+      "size": 256,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "CURSOR.mkd",
+      "stored_path": "CURSOR.mkd",
+      "sha256": "30c8edf4640d160c2245909e6a90139a2c0ce89f6e5022af89f5d13de0045a11",
+      "size": 751,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "DEEPSEEK.mkd",
+      "stored_path": "DEEPSEEK.mkd",
+      "sha256": "34462c84c73ab06d565cb09b29742fa89bf56e230bdab234a8aba70edcc4655e",
+      "size": 5455,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "FETCHAI.mkd",
+      "stored_path": "FETCHAI.mkd",
+      "sha256": "a214ea6f30647f5111a2b26e987efa63d166728cce0cee9b68d9adb45bfcd29d",
+      "size": 869,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "GOOGLE.mkd",
+      "stored_path": "GOOGLE.mkd",
+      "sha256": "f50cd3275b5980d6380d7d50266e37afa5040e7734fe3b2996e7406822a3ee07",
+      "size": 20354,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "GRAYSWAN.mkd",
+      "stored_path": "GRAYSWAN.mkd",
+      "sha256": "2381f0c5e616d3cb413ded5c06c311d868c489777ec037c99c4cfd9d91a52859",
+      "size": 515,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "GROK-MEGA.mkd",
+      "stored_path": "GROK-MEGA.mkd",
+      "sha256": "c5ddaa0675c85cc168a45c7f0337ba20a767863320b40a317cf30c37a59c093b",
+      "size": 97121,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "HUME.mkd",
+      "stored_path": "HUME.mkd",
+      "sha256": "b6958db6325269fba01912a6317029343a0de4c624a829031c876866225db766",
+      "size": 530,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "INCEPTION.mkd",
+      "stored_path": "INCEPTION.mkd",
+      "sha256": "28f8e4737efc69239183db421b69f28b60815212e11ebfe00eca706beeaa8022",
+      "size": 809,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "INFLECTION.mkd",
+      "stored_path": "INFLECTION.mkd",
+      "sha256": "6f90fbabefbdfac5c51175e26362c57c5a69fe1d60e3b75307591482916fa5a2",
+      "size": 191,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "LICENSE",
+      "stored_path": null,
+      "sha256": "8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef",
+      "size": 34523,
+      "bundled": false,
+      "reason": "copied to the module root as LICENSE instead of package data"
+    },
+    {
+      "source_path": "LIQUIDAI.mkd",
+      "stored_path": "LIQUIDAI.mkd",
+      "sha256": "9c0c12b7e1df5a5e2ec0cb0ab2e85b33b4485877ee95b5232b293a55085855a8",
+      "size": 302,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "META.mkd",
+      "stored_path": "META.mkd",
+      "sha256": "ed8aa03b26fe868bf19a2235d11c6e85c876be63b04370f152f766eb4471620a",
+      "size": 3834,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "MICROSOFT.mkd",
+      "stored_path": "MICROSOFT.mkd",
+      "sha256": "777e1ba43b9fa910cdba8fe34077e9eca1085b0f6ce5ad7f14d9353e8004d618",
+      "size": 173,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "MIDJOURNEY.mkd",
+      "stored_path": "MIDJOURNEY.mkd",
+      "sha256": "21c2e391081612a5ae73078a274fdf85189072da87183a7c7b729d6eae1ce3af",
+      "size": 1104,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "MISTRAL.mkd",
+      "stored_path": "MISTRAL.mkd",
+      "sha256": "8845b9ad362e39947499bbe4b2e18f05f7c347689582b87d21dc55b2910727cb",
+      "size": 1641,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "MOONSHOT.mkd",
+      "stored_path": "MOONSHOT.mkd",
+      "sha256": "42f13eda8f8956c59dd23195276e1b522d7934fe05ed78078b1eb1de5a0e25a5",
+      "size": 1493,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "MULTION.mkd",
+      "stored_path": "MULTION.mkd",
+      "sha256": "a2e6f8ff053655a019b8c98061836475df6e620ab65a12488067b44c227fa1fa",
+      "size": 11564,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "NOUS.mkd",
+      "stored_path": "NOUS.mkd",
+      "sha256": "a4764f2fd66b5218b55929be9606dd30efa904fe26e4ff5157f89aedfdf8eb91",
+      "size": 1802,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "NVIDIA.mkd",
+      "stored_path": "NVIDIA.mkd",
+      "sha256": "b45e76a9f9c6ba8e797fc6d06f9a274f2aee341415eb0503c2ec82b23946ddd0",
+      "size": 1821,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "OPENAI.mkd",
+      "stored_path": "OPENAI.mkd",
+      "sha256": "5035f681e7a1c2612c28612d686209231d6b2bc59eade10718cc2c3ae1f7f279",
+      "size": 13336,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "PERPLEXITY.mkd",
+      "stored_path": "PERPLEXITY.mkd",
+      "sha256": "ae59a26f0ac2eea8c54651eb01180548dc2e5d878fb26b18e0456a2a9a5c6c96",
+      "size": 1040,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "README.md",
+      "stored_path": "README.md",
+      "sha256": "81831d196e37c0bce05797257861946de5cdac28ab79af46df78e94da2f9219e",
+      "size": 24071,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "REFLECTION.mkd",
+      "stored_path": "REFLECTION.mkd",
+      "sha256": "09c1e77412835f288f4865b4e2bf1bce32c52de6a976a0c6e63e43a9be704d22",
+      "size": 943,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "REKA.mkd",
+      "stored_path": "REKA.mkd",
+      "sha256": "9e0b11d884766324497057891c8bdccdf5db35a588cd38571aa2fa204feee8fc",
+      "size": 563,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "SYSTEMPROMPTS.mkd",
+      "stored_path": "SYSTEMPROMPTS.mkd",
+      "sha256": "3e5449207089a6ce8929cdd474a7928dc90fa0d54dea9241e286207e6bd4c336",
+      "size": 37059,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "TOKEN80M8.mkd",
+      "stored_path": "TOKEN80M8.mkd",
+      "sha256": "aa032e7030732cf3230eb40e53baab8fb9622954740ef2b7d4f7212b54174492",
+      "size": 23448666,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "TOKENADE.mkd",
+      "stored_path": "TOKENADE.mkd",
+      "sha256": "32a89081dbc15829bc59347ce88a4f8a831baecea99fee7be49bf0ab0d0abace",
+      "size": 1867310,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "WINDSURF.mkd",
+      "stored_path": "WINDSURF.mkd",
+      "sha256": "0708bcb3c726b66c6b4f859cdf28311a70f63afdfd3ec08ee59e8e20a15d7099",
+      "size": 1051,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "XAI.mkd",
+      "stored_path": "XAI.mkd",
+      "sha256": "d511c7c8696a7139c0837be67192649e7d76f584097251b392162ea3e43148fb",
+      "size": 7443,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "ZAI.mkd",
+      "stored_path": "ZAI.mkd",
+      "sha256": "04c68dda34d4646b61b20b0a9a8dc01c65832a39bd04b83e828f2172111e0f13",
+      "size": 4179,
+      "bundled": true,
+      "reason": null
+    },
+    {
+      "source_path": "ZYPHRA.mkd",
+      "stored_path": "ZYPHRA.mkd",
+      "sha256": "a9b0135aa9fddd68b8c0bcb08fe8e0958ad217bfec09829c6aeaf92db9178f2a",
+      "size": 481,
+      "bundled": true,
+      "reason": null
+    }
+  ]
+}
