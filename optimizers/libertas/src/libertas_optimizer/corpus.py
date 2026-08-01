@@ -570,22 +570,41 @@ def _balanced_value_end(
     return None
 
 
-_PROVIDER_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("anthropic", ("anthropic/", "claude")),
-    ("openai", ("openai/", "azure/", "chatgpt", "gpt-", "o1", "o3", "o4")),
-    ("google", ("google/", "vertex_ai/", "gemini", "gemma")),
-    ("xai", ("xai/", "grok")),
-    ("meta", ("meta/", "llama")),
-    ("mistral", ("mistral/", "mixtral", "ministral")),
-    ("deepseek", ("deepseek/", "deepseek")),
-    ("alibaba", ("alibaba/", "dashscope/", "qwen")),
-    ("amazon", ("bedrock/amazon", "amazon/", "nova")),
-    ("zai", ("zai/", "glm-")),
-    ("moonshot", ("moonshot/", "kimi")),
-    ("nous", ("nous/", "hermes")),
-    ("nvidia", ("nvidia/", "nemotron")),
-    ("cohere", ("cohere/", "command-r")),
-    ("perplexity", ("perplexity/", "sonar")),
+_PROVIDER_NAMESPACE_ALIASES: dict[str, str] = {
+    **{provider: provider for provider in set(SOURCE_PROVIDERS.values())},
+    "azure": "openai",
+    "dashscope": "alibaba",
+    "vertex-ai": "google",
+    "vertex_ai": "google",
+    "vertexai": "google",
+}
+
+# More specific model families precede broad base-model names. For example,
+# Nemotron and Hermes models can contain ``llama`` without being Meta-hosted.
+_MODEL_FAMILY_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("anthropic", ("claude",)),
+    ("openai", ("chatgpt", "gpt-", "o1", "o3", "o4")),
+    ("google", ("gemini", "gemma")),
+    ("xai", ("grok",)),
+    ("mistral", ("mixtral", "ministral")),
+    ("deepseek", ("deepseek",)),
+    ("alibaba", ("qwen",)),
+    ("amazon", ("nova",)),
+    ("zai", ("glm-",)),
+    ("moonshot", ("kimi",)),
+    ("nous", ("hermes",)),
+    ("nvidia", ("nemotron",)),
+    ("cohere", ("command-r",)),
+    ("perplexity", ("sonar",)),
+    ("microsoft", ("phi-", "mai-")),
+    ("reka", ("reka-",)),
+    ("windsurf", ("swe-1",)),
+    ("fetchai", ("asi1",)),
+    ("grayswan", ("cygnet",)),
+    ("inception", ("mercury",)),
+    ("liquidai", ("lfm-", "lfm2")),
+    ("zyphra", ("zamba",)),
+    ("meta", ("llama",)),
 )
 
 
@@ -595,7 +614,14 @@ def detect_provider(model_identity: str) -> str | None:
     lowered = model_identity.strip().casefold()
     if not lowered:
         return None
-    for provider, patterns in _PROVIDER_PATTERNS:
+
+    namespace, separator, _model_name = lowered.partition("/")
+    if separator:
+        provider = _PROVIDER_NAMESPACE_ALIASES.get(namespace)
+        if provider is not None:
+            return provider
+
+    for provider, patterns in _MODEL_FAMILY_PATTERNS:
         if any(pattern in lowered for pattern in patterns):
             return provider
     return None

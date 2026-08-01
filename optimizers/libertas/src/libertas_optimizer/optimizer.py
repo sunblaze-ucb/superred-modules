@@ -52,10 +52,11 @@ class LibertasOptimizer(Optimizer):
     """Replay byte-faithful L1B3RT4S templates, one template per run.
 
     By default only upstream sections containing a reviewed goal input surface
-    are used.  The target's model identity selects the matching vendor
-    file family; if no identity can be inferred, every vendor family is
-    eligible.  By default one helper-LLM call ranks metadata for the compatible
-    templates, with validated IDs and deterministic fallback.
+    are used.  The target's model identity prioritizes the matching vendor
+    family, followed by universal and cross-provider templates; if no identity
+    can be inferred, every vendor family remains eligible in source order.  By
+    default one helper-LLM call ranks metadata within those priority tiers,
+    with validated IDs and deterministic fallback.
 
     Raw upstream prompts are never sent to the helper.  No internal judge is
     used; the SecurityClaim's ``RunEndEvent.evaluation.success`` is
@@ -161,8 +162,9 @@ class LibertasOptimizer(Optimizer):
             controllable.name == _SYSTEM_PROMPT_NAME for controllable in controllables
         )
 
+        strict_provider = self._provider_override if self._source_files is None else None
         templates = load_prompt_templates(
-            provider=self._resolved_provider,
+            provider=strict_provider,
             include_untemplated=self._include_untemplated,
             include_system_templates=self._include_system_templates,
             source_files=self._source_files,
@@ -170,7 +172,9 @@ class LibertasOptimizer(Optimizer):
         templates = tuple(
             template for template in templates if self._template_has_delivery_surface(template)
         )
+        templates = self._prioritize_templates(templates)
         templates = await self._rank_templates_with_llm(templates)
+        templates = self._prioritize_templates(templates)
         if self._max_attempts is not None:
             templates = templates[: self._max_attempts]
 
@@ -278,6 +282,26 @@ class LibertasOptimizer(Optimizer):
         if template.delivery == "system":
             return self._has_system_controllable
         return self._user_controllable_name is not None
+
+    def _prioritize_templates(
+        self,
+        templates: tuple[PromptTemplate, ...],
+    ) -> tuple[PromptTemplate, ...]:
+        """Keep native, universal, then transferable attacks in stable order."""
+
+        if self._source_files is not None or self._resolved_provider is None:
+            return templates
+
+        preferred_provider = self._resolved_provider
+
+        def priority(template: PromptTemplate) -> int:
+            if template.provider == preferred_provider:
+                return 0
+            if template.provider is None:
+                return 1
+            return 2
+
+        return tuple(sorted(templates, key=priority))
 
     async def _rank_templates_with_llm(
         self,

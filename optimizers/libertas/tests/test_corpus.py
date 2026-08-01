@@ -619,6 +619,12 @@ def test_untemplated_sections_are_opt_in_and_append_without_normalizing() -> Non
         ("vertex_ai/gemini-3-pro", "google"),
         ("xai/grok-4", "xai"),
         ("meta/llama-4-maverick", "meta"),
+        ("nvidia/llama-3.1-nemotron", "nvidia"),
+        ("nous/llama-3.1-hermes", "nous"),
+        ("microsoft/phi-4", "microsoft"),
+        ("apple/apple-intelligence", "apple"),
+        ("reka/reka-core", "reka"),
+        ("windsurf/swe-1", "windsurf"),
         ("deepseek/deepseek-v3", "deepseek"),
         ("dashscope/qwen3", "alibaba"),
         ("bedrock/amazon.nova-pro", "amazon"),
@@ -633,6 +639,11 @@ def test_provider_detection(model: str, provider: str) -> None:
 def test_unknown_provider_detection_is_conservative() -> None:
     assert detect_provider("private/my-model") is None
     assert detect_provider("") is None
+
+
+def test_specific_model_family_beats_broad_llama_fallback_without_a_namespace() -> None:
+    assert detect_provider("llama-3.1-nemotron-70b") == "nvidia"
+    assert detect_provider("llama-3.1-hermes-70b") == "nous"
 
 
 def test_optional_live_checkout_matches_every_manifest_entry() -> None:

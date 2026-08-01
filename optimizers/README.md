@@ -156,13 +156,15 @@ for the citation.
 ### Libertas (`superred-optimizer-libertas`)
 
 Replays the model-specific jailbreak prompts from Pliny's L1B3RT4S corpus,
-routing to the matching vendor family from the target's model identity and
-trying one prompt per run. The upstream files are pinned by commit and preserved
+prioritizing the matching vendor family from the target's model identity before
+universal and cross-provider prompts, and trying one prompt per run. The
+upstream files are pinned by commit and preserved
 byte-for-byte—including combining marks, variation selectors, confusables, and
 invisible Unicode—and strict mode changes only an explicit upstream goal
 placeholder. One helper-LLM call ranks prompt metadata for the exact target
-model; raw jailbreak bodies are never sent to the helper, and invalid output
-falls back to source order. There is no internal judge. Because the upstream
+model within those priority tiers; raw jailbreak bodies are never sent to the
+helper, and invalid output falls back to source order. There is no internal
+judge. Because the upstream
 corpus is AGPL-3.0, this independently installable module is also
 AGPL-3.0-only. See its `README.md` and `ASSUMPTIONS.md` for the exact parity
 boundary.

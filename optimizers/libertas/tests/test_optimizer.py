@@ -314,17 +314,84 @@ def test_invalid_selection_configuration_fails_loudly(
         LibertasOptimizer(**kwargs)
 
 
-def test_model_identity_routes_to_matching_upstream_files() -> None:
-    optimizer = LibertasOptimizer()
-    _initialize(optimizer, model="anthropic/claude-opus-4-6")
+def test_detected_provider_prioritizes_native_then_universal_then_transfer_attacks() -> None:
+    optimizer = LibertasOptimizer(selection_strategy="deterministic")
+    _initialize(optimizer, model="nvidia/llama-3.1-nemotron")
 
-    assert optimizer.resolved_provider == "anthropic"
-    assert optimizer.templates
-    provider_templates = [
-        template for template in optimizer.templates if template.provider is not None
+    assert optimizer.resolved_provider == "nvidia"
+    providers = [template.provider for template in optimizer.templates]
+    native_count = providers.count("nvidia")
+    universal_count = providers.count(None)
+    assert native_count > 0
+    assert universal_count > 0
+    assert providers[:native_count] == ["nvidia"] * native_count
+    assert providers[native_count : native_count + universal_count] == [None] * universal_count
+    assert any(provider not in {"nvidia", None} for provider in providers)
+
+
+def test_explicit_provider_remains_a_strict_native_first_filter() -> None:
+    optimizer = LibertasOptimizer(
+        provider="meta",
+        selection_strategy="deterministic",
+    )
+
+    _initialize(optimizer, model="nvidia/llama-3.1-nemotron")
+
+    assert optimizer.resolved_provider == "meta"
+    assert [template.provider for template in optimizer.templates] == [
+        "meta",
+        "meta",
+        "meta",
+        None,
+        None,
     ]
-    assert provider_templates
-    assert {template.source_file for template in provider_templates} == {"ANTHROPIC.mkd"}
+
+
+def test_source_files_remain_an_exact_filter_without_provider_reordering() -> None:
+    expected = load_prompt_templates(source_files=("OPENAI.mkd", "META.mkd"))
+    optimizer = LibertasOptimizer(
+        source_files=("OPENAI.mkd", "META.mkd"),
+        selection_strategy="deterministic",
+    )
+
+    _initialize(optimizer, model="meta/llama-4-maverick")
+
+    assert optimizer.templates == expected
+
+
+def test_helper_sees_transfer_candidates_but_cannot_move_them_ahead_of_native() -> None:
+    all_candidates = load_prompt_templates(provider=None)
+    native = next(template for template in all_candidates if template.provider == "meta")
+    transfer = next(template for template in all_candidates if template.provider == "openai")
+    llm = _ScriptedLLM(
+        [json.dumps({"template_ids": [transfer.id, native.id]}, ensure_ascii=False)]
+    )
+    optimizer = LibertasOptimizer(model_identity="meta/llama-4-maverick")
+
+    _initialize(optimizer, llm=llm)
+
+    catalog = json.loads(llm.calls[0][0][1]["content"])["candidates"]
+    assert {candidate["provider"] for candidate in catalog} >= {"meta", "openai", "nvidia"}
+    providers = [template.provider for template in optimizer.templates]
+    assert providers.index("meta") < providers.index(None) < providers.index("openai")
+    assert optimizer.templates[0] == native
+
+
+def test_attempt_limit_is_applied_after_native_and_universal_prioritization() -> None:
+    optimizer = LibertasOptimizer(
+        model_identity="meta/llama-4-maverick",
+        selection_strategy="deterministic",
+        max_attempts=4,
+    )
+
+    _initialize(optimizer)
+
+    assert [template.provider for template in optimizer.templates] == [
+        "meta",
+        "meta",
+        "meta",
+        None,
+    ]
 
 
 def test_unknown_model_uses_all_provider_families() -> None:

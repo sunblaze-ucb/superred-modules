@@ -149,21 +149,30 @@ Upstream organizes prompts by vendor files. An explicit `model_identity=` or a
 string-valued target observable named `model`, `model_id`, `model_identity`,
 `target_model`, or `victim_model` is conservatively mapped to those file
 families (for example `claude` to `ANTHROPIC.mkd`, `gpt` to
-`OPENAI.mkd`/`CHATGPT.mkd`, and `gemini` to `GOOGLE.mkd`). Unrelated observable
-text is never used for provider inference. This selection is adapter logic;
-upstream provides no routing algorithm.
+`OPENAI.mkd`/`CHATGPT.mkd`, and `gemini` to `GOOGLE.mkd`). A recognized leading
+namespace is authoritative, so `nvidia/llama-3.1-nemotron` maps to NVIDIA
+rather than the broader Llama/Meta family. Without a recognized namespace,
+specific derived families such as Nemotron and Hermes take precedence over the
+Llama fallback. Unrelated observable text is never used for provider inference.
+This selection is adapter logic; upstream provides no routing algorithm.
 
-If the provider cannot be inferred, strict templates from every provider are
-scheduled in lexicographic source-file order. An explicit `provider=` override
-is the reproducible alternative.
+An automatically inferred provider is a soft preference. All delivery-
+compatible strict templates remain eligible and are stably tiered as matching
+provider, universal, then cross-provider. If no provider can be inferred, all
+providers remain in lexicographic source-file order. An explicit `provider=`
+override is instead a strict filter that includes that provider's files and
+universal templates. `source_files=` is an exact filter and retains corpus
+order.
 
 Within a file, bodies retain upstream order.
 
 ## Helper-LLM ranking
 
-After deterministic provider and delivery-surface filtering, the default
+After deterministic filtering and provider tiering, the default
 `selection_strategy="llm"` makes one call through the optimizer's budgeted
-`self.llm`. It sends no raw upstream prompt body. The request contains:
+`self.llm`. It sends no raw upstream prompt body. For an automatically detected
+provider, the helper sees native, universal, and transfer candidates, but its
+ranking is constrained to preserve that tier order. The request contains:
 
 - target model identity and provider;
 - `Goal.description`;
@@ -173,8 +182,9 @@ After deterministic provider and delivery-surface filtering, the default
 The response must be an exact JSON object with a non-empty `template_ids`
 string list. Every ID must exist in the supplied catalog and duplicates are
 rejected. A valid partial list moves those entries to the front and leaves all
-others in deterministic source order. Any exception or schema violation falls
-back atomically. `selection_strategy="deterministic"` skips the call.
+others in deterministic source order within their tiers. Any exception or
+schema violation falls back atomically. `max_attempts` is applied only after
+tiering and ranking. `selection_strategy="deterministic"` skips the call.
 
 ## Delivery surfaces
 

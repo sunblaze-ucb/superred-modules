@@ -51,8 +51,8 @@ AGPL-3.0 prompt corpus.
 ```python
 from libertas_optimizer import LibertasOptimizer
 
-# Detect the provider from the target's model/model_identity observable,
-# then use self.llm to rank compatible prompts.
+# Detect and prioritize the provider from the target's model/model_identity
+# observable, then use self.llm to rank prompts within priority tiers.
 optimizer = LibertasOptimizer()
 
 # Supply exact target metadata when the target does not expose it.
@@ -78,11 +78,18 @@ By default the optimizer:
 
 The helper receives the target model identity, provider, task goal, and a
 catalog containing only template IDs, filenames, headings, delivery surfaces,
-and goal-marker spellings. A partial valid ranking is accepted; unmentioned
+and goal-marker spellings. Automatic provider detection is a preference, not a
+filter: matching-provider prompts run first, universal prompts second, and
+cross-provider prompts third. The helper sees all compatible candidates and
+may rank them within those tiers, but cannot promote a transfer prompt ahead of
+a native or universal prompt. A partial valid ranking is accepted; unmentioned
 candidates retain source order after the preferred entries. `max_attempts` is
-applied after ranking, so the helper can select a later upstream prompt for a
-one-attempt run. Inspect `selection_method` to distinguish `llm`,
-`deterministic`, and `deterministic-fallback` schedules.
+applied after tiering and ranking. Inspect `selection_method` to distinguish
+`llm`, `deterministic`, and `deterministic-fallback` schedules.
+
+An explicit `provider=` remains a strict reproducibility filter (plus universal
+templates), while `source_files=` selects exactly those files and preserves
+their corpus order.
 
 Privileged custom-instruction/system-prompt entries are opt-in:
 
