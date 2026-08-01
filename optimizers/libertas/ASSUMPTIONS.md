@@ -85,7 +85,9 @@ The indirection convention is visible in prompt text such as “response for
 `{Z}`” followed by an assignment, and upstream's OpenAI heading explicitly
 instructs users to change the ending `{Z}` section. Rendering therefore
 preserves every variable reference and the assignment's left-hand side, then
-changes only the value of the final assignment. For example:
+changes every Z-assignment value. Repeated definitions must remain consistent;
+otherwise an earlier hardcoded example can conflict with the adapted goal. For
+example:
 
 ```text
 Buy {Z} on the way home. {Z}=milk
@@ -97,9 +99,18 @@ becomes:
 Buy {Z} on the way home. {Z}=bread
 ```
 
-The final-assignment rule also preserves upstream's earlier explanatory
-assignments. It supports the braced, parenthesized, bracketed, plain, blank,
-and malformed-but-line-bounded value forms present at the pinned commit.
+The assignment rule supports the braced, parenthesized, bracketed, plain,
+blank, and malformed-but-line-bounded value forms present at the pinned
+commit.
+
+Some pinned templates use `<user_query>` as a reference while a separate
+`X=...` carries the concrete payload. For those reviewed bodies, rendering
+preserves `<user_query>`, changes the final X-assignment, and changes any
+trailing `USER:` payload. The two ciphered DeepSeek templates use reviewed
+equivalent assignment symbols (`𝓩` and `C`). Three other pinned bodies place
+their concrete query in a reviewed trailing literal rather than an assignment;
+those exact commit-pinned literals are changed while their query references
+remain intact.
 
 Direct marker spellings at this commit include:
 
@@ -171,18 +182,22 @@ The default uses user-message entries only. Headings that explicitly mention a
 system prompt, custom instructions, a custom GPT, or an instructions field are
 classified as privileged delivery and excluded.
 
-With `include_system_templates=True`, a privileged template is used only if
-both `system_prompt` and a user-facing controllable are in scope:
+With `include_system_templates=True`, a privileged template is used whenever a
+`system_prompt` controllable is in scope:
 
 1. the rendered upstream body replaces the system/custom-instruction surface;
-2. the unwrapped `Goal.description` is sent as the subsequent user query.
+2. when a user-facing controllable is also available, the unwrapped
+   `Goal.description` is sent as the subsequent user query.
 
-The second step is necessary because superred's chatbot target performs no LLM
-call without a user turn. It represents the upstream custom-instruction
-workflow but is adapter orchestration, not source text.
+The optional second step represents the upstream custom-instruction workflow
+but is adapter orchestration, not source text. A system-only scope can still
+inject the privileged template without crashing. If no loaded template has a
+compatible delivery surface, initialization succeeds with an empty schedule
+and the first run ends cleanly instead of producing `stop_reason=error`.
 
 An explicit `target_controllable_name=` overrides delivery classification and
-is therefore an experimental adaptation.
+is therefore an experimental adaptation. If that named surface is unavailable,
+the schedule is empty rather than raising during initialization.
 
 ## Evaluation and stopping
 

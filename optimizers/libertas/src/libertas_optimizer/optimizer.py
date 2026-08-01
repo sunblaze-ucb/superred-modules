@@ -51,8 +51,8 @@ SelectionMethod = Literal["llm", "deterministic", "deterministic-fallback"]
 class LibertasOptimizer(Optimizer):
     """Replay byte-faithful L1B3RT4S templates, one template per run.
 
-    By default only upstream sections containing an explicit generic goal
-    marker are used.  The target's model identity selects the matching vendor
+    By default only upstream sections containing a reviewed goal input surface
+    are used.  The target's model identity selects the matching vendor
     file family; if no identity can be inferred, every vendor family is
     eligible.  By default one helper-LLM call ranks metadata for the compatible
     templates, with validated IDs and deterministic fallback.
@@ -173,12 +173,6 @@ class LibertasOptimizer(Optimizer):
         templates = await self._rank_templates_with_llm(templates)
         if self._max_attempts is not None:
             templates = templates[: self._max_attempts]
-        if not templates:
-            provider_text = self._resolved_provider or "all providers"
-            raise ValueError(
-                "no runnable L1B3RT4S templates for "
-                f"{provider_text}; check scope, source_files, and template options"
-            )
 
         self._templates = templates
         self._template_index = 0
@@ -280,9 +274,9 @@ class LibertasOptimizer(Optimizer):
 
     def _template_has_delivery_surface(self, template: PromptTemplate) -> bool:
         if self._target_controllable_name_override is not None:
-            return True
+            return self._user_controllable_name is not None
         if template.delivery == "system":
-            return self._has_system_controllable and self._user_controllable_name is not None
+            return self._has_system_controllable
         return self._user_controllable_name is not None
 
     async def _rank_templates_with_llm(
@@ -381,12 +375,11 @@ class LibertasOptimizer(Optimizer):
     ) -> str | None:
         if self._target_controllable_name_override is not None:
             available = {controllable.name for controllable in controllables}
-            if self._target_controllable_name_override not in available:
-                raise ValueError(
-                    f"target controllable {self._target_controllable_name_override!r} "
-                    f"is unavailable; got {sorted(available)}"
-                )
-            return self._target_controllable_name_override
+            return (
+                self._target_controllable_name_override
+                if self._target_controllable_name_override in available
+                else None
+            )
 
         for controllable in controllables:
             if controllable.name.casefold() in _USER_CONTROLLABLE_NAMES:

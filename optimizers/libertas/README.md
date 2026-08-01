@@ -24,8 +24,10 @@ Parity is pinned to L1B3RT4S commit
   normalization.
 - Rendering changes only an explicit upstream input surface. Direct
   placeholders such as `<user_query>` are replaced directly; `{Z}` and its
-  spelling variants remain variable references while only the final
-  assignment value is changed. Untemplated sections are excluded by default.
+  spelling variants remain variable references while every corresponding
+  assignment value is changed. Reviewed X/cipher-variable templates preserve
+  their query references and change their concrete payload assignments.
+  Untemplated sections are excluded by default.
 - Prompt headings remain provenance metadata and are not sent to the target,
   matching the upstream copy/paste convention.
 - Upstream filenames—including names beginning with `!`, `#`, `*`, and `-`—are
@@ -91,10 +93,11 @@ optimizer = LibertasOptimizer(
 )
 ```
 
-They are scheduled only when both a `system_prompt` and a user-facing
-controllable are in scope. The exact upstream template is installed on the
-system surface and the task goal is sent as the subsequent user query, matching
-the upstream custom-instruction workflow.
+They are scheduled whenever a `system_prompt` controllable is in scope. The
+exact upstream template is installed on the system surface; when a user-facing
+controllable is also available, the task goal is sent as the subsequent user
+query, matching the upstream custom-instruction workflow. A scope with no
+compatible template initializes as an empty schedule and ends cleanly.
 
 Untemplated sections require an explicit adaptation opt-in:
 

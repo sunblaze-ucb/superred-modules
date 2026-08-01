@@ -464,6 +464,42 @@ def test_system_templates_are_filtered_without_system_surface() -> None:
     assert all(template.delivery == "user" for template in optimizer.templates)
 
 
+def test_system_only_scope_schedules_deliverable_system_templates() -> None:
+    optimizer = LibertasOptimizer(
+        provider="openai",
+        include_system_templates=True,
+        source_files=("OPENAI.mkd",),
+        selection_strategy="deterministic",
+    )
+
+    _initialize(optimizer, controllables=[_system_ctrl()])
+
+    assert optimizer.templates
+    assert all(template.delivery == "system" for template in optimizer.templates)
+    _event(optimizer, RunStartEvent(trajectory=MagicMock()))
+    injected = _event(
+        optimizer,
+        ControllablePreCallEvent(controllable=_system_ctrl(), request="system"),
+    )
+    assert isinstance(injected, ControllableInjection)
+
+
+def test_scope_without_a_runnable_surface_finishes_without_error() -> None:
+    optimizer = LibertasOptimizer(
+        provider="openai",
+        source_files=("OPENAI.mkd",),
+        selection_strategy="deterministic",
+    )
+
+    _initialize(optimizer, controllables=[_system_ctrl()])
+
+    assert optimizer.templates == ()
+    _event(optimizer, RunStartEvent(trajectory=MagicMock()))
+    end = _event(optimizer, RunEndEvent(evaluation=None))
+    assert isinstance(end, RunEndResponse)
+    assert end.done is True
+
+
 def test_explicit_controllable_override_is_respected() -> None:
     alternate = _user_ctrl("custom_prompt")
     optimizer = LibertasOptimizer(
@@ -487,17 +523,20 @@ def test_explicit_controllable_override_is_respected() -> None:
 
 
 def test_invalid_configuration_fails_loudly() -> None:
-    try:
+    with pytest.raises(ValueError, match="max_attempts"):
         LibertasOptimizer(max_attempts=0)
-    except ValueError as exc:
-        assert "max_attempts" in str(exc)
-    else:
-        raise AssertionError("expected invalid max_attempts to fail")
 
-    optimizer = LibertasOptimizer(target_controllable_name="missing")
-    try:
-        _initialize(optimizer)
-    except ValueError as exc:
-        assert "unavailable" in str(exc)
-    else:
-        raise AssertionError("expected unavailable controllable to fail")
+
+def test_unavailable_explicit_controllable_finishes_without_error() -> None:
+    optimizer = LibertasOptimizer(
+        target_controllable_name="missing",
+        selection_strategy="deterministic",
+    )
+
+    _initialize(optimizer)
+
+    assert optimizer.templates == ()
+    _event(optimizer, RunStartEvent(trajectory=MagicMock()))
+    end = _event(optimizer, RunEndEvent(evaluation=None))
+    assert isinstance(end, RunEndResponse)
+    assert end.done is True
