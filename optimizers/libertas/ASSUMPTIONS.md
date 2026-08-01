@@ -13,9 +13,12 @@ the pinned commit above.
 
 ## What is reproduced exactly
 
-All bundled upstream files are byte-for-byte copies. Their original and stored
-paths (which are identical), byte size, and SHA-256 are recorded in
-`src/libertas_optimizer/data/upstream_manifest.json`.
+All bundled upstream files are byte-for-byte copies. Their original path,
+portable stored path, byte size, and SHA-256 are recorded in
+`src/libertas_optimizer/data/upstream_manifest.json`. Paths are identical
+except for upstream's `*SPECIAL_TOKENS.json`: because `*` is illegal in Windows
+filenames, the wheel stores those exact bytes as `_SPECIAL_TOKENS.json` while
+the manifest and public corpus API retain the original source name.
 
 The sync script requires:
 
@@ -47,6 +50,11 @@ it, up to the next reviewed heading, as the prompt body. `AMAZON.mkd`,
 headings. Other files retain the level-one rule. Files without a reviewed
 heading are one body.
 
+The reviewed Amazon Rufus heading contains two separately triple-quoted
+prompts. They are split at the exact blank-line boundary into two body slices,
+so each remains an independent candidate and attack attempt rather than being
+concatenated into one message.
+
 The heading is not sent to the victim. This matches the repository's apparent
 copy/paste convention: headings name the intended target while the following
 body is the payload.
@@ -72,10 +80,10 @@ upstream input surface. L1B3RT4S uses two conventions:
   - `{USER QUERY}`
   - `<user_query>`
   - `<|user-query|>`
-  - `[Z]`
   - `[*insert-prompt-here*]` and its upstream variants
 - an indirection variable followed by a value assignment, spelled as:
   - `{Z}=...` or `{Z}: ...`
+  - `[Z]=...`
   - `{Variable Z}=...`
   - `variable Z = ...`
   - `Z = ...`
@@ -107,10 +115,12 @@ Some pinned templates use `<user_query>` as a reference while a separate
 `X=...` carries the concrete payload. For those reviewed bodies, rendering
 preserves `<user_query>`, changes the final X-assignment, and changes any
 trailing `USER:` payload. The two ciphered DeepSeek templates use reviewed
-equivalent assignment symbols (`𝓩` and `C`). Three other pinned bodies place
-their concrete query in a reviewed trailing literal rather than an assignment;
-those exact commit-pinned literals are changed while their query references
-remain intact.
+equivalent assignment symbols (`𝓩` and `C`). Seven pinned bodies contain
+reviewed concrete query literals; those exact commit-pinned literals are
+changed while their surrounding attack instructions and query references
+remain intact. Inception's trailing hardcoded title is changed together with
+both of its Z assignments. Grok 2's marker is replaced inside its assignment
+while the trailing length and response-mode suffix is preserved.
 
 Direct marker spellings at this commit include:
 
@@ -153,16 +163,20 @@ families (for example `claude` to `ANTHROPIC.mkd`, `gpt` to
 namespace is authoritative, so `nvidia/llama-3.1-nemotron` maps to NVIDIA
 rather than the broader Llama/Meta family. Without a recognized namespace,
 specific derived families such as Nemotron and Hermes take precedence over the
-Llama fallback. Unrelated observable text is never used for provider inference.
-This selection is adapter logic; upstream provides no routing algorithm.
+Llama fallback. Fallback family names are matched as identifier tokens rather
+than arbitrary substrings, so unrelated names such as `innovation-model` do
+not become Nova/Amazon. Unrelated observable text is never used for provider
+inference. This selection is adapter logic; upstream provides no routing
+algorithm.
 
 An automatically inferred provider is a soft preference. All delivery-
 compatible strict templates remain eligible and are stably tiered as matching
 provider, universal, then cross-provider. If no provider can be inferred, all
 providers remain in lexicographic source-file order. An explicit `provider=`
 override is instead a strict filter that includes that provider's files and
-universal templates. `source_files=` is an exact filter and retains corpus
-order.
+universal templates. `source_files=` is an exact candidate filter. Its corpus
+order is the deterministic fallback, but the default helper may rank selected
+candidates; `selection_strategy="deterministic"` preserves exact source order.
 
 Within a file, bodies retain upstream order.
 

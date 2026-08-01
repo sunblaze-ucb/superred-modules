@@ -208,6 +208,26 @@ def test_invalid_helper_rankings_fall_back_atomically(response: str) -> None:
     assert optimizer.selection_method == "deterministic-fallback"
 
 
+def test_helper_ranking_rejects_unexpected_object_fields() -> None:
+    candidates = load_prompt_templates(source_files=("OPENAI.mkd",))
+    llm = _ScriptedLLM(
+        [
+            json.dumps(
+                {
+                    "template_ids": [candidates[-1].id],
+                    "reason": "schema does not allow this field",
+                }
+            )
+        ]
+    )
+    optimizer = LibertasOptimizer(source_files=("OPENAI.mkd",))
+
+    _initialize(optimizer, llm=llm)
+
+    assert optimizer.templates == candidates
+    assert optimizer.selection_method == "deterministic-fallback"
+
+
 def test_duplicate_helper_ids_fall_back_instead_of_dropping_attempts() -> None:
     candidates = load_prompt_templates(source_files=("OPENAI.mkd",))
     duplicate = candidates[-1].id
@@ -245,11 +265,11 @@ def test_partial_helper_ranking_keeps_unmentioned_candidates_in_source_order() -
 def test_single_candidate_skips_helper_without_reporting_a_fallback() -> None:
     llm = _ScriptedLLM([])
     optimizer = LibertasOptimizer(
-        source_files=("AMAZON.mkd",),
+        source_files=("APPLE.mkd",),
         selection_strategy="llm",
     )
 
-    _initialize(optimizer, model="amazon/nova-pro", llm=llm)
+    _initialize(optimizer, model="apple/apple-intelligence", llm=llm)
 
     assert len(optimizer.templates) == 1
     assert optimizer.selection_method == "deterministic"

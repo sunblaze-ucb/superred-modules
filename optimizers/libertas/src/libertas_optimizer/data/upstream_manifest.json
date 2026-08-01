@@ -20,7 +20,7 @@
     },
     {
       "source_path": "*SPECIAL_TOKENS.json",
-      "stored_path": "*SPECIAL_TOKENS.json",
+      "stored_path": "_SPECIAL_TOKENS.json",
       "sha256": "c289f90a879b09831d4fd2933f57f46deea55a0f9b987a6003adf3a8d0948453",
       "size": 55437,
       "bundled": true,

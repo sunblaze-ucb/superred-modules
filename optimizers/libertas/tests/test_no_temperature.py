@@ -1,4 +1,4 @@
-"""Guard that this zero-LLM optimizer never adds a temperature setting."""
+"""Guard that Libertas never imposes a temperature on its helper LLM."""
 
 from __future__ import annotations
 

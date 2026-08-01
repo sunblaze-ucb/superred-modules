@@ -160,8 +160,8 @@ prioritizing the matching vendor family from the target's model identity before
 universal and cross-provider prompts, and trying one prompt per run. The
 upstream files are pinned by commit and preserved
 byte-for-byte—including combining marks, variation selectors, confusables, and
-invisible Unicode—and strict mode changes only an explicit upstream goal
-placeholder. One helper-LLM call ranks prompt metadata for the exact target
+invisible Unicode—and strict mode changes only a reviewed upstream goal-input
+surface. One helper-LLM call ranks prompt metadata for the exact target
 model within those priority tiers; raw jailbreak bodies are never sent to the
 helper, and invalid output falls back to source order. There is no internal
 judge. Because the upstream

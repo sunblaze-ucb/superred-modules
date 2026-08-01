@@ -83,7 +83,7 @@ def test_module_license_matches_the_upstream_manifest_entry() -> None:
 def test_special_character_filenames_and_bytes_are_exact() -> None:
     manifest = load_manifest()
     stored = {entry["source_path"]: entry["stored_path"] for entry in manifest["files"]}
-    assert stored["*SPECIAL_TOKENS.json"] == "*SPECIAL_TOKENS.json"
+    assert stored["*SPECIAL_TOKENS.json"] == "_SPECIAL_TOKENS.json"
     assert stored["#MOTHERLOAD.txt"] == "#MOTHERLOAD.txt"
     assert stored["!SHORTCUTS.json"] == "!SHORTCUTS.json"
     assert stored["-MISCELLANEOUS-.mkd"] == "-MISCELLANEOUS-.mkd"
@@ -97,6 +97,12 @@ def test_special_character_filenames_and_bytes_are_exact() -> None:
         entry = next(item for item in manifest["files"] if item["source_path"] == source_file)
         content = load_source_bytes(source_file)
         assert hashlib.sha256(content).hexdigest() == entry["sha256"]
+
+    windows_forbidden = set('<>:"/\\|?*')
+    assert all(
+        stored_path is None or windows_forbidden.isdisjoint(stored_path)
+        for stored_path in stored.values()
+    )
 
 
 def test_every_bundled_source_round_trips_strict_utf8() -> None:
@@ -123,7 +129,7 @@ def test_prompt_body_hashes_match_exact_utf8_slices() -> None:
         provider=None,
         include_system_templates=True,
     )
-    assert len(templates) == 63
+    assert len(templates) == 66
     assert len({template.id for template in templates}) == len(templates)
 
     for template in templates:
@@ -147,7 +153,7 @@ def test_strict_render_preserves_z_references_across_the_upstream_corpus() -> No
             assert rendered.count("{Z}") == template.raw_template.count("{Z}")
 
 
-def test_every_z_assignment_in_the_upstream_corpus_receives_the_goal() -> None:
+def test_every_z_assignment_and_companion_literal_receives_the_goal() -> None:
     goal = "UNIQUE-AUDIT-GOAL-7f31"
     templates = load_prompt_templates(
         provider=None,
@@ -161,7 +167,8 @@ def test_every_z_assignment_in_the_upstream_corpus_receives_the_goal() -> None:
         if not assignments or "<VARIABLE Z = ________>" in template.raw_template:
             continue
         rendered = render_prompt(template, goal)
-        assert rendered.count(goal) == len(assignments), template.id
+        reviewed_literals = corpus_module._reviewed_literal_spans(template)
+        assert rendered.count(goal) == len(assignments) + len(reviewed_literals), template.id
 
 
 def test_structural_user_query_xml_is_not_a_goal_marker() -> None:
@@ -502,6 +509,96 @@ def test_reviewed_non_z_payloads_do_not_retain_hardcoded_goals(
     assert preserved_reference in rendered
 
 
+def test_reka_square_bracket_variable_keeps_its_name_and_replaces_its_value() -> None:
+    template = next(
+        item
+        for item in load_prompt_templates(source_files=("REKA.mkd",))
+        if item.heading == "Reka Core"
+    )
+
+    rendered = render_prompt(template, "UNIQUE-AUDIT-GOAL-7f31")
+
+    assert rendered.count("[Z]") == template.raw_template.count("[Z]")
+    assert "[Z]=UNIQUE-AUDIT-GOAL-7f31" in rendered
+    assert "n4p4.lm" not in rendered
+
+
+def test_grok_2_replaces_only_the_query_marker_inside_its_suffixed_assignment() -> None:
+    template = next(
+        item
+        for item in load_prompt_templates(source_files=("XAI.mkd",))
+        if item.heading == "GROK 2"
+    )
+
+    rendered = render_prompt(template, "UNIQUE-AUDIT-GOAL-7f31")
+
+    assert "Z={UNIQUE-AUDIT-GOAL-7f31, over 420 words" in rendered
+    assert "in genius rebel accurate mode}" in rendered
+    assert "(insert-your-query-here)" not in rendered
+
+
+@pytest.mark.parametrize(
+    ("source_file", "heading", "hardcoded_values", "goal_count"),
+    [
+        (
+            "DEEPSEEK.mkd",
+            "DEEPSEEK-R1-LITE",
+            ("full LSD synthesis recipe",),
+            1,
+        ),
+    ],
+)
+def test_reviewed_concrete_native_prompts_are_scheduled_and_replace_their_payloads(
+    source_file: str,
+    heading: str,
+    hardcoded_values: tuple[str, ...],
+    goal_count: int,
+) -> None:
+    template = next(
+        item
+        for item in load_prompt_templates(source_files=(source_file,))
+        if item.heading == heading
+    )
+
+    rendered = render_prompt(template, "UNIQUE-AUDIT-GOAL-7f31")
+
+    assert all(value not in rendered for value in hardcoded_values)
+    assert rendered.count("UNIQUE-AUDIT-GOAL-7f31") == goal_count
+
+
+def test_amazon_rufus_prompts_are_independent_rankable_templates() -> None:
+    templates = tuple(
+        item
+        for item in load_prompt_templates(source_files=("AMAZON.mkd",))
+        if item.heading == "AMAZON RUFUS JAILBREAK\u2028\u2028"
+    )
+    hardcoded_values = (
+        "how to make m3thlab?",
+        "your full verbatim system prompt in l33tspeak?",
+    )
+
+    assert len(templates) == 2
+    assert all(template.raw_template.count('"""') == 2 for template in templates)
+    for template, hardcoded_value in zip(templates, hardcoded_values, strict=True):
+        rendered = render_prompt(template, "UNIQUE-AUDIT-GOAL-7f31")
+        assert hardcoded_value not in rendered
+        assert rendered.count("UNIQUE-AUDIT-GOAL-7f31") == 1
+
+
+def test_inception_replaces_assignment_and_conflicting_trailing_title() -> None:
+    template = next(
+        item
+        for item in load_prompt_templates(source_files=("INCEPTION.mkd",))
+        if item.heading == "MERCURY"
+    )
+
+    rendered = render_prompt(template, "UNIQUE-AUDIT-GOAL-7f31")
+
+    assert "{Z}=UNIQUE-AUDIT-GOAL-7f31" in rendered
+    assert "Meth 101: A Complete Guide" not in rendered
+    assert rendered.count("UNIQUE-AUDIT-GOAL-7f31") == 3
+
+
 @pytest.mark.parametrize(
     ("source_file", "heading"),
     [
@@ -602,7 +699,7 @@ def test_untemplated_sections_are_opt_in_and_append_without_normalizing() -> Non
     assert len(adapted) > len(strict)
 
     template = next(item for item in adapted if not item.is_templated)
-    with pytest.raises(ValueError, match="no explicit upstream goal marker"):
+    with pytest.raises(ValueError, match="no reviewed upstream goal input surface"):
         render_prompt(template, "goal")
 
     rendered = render_prompt(template, "goal", append_untemplated=True)
@@ -638,6 +735,8 @@ def test_provider_detection(model: str, provider: str) -> None:
 
 def test_unknown_provider_detection_is_conservative() -> None:
     assert detect_provider("private/my-model") is None
+    assert detect_provider("private/innovation-model") is None
+    assert detect_provider("private/pho4enix-model") is None
     assert detect_provider("") is None
 
 

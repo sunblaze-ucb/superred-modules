@@ -353,7 +353,7 @@ class LibertasOptimizer(Optimizer):
             parsed: Any = json.loads(content)
         except Exception:
             return templates
-        if not isinstance(parsed, dict):
+        if not isinstance(parsed, dict) or set(parsed) != {"template_ids"}:
             return templates
         template_ids = parsed.get("template_ids")
         if not isinstance(template_ids, list) or not template_ids:

@@ -8,7 +8,7 @@ auxiliary material rather than an executable attack algorithm.
 `LibertasOptimizer` turns the compatible portion of that corpus into a superred
 attack: it selects the target's vendor family from explicit model metadata,
 asks `self.llm` to rank trusted template metadata for the target model and
-goal, replaces the chosen prompt's explicit upstream goal slot with
+goal, replaces the chosen prompt's reviewed upstream goal-input surface with
 `Goal.description`, and tries one template per run. The SecurityClaim alone
 decides success.
 
@@ -22,17 +22,19 @@ Parity is pinned to L1B3RT4S commit
 - Prompt bodies are slices of those exact files. The parser never strips
   whitespace, converts newlines, uses replacement decoding, or applies Unicode
   normalization.
-- Rendering changes only an explicit upstream input surface. Direct
+- Rendering changes only a reviewed upstream input surface. Direct
   placeholders such as `<user_query>` are replaced directly; `{Z}` and its
   spelling variants remain variable references while every corresponding
-  assignment value is changed. Reviewed X/cipher-variable templates preserve
-  their query references and change their concrete payload assignments.
-  Untemplated sections are excluded by default.
+  assignment value is changed. Reviewed X/cipher-variable and concrete-literal
+  templates preserve their surrounding instructions and change only their
+  goal payloads. Untemplated sections are excluded by default.
 - Prompt headings remain provenance metadata and are not sent to the target,
   matching the upstream copy/paste convention.
-- Upstream filenames—including names beginning with `!`, `#`, `*`, and `-`—are
-  preserved exactly inside the wheel. Corpus paths are handled only through
-  Python resource APIs, never shell interpolation.
+- Original upstream filenames—including names beginning with `!`, `#`, `*`,
+  and `-`—are preserved as manifest provenance. The Windows-illegal leading
+  `*` name uses a portable internal storage alias inside the wheel; its bytes,
+  source name, size, and hash remain exact. Corpus paths are handled only
+  through Python resource APIs, never shell interpolation.
 
 Run `verify_bundled_corpus()` at any time to check the installed snapshot.
 See `ASSUMPTIONS.md` for the complete file-by-file boundary and deviations.
@@ -67,7 +69,7 @@ optimizer = LibertasOptimizer(selection_strategy="deterministic")
 
 By default the optimizer:
 
-- uses only prompt bodies with an explicit upstream goal marker;
+- uses only prompt bodies with a reviewed upstream goal-input surface;
 - uses only user-message delivery;
 - makes at most one helper-LLM call to rank candidate metadata;
 - never sends upstream prompt bodies to the helper LLM;
@@ -88,8 +90,9 @@ applied after tiering and ranking. Inspect `selection_method` to distinguish
 `llm`, `deterministic`, and `deterministic-fallback` schedules.
 
 An explicit `provider=` remains a strict reproducibility filter (plus universal
-templates), while `source_files=` selects exactly those files and preserves
-their corpus order.
+templates), while `source_files=` selects exactly those files. Their corpus
+order is the helper fallback; set `selection_strategy="deterministic"` when the
+exact source order itself must be reproduced.
 
 Privileged custom-instruction/system-prompt entries are opt-in:
 
