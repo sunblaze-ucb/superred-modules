@@ -50,7 +50,6 @@ REQUIRED_CONFIG_SLOTS: frozenset[str] = frozenset(
     {
         cfg.ACTIVE_MCP_SERVERS,
         cfg.ENV_INJECTION_CONFIG,
-        cfg.ENV_INJECTION_TEMPLATES,
         cfg.SYSTEM_PROMPT,
         cfg.USER_PROMPT,
         cfg.TASK_DIR,
@@ -126,9 +125,6 @@ class DtapTask(Task[Target]):
         tc = self._tc
         target.set_config(cfg.ACTIVE_MCP_SERVERS, json.dumps(list(tc.servers)))
         target.set_config(cfg.ENV_INJECTION_CONFIG, json.dumps(tc.env_injection_config))
-        target.set_config(
-            cfg.ENV_INJECTION_TEMPLATES, json.dumps(tc.env_injection_templates)
-        )
         target.set_config(cfg.SYSTEM_PROMPT, tc.system_prompt)
         target.set_config(cfg.USER_PROMPT, json.dumps(list(tc.instructions)))
         target.set_config(cfg.TASK_DIR, str(tc.task_dir))

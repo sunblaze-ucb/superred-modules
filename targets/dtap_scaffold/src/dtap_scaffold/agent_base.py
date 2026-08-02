@@ -59,7 +59,6 @@ from dtap_scaffold.controllables import (
     tool_call_controllable,
 )
 from dtap_scaffold.forest import TOOL_CATALOGUE_ADD_TAG, build_domain, env_server_tag
-from dtap_scaffold.injection import build_env_injection
 from dtap_scaffold.observables import (
     ACTIVE_ENVIRONMENTS_OBS,
     ATTACKER_CONTEXT_OBS,
@@ -136,7 +135,6 @@ class DtapAgentTarget(Target):
         self._active_servers: tuple[str, ...] = ()
         self._injection_servers: tuple[str, ...] = ()
         self._env_injection_config: dict[str, Any] = {}
-        self._env_injection_templates: dict[str, Any] = {}
         self._system_prompt: str = ""
         self._user_instructions: tuple[str, ...] = ()
         self._task_dir: str = ""
@@ -214,8 +212,6 @@ class DtapAgentTarget(Target):
             self._env_injection_config = dict(cfg)
             self._injection_servers = tuple(cfg.keys())
             self._env_tags = {s: env_server_tag(s) for s in self._injection_servers}
-        elif name == C.ENV_INJECTION_TEMPLATES:
-            self._env_injection_templates = json.loads(value) if value else {}
         elif name == C.SYSTEM_PROMPT:
             self._system_prompt = value
         elif name == C.USER_PROMPT:
@@ -266,12 +262,7 @@ class DtapAgentTarget(Target):
             # root/fallback (the whole-server grant; fires for unmapped tools)
             ctrls += list(self._env_tool_node_ctrls[s].values())
             ctrls.append(self._env_tool_defaults[s])
-        ctrls += [
-            env_inject_controllable(
-                s, self._env_tags[s], free_text=self._env_inject_free_text(s)
-            )
-            for s in self._injection_servers
-        ]
+        ctrls += [env_inject_controllable(s, self._env_tags[s]) for s in self._injection_servers]
         return ctrls
 
     def get_observables(self) -> list[ObservableValue]:
@@ -503,20 +494,12 @@ class DtapAgentTarget(Target):
 
         return added, removed, call_ctrls
 
-    def _env_inject_free_text(self, server: str) -> bool:
-        """Whether *server*'s env_inject accepts plain text (the task pinned a template
-        with a resolvable content field). Threaded into BOTH controllable-build sites
-        so the init-time and event-time value_type agree per server."""
-        return bool(self._env_injection_templates.get(server, {}).get("content_field"))
-
     async def _apply_env_injections(self, send_event: EventResponseHandler) -> None:
         assert self._injector is not None
         for server in self._injection_servers:
             point = InjectionPoint(server=server)
             answer = await self._injector.snapshot(point)
-            ctrl = env_inject_controllable(
-                server, self._env_tags[server], free_text=self._env_inject_free_text(server)
-            )
+            ctrl = env_inject_controllable(server, self._env_tags[server])
             resp = await send_event(
                 ControllablePostCallEvent(
                     controllable=ctrl,
@@ -526,13 +509,7 @@ class DtapAgentTarget(Target):
             )
             injected = _as_injection(resp)
             if injected is not None:
-                # Splice a plain-text payload into the task's pinned inject template
-                # (or pass a structured value through unchanged). None -> write nothing.
-                payload = build_env_injection(
-                    injected, self._env_injection_templates.get(server)
-                )
-                if payload is not None:
-                    await self._injector.apply(point, payload)
+                await self._injector.apply(point, injected)
 
     def _new_run_dir(self) -> str:
         """Create a fresh per-run host dir with a ``workspace/`` subdir, under

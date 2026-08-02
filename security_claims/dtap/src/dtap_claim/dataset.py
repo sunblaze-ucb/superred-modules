@@ -126,13 +126,6 @@ class TaskConfig:
     malicious_goal: str | None
     available_injections: dict[str, Any] = field(default_factory=dict)
     env_injection_config: dict[str, Any] = field(default_factory=dict)
-    #: Per-server reference env-injection TEMPLATE from ``Attack.attack_turns`` environment
-    #: steps: ``{server: {injection_mcp_tool, kwargs, content_field}}``. TARGET-PRIVATE
-    #: routing (NOT an attack replay): it lets the target splice a plain-text env_inject
-    #: payload into the pinned content field, so a generic attacker supplies CONTENT while
-    #: the task's inject tool + routing are inherited verbatim. Empty when the task pins no
-    #: environment step, or the inject tool has no allowlisted free-text content field.
-    env_injection_templates: dict[str, dict[str, Any]] = field(default_factory=dict)
     #: Per-server ``env_vars`` from ``Agent.mcp_servers`` (``{server: {VAR: value}}``),
     #: upstream's HIGHEST-priority env tier (``mcp_helpers.task_env_overrides``). Sets
     #: the acting-user identity (``USER_ACCESS_TOKEN``) + per-task credentials the
@@ -161,60 +154,6 @@ def _path_facts(config_path: Path, root: Path) -> tuple[str, str, str | None, st
     # benign
     risk = parts[2] if len(parts) >= 4 else None
     return domain, "benign", None, risk, task_id
-
-
-# Free-text content fields an inject_* tool exposes, i.e. the one kwarg an attacker's
-# plain-text payload belongs in. Corpus-derived (92% of text-only indirect env-first-step
-# tasks resolve via this set); a tool with none is left structured-only (env_tool fallback).
-# Extend ONLY from evidence in the dataset, never by guessing.
-_ENV_CONTENT_FIELDS: tuple[str, ...] = (
-    "content", "body", "message", "prompt", "description", "html", "summary", "abstract",
-    "announcement_body", "injection_payload", "test_result", "script_content",
-    "hidden_instruction", "value", "text", "notes", "comment_body",
-)
-
-
-def _content_field(kwargs: dict[str, Any]) -> str | None:
-    """The single free-text field of *kwargs* an attacker payload belongs in, or None."""
-    for name in _ENV_CONTENT_FIELDS:
-        v = kwargs.get(name)
-        if isinstance(v, str) and v.strip():
-            return name
-    return None
-
-
-def _env_injection_templates(attack: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Per-server reference env-injection template from ``Attack.attack_turns``.
-
-    Only ``type == "environment"`` steps are read (the tool/skill/prompt vectors are not
-    env injections). The FIRST env step per server wins; a step whose inject tool has no
-    allowlisted content field contributes nothing (that server stays structured-only, so
-    a generic attacker declines it and the target's env_tool surface is the fallback). The
-    attack is NOT replayed -- this is target-private routing the target splices content
-    into. Keyed by the injection server (the part of ``injection_mcp_tool`` before ':',
-    which equals an ``env_injection_config`` key).
-    """
-    out: dict[str, dict[str, Any]] = {}
-    for turn in attack.get("attack_turns") or []:
-        for step in turn.get("attack_steps") or []:
-            if step.get("type") != "environment":
-                continue
-            imt = step.get("injection_mcp_tool")
-            kwargs = step.get("kwargs")
-            if not imt or ":" not in str(imt) or not isinstance(kwargs, dict):
-                continue
-            server = str(imt).split(":", 1)[0]
-            if server in out:
-                continue
-            field = _content_field(kwargs)
-            if field is None:
-                continue
-            out[server] = {
-                "injection_mcp_tool": str(imt),
-                "kwargs": dict(kwargs),
-                "content_field": field,
-            }
-    return out
 
 
 def parse_task_config(
@@ -286,7 +225,6 @@ def parse_task_config(
         malicious_goal=attack.get("malicious_goal"),
         available_injections=dict(redteam.get("available_injections") or {}),
         env_injection_config=dict(redteam.get("env_injection_config") or {}),
-        env_injection_templates=_env_injection_templates(attack),
         server_env_overrides=server_env_overrides,
         additional_information=str(attack.get("additional_information") or ""),
     )

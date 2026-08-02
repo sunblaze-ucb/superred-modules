@@ -25,7 +25,6 @@ from dtap_scaffold.forest import (
 # Slot-name constants (referenced by the target's set_config dispatch and the claim).
 ACTIVE_MCP_SERVERS = "active_mcp_servers"
 ENV_INJECTION_CONFIG = "env_injection_config"
-ENV_INJECTION_TEMPLATES = "env_injection_templates"
 SYSTEM_PROMPT = "system_prompt"
 USER_PROMPT = "user_prompt"
 TASK_DIR = "task_dir"
@@ -53,18 +52,6 @@ CONFIG_SPECS: tuple[ConfigSpec, ...] = (
             "JSON of DTAP RedTeamingAgent.env_injection_config (e.g. "
             '{"gmail-injection": "all"}): which injection MCP servers start and '
             "which inject_* points become env_inject controllables."
-        ),
-    ),
-    ConfigSpec(
-        name=ENV_INJECTION_TEMPLATES,
-        security_domain=ENVIRONMENT_TAG,
-        description=(
-            "JSON {server: {injection_mcp_tool, kwargs, content_field}} of the task's "
-            "reference env injection per server (from Attack.attack_turns environment "
-            "steps). TARGET-PRIVATE routing: it is NOT replayed as an attack; it lets "
-            "the target splice a plain-text env_inject payload into the pinned content "
-            "field. A server present here exposes env_inject as free text; absent -> "
-            "structured JSON only. Empty when the task pins no env injection."
         ),
     ),
     ConfigSpec(
@@ -140,7 +127,6 @@ CONFIG_SPECS: tuple[ConfigSpec, ...] = (
 __all__ = [
     "ACTIVE_MCP_SERVERS",
     "ENV_INJECTION_CONFIG",
-    "ENV_INJECTION_TEMPLATES",
     "SYSTEM_PROMPT",
     "USER_PROMPT",
     "TASK_DIR",

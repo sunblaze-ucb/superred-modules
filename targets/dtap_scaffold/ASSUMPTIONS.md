@@ -334,31 +334,3 @@ fixing only if a future experiment makes them relevant):
   per-tool-call PostCall return-tampering still fires on every turn. Fix, if a future
   dataset ships multi-user-turn tasks with `turn_id`-scheduled env writes: thread a
   per-turn env-injection callback into the run loop.
-
-## J. env_inject accepts plain text by splicing it into the task's reference template
-
-DTAP's environment vector `env_inject:<server>` is a structured MCP call
-`{injection_mcp_tool, kwargs}`: the inject tool and its routing kwargs (recipient,
-page, path, ...) must be named, so a bare attacker string parses to nothing and writes
-nothing. But the per-task config already pins that routing in
-`Attack.attack_turns[].attack_steps[type=environment]` -- the red-teamer varies only the
-CONTENT. So the port carries that reference as a TARGET-PRIVATE template (config slot
-`env_injection_templates`, parsed by the claim; NOT replayed as an attack) and, when the
-attacker injects a plain-text `env_inject` value, splices it into the template's one
-content field (`injection.build_env_injection`), carrying every routing kwarg verbatim.
-
-- A server WITH a resolvable content-field template exposes `env_inject:<server>` as
-  `value_type="text"` (a generic content-injection attacker drives it directly); a server
-  WITHOUT one stays `value_type="json"` (structured-only; a generic attacker declines it
-  and the `env_tool:<server>` return-tampering surface is the fallback). The per-server
-  `value_type` is threaded into BOTH controllable-build sites (init + event) so they agree.
-- A structured JSON value is still accepted verbatim (upstream-faithful / power-user path).
-- Faithfulness: only the attacker-controlled CONTENT varies; the tool + routing are the
-  task's own. No template, an empty payload, or a passthrough decline writes nothing, so
-  the CLEAN BASELINE is byte-identical. A mis-placed content field can only WEAKEN an
-  attack (false-negative-safe), never inflate ASR. Coverage: ~92% of text-only indirect
-  env-first-step tasks resolve a content field via a corpus-derived allowlist; the ~8%
-  without one (e.g. inject_flight/inject_directory) stay structured-only -> env_tool.
-- The content-field allowlist is extended ONLY from dataset evidence, never guessed; the
-  first environment step per server wins; multi-step chains are not replayed (v1).
-- `hash_task` never reads `attack_turns`, so golden hashes are unaffected.

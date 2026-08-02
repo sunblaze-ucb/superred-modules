@@ -77,7 +77,6 @@ async def test_configure_target_sets_dtap_slots() -> None:
 
     assert target.config[cfg.ACTIVE_MCP_SERVERS] == json.dumps(["travel-suite", "calendar"])
     assert target.config[cfg.ENV_INJECTION_CONFIG] == json.dumps({"travel-injection": "all"})
-    assert target.config[cfg.ENV_INJECTION_TEMPLATES] == json.dumps({})
     assert target.config[cfg.SYSTEM_PROMPT] == "SP HERE"
     assert target.config[cfg.USER_PROMPT] == json.dumps(["turn one", "turn two"])
     assert target.config[cfg.TASK_DIR] == "/data/travel/malicious/direct/data-exfiltration/001"
@@ -128,7 +127,6 @@ def test_required_slots_constant() -> None:
         {
             cfg.ACTIVE_MCP_SERVERS,
             cfg.ENV_INJECTION_CONFIG,
-            cfg.ENV_INJECTION_TEMPLATES,
             cfg.SYSTEM_PROMPT,
             cfg.USER_PROMPT,
             cfg.TASK_DIR,
