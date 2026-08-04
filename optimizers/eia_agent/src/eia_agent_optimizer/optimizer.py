@@ -44,20 +44,12 @@ _TOOL_REWRITE_DOC = "tool_catalog_rewrite_doc"
 # Roles this attacker asks its LLM to sort the raw surfaces into, read from each
 # controllable's *description* rather than its name (see surface_llm). EIA plants
 # an HTML document into any surface whose returned content the agent reads:
-# ``content-injection``, ``environment-write`` and ``web-tool`` all denote one.
+# both ``content-injection`` and ``web-tool`` denote one.
 _ROLE_CATEGORIES: tuple[str, ...] = (
     "content-injection",
-    "environment-write",
     "web-tool",
-    "user-prompt",
 )
-_ENVIRONMENT_ROLES: frozenset[str] = frozenset(
-    {"content-injection", "environment-write", "web-tool"}
-)
-# A ``web-tool`` surface is a read/fetch tool whose *answer* (not its call
-# arguments) is the environment, so it is injected on PostCall like the
-# prefix-matched read tools -- never into its PreCall request.
-_TOOL_RETURN_ROLES: frozenset[str] = frozenset({"web-tool"})
+_ENVIRONMENT_ROLES: frozenset[str] = frozenset({"content-injection", "web-tool"})
 _DEFAULT_ACTION_OBSERVABLE_NAMES = frozenset(
     {
         "agent_action",
@@ -568,9 +560,11 @@ class EIAAgentOptimizer(Optimizer):
 
     def _is_tool_call_surface(self, name: str) -> bool:
         # A tool-return surface: its PostCall answer is the environment, so it is
-        # never injected on its PreCall request. The LLM ``web-tool`` role is the
-        # description-driven analogue of the read/tool-call name prefixes.
-        if self._surface_roles.get(name) in _TOOL_RETURN_ROLES:
+        # never injected on its PreCall request. A ``web-tool`` is a read/fetch
+        # tool whose answer (not its call arguments) is the environment; the LLM
+        # ``web-tool`` role is the description-driven analogue of the read/tool-call
+        # name prefixes.
+        if self._surface_roles.get(name) == "web-tool":
             return True
         normalized = name.lower()
         return any(normalized.startswith(prefix) for prefix in _READ_PREFIXES)

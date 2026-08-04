@@ -7,11 +7,12 @@ documents, the indirect-injection channel the upstream attack assumes -- and
 falls back to prompt surfaces (the user prompt first, then the system prompt)
 only when no content surface is in scope.
 
-The content / user-prompt surface predicates are reused verbatim from the
-AgentVigil/WebSentinel optimizer (``agentvigil_websentinel_optimizer.optimizer``:
-``_is_agent_content_surface`` / ``_is_content_postcall_surface`` / ``_is_user_prompt``)
-so the two indirect-injection optimizers classify a target's surfaces
-identically. ``build_vessels`` layers MUZZLE's grafter-guided ranking on top:
+The content / user-prompt surface predicates mirror the AgentVigil/WebSentinel
+optimizer (``agentvigil_websentinel_optimizer.optimizer``: ``_is_agent_content_surface``
+/ ``_is_content_postcall_surface`` / ``_is_user_prompt``) so the two
+indirect-injection optimizers classify a target's surfaces identically: the
+attacker's LLM ``roles`` classification first, then a reserved-name / prefix
+backstop. ``build_vessels`` layers MUZZLE's grafter-guided ranking on top:
 when the grafter LLM has proposed candidate web-UI anchors, content surfaces
 named by a higher-confidence candidate are ranked first.
 """
@@ -51,43 +52,8 @@ _TOOL_PREFIX = "read__"
 # never prefix-collide.
 _TOOL_OUTPUT_PREFIX = "tool:"
 _ATTACKER_TOOL_PREFIX = "tool_call:"
-_RESPONSE_NAME_HINTS = ("response", "assistant", "reply", "output", "completion")
-_CONTENT_RESPONSE_NAME_HINTS = (
-    "tool_response",
-    "tool_result",
-    "tool_output",
-    "tool_return",
-    "mcp_response",
-    "mcp_result",
-    "retrieval_response",
-    "retrieval_result",
-    "rag_response",
-    "rag_result",
-)
-_CONTENT_SURFACE_HINTS = (
-    "browser",
-    "content",
-    "context",
-    "document",
-    "external",
-    "html",
-    "knowledge",
-    "mcp",
-    "memory",
-    "observation",
-    "page",
-    "rag",
-    "read",
-    "retrieval",
-    "retrieved",
-    "result",
-    "tool_response",
-    "web",
-)
-# User-prompt role tokens that, combined with "user", mark a prompt surface.
-_USER_PROMPT_ROLE_HINTS = ("message", "prompt", "query", "task", "instruction")
 
-# --- LLM surface-role categories (consulted before the name/keyword backstop) -
+# --- LLM surface-role categories (consulted before the name/prefix backstop) --
 # Roles are ``{controllable.name -> category}`` from the attacker's own LLM
 # reading each surface's description (see ``surface_llm.classify_controllables``).
 # ``content-injection`` and ``environment-write`` both denote a surface whose
@@ -97,26 +63,16 @@ _USER_PROMPT_ROLE_CATEGORY = "user-prompt"
 
 
 def _is_content_postcall_surface(controllable: Controllable, extra_names: frozenset[str]) -> bool:
-    """AgentVigil ``_is_content_postcall_surface`` with explicit ``extra_names``.
+    """Explicit ``extra_names`` content-name backstop.
 
-    ``extra_names`` replaces AgentVigil's instance-stored
-    ``_content_controllable_names`` set; it is matched both as given and
-    lower-cased so opaque per-target content names can be force-classified.
+    ``extra_names`` is the per-target override for opaque content names; it is
+    matched both as given and lower-cased. Description/name keyword scanning was
+    removed in favour of the LLM ``roles`` classification consulted by the
+    ``is_content_surface`` caller.
     """
     normalized = controllable.name.lower()
     known = extra_names | frozenset(name.lower() for name in extra_names)
-    if controllable.name in known or normalized in known:
-        return True
-    metadata = f"{controllable.description} {controllable.value_type}".lower()
-    metadata_looks_content_like = any(hint in metadata for hint in _CONTENT_SURFACE_HINTS)
-    if any(hint in normalized for hint in _CONTENT_RESPONSE_NAME_HINTS):
-        return True
-    if any(hint in normalized for hint in _RESPONSE_NAME_HINTS) and not metadata_looks_content_like:
-        return False
-    haystack = " ".join(
-        (controllable.name, controllable.description, controllable.value_type)
-    ).lower()
-    return any(hint in haystack for hint in _CONTENT_SURFACE_HINTS)
+    return controllable.name in known or normalized in known
 
 
 def is_content_surface(
@@ -129,9 +85,9 @@ def is_content_surface(
 
     Consults the attacker's LLM ``roles`` classification first (a
     ``content-injection`` / ``environment-write`` role marks a content surface),
-    then falls back to the verbatim AgentVigil ``_is_agent_content_surface``
-    backstop: ``read__`` / ``tool:`` / ``tool_call:`` prefixes, or a content-like
-    PostCall surface. ``roles=None`` (the default) uses the backstop alone.
+    then falls back to the name/prefix backstop: ``read__`` / ``tool:`` /
+    ``tool_call:`` prefixes, or an explicit ``extra_names`` content name.
+    ``roles=None`` (the default) uses the backstop alone.
     """
     name = controllable.name
     if roles is not None and roles.get(name) in _CONTENT_ROLE_CATEGORIES:
@@ -150,20 +106,14 @@ def is_user_prompt_surface(
     """True if ``controllable`` is the agent's user-prompt surface.
 
     Consults the attacker's LLM ``roles`` classification first (a ``user-prompt``
-    role), then falls back to the verbatim AgentVigil ``_is_user_prompt``
-    backstop. ``roles=None`` (the default) uses the backstop alone.
+    role), then falls back to the reserved user-prompt names. A bare ``"user" in
+    <metadata>`` substring test was removed: it misclassified PostCall content
+    surfaces whose node key contains "user" (e.g. DTAP ``env_tool:atlassian.user``)
+    as a prompt channel. ``roles=None`` (the default) uses the backstop alone.
     """
     if roles is not None and roles.get(controllable.name) == _USER_PROMPT_ROLE_CATEGORY:
         return True
-    normalized = controllable.name.lower()
-    if normalized in _USER_PROMPT_NAMES:
-        return True
-    haystack = " ".join(
-        (controllable.name, controllable.description, controllable.value_type)
-    ).lower()
-    has_user = "user" in haystack
-    has_prompt_role = any(hint in haystack for hint in _USER_PROMPT_ROLE_HINTS)
-    return has_user and has_prompt_role
+    return controllable.name.lower() in _USER_PROMPT_NAMES
 
 
 @dataclass

@@ -35,18 +35,12 @@ from gepa_agentic_optimizer.surface_llm import (
 
 logger = logging.getLogger(__name__)
 
-# Categories this attacker asks its LLM to sort raw surfaces into (read from each
-# controllable's description, not its name). ``content-injection`` and
-# ``environment-write`` both denote a surface whose value the agent later reads,
-# so both map to a content PostCall surface.
-_ROLE_CATEGORIES: tuple[str, ...] = (
-    "content-injection",
-    "environment-write",
-    "user-prompt",
-    "system-prompt",
-    "tool-catalog-edit",
-)
-_CONTENT_ROLES: frozenset[str] = frozenset({"content-injection", "environment-write"})
+# The content surface is the one that varies across targets (env_tool, env_inject,
+# read__, tool:, opaque names), so it is what the LLM classifies from descriptions.
+# Prompt/catalog surfaces use the framework's reserved names and need no LLM.
+# ``content-injection`` and ``environment-write`` both denote a surface whose value
+# the agent later reads.
+_CONTENT_ROLES: tuple[str, ...] = ("content-injection", "environment-write")
 
 _DEFAULT_RESPONSE_OBSERVABLE_NAMES: frozenset[str] = frozenset(
     {"response", "model_response", "assistant_response"}
@@ -258,7 +252,7 @@ class GEPAAgenticOptimizer(Optimizer):
         self._surface_roles = await classify_controllables(
             self.llm,
             controllables,
-            _ROLE_CATEGORIES,
+            _CONTENT_ROLES,
             goal=goal.description,
         )
         self._content_surface_names = self._discover_content_surfaces(controllables)
@@ -689,20 +683,6 @@ class GEPAAgenticOptimizer(Optimizer):
                     0.7,
                     "runtime content looks like HTML/environment data",
                 )
-        # LLM role for non-content surfaces named outside the reserved vocabulary.
-        role = self._surface_roles.get(name)
-        if role == "system-prompt":
-            return _SurfaceClassification(
-                "system_prompt", 0.9, "LLM-classified system-prompt"
-            )
-        if role == "user-prompt":
-            return _SurfaceClassification(
-                "user_prompt", 0.9, "LLM-classified user-prompt"
-            )
-        if role == "tool-catalog-edit":
-            return _SurfaceClassification(
-                "tool_catalog", 0.9, "LLM-classified tool-catalog-edit"
-            )
         return _SurfaceClassification("unknown", 0.0, "no content/prompt signal")
 
     def _discover_content_surfaces(

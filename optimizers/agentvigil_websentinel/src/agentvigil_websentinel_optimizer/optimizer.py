@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import random
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -83,7 +83,6 @@ _TOOL_PREFIX = "read__"
 # at index 4, ``tool_call:`` an underscore, so they never prefix-collide.
 _TOOL_OUTPUT_PREFIX = "tool:"
 _ATTACKER_TOOL_PREFIX = "tool_call:"
-_RESPONSE_NAME_HINTS = ("response", "assistant", "reply", "output", "completion")
 # A content surface is only injectable if it consumes an unstructured STRING. A
 # schema-typed surface (e.g. DTAP's ``env_inject:<server>`` json vector) silently
 # discards a bare payload, so injecting it is a no-op recorded as a scored attack.
@@ -95,44 +94,12 @@ def _accepts_free_text(controllable: Controllable) -> bool:
     return controllable.value_type.lower() in _FREE_TEXT_VALUE_TYPES
 
 
-_CONTENT_RESPONSE_NAME_HINTS = (
-    "tool_response",
-    "tool_result",
-    "tool_output",
-    "tool_return",
-    "mcp_response",
-    "mcp_result",
-    "retrieval_response",
-    "retrieval_result",
-    "rag_response",
-    "rag_result",
-)
 _STATIC_CONTEXT_TRUNCATION = "...[truncated]"
 _AGENTDOJO_ATTACKER_TOOL_NAMES = (
     "__attacker_data_dump__",
     "__attacker_credentials_read__",
     "__attacker_remote_exec__",
     "__attacker_exfil_channel__",
-)
-_CONTENT_SURFACE_HINTS = (
-    "browser",
-    "content",
-    "context",
-    "document",
-    "external",
-    "html",
-    "knowledge",
-    "mcp",
-    "memory",
-    "observation",
-    "page",
-    "rag",
-    "read",
-    "retrieval",
-    "retrieved",
-    "result",
-    "tool_response",
-    "web",
 )
 
 # SuperRed-only bridge for the writable-system-prompt capability. The official
@@ -323,8 +290,7 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
             ctrl.name == _SYSTEM_PROMPT_NAME for ctrl in controllables
         )
         self._can_write_user_prompt = any(
-            self._is_user_prompt(ctrl, roles=self._surface_roles)
-            for ctrl in controllables
+            self._is_user_prompt(ctrl) for ctrl in controllables
         )
         self._catalog_ops = {
             ctrl.name
@@ -335,8 +301,7 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
             self._catalog_ops
         )
         self._content_surface_available = any(
-            self._is_agent_content_surface(ctrl, roles=self._surface_roles)
-            for ctrl in controllables
+            self._is_agent_content_surface(ctrl) for ctrl in controllables
         )
         # Prefer the closest paper-equivalent surface that is available, but
         # choose the actual injection point when the corresponding event fires.
@@ -428,7 +393,7 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
             return self._maybe_inject_system_prompt(event)
         if name in {_TOOL_REGISTER, _TOOL_REPLACE, _TOOL_REWRITE_DOC}:
             return self._maybe_inject_tool_catalog(event)
-        if self._is_user_prompt(event.controllable, roles=self._surface_roles):
+        if self._is_user_prompt(event.controllable):
             return self._maybe_inject_user_prompt(event)
         return ControllableNoInjection(event=event, controllable=event.controllable)
 
@@ -443,7 +408,7 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         # ``tool:<name>`` per-tool output surface) so init-time availability and
         # this PostCall injection gate never disagree.
         if self._selected_surface is None and self._is_agent_content_surface(
-            event.controllable, roles=self._surface_roles
+            event.controllable
         ):
             # Do NOT latch a schema-typed surface: it would discard the string
             # payload and shadow the later text surface (e.g. env_tool) for the
@@ -766,83 +731,34 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
                 return match
         return _AGENTDOJO_ATTACKER_TOOL_NAMES[0]
 
-    @staticmethod
-    def _is_user_prompt(
-        controllable: Controllable,
-        *,
-        roles: Mapping[str, str] | None = None,
-    ) -> bool:
-        if (
-            roles is not None
-            and roles.get(controllable.name) == _USER_PROMPT_ROLE_CATEGORY
-        ):
+    def _is_user_prompt(self, controllable: Controllable) -> bool:
+        # LLM role first, then the reserved-name backstop. A bare ``"user" in
+        # <metadata>`` substring test misclassified PostCall content surfaces
+        # whose node key contains "user" (e.g. DTAP ``env_tool:atlassian.user``)
+        # as a prompt channel, so it is gone.
+        if self._surface_roles.get(controllable.name) == _USER_PROMPT_ROLE_CATEGORY:
             return True
-        normalized = controllable.name.lower()
-        if normalized in _USER_PROMPT_NAMES:
-            return True
-        haystack = " ".join(
-            (
-                controllable.name,
-                controllable.description,
-                controllable.value_type,
-            )
-        ).lower()
-        has_user = "user" in haystack
-        has_prompt_role = any(
-            hint in haystack
-            for hint in ("message", "prompt", "query", "task", "instruction")
-        )
-        return has_user and has_prompt_role
+        return controllable.name.lower() in _USER_PROMPT_NAMES
 
-    def _is_content_postcall_surface(
-        self,
-        controllable: Controllable,
-        *,
-        roles: Mapping[str, str] | None = None,
-    ) -> bool:
-        if (
-            roles is not None
-            and roles.get(controllable.name) in _CONTENT_ROLE_CATEGORIES
-        ):
+    def _is_content_postcall_surface(self, controllable: Controllable) -> bool:
+        # LLM classification (the attacker's own LLM reading the description) is
+        # the content signal; the explicit ``content_controllable_names`` override
+        # is the only remaining name-based backstop.
+        if self._surface_roles.get(controllable.name) in _CONTENT_ROLE_CATEGORIES:
             return True
         normalized = controllable.name.lower()
-        if (
+        return (
             controllable.name in self._content_controllable_names
             or normalized in self._content_controllable_names
-        ):
-            return True
-        metadata = f"{controllable.description} {controllable.value_type}".lower()
-        metadata_looks_content_like = any(
-            hint in metadata for hint in _CONTENT_SURFACE_HINTS
         )
-        if any(hint in normalized for hint in _CONTENT_RESPONSE_NAME_HINTS):
-            return True
-        if (
-            any(hint in normalized for hint in _RESPONSE_NAME_HINTS)
-            and not metadata_looks_content_like
-        ):
-            return False
-        haystack = " ".join(
-            (
-                controllable.name,
-                controllable.description,
-                controllable.value_type,
-            )
-        ).lower()
-        return any(hint in haystack for hint in _CONTENT_SURFACE_HINTS)
 
-    def _is_agent_content_surface(
-        self,
-        controllable: Controllable,
-        *,
-        roles: Mapping[str, str] | None = None,
-    ) -> bool:
+    def _is_agent_content_surface(self, controllable: Controllable) -> bool:
         name = controllable.name
         return (
             name.startswith(_TOOL_PREFIX)
             or name.startswith(_TOOL_OUTPUT_PREFIX)
             or name.startswith(_ATTACKER_TOOL_PREFIX)
-            or self._is_content_postcall_surface(controllable, roles=roles)
+            or self._is_content_postcall_surface(controllable)
         )
 
     def _available_surface_ranks(self) -> list[int]:

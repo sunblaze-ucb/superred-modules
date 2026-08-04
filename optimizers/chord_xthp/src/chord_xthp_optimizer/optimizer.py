@@ -93,9 +93,7 @@ _USER_PROMPT_NAMES = frozenset(
 # a writable tool/skill catalog for the injection surface, a victim tool for the
 # tool to hijack around.
 _CATALOG_EDIT_CATEGORY = "tool-catalog-edit"
-_CATALOG_CATEGORIES: tuple[str, ...] = (_CATALOG_EDIT_CATEGORY,)
 _VICTIM_CATEGORY = "victim-tool"
-_VICTIM_CATEGORIES: tuple[str, ...] = (_VICTIM_CATEGORY,)
 _STATIC_CONTEXT_TRUNCATION = "...[truncated]"
 # Unique tag embedded in the misleading helper output. The no-feedback fallback
 # treats the attacker output reaching the agent's response as a pollution signal,
@@ -379,22 +377,17 @@ class ChordXTHPOptimizer(Optimizer):
         ]
         if not dynamic_candidates:
             return set()
-        names = await self._select_catalog_controllables_with_llm(dynamic_candidates)
-        return {name for name in names if any(ctrl.name == name for ctrl in dynamic_candidates)}
-
-    async def _select_catalog_controllables_with_llm(
-        self, controllables: Sequence[Controllable]
-    ) -> set[str]:
         # Shared LLM pass reads each surface's description and returns the ones it
         # places in the writable tool/skill catalog role. Degrades to {} on any
         # failure (including budget), matching the static-detection fallback.
         roles = await classify_controllables(
             self.llm,
-            controllables,
-            _CATALOG_CATEGORIES,
+            dynamic_candidates,
+            (_CATALOG_EDIT_CATEGORY,),
             goal=self._goal.description if self._goal is not None else "",
         )
-        return {name for name, category in roles.items() if category == _CATALOG_EDIT_CATEGORY}
+        names = {name for name, category in roles.items() if category == _CATALOG_EDIT_CATEGORY}
+        return {name for name in names if any(ctrl.name == name for ctrl in dynamic_candidates)}
 
     async def _select_victim_tools(self) -> list[_TargetTool]:
         if self._victim_tool_name is not None:
@@ -413,7 +406,21 @@ class ChordXTHPOptimizer(Optimizer):
         from_catalog = [tool for tool in self._target_tools if tool.name in official_names]
         if from_catalog:
             return from_catalog
-        llm_selected = await self._select_victims_with_llm()
+        # Shared LLM pass reads each target tool's description and returns the ones
+        # it places in the victim-tool role (a tool a helper could be inserted
+        # before or after). Degrades to {} on any failure, including budget.
+        roles = await classify_controllables(
+            self.llm,
+            cast("Sequence[Controllable]", self._target_tools),
+            (_VICTIM_CATEGORY,),
+            goal=self._goal.description if self._goal is not None else "",
+        )
+        by_name = {tool.name: tool for tool in self._target_tools}
+        llm_selected = [
+            by_name[name]
+            for name, category in roles.items()
+            if category == _VICTIM_CATEGORY and name in by_name
+        ]
         if llm_selected:
             return llm_selected
         if self._goal is not None:
@@ -426,25 +433,6 @@ class ChordXTHPOptimizer(Optimizer):
         # expose (which would burn the whole run budget on a guaranteed miss),
         # return no candidates so the optimizer finishes immediately.
         return []
-
-    async def _select_victims_with_llm(self) -> list[_TargetTool]:
-        if not self._target_tools:
-            return []
-        # Shared LLM pass reads each target tool's description and returns the ones
-        # it places in the victim-tool role (a tool a helper could be inserted
-        # before or after). Degrades to {} on any failure, including budget.
-        roles = await classify_controllables(
-            self.llm,
-            cast("Sequence[Controllable]", self._target_tools),
-            _VICTIM_CATEGORIES,
-            goal=self._goal.description if self._goal is not None else "",
-        )
-        by_name = {tool.name: tool for tool in self._target_tools}
-        return [
-            by_name[name]
-            for name, category in roles.items()
-            if category == _VICTIM_CATEGORY and name in by_name
-        ]
 
     def _queries_for(self, victim_name: str) -> tuple[str, ...]:
         if self._use_official_queries and self._has_user_prompt:

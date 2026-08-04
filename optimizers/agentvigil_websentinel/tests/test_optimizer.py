@@ -67,6 +67,19 @@ def failure_eval(score: float = 0.0) -> EvaluationResult:
     )
 
 
+def roles_llm(mapping: dict[str, str]) -> AsyncMock:
+    """LLM mock whose single ``classify_controllables`` call returns ``mapping``.
+
+    The optimizer no longer scans descriptions/names for content keywords; a
+    surface is recognised as content when the attacker's own LLM classifies it
+    (``content-injection``/``environment-write``) or as a prompt via
+    ``user-prompt``. This mock supplies that classification.
+    """
+    llm = AsyncMock()
+    llm.complete.return_value = mock_response(json.dumps(mapping))
+    return llm
+
+
 async def init_optimizer(
     *,
     llm: AsyncMock | None = None,
@@ -539,7 +552,8 @@ async def test_no_feedback_pending_candidate_enters_tree_with_neutral_reward() -
 @pytest.mark.asyncio
 async def test_tool_response_name_is_treated_as_content_surface() -> None:
     opt = await init_optimizer(
-        controllables=[make_controllable("tool_response", TOOLS_TAG)]
+        llm=roles_llm({"tool_response": "content-injection"}),
+        controllables=[make_controllable("tool_response", TOOLS_TAG)],
     )
     await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
@@ -757,7 +771,8 @@ async def test_generic_content_postcall_injects_for_browser_or_memory_surfaces()
     None
 ):
     opt = await init_optimizer(
-        controllables=[make_controllable("browser_page_content", TOOLS_TAG)]
+        llm=roles_llm({"browser_page_content": "content-injection"}),
+        controllables=[make_controllable("browser_page_content", TOOLS_TAG)],
     )
     await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
@@ -827,7 +842,8 @@ async def test_content_surface_detection_includes_observation_and_external_conte
     None
 ):
     opt = await init_optimizer(
-        controllables=[make_controllable("external_context", TOOLS_TAG)]
+        llm=roles_llm({"external_context": "content-injection"}),
+        controllables=[make_controllable("external_context", TOOLS_TAG)],
     )
     await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
@@ -879,9 +895,12 @@ async def test_llm_classified_content_surface_is_injected_over_name_backstop() -
         json.dumps({"atlas_field_42": "content-injection"})
     )
     ctrl = make_controllable("atlas_field_42", TOOLS_TAG)
-    assert AgentVigilWebSentinelOptimizer(
-        seeds=[Seed(id="s", text="s {injection_goal}")]
-    )._is_agent_content_surface(ctrl) is False  # backstop alone: not content
+    assert (
+        AgentVigilWebSentinelOptimizer(
+            seeds=[Seed(id="s", text="s {injection_goal}")]
+        )._is_agent_content_surface(ctrl)
+        is False
+    )  # backstop alone: not content
 
     opt = await init_optimizer(llm=llm, controllables=[ctrl])
     assert opt._surface_roles == {"atlas_field_42": "content-injection"}
@@ -942,11 +961,14 @@ async def test_content_controllable_description_and_value_type_are_detection_sig
         description="Retrieved external document chunk for the agent.",
         value_type="json",
     )
-    opt = await init_optimizer(controllables=[ctrl])
+    opt = await init_optimizer(
+        llm=roles_llm({"callback_output": "content-injection"}),
+        controllables=[ctrl],
+    )
     await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
-    # Description + value_type ARE detection signals: this IS recognised as an
-    # agent content surface.
+    # The attacker's LLM classifies this opaque surface as content-injection from
+    # its description, so it IS recognised as an agent content surface.
     assert opt._is_agent_content_surface(ctrl) is True
 
     resp = await dispatch_event(
@@ -1013,10 +1035,11 @@ async def test_user_prompt_is_deferred_when_agentic_content_surface_is_available
     None
 ):
     opt = await init_optimizer(
+        llm=roles_llm({"browser_page_content": "content-injection"}),
         controllables=[
             make_controllable("user_prompt", USER_TAG),
             make_controllable("browser_page_content", TOOLS_TAG),
-        ]
+        ],
     )
     await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
@@ -1046,6 +1069,7 @@ async def test_user_prompt_fallback_after_advertised_content_surface_is_not_reac
     None
 ):
     opt = await init_optimizer(
+        llm=roles_llm({"browser_page_content": "content-injection"}),
         controllables=[
             make_controllable("user_prompt", USER_TAG),
             make_controllable("browser_page_content", TOOLS_TAG),
@@ -1192,10 +1216,16 @@ async def test_best_prompt_surface_is_selected_rather_than_all_prompts() -> None
 @pytest.mark.asyncio
 async def test_first_reached_content_surface_wins_for_the_run() -> None:
     opt = await init_optimizer(
+        llm=roles_llm(
+            {
+                "browser_page_content": "content-injection",
+                "memory_search_result": "content-injection",
+            }
+        ),
         controllables=[
             make_controllable("browser_page_content", TOOLS_TAG),
             make_controllable("memory_search_result", TOOLS_TAG),
-        ]
+        ],
     )
     await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
@@ -1224,6 +1254,7 @@ async def test_first_reached_content_surface_wins_for_the_run() -> None:
 @pytest.mark.asyncio
 async def test_non_delivery_retries_candidate_without_scoring() -> None:
     opt = await init_optimizer(
+        llm=roles_llm({"browser_page_content": "content-injection"}),
         controllables=[
             make_controllable("browser_page_content", TOOLS_TAG),
             make_controllable("user_prompt", USER_TAG),
@@ -1261,6 +1292,7 @@ async def test_non_delivery_retries_candidate_without_scoring() -> None:
 @pytest.mark.asyncio
 async def test_gives_up_when_only_surface_can_never_be_reached() -> None:
     opt = await init_optimizer(
+        llm=roles_llm({"browser_page_content": "content-injection"}),
         controllables=[make_controllable("browser_page_content", TOOLS_TAG)],
         max_attempts=20,
     )
