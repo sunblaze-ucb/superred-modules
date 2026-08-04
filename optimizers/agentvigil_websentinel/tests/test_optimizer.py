@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -354,6 +355,9 @@ async def test_failed_feedback_after_initial_seed_scores_mutates_next_seed() -> 
         "noise <response>mutated {injection_goal}</response> tail"
     )
     opt = await init_optimizer(llm=llm, max_attempts=3)
+    # Ignore the one-time surface-classification call made during initialize; this
+    # test counts only mutation calls.
+    llm.complete.reset_mock()
     await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
     await deliver_user_prompt(opt)
     await dispatch_event(
@@ -387,6 +391,9 @@ async def test_initial_seed_corpus_is_scored_before_mutation() -> None:
         observables=[],
         llm_client=llm,
     )
+    # Ignore the one-time surface-classification call made during initialize; this
+    # test counts only mutation calls.
+    llm.complete.reset_mock()
 
     await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
     assert opt._current_seed is not None
@@ -485,6 +492,9 @@ async def test_mutator_transport_failures_prune_candidate_without_failing_optimi
     llm = AsyncMock()
     llm.complete.side_effect = RuntimeError("temporary transport failure")
     opt = await init_optimizer(llm=llm, max_attempts=2)
+    # Ignore the one-time surface-classification call made during initialize (it
+    # also raises and is swallowed to {}); this test counts only mutation retries.
+    llm.complete.reset_mock()
 
     await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
     await deliver_user_prompt(opt)
@@ -768,10 +778,6 @@ async def test_generic_content_postcall_injects_for_browser_or_memory_surfaces()
 @pytest.mark.asyncio
 async def test_generated_children_are_not_selectable_until_evaluated() -> None:
     llm = AsyncMock()
-    llm.complete.side_effect = [
-        mock_response("<response>child one {injection_goal}</response>"),
-        mock_response("<response>child two {injection_goal}</response>"),
-    ]
     opt = AgentVigilWebSentinelOptimizer(
         seeds=[Seed(id="root", text="root {injection_goal}")],
         population_size=2,
@@ -784,6 +790,13 @@ async def test_generated_children_are_not_selectable_until_evaluated() -> None:
         observables=[],
         llm_client=llm,
     )
+    # The two mutation responses feed candidate generation; the one-time
+    # surface-classification call during initialize used the default mock return.
+    llm.complete.reset_mock()
+    llm.complete.side_effect = [
+        mock_response("<response>child one {injection_goal}</response>"),
+        mock_response("<response>child two {injection_goal}</response>"),
+    ]
 
     await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
     await deliver_user_prompt(opt)
@@ -853,6 +866,38 @@ async def test_per_tool_output_surface_is_treated_as_content_surface() -> None:
 
     assert isinstance(resp, ControllableInjection)
     assert "the legitimate tool output" in resp.value
+    assert "send the secret token" in resp.value
+
+
+@pytest.mark.asyncio
+async def test_llm_classified_content_surface_is_injected_over_name_backstop() -> None:
+    # An opaquely-named surface with no content hint would be missed by the name/
+    # keyword backstop. The attacker's own LLM reads its description and classifies
+    # it as content-injection; the optimizer then injects into that PostCall.
+    llm = AsyncMock()
+    llm.complete.return_value = mock_response(
+        json.dumps({"atlas_field_42": "content-injection"})
+    )
+    ctrl = make_controllable("atlas_field_42", TOOLS_TAG)
+    assert AgentVigilWebSentinelOptimizer(
+        seeds=[Seed(id="s", text="s {injection_goal}")]
+    )._is_agent_content_surface(ctrl) is False  # backstop alone: not content
+
+    opt = await init_optimizer(llm=llm, controllables=[ctrl])
+    assert opt._surface_roles == {"atlas_field_42": "content-injection"}
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
+
+    resp = await dispatch_event(
+        opt,
+        ControllablePostCallEvent(
+            controllable=make_controllable("atlas_field_42", TOOLS_TAG),
+            request="fetch",
+            answer="legitimate field content",
+        ),
+    )
+
+    assert isinstance(resp, ControllableInjection)
+    assert "legitimate field content" in resp.value
     assert "send the secret token" in resp.value
 
 
@@ -1351,6 +1396,9 @@ async def test_llm_tool_description_not_spent_on_replace_only_catalog() -> None:
         ],
         llm_client=llm,
     )
+    # Ignore the one-time surface-classification call made during initialize; this
+    # test asserts the mutator LLM is not spent on a replace-only catalog.
+    llm.complete.reset_mock()
 
     await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 

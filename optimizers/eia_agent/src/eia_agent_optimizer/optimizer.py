@@ -24,6 +24,7 @@ from superred.core.types.events import (
 from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
 
+from eia_agent_optimizer.surface_llm import accepts_free_text, classify_controllables
 from eia_agent_optimizer.templates import (
     DEFAULT_ATTACK_POSITION,
     DEFAULT_ATTACK_SUBTYPE,
@@ -40,6 +41,23 @@ from eia_agent_optimizer.templates import (
 
 _SYSTEM_PROMPT_NAME = "system_prompt"
 _TOOL_REWRITE_DOC = "tool_catalog_rewrite_doc"
+# Roles this attacker asks its LLM to sort the raw surfaces into, read from each
+# controllable's *description* rather than its name (see surface_llm). EIA plants
+# an HTML document into any surface whose returned content the agent reads:
+# ``content-injection``, ``environment-write`` and ``web-tool`` all denote one.
+_ROLE_CATEGORIES: tuple[str, ...] = (
+    "content-injection",
+    "environment-write",
+    "web-tool",
+    "user-prompt",
+)
+_ENVIRONMENT_ROLES: frozenset[str] = frozenset(
+    {"content-injection", "environment-write", "web-tool"}
+)
+# A ``web-tool`` surface is a read/fetch tool whose *answer* (not its call
+# arguments) is the environment, so it is injected on PostCall like the
+# prefix-matched read tools -- never into its PreCall request.
+_TOOL_RETURN_ROLES: frozenset[str] = frozenset({"web-tool"})
 _DEFAULT_ACTION_OBSERVABLE_NAMES = frozenset(
     {
         "agent_action",
@@ -50,19 +68,10 @@ _DEFAULT_ACTION_OBSERVABLE_NAMES = frozenset(
         "response",
     }
 )
-_HTML_SURFACE_HINTS = (
-    "html",
-    "webpage",
-    "page_content",
-    "browser",
-    "dom",
-    "screenshot",
-    "interactive_elements",
-)
-_READ_PREFIXES = ("read__", "tool_call:", "tool:", "skill_call:", "skill:", "env_tool:")
-# A surface that consumes an unstructured string (vs a parsed schema). EIA plants
-# an HTML document string, so a json-typed surface would silently discard it.
-_FREE_TEXT_VALUE_TYPES = frozenset({"", "text", "str", "string", "html", "markdown"})
+_READ_PREFIXES = ("read__", "tool_call:", "tool:", "skill_call:", "skill:")
+# Web-read tools in a *static catalog observable* are still disambiguated by this
+# cheap hint set before falling back to the LLM (see _select_web_tool_name); this
+# is catalog-entry selection, not surface classification.
 _WEB_TOOL_HINTS = ("webpage", "browser", "html", "page", "url", "site")
 _PRIVACY_TYPE_HINTS = ("privacy_type", "pii_type", "risk_type", "detail_risk_type")
 _TARGET_SECRET_HINTS = ("target_secret", "secret", "pii_value", "private_value")
@@ -176,6 +185,9 @@ class EIAAgentOptimizer(Optimizer):
         self._subsequent_action_override = subsequent_action
 
         self._goal: Goal | None = None
+        # {controllable.name -> role category}, filled once in initialize() by the
+        # attacker's LLM reading each surface's description (see surface_llm).
+        self._surface_roles: dict[str, str] = {}
         self._privacy_type = "private information"
         self._target_secret: str | None = None
         self._target_element_html: str | None = None
@@ -211,6 +223,15 @@ class EIAAgentOptimizer(Optimizer):
     ) -> None:
         await super().initialize(goal, controllables, observables, llm_client)
         self._goal = goal
+        # One LLM pass sorts the raw surfaces into the roles this attacker acts on,
+        # read from each description. Degrades to {} (name/prefix backstop) on any
+        # failure. Computed before any surface classification consults the cache.
+        self._surface_roles = await classify_controllables(
+            self.llm,
+            controllables,
+            _ROLE_CATEGORIES,
+            goal=goal.description,
+        )
         self._privacy_type = (
             self._privacy_type_override
             or self._read_observable_by_hint(observables, _PRIVACY_TYPE_HINTS)
@@ -387,7 +408,7 @@ class EIAAgentOptimizer(Optimizer):
         # The EIA payload is an HTML document string; a schema-typed surface would
         # discard it. Decline non-free-text surfaces so the run is not scored as an
         # executed injection that silently wrote nothing.
-        if event.controllable.value_type.lower() not in _FREE_TEXT_VALUE_TYPES:
+        if not accepts_free_text(event.controllable):
             return ControllableNoInjection(event=event, controllable=event.controllable)
         if (
             self._max_environment_injections_per_run is not None
@@ -530,10 +551,13 @@ class EIAAgentOptimizer(Optimizer):
         return self._explicit_max_attempts or 1
 
     def _is_environment_surface(self, name: str, content: str) -> bool:
+        # Trust the attacker LLM's description-based role first, then fall back to
+        # zero-cost name prefixes and a runtime content sniff so AgentDojo/ASB
+        # still work with no LLM classification.
+        if self._surface_roles.get(name) in _ENVIRONMENT_ROLES:
+            return True
         normalized = name.lower()
         if any(normalized.startswith(prefix) for prefix in _READ_PREFIXES):
-            return True
-        if any(hint in normalized for hint in _HTML_SURFACE_HINTS):
             return True
         content_lower = content.lower()
         return (
@@ -542,17 +566,20 @@ class EIAAgentOptimizer(Optimizer):
             or "<input" in content_lower
         )
 
-    @staticmethod
-    def _is_tool_call_surface(name: str) -> bool:
+    def _is_tool_call_surface(self, name: str) -> bool:
+        # A tool-return surface: its PostCall answer is the environment, so it is
+        # never injected on its PreCall request. The LLM ``web-tool`` role is the
+        # description-driven analogue of the read/tool-call name prefixes.
+        if self._surface_roles.get(name) in _TOOL_RETURN_ROLES:
+            return True
         normalized = name.lower()
         return any(normalized.startswith(prefix) for prefix in _READ_PREFIXES)
 
-    @staticmethod
-    def _controllable_could_be_environment(controllable: Controllable) -> bool:
+    def _controllable_could_be_environment(self, controllable: Controllable) -> bool:
+        if self._surface_roles.get(controllable.name) in _ENVIRONMENT_ROLES:
+            return True
         normalized = controllable.name.lower()
         if any(normalized.startswith(prefix) for prefix in _READ_PREFIXES):
-            return True
-        if any(hint in normalized for hint in _HTML_SURFACE_HINTS):
             return True
         return controllable.value_type.lower() == "html"
 

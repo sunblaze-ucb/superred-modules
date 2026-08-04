@@ -73,6 +73,24 @@ def test_is_content_surface_extra_names_force_classifies_opaque_name() -> None:
     assert is_content_surface(ctrl, extra_names=frozenset({"xyzzy"})) is True
 
 
+@pytest.mark.parametrize("category", ["content-injection", "environment-write"])
+def test_is_content_surface_llm_role_marks_opaque_name_as_content(category: str) -> None:
+    """An LLM ``content-injection`` / ``environment-write`` role marks an opaque surface."""
+    ctrl = make_controllable(name="atlas_field_42", tag=USER_TAG)
+    assert is_content_surface(ctrl) is False  # backstop alone: not content
+    assert is_content_surface(ctrl, roles={"atlas_field_42": category}) is True
+
+
+def test_is_content_surface_roles_none_preserves_backstop() -> None:
+    """``roles=None`` (the default) leaves the name/keyword backstop untouched."""
+    opaque = make_controllable(name="atlas_field_42", tag=USER_TAG)
+    tool = make_controllable(name="tool:web", tag=TOOL_A_TAG)
+    assert is_content_surface(opaque, roles=None) is False
+    assert is_content_surface(tool, roles=None) is True
+    # An unrelated role does not force a match either.
+    assert is_content_surface(opaque, roles={"atlas_field_42": "user-prompt"}) is False
+
+
 # --- is_user_prompt_surface -------------------------------------------------
 
 
@@ -93,6 +111,23 @@ def test_is_user_prompt_surface_true_for_user_task_description() -> None:
 def test_is_user_prompt_surface_false_for_content_name() -> None:
     """A content surface is not mistaken for the user prompt."""
     assert is_user_prompt_surface(make_controllable(name="tool:web", tag=TOOL_A_TAG)) is False
+
+
+def test_is_user_prompt_surface_llm_role_marks_opaque_name() -> None:
+    """An LLM ``user-prompt`` role marks an opaque surface the backstop would miss."""
+    ctrl = make_controllable(name="channel_0", tag=USER_TAG)
+    assert is_user_prompt_surface(ctrl) is False  # backstop alone: not a prompt
+    assert is_user_prompt_surface(ctrl, roles={"channel_0": "user-prompt"}) is True
+
+
+def test_build_vessels_threads_roles_into_content_classification() -> None:
+    """An LLM-classified content surface becomes a content vessel via ``build_vessels``."""
+    opaque = make_controllable(name="atlas_field_42", tag=USER_TAG)
+    vessels = build_vessels([opaque], roles={"atlas_field_42": "environment-write"})
+    assert [v.controllable.name for v in vessels] == ["atlas_field_42"]
+    assert vessels[0].kind == "content"
+    # Without the role it is neither content nor a prompt -> no vessel.
+    assert build_vessels([opaque]) == []
 
 
 def test_system_prompt_name_constant() -> None:

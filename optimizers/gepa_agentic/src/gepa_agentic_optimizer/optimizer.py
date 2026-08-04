@@ -27,8 +27,26 @@ from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
 
 from gepa_agentic_optimizer.reflector import Reflector, RolloutRecord
+from gepa_agentic_optimizer.surface_llm import (
+    accepts_free_text,
+    classify_controllables,
+    fill_value,
+)
 
 logger = logging.getLogger(__name__)
+
+# Categories this attacker asks its LLM to sort raw surfaces into (read from each
+# controllable's description, not its name). ``content-injection`` and
+# ``environment-write`` both denote a surface whose value the agent later reads,
+# so both map to a content PostCall surface.
+_ROLE_CATEGORIES: tuple[str, ...] = (
+    "content-injection",
+    "environment-write",
+    "user-prompt",
+    "system-prompt",
+    "tool-catalog-edit",
+)
+_CONTENT_ROLES: frozenset[str] = frozenset({"content-injection", "environment-write"})
 
 _DEFAULT_RESPONSE_OBSERVABLE_NAMES: frozenset[str] = frozenset(
     {"response", "model_response", "assistant_response"}
@@ -69,38 +87,6 @@ _CATALOG_TOOL_HINTS: tuple[str, ...] = (
     "retrieve",
     "search",
     "tool",
-    "web",
-)
-_FREE_TEXT_VALUE_TYPES = frozenset({"", "text", "str", "string", "html", "markdown"})
-
-
-def _accepts_free_text(controllable: Controllable) -> bool:
-    """True if the surface consumes an unstructured string (vs a parsed schema).
-
-    A schema-typed content surface (e.g. DTAP's ``env_inject:<server>`` json
-    vector) silently discards a bare payload; injecting it is a no-op that is
-    nonetheless recorded as a scored attack, so gate emission on this.
-    """
-    return controllable.value_type.lower() in _FREE_TEXT_VALUE_TYPES
-
-
-_CONTENT_SURFACE_HINTS: tuple[str, ...] = (
-    "content",
-    "document",
-    "external",
-    "html",
-    "knowledge",
-    "memory",
-    "observation",
-    "page",
-    "per-call event",
-    "per-read injection",
-    "rag",
-    "read",
-    "retrieval",
-    "result",
-    "return",
-    "tool response",
     "web",
 )
 _HTML_CONTENT_HINTS: tuple[str, ...] = (
@@ -217,6 +203,9 @@ class GEPAAgenticOptimizer(Optimizer):
         self._reflector: Reflector | None = None
         self._target_observables: dict[str, str] | None = None
         self._controllables: dict[str, Controllable] = {}
+        # {controllable.name -> role category}, filled once in initialize() by the
+        # attacker's LLM reading each surface's description (see surface_llm).
+        self._surface_roles: dict[str, str] = {}
         self._content_surface_names: list[str] = []
         self._tool_catalog: list[dict[str, Any]] = []
         self._surface_stats: dict[str, _SurfaceStats] = {}
@@ -263,6 +252,15 @@ class GEPAAgenticOptimizer(Optimizer):
         )
         self._target_observables = self._extract_static_observables(observables)
         self._controllables = {ctrl.name: ctrl for ctrl in controllables}
+        # One LLM pass sorts the raw surfaces into the roles this attacker acts on,
+        # read from each description. Degrades to {} (name/prefix backstop) on any
+        # failure. Computed before content discovery, which consults the cache.
+        self._surface_roles = await classify_controllables(
+            self.llm,
+            controllables,
+            _ROLE_CATEGORIES,
+            goal=goal.description,
+        )
         self._content_surface_names = self._discover_content_surfaces(controllables)
         self._tool_catalog = self._extract_tool_catalog(observables)
         self._surface_stats = {
@@ -286,7 +284,7 @@ class GEPAAgenticOptimizer(Optimizer):
         if isinstance(event, ControllablePreCallEvent):
             return self._handle_pre_call(event)
         if isinstance(event, ControllablePostCallEvent):
-            return self._handle_post_call(event)
+            return await self._handle_post_call(event)
         if isinstance(event, RunEndEvent):
             return await self._handle_run_end(event)
         return EventResponse(event=event)
@@ -344,7 +342,7 @@ class GEPAAgenticOptimizer(Optimizer):
         elif event.controllable != self._primary_pre_controllable:
             return ControllableNoInjection(event=event, controllable=event.controllable)
 
-        if not _accepts_free_text(event.controllable):
+        if not accepts_free_text(event.controllable):
             return ControllableNoInjection(event=event, controllable=event.controllable)
         self._last_pre_request = event.request
         self._last_injected_value = self._current.prompt
@@ -364,7 +362,7 @@ class GEPAAgenticOptimizer(Optimizer):
             value=self._current.prompt,
         )
 
-    def _handle_post_call(
+    async def _handle_post_call(
         self,
         event: ControllablePostCallEvent,
     ) -> ControllableInjection | ControllableNoInjection:
@@ -392,11 +390,21 @@ class GEPAAgenticOptimizer(Optimizer):
                 f"runtime-discovered compatible content PostCall surface {name!r}"
             )
 
-        if should_inject and not _accepts_free_text(event.controllable):
-            # Schema-typed surface: a raw string is discarded. Decline WITHOUT
-            # spending the per-run content budget so a free-text surface (e.g.
-            # env_tool) later in the run can still be injected.
-            should_inject = False
+        structured_value: str | None = None
+        if should_inject and not accepts_free_text(event.controllable):
+            # Schema-typed surface (e.g. DTAP ``env_inject:<server>`` json): a raw
+            # string is discarded. Ask the LLM to format the evolved payload into
+            # the shape the controllable's description specifies. Decline WITHOUT
+            # spending the per-run content budget if that fails, so a free-text
+            # surface (e.g. env_tool) later in the run can still be injected.
+            structured_value = await fill_value(
+                self.llm,
+                event.controllable,
+                goal=self._goal.description if self._goal is not None else "",
+                payload=self._current.prompt,
+                context=event.answer,
+            )
+            should_inject = structured_value is not None
 
         if not should_inject:
             self._maybe_pair_post_call_response(event)
@@ -405,7 +413,11 @@ class GEPAAgenticOptimizer(Optimizer):
         self._injected_this_run = True
         self._content_injection_count += 1
         self._legitimate_tool_return = event.answer
-        injected_value = self._render_content_payload(event.answer)
+        injected_value = (
+            structured_value
+            if structured_value is not None
+            else self._render_content_payload(event.answer)
+        )
         self._last_injected_value = injected_value
         surface = {
             "name": name,
@@ -644,6 +656,8 @@ class GEPAAgenticOptimizer(Optimizer):
     ) -> _SurfaceClassification:
         name = controllable.name
         normalized = name.lower()
+        # Zero-cost fast path: canonical reserved names + agent content/tool-return
+        # prefixes cover AgentDojo/ASB/DTAP without an LLM call.
         if name == _SYSTEM_PROMPT_NAME:
             return _SurfaceClassification("system_prompt", 1.0, "canonical name")
         if name in _TOOL_CATALOG_NAMES:
@@ -663,13 +677,11 @@ class GEPAAgenticOptimizer(Optimizer):
                     1.0,
                     "agent content/tool-return prefix",
                 )
-            haystack = (
-                f"{controllable.name} {controllable.description} "
-                f"{controllable.value_type}".lower()
-            )
-            if any(hint in haystack for hint in _CONTENT_SURFACE_HINTS):
+            if self._surface_roles.get(name) in _CONTENT_ROLES:
                 return _SurfaceClassification(
-                    "content_postcall", 0.75, "content-like controllable metadata"
+                    "content_postcall",
+                    0.9,
+                    f"LLM-classified {self._surface_roles[name]}",
                 )
             if _looks_like_environment_content(content):
                 return _SurfaceClassification(
@@ -677,6 +689,20 @@ class GEPAAgenticOptimizer(Optimizer):
                     0.7,
                     "runtime content looks like HTML/environment data",
                 )
+        # LLM role for non-content surfaces named outside the reserved vocabulary.
+        role = self._surface_roles.get(name)
+        if role == "system-prompt":
+            return _SurfaceClassification(
+                "system_prompt", 0.9, "LLM-classified system-prompt"
+            )
+        if role == "user-prompt":
+            return _SurfaceClassification(
+                "user_prompt", 0.9, "LLM-classified user-prompt"
+            )
+        if role == "tool-catalog-edit":
+            return _SurfaceClassification(
+                "tool_catalog", 0.9, "LLM-classified tool-catalog-edit"
+            )
         return _SurfaceClassification("unknown", 0.0, "no content/prompt signal")
 
     def _discover_content_surfaces(

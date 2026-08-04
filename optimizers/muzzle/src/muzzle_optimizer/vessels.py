@@ -18,6 +18,7 @@ named by a higher-confidence candidate are ranked first.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -86,6 +87,14 @@ _CONTENT_SURFACE_HINTS = (
 # User-prompt role tokens that, combined with "user", mark a prompt surface.
 _USER_PROMPT_ROLE_HINTS = ("message", "prompt", "query", "task", "instruction")
 
+# --- LLM surface-role categories (consulted before the name/keyword backstop) -
+# Roles are ``{controllable.name -> category}`` from the attacker's own LLM
+# reading each surface's description (see ``surface_llm.classify_controllables``).
+# ``content-injection`` and ``environment-write`` both denote a surface whose
+# value the agent later reads, so both mark a content vessel.
+_CONTENT_ROLE_CATEGORIES = frozenset({"content-injection", "environment-write"})
+_USER_PROMPT_ROLE_CATEGORY = "user-prompt"
+
 
 def _is_content_postcall_surface(controllable: Controllable, extra_names: frozenset[str]) -> bool:
     """AgentVigil ``_is_content_postcall_surface`` with explicit ``extra_names``.
@@ -111,14 +120,22 @@ def _is_content_postcall_surface(controllable: Controllable, extra_names: frozen
 
 
 def is_content_surface(
-    controllable: Controllable, *, extra_names: frozenset[str] = frozenset()
+    controllable: Controllable,
+    *,
+    extra_names: frozenset[str] = frozenset(),
+    roles: Mapping[str, str] | None = None,
 ) -> bool:
     """True if ``controllable`` is a high-salience content surface.
 
-    Verbatim port of AgentVigil ``_is_agent_content_surface``: ``read__`` /
-    ``tool:`` / ``tool_call:`` prefixes, or a content-like PostCall surface.
+    Consults the attacker's LLM ``roles`` classification first (a
+    ``content-injection`` / ``environment-write`` role marks a content surface),
+    then falls back to the verbatim AgentVigil ``_is_agent_content_surface``
+    backstop: ``read__`` / ``tool:`` / ``tool_call:`` prefixes, or a content-like
+    PostCall surface. ``roles=None`` (the default) uses the backstop alone.
     """
     name = controllable.name
+    if roles is not None and roles.get(name) in _CONTENT_ROLE_CATEGORIES:
+        return True
     return (
         name.startswith(_TOOL_PREFIX)
         or name.startswith(_TOOL_OUTPUT_PREFIX)
@@ -127,11 +144,17 @@ def is_content_surface(
     )
 
 
-def is_user_prompt_surface(controllable: Controllable) -> bool:
+def is_user_prompt_surface(
+    controllable: Controllable, *, roles: Mapping[str, str] | None = None
+) -> bool:
     """True if ``controllable`` is the agent's user-prompt surface.
 
-    Verbatim port of AgentVigil ``_is_user_prompt``.
+    Consults the attacker's LLM ``roles`` classification first (a ``user-prompt``
+    role), then falls back to the verbatim AgentVigil ``_is_user_prompt``
+    backstop. ``roles=None`` (the default) uses the backstop alone.
     """
+    if roles is not None and roles.get(controllable.name) == _USER_PROMPT_ROLE_CATEGORY:
+        return True
     normalized = controllable.name.lower()
     if normalized in _USER_PROMPT_NAMES:
         return True
@@ -191,6 +214,7 @@ def build_vessels(
     *,
     grafter_candidates: list[dict[str, Any]] | None = None,
     extra_content_names: frozenset[str] = frozenset(),
+    roles: Mapping[str, str] | None = None,
 ) -> list[Vessel]:
     """Rank ``controllables`` into a prioritized list of injection vessels.
 
@@ -205,7 +229,8 @@ def build_vessels(
     content_controllables = [
         ctrl
         for ctrl in controllables
-        if is_content_surface(ctrl, extra_names=extra_content_names) and accepts_free_text(ctrl)
+        if is_content_surface(ctrl, extra_names=extra_content_names, roles=roles)
+        and accepts_free_text(ctrl)
     ]
 
     # Grafter-named content surfaces. A candidate "names" a content surface when
@@ -260,7 +285,7 @@ def build_vessels(
     for ctrl in controllables:
         if id(ctrl) in seen:
             continue
-        if is_user_prompt_surface(ctrl):
+        if is_user_prompt_surface(ctrl, roles=roles):
             seen.add(id(ctrl))
             vessels.append(Vessel(controllable=ctrl, kind="user_prompt"))
             break

@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import random
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -56,9 +56,23 @@ from agentvigil_websentinel_optimizer.seeds import (
     OFFICIAL_TEXT_SEEDS,
     Seed,
 )
+from agentvigil_websentinel_optimizer.surface_llm import classify_controllables
 
 _SYSTEM_PROMPT_NAME = "system_prompt"
 _USER_PROMPT_NAMES = {"user_prompt", "user_message", "query", "prompt"}
+# Role categories the attacker's LLM sorts raw surfaces into by reading each
+# controllable's description (see ``surface_llm.classify_controllables``). Both
+# ``content-injection`` and ``environment-write`` denote a surface whose value
+# the agent later reads, so both map to a content PostCall surface.
+_ROLE_CATEGORIES: tuple[str, ...] = (
+    "content-injection",
+    "environment-write",
+    "user-prompt",
+)
+_CONTENT_ROLE_CATEGORIES: frozenset[str] = frozenset(
+    {"content-injection", "environment-write"}
+)
+_USER_PROMPT_ROLE_CATEGORY = "user-prompt"
 _TOOL_REGISTER = "tool_catalog_register"
 _TOOL_REPLACE = "tool_catalog_replace"
 _TOOL_REWRITE_DOC = "tool_catalog_rewrite_doc"
@@ -237,6 +251,10 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         self._random = random.Random(random_seed)
 
         self._goal: Goal | None = None
+        # {controllable.name -> role category}, filled once in initialize() by the
+        # attacker's LLM reading each surface's description. Consulted first by the
+        # surface predicates; degrades to {} (name/prefix backstop) on any failure.
+        self._surface_roles: dict[str, str] = {}
         self._tree: MonteCarloTree | None = None
         self._mutator: Mutator | None = None
         self._static_context: str | None = None
@@ -288,6 +306,15 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
     ) -> None:
         await super().initialize(goal, controllables, observables, llm_client)
         self._goal = goal
+        # One LLM pass sorts the raw surfaces into the roles this attacker acts on,
+        # read from each description. Computed before any surface classification so
+        # the predicates below consult the cache; {} on any failure -> name backstop.
+        self._surface_roles = await classify_controllables(
+            self.llm,
+            controllables,
+            _ROLE_CATEGORIES,
+            goal=goal.description,
+        )
         self._static_context = self._format_static_context(observables)
         self._target_model = self._extract_model(observables) or "ChatGPT"
         self._target_user = self._extract_user(observables) or "User"
@@ -296,7 +323,8 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
             ctrl.name == _SYSTEM_PROMPT_NAME for ctrl in controllables
         )
         self._can_write_user_prompt = any(
-            self._is_user_prompt(ctrl) for ctrl in controllables
+            self._is_user_prompt(ctrl, roles=self._surface_roles)
+            for ctrl in controllables
         )
         self._catalog_ops = {
             ctrl.name
@@ -307,7 +335,8 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
             self._catalog_ops
         )
         self._content_surface_available = any(
-            self._is_agent_content_surface(ctrl) for ctrl in controllables
+            self._is_agent_content_surface(ctrl, roles=self._surface_roles)
+            for ctrl in controllables
         )
         # Prefer the closest paper-equivalent surface that is available, but
         # choose the actual injection point when the corresponding event fires.
@@ -399,7 +428,7 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
             return self._maybe_inject_system_prompt(event)
         if name in {_TOOL_REGISTER, _TOOL_REPLACE, _TOOL_REWRITE_DOC}:
             return self._maybe_inject_tool_catalog(event)
-        if self._is_user_prompt(event.controllable):
+        if self._is_user_prompt(event.controllable, roles=self._surface_roles):
             return self._maybe_inject_user_prompt(event)
         return ControllableNoInjection(event=event, controllable=event.controllable)
 
@@ -414,7 +443,7 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         # ``tool:<name>`` per-tool output surface) so init-time availability and
         # this PostCall injection gate never disagree.
         if self._selected_surface is None and self._is_agent_content_surface(
-            event.controllable
+            event.controllable, roles=self._surface_roles
         ):
             # Do NOT latch a schema-typed surface: it would discard the string
             # payload and shadow the later text surface (e.g. env_tool) for the
@@ -738,7 +767,16 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         return _AGENTDOJO_ATTACKER_TOOL_NAMES[0]
 
     @staticmethod
-    def _is_user_prompt(controllable: Controllable) -> bool:
+    def _is_user_prompt(
+        controllable: Controllable,
+        *,
+        roles: Mapping[str, str] | None = None,
+    ) -> bool:
+        if (
+            roles is not None
+            and roles.get(controllable.name) == _USER_PROMPT_ROLE_CATEGORY
+        ):
+            return True
         normalized = controllable.name.lower()
         if normalized in _USER_PROMPT_NAMES:
             return True
@@ -756,7 +794,17 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         )
         return has_user and has_prompt_role
 
-    def _is_content_postcall_surface(self, controllable: Controllable) -> bool:
+    def _is_content_postcall_surface(
+        self,
+        controllable: Controllable,
+        *,
+        roles: Mapping[str, str] | None = None,
+    ) -> bool:
+        if (
+            roles is not None
+            and roles.get(controllable.name) in _CONTENT_ROLE_CATEGORIES
+        ):
+            return True
         normalized = controllable.name.lower()
         if (
             controllable.name in self._content_controllable_names
@@ -783,13 +831,18 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         ).lower()
         return any(hint in haystack for hint in _CONTENT_SURFACE_HINTS)
 
-    def _is_agent_content_surface(self, controllable: Controllable) -> bool:
+    def _is_agent_content_surface(
+        self,
+        controllable: Controllable,
+        *,
+        roles: Mapping[str, str] | None = None,
+    ) -> bool:
         name = controllable.name
         return (
             name.startswith(_TOOL_PREFIX)
             or name.startswith(_TOOL_OUTPUT_PREFIX)
             or name.startswith(_ATTACKER_TOOL_PREFIX)
-            or self._is_content_postcall_surface(controllable)
+            or self._is_content_postcall_surface(controllable, roles=roles)
         )
 
     def _available_surface_ranks(self) -> list[int]:
