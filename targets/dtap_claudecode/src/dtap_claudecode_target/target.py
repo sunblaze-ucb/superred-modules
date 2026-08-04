@@ -58,6 +58,15 @@ OS_FILESYSTEM_DISALLOWED_TOOLS = (
 
 __all__ = ["DtapClaudeCodeTarget", "OS_FILESYSTEM_DISALLOWED_TOOLS", "DEFAULT_IMAGE"]
 
+# Forwarded into the container when ``bedrock=True``, name-only (docker inherits each
+# VALUE from this process, keeping the token off the argv). See ASSUMPTIONS B.6.
+BEDROCK_ENV = ("CLAUDE_CODE_USE_BEDROCK", "AWS_REGION", "AWS_BEARER_TOKEN_BEDROCK")
+
+
+def _container_name(instance_dir: str) -> str:
+    """Name the episode container so a timed-out one can be removed."""
+    return f"dtap-cc-{os.path.basename(instance_dir)}"
+
 
 class DtapClaudeCodeTarget(DtapAgentTarget):
     """DTAP agent target backed by the Claude Agent SDK (Claude Code), in Docker.
@@ -65,11 +74,24 @@ class DtapClaudeCodeTarget(DtapAgentTarget):
     Args mirror the base, plus ``image`` (the agent Docker image to run). Model
     identity, credentials, and generation settings are construction concerns (not
     config slots), per the base.
+
+    ``bedrock=True`` runs the agent on AWS Bedrock instead of Anthropic-direct: the
+    :data:`BEDROCK_ENV` names are forwarded from this process into the container, and
+    ``model`` carries a Bedrock inference-profile id (ASSUMPTIONS B.6).
     """
 
-    def __init__(self, *, image: str | None = None, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        image: str | None = None,
+        bedrock: bool = False,
+        docker_timeout: float = 1800.0,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self._image = image or DEFAULT_IMAGE
+        self._bedrock = bedrock
+        self._docker_timeout = docker_timeout
 
     # ----- per-agent hooks --------------------------------------------------
 
@@ -141,7 +163,21 @@ class DtapClaudeCodeTarget(DtapAgentTarget):
             stderr=asyncio.subprocess.STDOUT,
             env=run_env,
         )
-        await proc.communicate()
+        try:
+            await asyncio.wait_for(proc.communicate(), timeout=self._docker_timeout)
+        except TimeoutError:
+            # kill() stops only the docker CLIENT, so remove the container too (an
+            # orphan keeps calling the host MCP proxy into a LATER run), then fail
+            # loudly: an empty result.json would score as a legitimate no-op. This is
+            # what a wrong Bedrock credential looks like (the CLI retries a 403).
+            proc.kill()
+            rm = await asyncio.create_subprocess_exec(
+                "docker", "rm", "-f", _container_name(instance_dir)
+            )
+            await rm.wait()
+            raise RuntimeError(
+                f"agent container exceeded docker_timeout={self._docker_timeout}s"
+            ) from None
         return instance_dir
 
     async def _exec_on_host(self, code: str) -> str:
@@ -203,6 +239,7 @@ class DtapClaudeCodeTarget(DtapAgentTarget):
     def _docker_command(self, spec: AgentLaunchSpec, instance_dir: str) -> list[str]:
         """Build the ``docker run`` argv: state mounts + Anthropic env + proxy reachability."""
         cmd = ["docker", "run", "--rm", "--add-host", "host.docker.internal:host-gateway"]
+        cmd += ["--name", _container_name(instance_dir)]  # so a timeout can remove it
         # The Claude Code CLI refuses --dangerously-skip-permissions (which
         # permission_mode="bypassPermissions" maps to) when running as root unless
         # told it is sandboxed; the container IS the isolation boundary.
@@ -216,6 +253,8 @@ class DtapClaudeCodeTarget(DtapAgentTarget):
             cmd += ["-e", "ANTHROPIC_AUTH_TOKEN"]
         if spec.model:
             cmd += ["-e", f"ANTHROPIC_MODEL={spec.model}"]
+        if self._bedrock:
+            cmd += [arg for name in BEDROCK_ENV if name in os.environ for arg in ("-e", name)]
         cmd += ["-e", f"DTAP_TASK_FILE={CONTAINER_MOUNT}/{TASK_FILENAME}"]
         cmd += ["-v", f"{instance_dir}:{CONTAINER_MOUNT}"]
         cmd += [self._image]

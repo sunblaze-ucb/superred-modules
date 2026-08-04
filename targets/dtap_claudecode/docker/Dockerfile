@@ -10,10 +10,11 @@
 # run later in the environment that has Docker. Pin versions when productionizing.
 FROM python:3.13-slim
 
-# Node 20 (the Claude Code CLI requires a current Node runtime).
+# Node 22: npm installs the newest claude-code the runtime's `engines` allow, and
+# Node 20 caps that below the first release that authenticates to Bedrock (B.6).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates gnupg \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
