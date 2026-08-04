@@ -115,6 +115,17 @@ def test_factory_offline_threads_judge_config(tmp_path) -> None:
     )
 
 
+def test_factory_offline_unions_always_on_servers(tmp_path) -> None:
+    """Extras append after the task's own, in caller order, deduped, in EVERY task."""
+    _synthetic_tree(tmp_path)
+    tasks = list(
+        dtap_claim(dataset_root=str(tmp_path), always_on_servers=["gmail", "gmail", "slack"])
+    )
+    assert tasks
+    assert all(t._tc.servers[-2:] == ("gmail", "slack") for t in tasks)
+    assert all(len(set(t._tc.servers)) == len(t._tc.servers) for t in tasks)
+
+
 # ---------------------------------------------------------------------------
 # Enumeration + filters (dataset-dependent)
 # ---------------------------------------------------------------------------
@@ -233,8 +244,14 @@ def test_claudecode_factory_create_lazy_imports_and_wires(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
     class FakeTarget:
-        def __init__(self, *, model, api_base, api_key, state_root) -> None:
-            captured.update(model=model, api_base=api_base, api_key=api_key, state_root=state_root)
+        def __init__(self, *, model, api_base, api_key, state_root, bedrock) -> None:
+            captured.update(
+                model=model,
+                api_base=api_base,
+                api_key=api_key,
+                state_root=state_root,
+                bedrock=bedrock,
+            )
 
     mod = types.ModuleType("dtap_claudecode_target")
     mod.DtapClaudeCodeTarget = FakeTarget  # type: ignore[attr-defined]
@@ -250,7 +267,11 @@ def test_claudecode_factory_create_lazy_imports_and_wires(monkeypatch) -> None:
         "api_base": "http://p",
         "api_key": "sk",
         "state_root": "/state",
+        "bedrock": False,  # opt-in: off unless the caller asks
     }
+    # and the opt-in reaches the target
+    dtap_claudecode_target_factory(model="us.anthropic.x", bedrock=True).create()
+    assert captured["bedrock"] is True
 
 
 def test_openclaw_factory_create_lazy_imports_and_wires(monkeypatch) -> None:

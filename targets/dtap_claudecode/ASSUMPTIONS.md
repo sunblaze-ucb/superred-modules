@@ -85,7 +85,7 @@ Deviations specific to those hooks are below.
   (`CLAUDE_CONFIG_DIR` temp dir). This gives the stronger isolation the base's
   parallelism assumes (independent target instances), and credentials reach the
   CLI as `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_MODEL` env
-  vars. The single `docker run` is isolated in the overridable `_docker_run` so
+  vars, or the Bedrock env of B.6. The single `docker run` is isolated in the overridable `_docker_run` so
   the whole lifecycle is testable offline with a fake.
 - **B.5 Per-turn `agent_responses`.** The base's query surface and the DTAP judge
   take a per-turn final-output list. The upstream converter exposes only a single
@@ -93,6 +93,24 @@ Deviations specific to those hooks are below.
   turn's last assistant text (falling back to that turn's `ResultMessage.result`,
   then `""`). `final_response` is the last turn's entry, so it equals the upstream
   single final for the common case.
+- **B.6 AWS Bedrock path (opt-in deviation from the upstream Anthropic-direct backend).**
+  `bedrock=True` forwards `CLAUDE_CODE_USE_BEDROCK` / `AWS_REGION` /
+  `AWS_BEARER_TOKEN_BEDROCK` from the launching process into the container by NAME
+  (docker inherits each value, so no token reaches the argv). It is an explicit flag,
+  not ambient detection: a stray `CLAUDE_CODE_USE_BEDROCK` in an operator's shell must
+  not silently switch a run's provider. Default `False` forwards nothing. `model`
+  then carries a Bedrock inference-profile id, so `model_identity` values are not
+  comparable across the two provider paths. Two measured constraints (2026-08):
+  `npm` installs the newest CLI the runtime's `engines` allow, and Node 20 caps that
+  at 2.1.197, which cannot authenticate a bearer token; Node 22 gets 2.1.220, which
+  can (hence the Dockerfile pin). And a WRONG credential does not fail fast: Bedrock
+  answers HTTP 403 in ~0.2s, but the CLI retries it silently and never exits. So
+  `_docker_run` bounds every episode at `docker_timeout` (default 1800s, above the
+  ~1080s worst case measured on the legal domain), removes the container by name
+  (`proc.kill()` stops only the docker client, and an orphan would keep calling the
+  host MCP proxy into a later run), and RAISES: returning an empty `result.json`
+  would score as a legitimate no-op. A misconfigured sweep therefore reports
+  `stop_reason="error"` on its first tasks instead of a benchmark of zeros.
 
 ## C. The native-tool menu (upstream-faithful: no `allowed_tools`)
 
@@ -139,7 +157,8 @@ Two deliberate, faithful-to-intent narrowings of the upstream skill machinery:
 ## E. Out-of-band model client / budget
 
 Like the AgentDojo and inspect-agent ports, the agent runs inference with its own
-provider client (the Claude Code CLI talking to `ANTHROPIC_BASE_URL`), **not**
+provider client (the Claude Code CLI talking to `ANTHROPIC_BASE_URL`, or to AWS
+Bedrock per B.6), **not**
 superred's `LLMClient`. Its token spend is out of band and uncounted against the
 optimizer's budget. The model id is fixed at construction (not a config slot), so
 neither the Task nor the attacker can change the agent's model; it is exposed

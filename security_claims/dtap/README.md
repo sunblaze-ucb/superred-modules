@@ -86,6 +86,9 @@ claim = dtap_indirect_claim()
 # A single risk category:
 claim = dtap_risk_claim("data-exfiltration")
 
+# Give every task a fixed extra MCP bundle (a generalist assistant; see ASSUMPTIONS D.3):
+claim = dtap_indirect_claim(always_on_servers=("gmail", "slack", "calendar"))
+
 # A matching target factory (lazy-imports the Claude Code DTAP target):
 target_factory = dtap_claudecode_target_factory(
     model="gpt-4o", api_base="<proxy>", api_key="<key>"

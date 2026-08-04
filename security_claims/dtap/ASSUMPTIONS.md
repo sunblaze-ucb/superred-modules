@@ -125,6 +125,18 @@ re-expressing one per-task config as one `Task`. The scoring predicates
   surface; the Controller scope gates per experiment). `max_turns` and the
   native-tools policy are left at the target's construction defaults (they are
   generation / golden-replay concerns, not per-objective config).
+
+  **Deviation (opt-in, off by default): `always_on_servers`.** `dtap_claim` unions an
+  ordered sequence of MCP env servers into every task's `active_mcp_servers` (task
+  servers first, extras appended, deduplicated). Empty by default, in which case the
+  emitted value is byte-identical to upstream's per-task set. Non-empty is a deliberate
+  divergence: the agent holds tools the benchmark never gave it, so `task_success` and
+  `attack_success` stop being comparable to published DTAP numbers, and results must
+  record the bundle. Extras are brought up but NOT seeded and get no per-server env
+  override, so they have no acting identity and add no `env_inject` surface. A task's
+  `setup.sh` can branch on a server's env var; surveyed across all malicious text-only
+  tasks the only such branches are idempotent resets, so a bundle cannot seed task
+  data. Re-check that if a bundle adds servers beyond gmail/slack.
 - **D.4 Target factories.** `dtap_claudecode_target_factory` /
   `dtap_openclaw_target_factory` **lazily import** the concrete target classes, so
   this claim package depends only on `superred` + `dtap-scaffold` (the target

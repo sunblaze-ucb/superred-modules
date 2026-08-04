@@ -10,6 +10,7 @@ import pytest
 from dtap_scaffold.types import AgentLaunchSpec, EpisodeResult
 
 from dtap_claudecode_target import DtapClaudeCodeTarget
+from dtap_claudecode_target import target as target_mod
 from dtap_claudecode_target.target import (
     CONTAINER_MOUNT,
     CONTAINER_WORKSPACE,
@@ -134,6 +135,24 @@ def test_docker_command_omits_absent_credentials():
     assert not any(c.startswith("ANTHROPIC_BASE_URL=") for c in cmd)
     assert not any(c.startswith("ANTHROPIC_AUTH_TOKEN=") for c in cmd)
     assert "ANTHROPIC_MODEL=m" in cmd
+
+
+def test_docker_command_forwards_bedrock_env_by_name_only(monkeypatch):
+    """Bedrock env rides a name-only -e, so no credential value reaches the argv."""
+    for name, value in zip(target_mod.BEDROCK_ENV, ("1", "us-west-2", "bedrock-secret")):
+        monkeypatch.setenv(name, value)
+    spec = _spec(api_base=None, api_key=None, model="us.anthropic.claude-x")
+    cmd = DtapClaudeCodeTarget(model="us.anthropic.claude-x", bedrock=True)._docker_command(
+        spec, "/i"
+    )
+    for name in target_mod.BEDROCK_ENV:
+        assert name in cmd
+        assert not any(c.startswith(f"{name}=") for c in cmd)
+    assert "bedrock-secret" not in cmd
+    assert target_mod._container_name("/i") in cmd  # the timeout path removes this name
+    # opt-in: the same ambient env must NOT reach a default target
+    off = DtapClaudeCodeTarget(model="claude-x")._docker_command(spec, "/i")
+    assert not any(n in off for n in target_mod.BEDROCK_ENV)
 
 
 # ----- _read_result -------------------------------------------------------

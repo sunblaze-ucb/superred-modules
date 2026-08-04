@@ -13,7 +13,8 @@ packages carry the heavier Docker/agent-SDK deps).
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
+from dataclasses import replace
 from typing import cast
 
 from superred.core.controller import TargetFactory
@@ -44,6 +45,7 @@ def dtap_claim(
     judge_model: str | None = None,
     judge_api_base: str | None = None,
     judge_api_key: str | None = None,
+    always_on_servers: Sequence[str] = (),
 ) -> SecurityClaim[Target]:
     """Build a DTAP claim: one :class:`DtapTask` per matching per-task config.
 
@@ -59,6 +61,10 @@ def dtap_claim(
         judge_model / judge_api_base / judge_api_key: out-of-band DTAP judge LLM
             (passed through to ``run_dtap_judge``; the judge re-queries the live
             env and its cost is out of band, never the optimizer's budget).
+        always_on_servers: extra MCP env servers unioned into EVERY task's active
+            set, on top of the task's own (a "generalist assistant" bundle). Order
+            reaches the agent's tool ordering; use canonical ``mcp.yaml`` casing
+            (e.g. ``"OS-filesystem"``). Empty (default) is upstream-faithful.
 
     Raises:
         ValueError: if no task matches the filters.
@@ -67,6 +73,8 @@ def dtap_claim(
     type_list = _as_list(types)
     threat_model_list = _as_list(threat_models)
     risk_set = set(risk_categories) if risk_categories is not None else None
+
+    always_on = tuple(always_on_servers)  # re-iterable: consumed once per task
 
     root = resolve_dataset_root(domain_list, root=dataset_root, download=download)
 
@@ -80,6 +88,8 @@ def dtap_claim(
         tc = parse_task_config(config_path, root=root)
         if risk_set is not None and tc.risk_category not in risk_set:
             continue
+        if always_on:
+            tc = replace(tc, servers=tuple(dict.fromkeys([*tc.servers, *always_on])))
         tasks.append(
             DtapTask(
                 task_config=tc,
@@ -137,6 +147,7 @@ def dtap_claudecode_target_factory(
     api_key: str | None = None,
     concurrency: int = 1,
     state_root: str | None = None,
+    bedrock: bool = False,
 ) -> TargetFactory:
     """A ``TargetFactory`` for the Claude Code DTAP target.
 
@@ -146,13 +157,19 @@ def dtap_claudecode_target_factory(
     NOT the optimizer's budget-locked ``LLMClient``). ``concurrency`` is how many
     isolated env+agent instances run in parallel (each task gets a fresh target);
     keep it at 1 unless the host can run several Docker env stacks at once.
+    ``bedrock=True`` runs the agent on AWS Bedrock (``model`` is then an inference
+    profile id, and ``api_base``/``api_key`` are unused).
     """
 
     def create() -> Target:
         from dtap_claudecode_target import DtapClaudeCodeTarget
 
         target: Target = DtapClaudeCodeTarget(
-            model=model, api_base=api_base, api_key=api_key, state_root=state_root
+            model=model,
+            api_base=api_base,
+            api_key=api_key,
+            state_root=state_root,
+            bedrock=bedrock,
         )
         return target
 

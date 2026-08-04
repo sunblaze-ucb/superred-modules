@@ -43,7 +43,7 @@ edit, web) plus the DTAP environment tools exposed over MCP.
 Controller → base.run()                       (host)
   ├─ fires the 5 DTAP controllables, applies env injections, binds the proxy
   ├─ _run_episode(spec) → _docker_run(spec):
-  │     docker run  (env: ANTHROPIC_BASE_URL/AUTH_TOKEN/MODEL, --add-host …)
+  │     docker run  (env: ANTHROPIC_BASE_URL/AUTH_TOKEN/MODEL or the Bedrock env, …)
   │       └─ driver.py  (in container)
   │            ClaudeSDKClient ⇄ mcp__dtap_proxy__*  ⇄ host MCP proxy ⇄ env
   │            writes transcript.jsonl + result.json to the mounted dir
@@ -71,6 +71,34 @@ target = DtapClaudeCodeTarget(
     state_root="/var/tmp/dtap",              # optional per-instance dir root
     max_turns=200,
 )
+```
+
+To run the agent on **AWS Bedrock** instead, pass `bedrock=True`, give `model` a Bedrock
+inference-profile id, and leave `api_base`/`api_key` unset. Export the three variables
+the Claude Code CLI itself reads; the target forwards them into the container by name,
+so no token reaches the `docker run` argv:
+
+```bash
+export CLAUDE_CODE_USE_BEDROCK=1 AWS_REGION=us-west-2 AWS_BEARER_TOKEN_BEDROCK=...
+```
+
+```python
+target = DtapClaudeCodeTarget(model="us.anthropic.claude-sonnet-4-6", bedrock=True)
+# or via the claim's factory:
+#   dtap_claudecode_target_factory(model="us.anthropic.claude-sonnet-4-6", bedrock=True)
+```
+
+The flag is required: without it nothing is forwarded, so a stray `CLAUDE_CODE_USE_BEDROCK`
+in your shell cannot silently switch a run's provider.
+
+A wrong credential does not fail fast (the CLI retries Bedrock's 403 silently), so each
+episode is bounded by `docker_timeout` and a timeout raises. Check one before a sweep:
+
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' -X POST \
+  -H "Authorization: Bearer $AWS_BEARER_TOKEN_BEDROCK" -H 'content-type: application/json' \
+  -d '{"anthropic_version":"bedrock-2023-05-31","max_tokens":1,"messages":[{"role":"user","content":"."}]}' \
+  "https://bedrock-runtime.$AWS_REGION.amazonaws.com/model/us.anthropic.claude-sonnet-4-6/invoke"
 ```
 
 The DTAP claim configures it per task via the base's config slots
