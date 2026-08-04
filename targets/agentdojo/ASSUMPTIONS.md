@@ -341,3 +341,15 @@ Decisions resolved through direct exchanges with the user during the port. Each 
 ---
 
 (more sections to be added as implementation discovers divergences)
+
+## Read / attacker-tool controllables declare `value_type="text"`
+
+The per-read (`read__<tool>`) and attacker-added-tool (`tool_call:*`) controllables
+declare `value_type="text"`, because the runtime injects `response.value` verbatim as
+the agent-visible return (`runtime_wrapper`: "Inject the raw string"). They were
+previously mislabelled `json` even though the consumer takes a raw string and nothing in
+this package reads `value_type`. The corrected label makes `value_type` a truthful
+signal so a generic content-injection attacker can distinguish a free-text surface from
+a schema-parsed one (DTAP `env_inject`/`tool_add`/`filesystem`) without a target-specific
+allowlist. The genuinely structured catalogue-edit controllables (add/replace/remove/
+rewrite a tool) keep `value_type="json"`.

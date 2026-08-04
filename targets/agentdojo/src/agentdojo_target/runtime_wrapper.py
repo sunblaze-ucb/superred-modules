@@ -122,7 +122,11 @@ def _attacker_call_ctrl(entry: CatalogEntry) -> Controllable:
     - ``registered`` -> :data:`TOOL_CATALOGUE_ADD_TAG` (add capability).
     - ``replaced``   -> :data:`TOOL_CATALOGUE_EDIT_TAG` (edit capability).
     """
-    tag = TOOL_CATALOGUE_ADD_TAG if entry.kind == "registered" else TOOL_CATALOGUE_EDIT_TAG
+    tag = (
+        TOOL_CATALOGUE_ADD_TAG
+        if entry.kind == "registered"
+        else TOOL_CATALOGUE_EDIT_TAG
+    )
     return Controllable(
         name=f"tool_call:{entry.name}",
         security_domain=tag,
@@ -132,7 +136,9 @@ def _attacker_call_ctrl(entry: CatalogEntry) -> Controllable:
             "stored fake_return; a ControllableInjection response "
             "overrides per call."
         ),
-        value_type="json",
+        # Consumed as a RAW STRING (response.value is injected verbatim); ``text``
+        # keeps the value_type contract truthful.
+        value_type="text",
     )
 
 
@@ -262,7 +268,9 @@ class WrappedFunctionsRuntime(FunctionsRuntime):
             return super().run_function(env, function, kwargs, raise_on_error)
 
         if entry.kind == "canonical":
-            return self._run_canonical(env, entry, function, kwargs, raise_on_error, call)
+            return self._run_canonical(
+                env, entry, function, kwargs, raise_on_error, call
+            )
         # Attacker-managed: short-circuit to a synthetic event.
         return self._run_attacker(entry, function, kwargs)
 

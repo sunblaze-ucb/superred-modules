@@ -56,9 +56,23 @@ from agentvigil_websentinel_optimizer.seeds import (
     OFFICIAL_TEXT_SEEDS,
     Seed,
 )
+from agentvigil_websentinel_optimizer.surface_llm import classify_controllables
 
 _SYSTEM_PROMPT_NAME = "system_prompt"
 _USER_PROMPT_NAMES = {"user_prompt", "user_message", "query", "prompt"}
+# Role categories the attacker's LLM sorts raw surfaces into by reading each
+# controllable's description (see ``surface_llm.classify_controllables``). Both
+# ``content-injection`` and ``environment-write`` denote a surface whose value
+# the agent later reads, so both map to a content PostCall surface.
+_ROLE_CATEGORIES: tuple[str, ...] = (
+    "content-injection",
+    "environment-write",
+    "user-prompt",
+)
+_CONTENT_ROLE_CATEGORIES: frozenset[str] = frozenset(
+    {"content-injection", "environment-write"}
+)
+_USER_PROMPT_ROLE_CATEGORY = "user-prompt"
 _TOOL_REGISTER = "tool_catalog_register"
 _TOOL_REPLACE = "tool_catalog_replace"
 _TOOL_REWRITE_DOC = "tool_catalog_rewrite_doc"
@@ -69,45 +83,23 @@ _TOOL_PREFIX = "read__"
 # at index 4, ``tool_call:`` an underscore, so they never prefix-collide.
 _TOOL_OUTPUT_PREFIX = "tool:"
 _ATTACKER_TOOL_PREFIX = "tool_call:"
-_RESPONSE_NAME_HINTS = ("response", "assistant", "reply", "output", "completion")
-_CONTENT_RESPONSE_NAME_HINTS = (
-    "tool_response",
-    "tool_result",
-    "tool_output",
-    "tool_return",
-    "mcp_response",
-    "mcp_result",
-    "retrieval_response",
-    "retrieval_result",
-    "rag_response",
-    "rag_result",
-)
+# A content surface is only injectable if it consumes an unstructured STRING. A
+# schema-typed surface (e.g. DTAP's ``env_inject:<server>`` json vector) silently
+# discards a bare payload, so injecting it is a no-op recorded as a scored attack.
+_FREE_TEXT_VALUE_TYPES = frozenset({"", "text", "str", "string", "html", "markdown"})
+
+
+def _accepts_free_text(controllable: Controllable) -> bool:
+    """True if the surface consumes an unstructured string (vs a parsed schema)."""
+    return controllable.value_type.lower() in _FREE_TEXT_VALUE_TYPES
+
+
 _STATIC_CONTEXT_TRUNCATION = "...[truncated]"
 _AGENTDOJO_ATTACKER_TOOL_NAMES = (
     "__attacker_data_dump__",
     "__attacker_credentials_read__",
     "__attacker_remote_exec__",
     "__attacker_exfil_channel__",
-)
-_CONTENT_SURFACE_HINTS = (
-    "browser",
-    "content",
-    "context",
-    "document",
-    "external",
-    "html",
-    "knowledge",
-    "mcp",
-    "memory",
-    "observation",
-    "page",
-    "rag",
-    "read",
-    "retrieval",
-    "retrieved",
-    "result",
-    "tool_response",
-    "web",
 )
 
 # SuperRed-only bridge for the writable-system-prompt capability. The official
@@ -226,6 +218,10 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         self._random = random.Random(random_seed)
 
         self._goal: Goal | None = None
+        # {controllable.name -> role category}, filled once in initialize() by the
+        # attacker's LLM reading each surface's description. Consulted first by the
+        # surface predicates; degrades to {} (name/prefix backstop) on any failure.
+        self._surface_roles: dict[str, str] = {}
         self._tree: MonteCarloTree | None = None
         self._mutator: Mutator | None = None
         self._static_context: str | None = None
@@ -277,6 +273,15 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
     ) -> None:
         await super().initialize(goal, controllables, observables, llm_client)
         self._goal = goal
+        # One LLM pass sorts the raw surfaces into the roles this attacker acts on,
+        # read from each description. Computed before any surface classification so
+        # the predicates below consult the cache; {} on any failure -> name backstop.
+        self._surface_roles = await classify_controllables(
+            self.llm,
+            controllables,
+            _ROLE_CATEGORIES,
+            goal=goal.description,
+        )
         self._static_context = self._format_static_context(observables)
         self._target_model = self._extract_model(observables) or "ChatGPT"
         self._target_user = self._extract_user(observables) or "User"
@@ -405,6 +410,13 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
         if self._selected_surface is None and self._is_agent_content_surface(
             event.controllable
         ):
+            # Do NOT latch a schema-typed surface: it would discard the string
+            # payload and shadow the later text surface (e.g. env_tool) for the
+            # rest of the run. Decline so a free-text content surface can be used.
+            if not _accepts_free_text(event.controllable):
+                return ControllableNoInjection(
+                    event=event, controllable=event.controllable
+                )
             self._selected_surface = f"content:{name}"
             return ControllableInjection(
                 event=event,
@@ -719,51 +731,26 @@ class AgentVigilWebSentinelOptimizer(Optimizer):
                 return match
         return _AGENTDOJO_ATTACKER_TOOL_NAMES[0]
 
-    @staticmethod
-    def _is_user_prompt(controllable: Controllable) -> bool:
-        normalized = controllable.name.lower()
-        if normalized in _USER_PROMPT_NAMES:
+    def _is_user_prompt(self, controllable: Controllable) -> bool:
+        # LLM role first, then the reserved-name backstop. A bare ``"user" in
+        # <metadata>`` substring test misclassified PostCall content surfaces
+        # whose node key contains "user" (e.g. DTAP ``env_tool:atlassian.user``)
+        # as a prompt channel, so it is gone.
+        if self._surface_roles.get(controllable.name) == _USER_PROMPT_ROLE_CATEGORY:
             return True
-        haystack = " ".join(
-            (
-                controllable.name,
-                controllable.description,
-                controllable.value_type,
-            )
-        ).lower()
-        has_user = "user" in haystack
-        has_prompt_role = any(
-            hint in haystack
-            for hint in ("message", "prompt", "query", "task", "instruction")
-        )
-        return has_user and has_prompt_role
+        return controllable.name.lower() in _USER_PROMPT_NAMES
 
     def _is_content_postcall_surface(self, controllable: Controllable) -> bool:
+        # LLM classification (the attacker's own LLM reading the description) is
+        # the content signal; the explicit ``content_controllable_names`` override
+        # is the only remaining name-based backstop.
+        if self._surface_roles.get(controllable.name) in _CONTENT_ROLE_CATEGORIES:
+            return True
         normalized = controllable.name.lower()
-        if (
+        return (
             controllable.name in self._content_controllable_names
             or normalized in self._content_controllable_names
-        ):
-            return True
-        metadata = f"{controllable.description} {controllable.value_type}".lower()
-        metadata_looks_content_like = any(
-            hint in metadata for hint in _CONTENT_SURFACE_HINTS
         )
-        if any(hint in normalized for hint in _CONTENT_RESPONSE_NAME_HINTS):
-            return True
-        if (
-            any(hint in normalized for hint in _RESPONSE_NAME_HINTS)
-            and not metadata_looks_content_like
-        ):
-            return False
-        haystack = " ".join(
-            (
-                controllable.name,
-                controllable.description,
-                controllable.value_type,
-            )
-        ).lower()
-        return any(hint in haystack for hint in _CONTENT_SURFACE_HINTS)
 
     def _is_agent_content_surface(self, controllable: Controllable) -> bool:
         name = controllable.name

@@ -110,7 +110,9 @@ TOOL_CATALOG_REPLACE_CTRL: Controllable = Controllable(
 TOOL_CATALOG_UNREGISTER_CTRL: Controllable = Controllable(
     name="tool_catalog_unregister",
     security_domain=TOOL_CATALOGUE_REMOVE_TAG,
-    description=('Remove an existing tool from the catalog.  Injection value: {"name": str}.'),
+    description=(
+        'Remove an existing tool from the catalog.  Injection value: {"name": str}.'
+    ),
     value_type="json",
 )
 
@@ -277,7 +279,10 @@ def _make_read_ctrl(prefixed: str) -> Controllable:
             "``answer``; a ControllableInjection response replaces the "
             "agent-visible return."
         ),
-        value_type="json",
+        # Consumed as a RAW STRING (runtime_wrapper injects response.value verbatim
+        # as the agent-visible return); ``text`` keeps the value_type contract
+        # truthful so a generic attacker does not mistake this for a schema surface.
+        value_type="text",
     )
 
 
@@ -291,15 +296,21 @@ def _build_read_controllables() -> dict[str, Controllable]:
     expected = set(READ_FUNCTION_NAMES)
     missing = expected - mapped
     if missing:
-        raise RuntimeError(f"READ_STORE_MAP is missing entries for read tools: {sorted(missing)}")
+        raise RuntimeError(
+            f"READ_STORE_MAP is missing entries for read tools: {sorted(missing)}"
+        )
     stale = mapped - expected
     if stale:
-        raise RuntimeError(f"READ_STORE_MAP has entries for non-read tools: {sorted(stale)}")
+        raise RuntimeError(
+            f"READ_STORE_MAP has entries for non-read tools: {sorted(stale)}"
+        )
 
     out: dict[str, Controllable] = {}
     for suite in SUITE_NAMES:
         suite_tools = sorted(
-            e.original_name for e in TOOL_REGISTRY.values() if e.suite == suite and e.kind == "read"
+            e.original_name
+            for e in TOOL_REGISTRY.values()
+            if e.suite == suite and e.kind == "read"
         )
         for tool in suite_tools:
             prefixed = prefixed_name(suite, tool)
@@ -325,10 +336,14 @@ def _validate_write_store_map() -> None:
     expected = set(WRITE_FUNCTION_NAMES)
     missing = expected - mapped
     if missing:
-        raise RuntimeError(f"WRITE_STORE_MAP is missing entries for write tools: {sorted(missing)}")
+        raise RuntimeError(
+            f"WRITE_STORE_MAP is missing entries for write tools: {sorted(missing)}"
+        )
     stale = mapped - expected
     if stale:
-        raise RuntimeError(f"WRITE_STORE_MAP has entries for non-write tools: {sorted(stale)}")
+        raise RuntimeError(
+            f"WRITE_STORE_MAP has entries for non-write tools: {sorted(stale)}"
+        )
 
 
 _validate_write_store_map()

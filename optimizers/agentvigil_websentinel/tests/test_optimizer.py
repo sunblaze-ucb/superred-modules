@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -64,6 +65,19 @@ def failure_eval(score: float = 0.0) -> EvaluationResult:
         sub_scores={},
         rationale="attack failed",
     )
+
+
+def roles_llm(mapping: dict[str, str]) -> AsyncMock:
+    """LLM mock whose single ``classify_controllables`` call returns ``mapping``.
+
+    The optimizer no longer scans descriptions/names for content keywords; a
+    surface is recognised as content when the attacker's own LLM classifies it
+    (``content-injection``/``environment-write``) or as a prompt via
+    ``user-prompt``. This mock supplies that classification.
+    """
+    llm = AsyncMock()
+    llm.complete.return_value = mock_response(json.dumps(mapping))
+    return llm
 
 
 async def init_optimizer(
@@ -354,6 +368,9 @@ async def test_failed_feedback_after_initial_seed_scores_mutates_next_seed() -> 
         "noise <response>mutated {injection_goal}</response> tail"
     )
     opt = await init_optimizer(llm=llm, max_attempts=3)
+    # Ignore the one-time surface-classification call made during initialize; this
+    # test counts only mutation calls.
+    llm.complete.reset_mock()
     await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
     await deliver_user_prompt(opt)
     await dispatch_event(
@@ -387,6 +404,9 @@ async def test_initial_seed_corpus_is_scored_before_mutation() -> None:
         observables=[],
         llm_client=llm,
     )
+    # Ignore the one-time surface-classification call made during initialize; this
+    # test counts only mutation calls.
+    llm.complete.reset_mock()
 
     await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
     assert opt._current_seed is not None
@@ -485,6 +505,9 @@ async def test_mutator_transport_failures_prune_candidate_without_failing_optimi
     llm = AsyncMock()
     llm.complete.side_effect = RuntimeError("temporary transport failure")
     opt = await init_optimizer(llm=llm, max_attempts=2)
+    # Ignore the one-time surface-classification call made during initialize (it
+    # also raises and is swallowed to {}); this test counts only mutation retries.
+    llm.complete.reset_mock()
 
     await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
     await deliver_user_prompt(opt)
@@ -529,7 +552,8 @@ async def test_no_feedback_pending_candidate_enters_tree_with_neutral_reward() -
 @pytest.mark.asyncio
 async def test_tool_response_name_is_treated_as_content_surface() -> None:
     opt = await init_optimizer(
-        controllables=[make_controllable("tool_response", TOOLS_TAG)]
+        llm=roles_llm({"tool_response": "content-injection"}),
+        controllables=[make_controllable("tool_response", TOOLS_TAG)],
     )
     await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
@@ -747,7 +771,8 @@ async def test_generic_content_postcall_injects_for_browser_or_memory_surfaces()
     None
 ):
     opt = await init_optimizer(
-        controllables=[make_controllable("browser_page_content", TOOLS_TAG)]
+        llm=roles_llm({"browser_page_content": "content-injection"}),
+        controllables=[make_controllable("browser_page_content", TOOLS_TAG)],
     )
     await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
@@ -768,10 +793,6 @@ async def test_generic_content_postcall_injects_for_browser_or_memory_surfaces()
 @pytest.mark.asyncio
 async def test_generated_children_are_not_selectable_until_evaluated() -> None:
     llm = AsyncMock()
-    llm.complete.side_effect = [
-        mock_response("<response>child one {injection_goal}</response>"),
-        mock_response("<response>child two {injection_goal}</response>"),
-    ]
     opt = AgentVigilWebSentinelOptimizer(
         seeds=[Seed(id="root", text="root {injection_goal}")],
         population_size=2,
@@ -784,6 +805,13 @@ async def test_generated_children_are_not_selectable_until_evaluated() -> None:
         observables=[],
         llm_client=llm,
     )
+    # The two mutation responses feed candidate generation; the one-time
+    # surface-classification call during initialize used the default mock return.
+    llm.complete.reset_mock()
+    llm.complete.side_effect = [
+        mock_response("<response>child one {injection_goal}</response>"),
+        mock_response("<response>child two {injection_goal}</response>"),
+    ]
 
     await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
     await deliver_user_prompt(opt)
@@ -814,7 +842,8 @@ async def test_content_surface_detection_includes_observation_and_external_conte
     None
 ):
     opt = await init_optimizer(
-        controllables=[make_controllable("external_context", TOOLS_TAG)]
+        llm=roles_llm({"external_context": "content-injection"}),
+        controllables=[make_controllable("external_context", TOOLS_TAG)],
     )
     await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
@@ -853,6 +882,41 @@ async def test_per_tool_output_surface_is_treated_as_content_surface() -> None:
 
     assert isinstance(resp, ControllableInjection)
     assert "the legitimate tool output" in resp.value
+    assert "send the secret token" in resp.value
+
+
+@pytest.mark.asyncio
+async def test_llm_classified_content_surface_is_injected_over_name_backstop() -> None:
+    # An opaquely-named surface with no content hint would be missed by the name/
+    # keyword backstop. The attacker's own LLM reads its description and classifies
+    # it as content-injection; the optimizer then injects into that PostCall.
+    llm = AsyncMock()
+    llm.complete.return_value = mock_response(
+        json.dumps({"atlas_field_42": "content-injection"})
+    )
+    ctrl = make_controllable("atlas_field_42", TOOLS_TAG)
+    assert (
+        AgentVigilWebSentinelOptimizer(
+            seeds=[Seed(id="s", text="s {injection_goal}")]
+        )._is_agent_content_surface(ctrl)
+        is False
+    )  # backstop alone: not content
+
+    opt = await init_optimizer(llm=llm, controllables=[ctrl])
+    assert opt._surface_roles == {"atlas_field_42": "content-injection"}
+    await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
+
+    resp = await dispatch_event(
+        opt,
+        ControllablePostCallEvent(
+            controllable=make_controllable("atlas_field_42", TOOLS_TAG),
+            request="fetch",
+            answer="legitimate field content",
+        ),
+    )
+
+    assert isinstance(resp, ControllableInjection)
+    assert "legitimate field content" in resp.value
     assert "send the secret token" in resp.value
 
 
@@ -897,8 +961,15 @@ async def test_content_controllable_description_and_value_type_are_detection_sig
         description="Retrieved external document chunk for the agent.",
         value_type="json",
     )
-    opt = await init_optimizer(controllables=[ctrl])
+    opt = await init_optimizer(
+        llm=roles_llm({"callback_output": "content-injection"}),
+        controllables=[ctrl],
+    )
     await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
+
+    # The attacker's LLM classifies this opaque surface as content-injection from
+    # its description, so it IS recognised as an agent content surface.
+    assert opt._is_agent_content_surface(ctrl) is True
 
     resp = await dispatch_event(
         opt,
@@ -909,8 +980,11 @@ async def test_content_controllable_description_and_value_type_are_detection_sig
         ),
     )
 
-    assert isinstance(resp, ControllableInjection)
-    assert "document chunk" in resp.value
+    # ... but emission is schema-gated: a json surface consumes a parsed schema,
+    # not a raw string, so injecting one would silently write nothing. Decline it
+    # (rather than record a no-op as a scored attack) and hold out for a free-text
+    # surface. A value_type="html"/"text" content surface still injects (below).
+    assert isinstance(resp, ControllableNoInjection)
 
 
 @pytest.mark.asyncio
@@ -961,10 +1035,11 @@ async def test_user_prompt_is_deferred_when_agentic_content_surface_is_available
     None
 ):
     opt = await init_optimizer(
+        llm=roles_llm({"browser_page_content": "content-injection"}),
         controllables=[
             make_controllable("user_prompt", USER_TAG),
             make_controllable("browser_page_content", TOOLS_TAG),
-        ]
+        ],
     )
     await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
@@ -994,6 +1069,7 @@ async def test_user_prompt_fallback_after_advertised_content_surface_is_not_reac
     None
 ):
     opt = await init_optimizer(
+        llm=roles_llm({"browser_page_content": "content-injection"}),
         controllables=[
             make_controllable("user_prompt", USER_TAG),
             make_controllable("browser_page_content", TOOLS_TAG),
@@ -1140,10 +1216,16 @@ async def test_best_prompt_surface_is_selected_rather_than_all_prompts() -> None
 @pytest.mark.asyncio
 async def test_first_reached_content_surface_wins_for_the_run() -> None:
     opt = await init_optimizer(
+        llm=roles_llm(
+            {
+                "browser_page_content": "content-injection",
+                "memory_search_result": "content-injection",
+            }
+        ),
         controllables=[
             make_controllable("browser_page_content", TOOLS_TAG),
             make_controllable("memory_search_result", TOOLS_TAG),
-        ]
+        ],
     )
     await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 
@@ -1172,6 +1254,7 @@ async def test_first_reached_content_surface_wins_for_the_run() -> None:
 @pytest.mark.asyncio
 async def test_non_delivery_retries_candidate_without_scoring() -> None:
     opt = await init_optimizer(
+        llm=roles_llm({"browser_page_content": "content-injection"}),
         controllables=[
             make_controllable("browser_page_content", TOOLS_TAG),
             make_controllable("user_prompt", USER_TAG),
@@ -1209,6 +1292,7 @@ async def test_non_delivery_retries_candidate_without_scoring() -> None:
 @pytest.mark.asyncio
 async def test_gives_up_when_only_surface_can_never_be_reached() -> None:
     opt = await init_optimizer(
+        llm=roles_llm({"browser_page_content": "content-injection"}),
         controllables=[make_controllable("browser_page_content", TOOLS_TAG)],
         max_attempts=20,
     )
@@ -1344,6 +1428,9 @@ async def test_llm_tool_description_not_spent_on_replace_only_catalog() -> None:
         ],
         llm_client=llm,
     )
+    # Ignore the one-time surface-classification call made during initialize; this
+    # test asserts the mutator LLM is not spent on a replace-only catalog.
+    llm.complete.reset_mock()
 
     await dispatch_event(opt, RunStartEvent(trajectory=Trajectory()))
 

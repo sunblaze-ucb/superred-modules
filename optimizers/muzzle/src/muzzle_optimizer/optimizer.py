@@ -53,6 +53,7 @@ from muzzle_optimizer.judge import Judge, contains_injected_content
 from muzzle_optimizer.pair.bridge import PairBridge
 from muzzle_optimizer.prompter import Prompter
 from muzzle_optimizer.summarizer import Summarizer
+from muzzle_optimizer.surface_llm import classify_controllables
 from muzzle_optimizer.templates import render_injection
 from muzzle_optimizer.transcript import (
     PlaceholderNotFoundError,
@@ -77,6 +78,9 @@ _PROBE = "PROBE"
 _ATTACK = "ATTACK"
 
 _PLACEHOLDER_TOKENS = (PLACEHOLDER_INSTR, PLACEHOLDER_ALIAS)
+# Role categories the attacker's LLM sorts raw surfaces into by reading each
+# controllable's description; ``vessels`` consults these before its name backstop.
+_ROLE_CATEGORIES = ("content-injection", "environment-write", "user-prompt")
 _DEFAULT_RESPONSE_OBSERVABLE_NAMES = frozenset(
     {"response", "model_response", "assistant_response", "agent_response"}
 )
@@ -145,6 +149,10 @@ class MuzzleOptimizer(Optimizer):
         self._goal: Goal | None = None
         self._controllables: list[Controllable] = []
         self._observables: list[ObservableValue] = []
+        # {controllable.name -> role category}, filled once in initialize() by the
+        # attacker's LLM reading each surface's description; consulted first by the
+        # vessels predicates. Degrades to {} (name backstop) on any failure.
+        self._surface_roles: dict[str, str] = {}
         self._summarizer: Summarizer | None = None
         self._grafter: Grafter | None = None
         self._prompter: Prompter | None = None
@@ -195,9 +203,20 @@ class MuzzleOptimizer(Optimizer):
             keep_last_n=self._pair_keep_last_n,
             judge_method=self._pair_judge_method,
         )
+        # One LLM pass sorts the raw surfaces into roles read from each description;
+        # computed before any surface classification so the vessels predicates below
+        # consult the cache. {} on any failure -> the name/keyword backstop.
+        self._surface_roles = await classify_controllables(
+            self.llm,
+            controllables,
+            _ROLE_CATEGORIES,
+            goal=goal.description,
+        )
         self._can_inject = any(
-            is_content_surface(ctrl, extra_names=self._extra_content_names)
-            or is_user_prompt_surface(ctrl)
+            is_content_surface(
+                ctrl, extra_names=self._extra_content_names, roles=self._surface_roles
+            )
+            or is_user_prompt_surface(ctrl, roles=self._surface_roles)
             or ctrl.name == SYSTEM_PROMPT_NAME
             for ctrl in controllables
         )
@@ -288,6 +307,7 @@ class MuzzleOptimizer(Optimizer):
             self._controllables,
             grafter_candidates=candidates,
             extra_content_names=self._extra_content_names,
+            roles=self._surface_roles,
         )
         if self._target_controllable_name is not None:
             vessels = [v for v in vessels if v.controllable.name == self._target_controllable_name]

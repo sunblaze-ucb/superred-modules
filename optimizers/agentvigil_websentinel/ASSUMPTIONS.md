@@ -49,3 +49,17 @@ This module implements the AgentVigil/WebSentinel attack idea for SuperRed agent
 ## Agent Targets
 
 This optimizer is intended for agent-style targets such as AgentDojo, browser agents, RAG/memory agents, MCP/tool agents, and Letta/ASB-style targets when they expose any of these SuperRed surfaces: user prompt, system prompt, tool catalog, static observables, dynamic tool responses, or content/read injection points.
+
+## Schema-typed content surfaces are declined, not injected (DTAP fitness)
+
+A content-injection payload is an unstructured string. A content surface whose
+`value_type` is a parsed schema (e.g. DTAP `env_inject:<server>`, which needs a
+`{injection_mcp_tool, kwargs}` object) silently discards a bare string: the target
+`json.loads`-parses it, gets nothing, and writes nothing, yet the run is still
+recorded as a scored attack -- a fake 0.0 indistinguishable from a defended attack.
+`_handle_post_call` now checks `_accepts_free_text` (value_type in
+text/str/string/html/markdown) BEFORE latching `_selected_surface`: a schema surface
+is declined WITHOUT consuming the run, so the later free-text surface (e.g.
+`env_tool:<server>`, which replaces a tool return) is still selected. Detection is
+unchanged (the surface is still classified as content); only emission is gated. On
+AgentDojo/ASB/inspect_agent every content surface is `text`, so this is a no-op there.

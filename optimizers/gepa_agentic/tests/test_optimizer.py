@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -63,6 +65,24 @@ def _empty_llm() -> MagicMock:
     return llm
 
 
+def _classifying_llm(roles: dict[str, str]) -> MagicMock:
+    """An LLM whose ``complete`` returns a fixed surface->role classification.
+
+    Lets a test exercise the LLM-driven surface interpretation path
+    (``surface_llm.classify_controllables``) deterministically.
+    """
+    llm = MagicMock()
+
+    async def complete(_messages: Any, **_kwargs: Any) -> Any:
+        content = json.dumps(roles)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
+        )
+
+    llm.complete.side_effect = complete
+    return llm
+
+
 def _user_ctrl(name: str = "user_prompt") -> Controllable:
     return Controllable(name=name, security_domain=USER_TAG)
 
@@ -79,7 +99,9 @@ def _read_ctrl(name: str = "read__slack__get_webpage") -> Controllable:
             "Per-read injection point. ControllablePostCallEvent answer carries "
             "the legitimate tool return."
         ),
-        value_type="json",
+        # A read/content surface consumes the injected value as a raw string
+        # (see agentdojo runtime_wrapper), so its truthful value_type is text.
+        value_type="text",
     )
 
 
@@ -133,6 +155,7 @@ async def _init_optimizer(
     max_content_injections_per_run: int = 3,
     max_pool_size: int = 8,
     response_observable_names: list[str] | None = None,
+    llm: MagicMock | None = None,
 ) -> GEPAAgenticOptimizer:
     opt = GEPAAgenticOptimizer(
         max_attempts=max_attempts,
@@ -146,7 +169,7 @@ async def _init_optimizer(
         goal=Goal(description="achieve target X"),
         controllables=controllables if controllables is not None else [_read_ctrl()],
         observables=observables if observables is not None else [],
-        llm_client=_empty_llm(),
+        llm_client=llm if llm is not None else _empty_llm(),
     )
     return opt
 
@@ -161,10 +184,22 @@ class TestSurfaceClassification:
         assert opt._content_surface_names == ["read__slack__get_webpage"]
 
     @pytest.mark.asyncio
-    async def test_discovers_opaque_content_surface_from_metadata(self) -> None:
-        opt = await _init_optimizer(controllables=[_opaque_content_ctrl()])
+    async def test_discovers_opaque_content_surface_via_llm(self) -> None:
+        # An opaque, non-canonically-named surface is discovered by the attacker's
+        # LLM reading its description (not by a hard-coded keyword table).
+        opt = await _init_optimizer(
+            controllables=[_opaque_content_ctrl()],
+            llm=_classifying_llm({"opaque_surface": "content-injection"}),
+        )
 
         assert opt._content_surface_names == ["opaque_surface"]
+
+    @pytest.mark.asyncio
+    async def test_opaque_surface_ignored_without_llm_signal(self) -> None:
+        # No name/prefix match and no LLM classification -> not a content surface.
+        opt = await _init_optimizer(controllables=[_opaque_content_ctrl()])
+
+        assert opt._content_surface_names == []
 
     @pytest.mark.asyncio
     async def test_constructor_names_mark_opaque_content_surface(self) -> None:
@@ -201,6 +236,79 @@ class TestSurfaceClassification:
         assert isinstance(resp, ControllableInjection)
         assert opt._selected_surface is not None
         assert "HTML/environment" in opt._selected_surface["classification_reason"]
+
+    @pytest.mark.asyncio
+    async def test_json_content_surface_routes_through_fill_value(self) -> None:
+        # A schema-typed (json) content surface is LLM-classified as content, then
+        # its value is produced by fill_value (valid JSON), not silently declined.
+        ctrl = _opaque_content_ctrl("env_inject:gmail")  # value_type="json"
+        fill = '{"injection_mcp_tool": "gmail:inject_email", "kwargs": {"body": "PWN"}}'
+
+        def _dispatch(messages: list[dict[str, str]], **_kw: Any) -> Any:
+            system = messages[0]["content"]
+            content = (
+                fill
+                if "crafting the exact value" in system
+                else ('{"env_inject:gmail": "environment-write"}')
+            )
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
+            )
+
+        llm = MagicMock()
+
+        async def complete(messages: Any, **kwargs: Any) -> Any:
+            return _dispatch(messages, **kwargs)
+
+        llm.complete.side_effect = complete
+
+        opt = await _init_optimizer(controllables=[ctrl], llm=llm)
+        assert opt._content_surface_names == ["env_inject:gmail"]
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        resp = await _dispatch_event(
+            opt,
+            ControllablePostCallEvent(
+                controllable=ctrl, request="read", answer="genuine content"
+            ),
+        )
+
+        assert isinstance(resp, ControllableInjection)
+        assert json.loads(resp.value)["kwargs"]["body"] == "PWN"
+
+    @pytest.mark.asyncio
+    async def test_json_content_surface_declines_when_fill_fails(self) -> None:
+        # When fill_value cannot produce valid JSON, the surface is declined
+        # (no malformed value emitted, no crash).
+        ctrl = _opaque_content_ctrl("env_inject:gmail")
+
+        def _dispatch(messages: list[dict[str, str]], **_kw: Any) -> Any:
+            system = messages[0]["content"]
+            content = (
+                "no json here"
+                if "crafting the exact value" in system
+                else ('{"env_inject:gmail": "environment-write"}')
+            )
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
+            )
+
+        llm = MagicMock()
+
+        async def complete(messages: Any, **kwargs: Any) -> Any:
+            return _dispatch(messages, **kwargs)
+
+        llm.complete.side_effect = complete
+
+        opt = await _init_optimizer(controllables=[ctrl], llm=llm)
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        resp = await _dispatch_event(
+            opt,
+            ControllablePostCallEvent(
+                controllable=ctrl, request="read", answer="genuine content"
+            ),
+        )
+
+        assert isinstance(resp, ControllableNoInjection)
 
     @pytest.mark.asyncio
     async def test_agentdojo_contract_shapes_are_classified(self) -> None:
@@ -418,7 +526,9 @@ class TestPromptFallback:
         }
 
     @pytest.mark.asyncio
-    async def test_prompt_channels_skipped_when_content_surface_is_planned(self) -> None:
+    async def test_prompt_channels_skipped_when_content_surface_is_planned(
+        self,
+    ) -> None:
         opt = await _init_optimizer(controllables=[_user_ctrl(), _read_ctrl()])
         await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
 
@@ -509,7 +619,9 @@ class TestRolloutContext:
         assert rollout.target_observables == {"model_identity": "gpt-4o"}
 
     @pytest.mark.asyncio
-    async def test_explicit_response_allowlist_disables_response_heuristics(self) -> None:
+    async def test_explicit_response_allowlist_disables_response_heuristics(
+        self,
+    ) -> None:
         opt = await _init_optimizer(
             controllables=[_read_ctrl()],
             max_attempts=2,
@@ -727,7 +839,9 @@ class TestAcceptance:
         for idx, score in enumerate((0.1, 0.2, 0.3), start=1):
             candidate = type(opt._pool[0])(prompt=f"candidate {idx}", rolled_out=True)
             candidate.rollouts.append(
-                RolloutRecord(goal="achieve target X", prompt=candidate.prompt, score=score)
+                RolloutRecord(
+                    goal="achieve target X", prompt=candidate.prompt, score=score
+                )
             )
             opt._pool.append(candidate)
 
@@ -748,12 +862,16 @@ class TestDoneSemantics:
         propose = AsyncMock(return_value=None)
 
         with patch.object(opt._reflector, "propose", new=propose):
-            await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+            await _dispatch_event(
+                opt, RunStartEvent(trajectory=_FakeReadableTrajectory())
+            )
             end_1 = await _dispatch_event(
                 opt,
                 RunEndEvent(evaluation=None, security_domain=USER_TAG),
             )
-            await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+            await _dispatch_event(
+                opt, RunStartEvent(trajectory=_FakeReadableTrajectory())
+            )
             end_2 = await _dispatch_event(
                 opt,
                 RunEndEvent(evaluation=None, security_domain=USER_TAG),

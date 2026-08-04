@@ -100,3 +100,21 @@ SuperRed optimizer operates on one task rollout at a time rather than GEPA's
 multi-example minibatch/full-validation loop, so this PR implements the
 faithfulness-critical acceptance gate without inventing a frontier abstraction
 that the controller does not yet expose.
+
+## DTAP fitness: free-text gating, exact user-prompt match, no command surface
+
+Three plumbing corrections so the reflective loop reaches a real surface on the DTAP
+targets without changing the algorithm:
+- `_accepts_free_text` gate (value_type in text/str/string/html/markdown) on both the
+  PreCall and PostCall emission sites. A schema-typed content surface (DTAP
+  `env_inject:<server>`, json) discards a raw string, so injecting it is a no-op
+  recorded as a scored attack; it is now declined WITHOUT spending the per-run content
+  budget, so a free-text surface (e.g. `env_tool:<server>`) later in the run is reached.
+- `_is_user_prompt` is an exact reserved-name match. The prior `"user" in name`
+  substring test misclassified PostCall content surfaces whose authorization node key
+  is `user` (e.g. DTAP `env_tool:atlassian.user`) as a prompt channel.
+- the `"answer carries"` content hint was removed. It classified `code_execution`
+  (a shell surface) as content, so the reflective prose was run as a shell command
+  (a side-effecting nondeterminism hazard) and consumed the injection budget that
+  `env_tool` needs. `code_execution` has no faithful natural-language payload, so it is
+  no longer treated as a content surface.

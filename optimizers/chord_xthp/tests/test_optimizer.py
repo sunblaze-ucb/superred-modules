@@ -645,7 +645,7 @@ async def test_default_direction_schedules_predecessor_and_successor() -> None:
 async def test_llm_selects_semantic_victim_and_generates_helper() -> None:
     llm = _ScriptedLLM(
         [
-            json.dumps({"victim_tool": "web_lookup"}),
+            json.dumps({"web_lookup": "victim-tool"}),
             json.dumps(
                 {
                     "name": "LookupFormatter",
@@ -685,7 +685,7 @@ async def test_llm_selects_semantic_victim_and_generates_helper() -> None:
 async def test_llm_selects_victim_from_structural_catalog_with_neutral_name() -> None:
     llm = _ScriptedLLM(
         [
-            json.dumps({"victim_tool": "web_lookup"}),
+            json.dumps({"web_lookup": "victim-tool"}),
             json.dumps(
                 {
                     "name": "LookupFormatter",
@@ -725,7 +725,7 @@ async def test_llm_selects_victim_from_structural_catalog_with_neutral_name() ->
 async def test_llm_selects_victim_from_nested_runtime_metadata_catalog() -> None:
     llm = _ScriptedLLM(
         [
-            json.dumps({"victim_tool": "web_lookup"}),
+            json.dumps({"web_lookup": "victim-tool"}),
             json.dumps(
                 {
                     "name": "LookupFormatter",
@@ -774,7 +774,7 @@ async def test_llm_selects_victim_from_nested_runtime_metadata_catalog() -> None
 async def test_llm_selects_victim_from_openai_style_tool_schema_with_neutral_name() -> None:
     llm = _ScriptedLLM(
         [
-            json.dumps({"victim_tool": "web_lookup"}),
+            json.dumps({"web_lookup": "victim-tool"}),
             json.dumps(
                 {
                     "name": "LookupFormatter",
@@ -823,7 +823,7 @@ async def test_llm_selects_victim_from_openai_style_tool_schema_with_neutral_nam
 async def test_visible_catalog_takes_precedence_over_goal_mentioned_official_tool() -> None:
     llm = _ScriptedLLM(
         [
-            json.dumps({"victim_tool": "web_lookup"}),
+            json.dumps({"web_lookup": "victim-tool"}),
             json.dumps(
                 {
                     "name": "LookupFormatter",
@@ -860,7 +860,7 @@ async def test_visible_catalog_takes_precedence_over_goal_mentioned_official_too
 
 @pytest.mark.asyncio
 async def test_llm_selects_tool_catalog_controllable_when_name_is_unusual() -> None:
-    llm = _ScriptedLLM([json.dumps({"catalog_controllable": "workspace_capabilities"})])
+    llm = _ScriptedLLM([json.dumps({"workspace_capabilities": "tool-catalog-edit"})])
     opt = ChordXTHPOptimizer(
         victim_tool_name="brave_search",
         direction="predecessor",
@@ -893,7 +893,7 @@ async def test_llm_selects_tool_catalog_controllable_when_name_is_unusual() -> N
 
 @pytest.mark.asyncio
 async def test_llm_can_select_opaque_catalog_controllable() -> None:
-    llm = _ScriptedLLM([json.dumps({"catalog_controllable": "slot_alpha"})])
+    llm = _ScriptedLLM([json.dumps({"slot_alpha": "tool-catalog-edit"})])
     opt = ChordXTHPOptimizer(
         victim_tool_name="brave_search",
         direction="predecessor",

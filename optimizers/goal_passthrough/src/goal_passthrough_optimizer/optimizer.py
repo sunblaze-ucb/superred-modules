@@ -49,6 +49,7 @@ from superred.core.types.observable import ObservableValue
 # Reserved controllable name the baseline never injects into, so a
 # Task-configured system prompt survives unchanged.
 _SYSTEM_PROMPT_CONTROLLABLE_NAME = "system_prompt"
+_FREE_TEXT_VALUE_TYPES = frozenset({"", "text", "str", "string", "html", "markdown"})
 
 
 class GoalPassthroughOptimizer(Optimizer):
@@ -98,6 +99,12 @@ class GoalPassthroughOptimizer(Optimizer):
 
         # Leave any Task-configured system prompt untouched.
         if event.controllable.name == _SYSTEM_PROMPT_CONTROLLABLE_NAME:
+            return ControllableNoInjection(event=event, controllable=event.controllable)
+
+        # Only inject a surface that consumes free text. A json-typed first
+        # controllable (e.g. DTAP skill / tool_description) would discard the raw
+        # goal string; decline so the baseline lands on the user-message channel.
+        if event.controllable.value_type.lower() not in _FREE_TEXT_VALUE_TYPES:
             return ControllableNoInjection(event=event, controllable=event.controllable)
 
         if not self._injected:

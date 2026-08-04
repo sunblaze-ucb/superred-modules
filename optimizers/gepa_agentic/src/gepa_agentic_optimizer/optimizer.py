@@ -27,8 +27,20 @@ from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
 
 from gepa_agentic_optimizer.reflector import Reflector, RolloutRecord
+from gepa_agentic_optimizer.surface_llm import (
+    accepts_free_text,
+    classify_controllables,
+    fill_value,
+)
 
 logger = logging.getLogger(__name__)
+
+# The content surface is the one that varies across targets (env_tool, env_inject,
+# read__, tool:, opaque names), so it is what the LLM classifies from descriptions.
+# Prompt/catalog surfaces use the framework's reserved names and need no LLM.
+# ``content-injection`` and ``environment-write`` both denote a surface whose value
+# the agent later reads.
+_CONTENT_ROLES: tuple[str, ...] = ("content-injection", "environment-write")
 
 _DEFAULT_RESPONSE_OBSERVABLE_NAMES: frozenset[str] = frozenset(
     {"response", "model_response", "assistant_response"}
@@ -69,26 +81,6 @@ _CATALOG_TOOL_HINTS: tuple[str, ...] = (
     "retrieve",
     "search",
     "tool",
-    "web",
-)
-_CONTENT_SURFACE_HINTS: tuple[str, ...] = (
-    "answer carries",
-    "content",
-    "document",
-    "external",
-    "html",
-    "knowledge",
-    "memory",
-    "observation",
-    "page",
-    "per-call event",
-    "per-read injection",
-    "rag",
-    "read",
-    "retrieval",
-    "result",
-    "return",
-    "tool response",
     "web",
 )
 _HTML_CONTENT_HINTS: tuple[str, ...] = (
@@ -205,6 +197,9 @@ class GEPAAgenticOptimizer(Optimizer):
         self._reflector: Reflector | None = None
         self._target_observables: dict[str, str] | None = None
         self._controllables: dict[str, Controllable] = {}
+        # {controllable.name -> role category}, filled once in initialize() by the
+        # attacker's LLM reading each surface's description (see surface_llm).
+        self._surface_roles: dict[str, str] = {}
         self._content_surface_names: list[str] = []
         self._tool_catalog: list[dict[str, Any]] = []
         self._surface_stats: dict[str, _SurfaceStats] = {}
@@ -251,6 +246,15 @@ class GEPAAgenticOptimizer(Optimizer):
         )
         self._target_observables = self._extract_static_observables(observables)
         self._controllables = {ctrl.name: ctrl for ctrl in controllables}
+        # One LLM pass sorts the raw surfaces into the roles this attacker acts on,
+        # read from each description. Degrades to {} (name/prefix backstop) on any
+        # failure. Computed before content discovery, which consults the cache.
+        self._surface_roles = await classify_controllables(
+            self.llm,
+            controllables,
+            _CONTENT_ROLES,
+            goal=goal.description,
+        )
         self._content_surface_names = self._discover_content_surfaces(controllables)
         self._tool_catalog = self._extract_tool_catalog(observables)
         self._surface_stats = {
@@ -274,7 +278,7 @@ class GEPAAgenticOptimizer(Optimizer):
         if isinstance(event, ControllablePreCallEvent):
             return self._handle_pre_call(event)
         if isinstance(event, ControllablePostCallEvent):
-            return self._handle_post_call(event)
+            return await self._handle_post_call(event)
         if isinstance(event, RunEndEvent):
             return await self._handle_run_end(event)
         return EventResponse(event=event)
@@ -284,7 +288,9 @@ class GEPAAgenticOptimizer(Optimizer):
         self._current, self._current_is_fresh = self._select_current_candidate()
         self._planned_content_surfaces = self._choose_content_surfaces()
         self._planned_content_surface = (
-            self._planned_content_surfaces[0] if self._planned_content_surfaces else None
+            self._planned_content_surfaces[0]
+            if self._planned_content_surfaces
+            else None
         )
         if self._planned_content_surface is not None:
             self._selection_reason = (
@@ -308,10 +314,7 @@ class GEPAAgenticOptimizer(Optimizer):
             return ControllableNoInjection(event=event, controllable=event.controllable)
 
         name = event.controllable.name
-        if (
-            self._target_controllable_name is None
-            and name == _TOOL_CATALOG_REWRITE_DOC
-        ):
+        if self._target_controllable_name is None and name == _TOOL_CATALOG_REWRITE_DOC:
             return self._maybe_inject_tool_catalog_rewrite(event)
 
         if self._target_controllable_name is not None:
@@ -333,6 +336,8 @@ class GEPAAgenticOptimizer(Optimizer):
         elif event.controllable != self._primary_pre_controllable:
             return ControllableNoInjection(event=event, controllable=event.controllable)
 
+        if not accepts_free_text(event.controllable):
+            return ControllableNoInjection(event=event, controllable=event.controllable)
         self._last_pre_request = event.request
         self._last_injected_value = self._current.prompt
         surface_type = "system_prompt" if name == _SYSTEM_PROMPT_NAME else "user_prompt"
@@ -351,7 +356,7 @@ class GEPAAgenticOptimizer(Optimizer):
             value=self._current.prompt,
         )
 
-    def _handle_post_call(
+    async def _handle_post_call(
         self,
         event: ControllablePostCallEvent,
     ) -> ControllableInjection | ControllableNoInjection:
@@ -379,6 +384,22 @@ class GEPAAgenticOptimizer(Optimizer):
                 f"runtime-discovered compatible content PostCall surface {name!r}"
             )
 
+        structured_value: str | None = None
+        if should_inject and not accepts_free_text(event.controllable):
+            # Schema-typed surface (e.g. DTAP ``env_inject:<server>`` json): a raw
+            # string is discarded. Ask the LLM to format the evolved payload into
+            # the shape the controllable's description specifies. Decline WITHOUT
+            # spending the per-run content budget if that fails, so a free-text
+            # surface (e.g. env_tool) later in the run can still be injected.
+            structured_value = await fill_value(
+                self.llm,
+                event.controllable,
+                goal=self._goal.description if self._goal is not None else "",
+                payload=self._current.prompt,
+                context=event.answer,
+            )
+            should_inject = structured_value is not None
+
         if not should_inject:
             self._maybe_pair_post_call_response(event)
             return ControllableNoInjection(event=event, controllable=event.controllable)
@@ -386,7 +407,11 @@ class GEPAAgenticOptimizer(Optimizer):
         self._injected_this_run = True
         self._content_injection_count += 1
         self._legitimate_tool_return = event.answer
-        injected_value = self._render_content_payload(event.answer)
+        injected_value = (
+            structured_value
+            if structured_value is not None
+            else self._render_content_payload(event.answer)
+        )
         self._last_injected_value = injected_value
         surface = {
             "name": name,
@@ -583,7 +608,9 @@ class GEPAAgenticOptimizer(Optimizer):
             return None
         out: dict[str, Any] = dict(self._selected_surface)
         if len(self._injected_surfaces) > 1:
-            out["all_injected_surfaces"] = [dict(item) for item in self._injected_surfaces]
+            out["all_injected_surfaces"] = [
+                dict(item) for item in self._injected_surfaces
+            ]
         return out
 
     def _record_observed_surface(
@@ -592,7 +619,9 @@ class GEPAAgenticOptimizer(Optimizer):
         event_kind: str,
         content: str = "",
     ) -> _SurfaceClassification:
-        classification = self._classify_surface(controllable, event_kind, content=content)
+        classification = self._classify_surface(
+            controllable, event_kind, content=content
+        )
         key = f"{event_kind}:{controllable.name}"
         if key not in self._observed_surface_names:
             self._observed_surface_names.add(key)
@@ -621,6 +650,8 @@ class GEPAAgenticOptimizer(Optimizer):
     ) -> _SurfaceClassification:
         name = controllable.name
         normalized = name.lower()
+        # Zero-cost fast path: canonical reserved names + agent content/tool-return
+        # prefixes cover AgentDojo/ASB/DTAP without an LLM call.
         if name == _SYSTEM_PROMPT_NAME:
             return _SurfaceClassification("system_prompt", 1.0, "canonical name")
         if name in _TOOL_CATALOG_NAMES:
@@ -640,17 +671,17 @@ class GEPAAgenticOptimizer(Optimizer):
                     1.0,
                     "agent content/tool-return prefix",
                 )
-            haystack = (
-                f"{controllable.name} {controllable.description} "
-                f"{controllable.value_type}".lower()
-            )
-            if any(hint in haystack for hint in _CONTENT_SURFACE_HINTS):
+            if self._surface_roles.get(name) in _CONTENT_ROLES:
                 return _SurfaceClassification(
-                    "content_postcall", 0.75, "content-like controllable metadata"
+                    "content_postcall",
+                    0.9,
+                    f"LLM-classified {self._surface_roles[name]}",
                 )
             if _looks_like_environment_content(content):
                 return _SurfaceClassification(
-                    "content_postcall", 0.7, "runtime content looks like HTML/environment data"
+                    "content_postcall",
+                    0.7,
+                    "runtime content looks like HTML/environment data",
                 )
         return _SurfaceClassification("unknown", 0.0, "no content/prompt signal")
 
@@ -783,7 +814,7 @@ class GEPAAgenticOptimizer(Optimizer):
 
     def _add_agent_observation(self, text: str) -> None:
         if len(text) > _MAX_AGENT_OBSERVATION_CHARS:
-            text = f"{text[: _MAX_AGENT_OBSERVATION_CHARS].rstrip()}..."
+            text = f"{text[:_MAX_AGENT_OBSERVATION_CHARS].rstrip()}..."
         self._agent_observations.append(text)
         if len(self._agent_observations) > _MAX_AGENT_OBSERVATIONS:
             self._agent_observations = self._agent_observations[
@@ -821,8 +852,10 @@ class GEPAAgenticOptimizer(Optimizer):
 
     @staticmethod
     def _is_user_prompt(name: str) -> bool:
-        normalized = name.lower()
-        return normalized in _USER_PROMPT_NAMES or "user" in normalized
+        # Exact reserved-name match only. A bare ``"user" in name`` substring test
+        # misclassifies PostCall content surfaces whose node key is "user"
+        # (e.g. DTAP ``env_tool:atlassian.user``) as a prompt channel.
+        return name.lower() in _USER_PROMPT_NAMES
 
     @staticmethod
     def _stringify_content(content: Any) -> str:
@@ -880,7 +913,9 @@ def _iter_tool_entries(content: Any) -> Iterable[dict[str, str]]:
                 if isinstance(name, str) and name.strip():
                     yield {
                         "name": name.strip(),
-                        "description": _stringify_value(item.get("description")).strip(),
+                        "description": _stringify_value(
+                            item.get("description")
+                        ).strip(),
                     }
     elif isinstance(content, Mapping):
         for name, description in content.items():

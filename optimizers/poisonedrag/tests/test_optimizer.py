@@ -213,7 +213,7 @@ async def test_generates_poison_with_official_json_prompt_when_texts_absent() ->
 async def test_llm_selects_nonstandard_corpus_surface() -> None:
     llm = _ScriptedLLM(
         [
-            json.dumps({"corpus_surfaces": ["tenant_memory_slot"]}),
+            json.dumps({"tenant_memory_slot": "corpus"}),
         ]
     )
     opt = PoisonedRAGOptimizer(
@@ -252,7 +252,7 @@ async def test_llm_context_surface_is_injected_on_precall() -> None:
     # A controllable the LLM labels a "context" surface must still be poisoned
     # when it is exercised as a PreCall (controllables may use either event), and
     # a JSON surface gets the JSON payload regardless of the corpus/context label.
-    llm = _ScriptedLLM([json.dumps({"context_surfaces": ["tenant_memory_slot"]})])
+    llm = _ScriptedLLM([json.dumps({"tenant_memory_slot": "context"})])
     opt = PoisonedRAGOptimizer(
         target_answer="Lyon",
         poison_texts=["Lyon poison"] * 5,
@@ -316,7 +316,7 @@ async def test_corpus_surface_is_injected_on_postcall() -> None:
 
 @pytest.mark.asyncio
 async def test_llm_can_select_surface_without_static_rag_hints() -> None:
-    llm = _ScriptedLLM(json.dumps({"corpus_surfaces": ["slot_alpha"]}))
+    llm = _ScriptedLLM(json.dumps({"slot_alpha": "corpus"}))
     opt = PoisonedRAGOptimizer(
         target_answer="Lyon",
         poison_texts=["Lyon poison"] * 5,
