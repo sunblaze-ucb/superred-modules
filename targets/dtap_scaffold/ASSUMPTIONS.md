@@ -42,10 +42,18 @@ process must be reproduced here:
   exits -1 ("executable file not found in $PATH") and the check can never pass, while
   the service itself is up (`/health` -> 200). Measured 2026-08; it is the only
   unsatisfiable check among the 32 healthchecks in upstream's compose files (the three
-  other `curl`-based ones do ship `curl`). So `env_registry._HEALTH_TIMEOUT_OVERRIDES`
-  caps calendar's wait at 20s instead of burning the 120s default on each of the 28
-  malicious text-domain tasks that activate it (16 `crm`, 12 `workflow`). An explicit
-  env.yaml `health_timeout` still takes precedence, and no other env is affected.
+  other `curl`-based ones do ship `curl`). Because it can never pass, `wait_healthy` does not exit
+  early here the way it does elsewhere: it burns its ENTIRE budget and returns False,
+  every time. Measured: 31.3s against a 30s budget for calendar, versus 16.7s for
+  `travel` (a working healthcheck) on the same budget. So the 120s default was 120s of
+  dead wait on each of the 28 malicious text-domain tasks that activate calendar (16
+  `crm`, 12 `workflow`), and a larger timeout buys no extra chance of success.
+  `env_registry._HEALTH_TIMEOUT_OVERRIDES` caps it at 20s, sized off the measured
+  3.0-4.2s cold-boot-to-serving time and the 10s healthcheck interval, so it stays
+  correct if upstream fixes the check (at which point the override should be deleted).
+  An explicit env.yaml `health_timeout` still takes precedence, and no other env is
+  affected. Deliberately NOT fixed with a compose overlay: we do not own upstream's
+  compose file, and an overlay would diverge the container definition under test.
 
 ## B. Undeclared upstream server dependencies (the `[sdk]` extra)
 

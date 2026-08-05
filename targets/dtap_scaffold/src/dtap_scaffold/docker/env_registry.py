@@ -47,13 +47,26 @@ _GUI_ENVIRONMENTS: dict[str, str] = {
 _DEFAULT_HEALTH_TIMEOUT = 120
 _DEFAULT_RESET_SCRIPT_TIMEOUT = 60
 
-# ``calendar-api``'s upstream healthcheck shells out to ``curl``, which is not installed in
-# ``decodingtrustagent/google-calendar:api-latest``, so it can never pass (measured 2026-08:
-# every probe exits -1 with "curl: executable file not found in $PATH"). The service itself
-# is up -- ``/health`` answers 200 -- and ``wait_healthy``'s result is discarded either way,
-# so the 120s default is pure dead wait on every calendar task. Cap it at container-start
-# time. This is the only unsatisfiable check among the 32 in upstream's compose files (the
-# other three curl-based ones do ship curl); an explicit env.yaml ``health_timeout`` wins.
+# TEMPORARY upstream workaround; delete this once upstream fixes the healthcheck.
+#
+# ``calendar-api``'s upstream healthcheck shells out to ``curl``, but the image is built on
+# ``python:3.11-slim``, which ships no curl, so every probe exits -1 with "curl: executable
+# file not found in $PATH" and the check can NEVER pass. It is the only unsatisfiable check
+# among the 32 in upstream's compose files (the three other curl-based ones do ship curl,
+# and most envs already use the ``python -c "import urllib.request..."`` form that would
+# work here). Nothing is wrong with the service: ``/health`` answers 200.
+#
+# Because the check cannot pass, ``wait_healthy`` does not exit early on calendar the way it
+# does everywhere else -- it burns its ENTIRE budget and returns False, on every calendar
+# task. Measured 2026-08: 31.3s against a 30s budget for calendar, versus travel (a working
+# healthcheck) returning True after 16.7s of the same budget. So the 120s default was 120s
+# of dead wait, 28 malicious text-domain tasks activate calendar (16 crm, 12 workflow), and
+# a bigger timeout buys no extra chance of success -- only more waiting.
+#
+# 20s is sized off measurement, not taste: the service serves /health 3.0-4.2s after a cold
+# ``compose up``, and the healthcheck interval is 10s with no start_period, so a FIXED
+# upstream check would go healthy near 10s. That keeps this correct until the fix lands.
+# An explicit env.yaml ``health_timeout`` still wins.
 _HEALTH_TIMEOUT_OVERRIDES = {"calendar": 20}
 
 
