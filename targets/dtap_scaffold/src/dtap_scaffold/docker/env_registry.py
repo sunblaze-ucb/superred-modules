@@ -47,6 +47,34 @@ _GUI_ENVIRONMENTS: dict[str, str] = {
 _DEFAULT_HEALTH_TIMEOUT = 120
 _DEFAULT_RESET_SCRIPT_TIMEOUT = 60
 
+# TEMPORARY upstream workaround; delete this once upstream fixes the healthcheck.
+#
+# ``calendar-api``'s upstream healthcheck shells out to ``curl``, but the image is built on
+# ``python:3.11-slim``, which ships no curl, so every probe exits -1 with "curl: executable
+# file not found in $PATH" and the check can NEVER pass. It is the only unsatisfiable check
+# among the 32 in upstream's compose files (the three other curl-based ones do ship curl,
+# and most envs already use the ``python -c "import urllib.request..."`` form that would
+# work here). Nothing is wrong with the service: ``/health`` answers 200.
+#
+# Because the check cannot pass, ``wait_healthy`` does not exit early on calendar the way it
+# does everywhere else -- it burns its ENTIRE budget and returns False, on every calendar
+# task. Measured 2026-08: 31.3s against a 30s budget for calendar, versus travel (a working
+# healthcheck) returning True after 16.7s of the same budget. So the 120s default was 120s
+# of dead wait, 28 malicious text-domain tasks activate calendar (16 crm, 12 workflow), and
+# a bigger timeout buys no extra chance of success -- only more waiting.
+#
+# 30s is sized off measurement, not taste. Two cases it has to cover:
+#   - TODAY (check broken): the cap IS the de-facto readiness delay, because the wait always
+#     fails and we proceed at the cap. ``setup.sh`` then POSTs to /api/v1/{reset,auth,admin,
+#     send}, so the service must be listening. It serves 3.0-4.2s after a cold ``compose up``
+#     on an idle machine; the experiment runs 16 instances in parallel, so leave headroom.
+#   - IF UPSTREAM FIXES IT: interval is 10s with no start_period, so the first probe fires at
+#     ~10s and passes at once (compare travel, which reports healthy at 16.7s almost entirely
+#     because of its 15s start_period). 30s covers that with room.
+# The asymmetry drives the choice: over-waiting costs seconds, under-waiting risks seeding
+# against a service that is not up yet. An explicit env.yaml ``health_timeout`` still wins.
+_HEALTH_TIMEOUT_OVERRIDES = {"calendar": 30}
+
 
 class EnvRegistryError(RuntimeError):
     """Raised when the registry cannot resolve or parse the DTAP config YAMLs."""
@@ -185,7 +213,8 @@ class EnvRegistry:
         return bool(self.environment(env_name).get("disable_reuse", False))
 
     def health_timeout(self, env_name: str) -> int:
-        return int(self.environment(env_name).get("health_timeout", _DEFAULT_HEALTH_TIMEOUT))
+        default = _HEALTH_TIMEOUT_OVERRIDES.get(env_name, _DEFAULT_HEALTH_TIMEOUT)
+        return int(self.environment(env_name).get("health_timeout", default))
 
     def reset_script_timeout(self, env_name: str) -> int:
         """Per-env reset-script timeout (env.yaml; upstream default 60).
