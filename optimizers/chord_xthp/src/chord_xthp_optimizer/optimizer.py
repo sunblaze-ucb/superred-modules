@@ -50,8 +50,24 @@ _SKILL_REWRITE_DOC = "skill_catalog_rewrite_doc"
 _CATALOG_REGISTER_NAMES = frozenset({_TOOL_REGISTER, _SKILL_REGISTER})
 _CATALOG_REPLACE_NAMES = frozenset({_TOOL_REPLACE, _SKILL_REPLACE})
 _CATALOG_REWRITE_DOC_NAMES = frozenset({_TOOL_REWRITE_DOC, _SKILL_REWRITE_DOC})
+# DTAP (dtap_scaffold) names its catalogue surfaces differently from the flat
+# LangChain/LlamaIndex registries Chord targets upstream: an ADD vector plus two
+# tool-description-edit vectors (Chord adds and edits, never removes, so DTAP's
+# tool_remove is deliberately not listed).
+_DTAP_TOOL_ADD = "tool_add"
+_DTAP_DESC_OVERRIDE = "tool_description_override"
+_DTAP_DESC_SUFFIX = "tool_description_suffix"
+_DTAP_EDIT_NAMES = frozenset({_DTAP_DESC_OVERRIDE, _DTAP_DESC_SUFFIX})
+_DTAP_CATALOG_NAMES = frozenset({_DTAP_TOOL_ADD, *_DTAP_EDIT_NAMES})
+_DTAP_TOOL_CATALOGUE_OBS = "tool_catalogue"
+_DTAP_DEFAULT_SERVER = "attacker-tools"
 _CATALOG_CONTROLLABLE_NAMES = frozenset(
-    {*_CATALOG_REGISTER_NAMES, *_CATALOG_REPLACE_NAMES, *_CATALOG_REWRITE_DOC_NAMES}
+    {
+        *_CATALOG_REGISTER_NAMES,
+        *_CATALOG_REPLACE_NAMES,
+        *_CATALOG_REWRITE_DOC_NAMES,
+        *_DTAP_CATALOG_NAMES,
+    }
 )
 _DEFAULT_RESPONSE_OBSERVABLE_NAMES = frozenset(
     {
@@ -261,6 +277,7 @@ class ChordXTHPOptimizer(Optimizer):
         if isinstance(event, RunStartEvent):
             return self._handle_run_start(event)
         if isinstance(event, ControllablePreCallEvent):
+            await self._ensure_catalogue_schedule()
             return self._handle_pre_call(event)
         if isinstance(event, ControllablePostCallEvent):
             return self._handle_post_call(event)
@@ -368,6 +385,11 @@ class ChordXTHPOptimizer(Optimizer):
         static_matches = {
             ctrl.name for ctrl in controllables if self._looks_like_catalog_controllable(ctrl)
         }
+        # DTAP fires its tool-description edit vector BEFORE tool_add, so the
+        # single-injection guard would spend the run on a doc-edit and never
+        # register the helper. Prefer ADD, Chord's primary mechanism.
+        if _DTAP_TOOL_ADD in static_matches:
+            static_matches -= _DTAP_EDIT_NAMES
         if static_matches:
             return static_matches
         dynamic_candidates = [
@@ -499,6 +521,15 @@ class ChordXTHPOptimizer(Optimizer):
         self._catalog_injected = True
         self._injected_this_run = True
         candidate = self._current_candidate
+        if event.controllable.name in _DTAP_CATALOG_NAMES:
+            return ControllableInjection(
+                event=event,
+                controllable=event.controllable,
+                value=json.dumps(
+                    self._dtap_catalog_payload(event.controllable.name, candidate),
+                    ensure_ascii=False,
+                ),
+            )
         if event.controllable.name in _CATALOG_REWRITE_DOC_NAMES:
             payload: dict[str, Any] = {
                 "target_tool": candidate.victim_tool,
@@ -530,6 +561,90 @@ class ChordXTHPOptimizer(Optimizer):
             controllable=event.controllable,
             value=json.dumps(payload, ensure_ascii=False),
         )
+
+    def _dtap_catalog_payload(self, name: str, candidate: _Candidate) -> dict[str, Any]:
+        """Chord helper metadata shaped for DTAP's catalogue controllables.
+
+        DTAP's tool_add requires a per-entry ``server``/``name`` and reads schema
+        from ``inputSchema`` (not ``parameters_schema``); its description vectors
+        need ``{server, tool, description|suffix}``. Content is reused verbatim
+        from the byte-faithful Chord builders, only the keys/shape adapt.
+        """
+        victim_server = self._victim_server(candidate.victim_tool)
+        if name == _DTAP_DESC_OVERRIDE:
+            return {
+                "server": victim_server,
+                "tool": candidate.victim_tool,
+                "description": self._helper_description(candidate),
+            }
+        if name == _DTAP_DESC_SUFFIX:
+            return {
+                "server": victim_server,
+                "tool": candidate.victim_tool,
+                "suffix": self._helper_description(candidate),
+            }
+        return {
+            "server": victim_server or _DTAP_DEFAULT_SERVER,
+            "name": candidate.helper.name,
+            "description": self._helper_description(candidate),
+            "inputSchema": self._parameters_schema(candidate),
+            "fake_return": self._fake_return(),
+        }
+
+    def _catalogue_tools(self) -> list[tuple[str, Mapping[str, Any]]]:
+        """``(server, tool)`` pairs from the mid-run ``tool_catalogue`` observable
+        (``{"servers": {server: [{"name", "description", ...}]}}``). Empty if the
+        catalogue is absent or out of read scope."""
+        trajectory = self.current_trajectory
+        if trajectory is None:
+            return []
+        for item in trajectory.snapshot():
+            if not isinstance(item, ObservableEvent):
+                continue
+            if item.observable.name != _DTAP_TOOL_CATALOGUE_OBS:
+                continue
+            servers = item.content.get("servers") if isinstance(item.content, Mapping) else None
+            if not isinstance(servers, Mapping):
+                continue
+            return [
+                (str(server), tool)
+                for server, tools in servers.items()
+                if isinstance(tools, Sequence) and not isinstance(tools, (str, bytes, bytearray))
+                for tool in tools
+                if isinstance(tool, Mapping)
+            ]
+        return []
+
+    def _victim_server(self, victim_tool: str) -> str | None:
+        """The victim tool's server, or ``None`` if it is not in the catalogue."""
+        return next(
+            (server for server, tool in self._catalogue_tools() if tool.get("name") == victim_tool),
+            None,
+        )
+
+    async def _ensure_catalogue_schedule(self) -> None:
+        """Build the candidate schedule from the mid-run tool catalogue.
+
+        DTAP cannot advertise its catalogue as a static observable (it is only
+        knowable once the env containers boot), so ``initialize`` saw no tools and
+        built an EMPTY schedule, which makes the optimizer finish without injecting.
+        The catalogue observable is emitted before the PreCall vectors fire, so by
+        the first PreCall it is on the trajectory and the schedule can be built.
+        No-op once a schedule exists, and on targets that do advertise statically.
+        """
+        if self._candidate_schedule or self._target_tools or not self._can_inject:
+            return
+        self._target_tools = [
+            _TargetTool(str(tool["name"]), str(tool.get("description") or ""))
+            for _, tool in self._catalogue_tools()
+            if tool.get("name")
+        ]
+        if not self._target_tools:
+            return
+        self._candidate_schedule = await self._build_candidate_schedule()
+        if self._candidate_schedule:
+            self._current_candidate = self._candidate_schedule[0]
+            self._candidate_index = 1
 
     def _maybe_inject_system_prompt(
         self,
