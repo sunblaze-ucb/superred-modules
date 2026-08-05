@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from typing import Any
 
@@ -26,9 +27,13 @@ def _llm(content: str) -> Any:
     class _LLM:
         def __init__(self) -> None:
             self.calls = 0
+            self.kwargs: dict[str, Any] = {}
+            self.messages: Any = []
 
-        async def complete(self, _messages: Any, **_kwargs: Any) -> Any:
+        async def complete(self, messages: Any, **kwargs: Any) -> Any:
             self.calls += 1
+            self.kwargs = kwargs
+            self.messages = messages
             return SimpleNamespace(
                 choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
             )
@@ -93,6 +98,43 @@ class TestClassifyControllables:
         llm = _llm('{"user_prompt": "made-up", "ghost": "user-prompt"}')
         roles = await classify_controllables(llm, ctrls, ("user-prompt",))
         assert roles == {}
+
+    @pytest.mark.asyncio
+    async def test_token_budget_scales_with_surface_count(self) -> None:
+        # DTAP's largest text domain (workflow) exposes 49 surfaces at once. The
+        # reply is one JSON entry per surface, so a fixed 256-token cap truncates
+        # it mid-object, parsing fails, and the caller is left fully blind.
+        ctrls = [
+            Controllable(name=f"env_tool:workflow_service_{i:02d}", security_domain=TAG)
+            for i in range(49)
+        ]
+        llm = _llm("{}")
+        await classify_controllables(
+            llm, ctrls, ("content-injection", "environment-write")
+        )
+        reply_chars = len(json.dumps({c.name: "environment-write" for c in ctrls}))
+        # Even at an optimistic 4 chars per token the old constant was too small,
+        # and the budget must clear that same optimistic need.
+        assert reply_chars // 4 > 256
+        assert llm.kwargs["max_tokens"] > reply_chars // 4
+
+    @pytest.mark.asyncio
+    async def test_reserves_execution_label_for_non_content_surfaces(self) -> None:
+        # dtap_scaffold's code_execution surface runs attacker code; it is not a
+        # place the agent later reads attacker text as data. The prompt gives the
+        # model a reserved label for it, and the caller-category filter drops it.
+        ctrls = [
+            Controllable(name="code_execution", security_domain=TAG),
+            Controllable(name="env_tool:atlassian", security_domain=TAG),
+        ]
+        llm = _llm(
+            '{"code_execution": "execution", "env_tool:atlassian": "content-injection"}'
+        )
+        roles = await classify_controllables(
+            llm, ctrls, ("content-injection", "environment-write")
+        )
+        assert '"execution"' in llm.messages[0]["content"]
+        assert roles == {"env_tool:atlassian": "content-injection"}
 
     @pytest.mark.asyncio
     async def test_degrades_to_empty_on_error(self) -> None:

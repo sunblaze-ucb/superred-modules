@@ -56,18 +56,23 @@ async def classify_controllables(
     categories: Sequence[str],
     *,
     goal: str = "",
-    max_tokens: int = 256,
+    max_tokens: int | None = None,
 ) -> dict[str, str]:
     """Map each controllable to one of ``categories`` by reading its description.
 
     One deterministic LLM call. Unknown names/categories and an implicit
-    ``"irrelevant"`` bucket are dropped. Returns ``{}`` on any failure (incl.
-    budget) so the caller falls back to its name-based backstop.
+    ``"irrelevant"``/``"execution"`` bucket are dropped. Returns ``{}`` on any
+    failure (incl. budget) so the caller falls back to its name-based backstop.
+    ``max_tokens`` defaults to a budget sized to the reply the surface list
+    demands, since a truncated reply parses to ``{}`` and blinds the caller.
     """
     names = {c.name for c in controllables}
     allowed = {str(c) for c in categories}
     if not names or not allowed:
         return {}
+    if max_tokens is None:
+        reply = json.dumps({c.name: max(allowed, key=len) for c in controllables})
+        max_tokens = 256 + len(reply) // 2
     surfaces = [
         {"name": c.name, "description": c.description, "value_type": c.value_type}
         for c in controllables
@@ -80,8 +85,10 @@ async def classify_controllables(
                 "test exposes to an attacker. Each has a name, a description of what "
                 "it does and what value to submit, and a value_type. Assign each to "
                 'exactly one of the given categories, or "irrelevant". Judge by the '
-                "description, not the name. Reply with a JSON object mapping name to "
-                "category, using only the given names and category labels."
+                'description, not the name. Answer "execution" instead for a surface '
+                "whose value is run as code rather than being read back as data by "
+                "the agent. Reply with a JSON object mapping name to category, using "
+                "only the given names and category labels."
             ),
         },
         {
