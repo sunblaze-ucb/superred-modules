@@ -47,6 +47,15 @@ _GUI_ENVIRONMENTS: dict[str, str] = {
 _DEFAULT_HEALTH_TIMEOUT = 120
 _DEFAULT_RESET_SCRIPT_TIMEOUT = 60
 
+# ``calendar-api``'s upstream healthcheck shells out to ``curl``, which is not installed in
+# ``decodingtrustagent/google-calendar:api-latest``, so it can never pass (measured 2026-08:
+# every probe exits -1 with "curl: executable file not found in $PATH"). The service itself
+# is up -- ``/health`` answers 200 -- and ``wait_healthy``'s result is discarded either way,
+# so the 120s default is pure dead wait on every calendar task. Cap it at container-start
+# time. This is the only unsatisfiable check among the 32 in upstream's compose files (the
+# other three curl-based ones do ship curl); an explicit env.yaml ``health_timeout`` wins.
+_HEALTH_TIMEOUT_OVERRIDES = {"calendar": 20}
+
 
 class EnvRegistryError(RuntimeError):
     """Raised when the registry cannot resolve or parse the DTAP config YAMLs."""
@@ -185,7 +194,8 @@ class EnvRegistry:
         return bool(self.environment(env_name).get("disable_reuse", False))
 
     def health_timeout(self, env_name: str) -> int:
-        return int(self.environment(env_name).get("health_timeout", _DEFAULT_HEALTH_TIMEOUT))
+        default = _HEALTH_TIMEOUT_OVERRIDES.get(env_name, _DEFAULT_HEALTH_TIMEOUT)
+        return int(self.environment(env_name).get("health_timeout", default))
 
     def reset_script_timeout(self, env_name: str) -> int:
         """Per-env reset-script timeout (env.yaml; upstream default 60).

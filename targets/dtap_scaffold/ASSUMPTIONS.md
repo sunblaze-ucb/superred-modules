@@ -34,6 +34,18 @@ process must be reproduced here:
   with those log tails. This is how the missing-dep crashes below were found
   (otherwise they vanished into DEVNULL and became a 10-minute readiness hang; the
   ready timeout is now 150s, not 600s).
+- **A.4 `calendar` health-wait cap (live-found).** `wait_healthy` mirrors upstream's
+  `_wait_for_healthy` exactly, including that BOTH callers discard its result: a
+  container that never reports healthy only costs wall-clock, it does not abort the
+  run. `calendar-api` is such a container -- its upstream healthcheck runs `curl`,
+  which is absent from `decodingtrustagent/google-calendar:api-latest`, so every probe
+  exits -1 ("executable file not found in $PATH") and the check can never pass, while
+  the service itself is up (`/health` -> 200). Measured 2026-08; it is the only
+  unsatisfiable check among the 32 healthchecks in upstream's compose files (the three
+  other `curl`-based ones do ship `curl`). So `env_registry._HEALTH_TIMEOUT_OVERRIDES`
+  caps calendar's wait at 20s instead of burning the 120s default on each of the 28
+  malicious text-domain tasks that activate it (16 `crm`, 12 `workflow`). An explicit
+  env.yaml `health_timeout` still takes precedence, and no other env is affected.
 
 ## B. Undeclared upstream server dependencies (the `[sdk]` extra)
 
