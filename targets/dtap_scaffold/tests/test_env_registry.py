@@ -83,7 +83,7 @@ def test_env_metadata(reg: EnvRegistry) -> None:
 def test_health_timeout_override(reg: EnvRegistry, monkeypatch: pytest.MonkeyPatch) -> None:
     # `calendar` has no env.yaml health_timeout, so our override for its unsatisfiable
     # (curl-less) healthcheck applies instead of the 120s default.
-    assert reg.health_timeout("calendar") == 20
+    assert reg.health_timeout("calendar") == 30
     # ... but an explicit env.yaml value still wins over an override.
     monkeypatch.setitem(env_registry._HEALTH_TIMEOUT_OVERRIDES, "bigquery", 5)
     assert reg.health_timeout("bigquery") == 180

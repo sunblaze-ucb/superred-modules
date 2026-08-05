@@ -63,11 +63,17 @@ _DEFAULT_RESET_SCRIPT_TIMEOUT = 60
 # of dead wait, 28 malicious text-domain tasks activate calendar (16 crm, 12 workflow), and
 # a bigger timeout buys no extra chance of success -- only more waiting.
 #
-# 20s is sized off measurement, not taste: the service serves /health 3.0-4.2s after a cold
-# ``compose up``, and the healthcheck interval is 10s with no start_period, so a FIXED
-# upstream check would go healthy near 10s. That keeps this correct until the fix lands.
-# An explicit env.yaml ``health_timeout`` still wins.
-_HEALTH_TIMEOUT_OVERRIDES = {"calendar": 20}
+# 30s is sized off measurement, not taste. Two cases it has to cover:
+#   - TODAY (check broken): the cap IS the de-facto readiness delay, because the wait always
+#     fails and we proceed at the cap. ``setup.sh`` then POSTs to /api/v1/{reset,auth,admin,
+#     send}, so the service must be listening. It serves 3.0-4.2s after a cold ``compose up``
+#     on an idle machine; the experiment runs 16 instances in parallel, so leave headroom.
+#   - IF UPSTREAM FIXES IT: interval is 10s with no start_period, so the first probe fires at
+#     ~10s and passes at once (compare travel, which reports healthy at 16.7s almost entirely
+#     because of its 15s start_period). 30s covers that with room.
+# The asymmetry drives the choice: over-waiting costs seconds, under-waiting risks seeding
+# against a service that is not up yet. An explicit env.yaml ``health_timeout`` still wins.
+_HEALTH_TIMEOUT_OVERRIDES = {"calendar": 30}
 
 
 class EnvRegistryError(RuntimeError):

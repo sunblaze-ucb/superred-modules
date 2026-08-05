@@ -48,9 +48,15 @@ process must be reproduced here:
   `travel` (a working healthcheck) on the same budget. So the 120s default was 120s of
   dead wait on each of the 28 malicious text-domain tasks that activate calendar (16
   `crm`, 12 `workflow`), and a larger timeout buys no extra chance of success.
-  `env_registry._HEALTH_TIMEOUT_OVERRIDES` caps it at 20s, sized off the measured
-  3.0-4.2s cold-boot-to-serving time and the 10s healthcheck interval, so it stays
-  correct if upstream fixes the check (at which point the override should be deleted).
+  `env_registry._HEALTH_TIMEOUT_OVERRIDES` caps it at 30s. Because the wait always
+  fails, that cap IS the de-facto readiness delay before `setup.sh` POSTs to
+  `/api/v1/{reset,auth,admin,send}`, and the service serves 3.0-4.2s after a cold
+  `compose up` on an idle machine (the experiment runs 16 in parallel, hence the
+  headroom). It also covers a FIXED upstream check: interval 10s with no
+  `start_period` means the first probe fires at ~10s and passes at once, versus
+  travel's 16.7s which is almost entirely its 15s `start_period`. Over-waiting costs
+  seconds; under-waiting risks seeding a service that is not up. The override should
+  be deleted once upstream fixes the check.
   An explicit env.yaml `health_timeout` still takes precedence, and no other env is
   affected. Deliberately NOT fixed with a compose overlay: we do not own upstream's
   compose file, and an overlay would diverge the container definition under test.
