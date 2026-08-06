@@ -143,7 +143,15 @@ run is a clean OpenClaw episode. Attacks are an optimizer's concern.
   `.optional()` and its consumers guard with `typeof x === "number"`, yet a live episode with
   both absent reproduced the dead-episode signature (0 agent messages) while the same task
   with an explicit 4096 produced a real assistant turn. An explicit value is REQUIRED, so
-  raise it per target for any victim whose cap exceeds the floor.
+  DERIVE it instead: `max_tokens=None` (the default) resolves the model's real cap via
+  `litellm.get_max_tokens`, which is the same per-model table the proxy enforces, falling back
+  to `FALLBACK_MAX_TOKENS = 4096` only when litellm does not know the model. Verified:
+  gpt-4o-2024-05-13 -> 4096, gpt-4o-2024-08-06 -> 16384, claude-opus-4-6 -> 128000, unknown ->
+  4096, and an explicit `max_tokens=` still overrides. The mechanism that makes this necessary:
+  OpenClaw's `clampOpenAICompletionsMaxTokens` is a one-directional CEILING
+  (`modelMaxTokens === void 0 || requested <= modelMaxTokens ? requested : modelMaxTokens`), so
+  the field only ever pulls OpenClaw's own 8192 request DOWN; omitting it lets the unclamped
+  8192 through, which is why omission fails despite the schema marking it optional.
 
 ## D. MCP wiring (env tools via the host proxy)
 

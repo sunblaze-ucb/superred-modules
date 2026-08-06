@@ -65,7 +65,7 @@ class DtapOpenClawTarget(DtapAgentTarget):
         # context window. The default is the cross-family floor; RAISING it above
         # the model's real completion cap makes every request 400 and produces a
         # silent dead episode (see driver.DEFAULT_MAX_TOKENS).
-        max_tokens: int = driver.DEFAULT_MAX_TOKENS,
+        max_tokens: int | None = driver.DEFAULT_MAX_TOKENS,
         context_window: int = driver.DEFAULT_CONTEXT_WINDOW,
     ) -> None:
         super().__init__(

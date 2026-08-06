@@ -89,10 +89,35 @@ _WEB_DENY: tuple[str, ...] = ("group:web",)
 # signature as the oversized value (0 agent messages), while the same task with an
 # explicit 4096 produced a real assistant turn. An explicit value is therefore REQUIRED.
 # Since this port serves an arbitrary model over an OpenAI-compatible proxy, and the
-# planned victims span very different caps, pass ``max_tokens=`` per target for any model
-# that supports more than the floor.
-DEFAULT_MAX_TOKENS = 4096
+# victims span very different caps, ``None`` (the default) DERIVES the value per model via
+# :func:`_model_max_tokens` rather than pinning every model to the floor.
+#
+# WHY an explicit value is needed at all: OpenClaw's ``clampOpenAICompletionsMaxTokens`` is a
+# one-directional CEILING, not a fallback -- ``modelMaxTokens === void 0 || requested <=
+# modelMaxTokens ? requested : modelMaxTokens``. OpenClaw independently requests 8192, and this
+# field only ever pulls that request DOWN. Omitting it does not mean "ask for what the model
+# supports"; it means "do not restrain my request", so the 8192 goes out unclamped and 400s.
+DEFAULT_MAX_TOKENS: int | None = None
+
+#: Completion cap used when litellm does not know the model.  Cross-family floor.
+FALLBACK_MAX_TOKENS = 4096
 DEFAULT_CONTEXT_WINDOW = 128000
+
+
+def _model_max_tokens(model: str) -> int:
+    """The model's real completion cap, or :data:`FALLBACK_MAX_TOKENS` if unknown.
+
+    litellm ships the same per-model cost/limit table the proxy enforces, so this is the
+    provider's own number rather than a guess. Unknown models (a proxy alias, a private
+    deployment) fall back to the cross-family floor: too low truncates one answer, too high
+    kills the whole episode silently.
+    """
+    try:
+        import litellm
+
+        return int(litellm.get_max_tokens(model) or FALLBACK_MAX_TOKENS)
+    except Exception:
+        return FALLBACK_MAX_TOKENS
 
 
 def _profile_config_rel(profile: str) -> str:
@@ -119,7 +144,7 @@ def build_openclaw_config(
     provider_api: str = "openai-completions",
     workspace_dir: str = CONTAINER_WORKSPACE,
     skills_dir: str | None = None,
-    max_tokens: int = DEFAULT_MAX_TOKENS,
+    max_tokens: int | None = DEFAULT_MAX_TOKENS,
     context_window: int = DEFAULT_CONTEXT_WINDOW,
 ) -> dict[str, Any]:
     """Build the per-profile ``openclaw.json`` for one episode.
@@ -155,7 +180,8 @@ def build_openclaw_config(
                             "name": model_id,
                             "input": ["text"],
                             "contextWindow": context_window,
-                            "maxTokens": max_tokens,
+                            # None -> derive the model's real cap (see _model_max_tokens)
+                            "maxTokens": max_tokens or _model_max_tokens(model_id),
                         }
                     ],
                 }
@@ -262,7 +288,7 @@ def write_episode_inputs(
     profile: str,
     thinking: str,
     provider_api: str = "openai-completions",
-    max_tokens: int = DEFAULT_MAX_TOKENS,
+    max_tokens: int | None = DEFAULT_MAX_TOKENS,
     context_window: int = DEFAULT_CONTEXT_WINDOW,
 ) -> dict[str, str]:
     """Materialize ``openclaw.json`` + ``AGENTS.md`` + skills + ``task.json`` under
@@ -346,7 +372,7 @@ def run_openclaw_container(
     network: str | None = None,
     provider_api: str = "openai-completions",
     episode_dir: str | None = None,
-    max_tokens: int = DEFAULT_MAX_TOKENS,
+    max_tokens: int | None = DEFAULT_MAX_TOKENS,
     context_window: int = DEFAULT_CONTEXT_WINDOW,
 ) -> str:
     """Run ONE OpenClaw episode in a container; return the episode output dir.

@@ -439,3 +439,17 @@ async def test_exec_on_host_builds_docker_cmd(tmp_path, monkeypatch) -> None:
     workspace = os.path.join(str(tmp_path), "workspace")
     assert f"{workspace}:{driver.CONTAINER_WORKSPACE}" in cmd  # attacker + agent share it
     assert cmd[-3:] == [t._image, "-c", "echo hi"]
+
+
+def test_max_tokens_is_derived_per_model_not_pinned_to_the_floor() -> None:
+    """``max_tokens=None`` resolves the model's REAL completion cap.
+
+    OpenClaw's ``clampOpenAICompletionsMaxTokens`` is a one-directional ceiling, so this
+    value only ever pulls its own 8192 request DOWN. Pinning every victim to the 4096
+    floor would silently truncate the capable ones; omitting it entirely lets the
+    unclamped 8192 through and kills the episode (both verified live).
+    """
+    assert driver._model_max_tokens("openai/gpt-4o-2024-05-13") == 4096
+    assert driver._model_max_tokens("openai/gpt-4o-2024-08-06") == 16384
+    # a model litellm does not know falls back to the cross-family floor, never to None
+    assert driver._model_max_tokens("litellm/no-such-model-xyz") == driver.FALLBACK_MAX_TOKENS
