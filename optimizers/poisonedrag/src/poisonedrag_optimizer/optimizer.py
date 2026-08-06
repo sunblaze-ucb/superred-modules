@@ -35,7 +35,11 @@ from poisonedrag_optimizer.prompts import (
     clean_str,
     wrap_prompt,
 )
-from poisonedrag_optimizer.surface_llm import classify_controllables
+from poisonedrag_optimizer.surface_llm import (
+    accepts_free_text,
+    classify_controllables,
+    fill_value,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +70,13 @@ _CORPUS_HINTS = (
     "retrieved_context",
     "rag_context",
     "context",
+    # DTAP environment vector: writes attacker data into a live backend the
+    # agent reads back later (write-once/read-later, i.e. corpus semantics),
+    # named "env_inject:<server>". Its description names an inject tool call,
+    # which the shared surface-role classifier can read as "execution" and
+    # drop, so it needs this static name backstop rather than relying on the
+    # LLM pass.
+    "env_inject",
 )
 _CONTEXT_HINTS = ("retrieved_context", "rag_context", "context")
 # Role categories the attacker asks its LLM to sort raw surfaces into, read from
@@ -381,11 +392,38 @@ class PoisonedRAGOptimizer(Optimizer):
                         event=event, controllable=event.controllable
                     )
                 self._current_batch = batch
+            # The format follows the controllable's value type, same as the
+            # PreCall corpus path. Unlike PreCall's ``event.request`` (often a
+            # write template), PostCall's ``event.answer`` is the genuine
+            # CURRENT read content, not a write shape, so a non-free-text
+            # surface cannot be merged deterministically; ask the shared LLM
+            # formatter to build a value that matches the description's
+            # schema instead, embedding the poison documents verbatim. A
+            # free-text surface keeps the plain-text formatter (no LLM).
+            if accepts_free_text(event.controllable):
+                value: str | None = self._format_context_value(
+                    event.answer, self._adv_documents(batch)
+                )
+            else:
+                value = await fill_value(
+                    self.llm,
+                    event.controllable,
+                    goal=self._question,
+                    payload="\n".join(self._adv_documents(batch)),
+                    context=event.answer,
+                )
+            if value is None:
+                # The formatter could not produce a value matching the
+                # surface's schema; decline rather than emit garbage into a
+                # structured surface. The corpus gate stays open for a later
+                # attempt on this surface within the run.
+                return ControllableNoInjection(
+                    event=event, controllable=event.controllable
+                )
             # Share the corpus gate so a doc-carrying surface is poisoned once
             # per run whether it fires as a PreCall or a PostCall.
             self._corpus_injected = True
             self._injected_this_run = True
-            value = self._format_context_value(event.answer, self._adv_documents(batch))
             self._record_retrieval_metrics_from_content(value)
             return ControllableInjection(
                 event=event,

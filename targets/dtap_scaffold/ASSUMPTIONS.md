@@ -379,3 +379,20 @@ fixing only if a future experiment makes them relevant):
   per-tool-call PostCall return-tampering still fires on every turn. Fix, if a future
   dataset ships multi-user-turn tasks with `turn_id`-scheduled env writes: thread a
   per-turn env-injection callback into the run loop.
+
+## J. Discarded `env_inject` values are logged, not persisted
+
+`McpEnvInjector.apply` must never abort the run on a malformed attacker value
+(section I and the parser's own docstring), so a value that does not parse into
+any `(tool, kwargs)` call is still swallowed. Swallowing it with no trace at all
+made a genuinely-failed injection indistinguishable from a defended one -- both
+just score as if the vector had never fired. `apply` now logs a `WARNING` (module
+logger, matching `openclaw_target`'s `logging.getLogger(__name__)` pattern) when a
+non-empty value parses to zero calls; an empty value (nothing was injected) does
+not log. This is a log-only fix, not a trajectory marker: the raw injected value
+is already recorded verbatim on the persisted trajectory (the `ControllableInjection`
+response to the `env_inject` PostCall event), so an analyst reviewing a suspiciously
+flat run can already see and re-parse it; adding a redundant marker there would mean
+threading a second callback (`emit`) through `EnvInjector.apply`'s signature, the
+`agent_base` wiring, and every other `EnvInjector` implementation, for information
+already reconstructable from what is persisted today.

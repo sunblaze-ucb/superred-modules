@@ -288,13 +288,100 @@ async def test_llm_context_surface_is_injected_on_precall() -> None:
 @pytest.mark.asyncio
 async def test_corpus_surface_is_injected_on_postcall() -> None:
     # The mirror of the above: a corpus surface exercised as a PostCall is also
-    # poisoned, not just on PreCall.
+    # poisoned, not just on PreCall. It is a JSON surface, so (unlike the
+    # free-text PreCall test) the value comes from the shared surface_llm
+    # formatter, not the plain-text formatter.
+    llm = _ScriptedLLM(json.dumps({"documents": ["Lyon poison"]}))
     opt = PoisonedRAGOptimizer(
         target_answer="Lyon",
         poison_texts=["Lyon poison"] * 5,
         max_attempts=1,
     )
     corpus = ctrl("knowledge_base_insert")
+    await opt.initialize(
+        Goal(description="What is the capital of France?"),
+        [corpus],
+        [],
+        llm,
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    response = await dispatch(
+        opt,
+        ControllablePostCallEvent(
+            controllable=corpus, request="kb-write", answer="existing knowledge"
+        ),
+    )
+
+    assert isinstance(response, ControllableInjection)
+    assert json.loads(response.value) == {"documents": ["Lyon poison"]}
+
+
+@pytest.mark.asyncio
+async def test_json_postcall_corpus_uses_surface_llm_formatter_not_plain_text() -> None:
+    # Defect 1: a PostCall corpus/context surface must format through the
+    # controllable's value_type like the PreCall path does, not always emit
+    # plain prose. A JSON surface routes through surface_llm.fill_value,
+    # which reads the surface's description and embeds the poison payload
+    # verbatim rather than concatenating raw poison text onto event.answer.
+    llm = _ScriptedLLM(json.dumps({"injection_mcp_tool": "kb:insert", "kwargs": {}}))
+    opt = PoisonedRAGOptimizer(
+        target_answer="Lyon",
+        poison_texts=["Lyon poison"] * 5,
+        max_attempts=1,
+    )
+    corpus = Controllable(
+        "knowledge_base_insert",
+        RAG_TAG,
+        description="Write a document into the live knowledge base.",
+        value_type="json",
+    )
+    await opt.initialize(
+        Goal(description="What is the capital of France?"),
+        [corpus],
+        [],
+        llm,
+    )
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+
+    response = await dispatch(
+        opt,
+        ControllablePostCallEvent(
+            controllable=corpus, request="kb-write", answer="existing knowledge"
+        ),
+    )
+
+    assert isinstance(response, ControllableInjection)
+    # The plain-text formatter would have produced "Lyon poison\n...\nexisting
+    # knowledge"; the JSON surface must not receive that malformed-for-JSON text.
+    assert response.value == json.dumps(
+        {"injection_mcp_tool": "kb:insert", "kwargs": {}}
+    )
+    assert "existing knowledge" not in response.value
+    # The formatter call carries the poison documents as the payload and the
+    # surface's genuine current content as context.
+    fill_call = llm.calls[-1]
+    sent = json.loads(fill_call["messages"][-1]["content"])
+    assert "Lyon poison" in sent["attacker_payload"]
+    assert sent["current_content"] == "existing knowledge"
+
+
+@pytest.mark.asyncio
+async def test_json_postcall_corpus_declines_when_formatter_fails() -> None:
+    # Defect 1 (decline branch): when the JSON formatter cannot produce a
+    # value (LLM failure, budget, malformed reply), the optimizer must decline
+    # rather than fall back to emitting plain-text garbage into a JSON surface.
+    opt = PoisonedRAGOptimizer(
+        target_answer="Lyon",
+        poison_texts=["Lyon poison"] * 5,
+        max_attempts=1,
+    )
+    corpus = Controllable(
+        "knowledge_base_insert",
+        RAG_TAG,
+        description="Write a document into the live knowledge base.",
+        value_type="json",
+    )
     await opt.initialize(
         Goal(description="What is the capital of France?"),
         [corpus],
@@ -310,8 +397,49 @@ async def test_corpus_surface_is_injected_on_postcall() -> None:
         ),
     )
 
-    assert isinstance(response, ControllableInjection)
-    assert "Lyon poison" in response.value
+    assert not isinstance(response, ControllableInjection)
+    # Declining must not consume the once-per-run corpus gate: a later
+    # PostCall on the same surface can still be attempted.
+    assert opt._corpus_injected is False
+    assert opt._injected_this_run is False
+
+
+@pytest.mark.asyncio
+async def test_env_inject_prefix_is_recognized_as_corpus_surface() -> None:
+    # Defect 2: a DTAP env_inject:<server> surface carries none of the generic
+    # corpus/context hints in its name or description, and its description
+    # names an inject tool call, which the shared LLM surface-role classifier
+    # can read as "execution" rather than data and drop. The static
+    # name-prefix backstop must still route it as a corpus surface, without
+    # needing (or spending) an LLM classification call.
+    surface = Controllable(
+        "env_inject:travel-injection",
+        RAG_TAG,
+        description=(
+            "Write attacker data into the live backend via the travel-injection "
+            "server; the agent reads it later. JSON value: "
+            '{"injection_mcp_tool": "<server>:<tool>", "kwargs": {<object>}}.'
+        ),
+        value_type="json",
+    )
+    llm = _RaisingLLM()
+    opt = PoisonedRAGOptimizer(
+        target_answer="Lyon",
+        poison_texts=["Lyon poison"] * 5,
+        max_attempts=1,
+    )
+
+    await opt.initialize(
+        Goal(description="What is the capital of France?"),
+        [surface],
+        [],
+        llm,
+    )
+
+    assert opt._is_corpus_surface(surface) is True
+    # Recognized statically: no LLM classification call was spent on it.
+    assert llm.calls == 0
+    assert surface.name not in opt._llm_corpus_surface_names
 
 
 @pytest.mark.asyncio

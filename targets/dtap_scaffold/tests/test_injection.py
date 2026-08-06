@@ -11,6 +11,7 @@ The real fastmcp round-trip is a ``live`` concern, not exercised here.
 from __future__ import annotations
 
 import json
+import logging
 
 from dtap_scaffold.injection import McpEnvInjector, _parse_injection_calls
 from dtap_scaffold.protocols import EnvInjector
@@ -148,6 +149,26 @@ async def test_apply_dict_without_mcp_tool_is_noop():
     inj, calls = _injector_with_recorder({"s": "http://x"})
     await inj.apply(InjectionPoint(server="s"), json.dumps({"to_email": "v@x.y"}))
     assert calls == []  # the tool identity must ride in the value (injection_mcp_tool)
+
+
+async def test_apply_discarded_nonempty_value_logs_warning(caplog):
+    """A non-empty value that parses to zero calls must leave evidence: silently
+    discarding it makes a failed injection indistinguishable from a defended one."""
+    inj, calls = _injector_with_recorder({"s": "http://x"})
+    with caplog.at_level(logging.WARNING, logger="dtap_scaffold.injection"):
+        await inj.apply(InjectionPoint(server="s"), "just plain text, not JSON")
+    assert calls == []
+    assert len(caplog.records) == 1
+    assert "s" in caplog.records[0].message or "s" in caplog.records[0].getMessage()
+
+
+async def test_apply_empty_value_does_not_log(caplog):
+    """An empty injected value is not a discarded attacker payload; no diagnostic."""
+    inj, calls = _injector_with_recorder({"s": "http://x"})
+    with caplog.at_level(logging.WARNING, logger="dtap_scaffold.injection"):
+        await inj.apply(InjectionPoint(server="s"), "")
+    assert calls == []
+    assert caplog.records == []
 
 
 async def test_apply_non_dict_kwargs_does_not_crash():
