@@ -135,6 +135,15 @@ run is a clean OpenClaw episode. Attacks are an optimizer's concern.
   `max_tokens=` / `context_window=` on the constructor raise it for a model known to
   allow more. The failure is asymmetric (too low truncates one answer, too high kills
   the episode silently), hence the conservative floor.
+  Provenance: upstream hardcodes a pair per provider BRANCH, each matched to the one model
+  that branch serves (`agent/openclaw/src/agent.py`): litellm declares 200000/64000 for
+  `claude-opus-4-6`, llama declares 128000/8192, and the `openai/` branch emits no models
+  block at all. This port's previous 200000/8192 was a MIX of two branches, correct for
+  neither. OMITTING both keys was TESTED and does NOT work: OpenClaw's zod schema marks them
+  `.optional()` and its consumers guard with `typeof x === "number"`, yet a live episode with
+  both absent reproduced the dead-episode signature (0 agent messages) while the same task
+  with an explicit 4096 produced a real assistant turn. An explicit value is REQUIRED, so
+  raise it per target for any victim whose cap exceeds the floor.
 
 ## D. MCP wiring (env tools via the host proxy)
 

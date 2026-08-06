@@ -79,6 +79,18 @@ _WEB_DENY: tuple[str, ...] = ("group:web",)
 # ``openai/gpt-4o-2024-05-13``, whose cap is 4096: with maxTokens 8192 every episode
 # was dead. 4096 is the floor across the GPT-4o / Claude / Gemini families used here,
 # so it is the safe default; raise it per target only for a model known to allow more.
+# Upstream hardcodes a pair per provider BRANCH, matched to the one model that branch
+# serves (``agent/openclaw/src/agent.py``): the litellm branch declares 200000/64000 for
+# ``claude-opus-4-6``; the llama branch declares 128000/8192 for its own model; the
+# ``openai/`` branch emits NO models block at all (it relies on OpenClaw's built-in
+# provider). The previous 200000/8192 here was a MIX of two branches, correct for neither.
+# Omitting both keys was TESTED and does NOT work: OpenClaw's zod schema marks them
+# ``.optional()``, but a live episode with both absent produced the same dead-episode
+# signature as the oversized value (0 agent messages), while the same task with an
+# explicit 4096 produced a real assistant turn. An explicit value is therefore REQUIRED.
+# Since this port serves an arbitrary model over an OpenAI-compatible proxy, and the
+# planned victims span very different caps, pass ``max_tokens=`` per target for any model
+# that supports more than the floor.
 DEFAULT_MAX_TOKENS = 4096
 DEFAULT_CONTEXT_WINDOW = 128000
 
