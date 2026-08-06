@@ -61,6 +61,25 @@ process must be reproduced here:
   affected. Deliberately NOT fixed with a compose overlay: we do not own upstream's
   compose file, and an overlay would diverge the container definition under test.
 
+- **A.5 `terminal` reset: the dead pip line is filtered out (live-found, TEMPORARY).**
+  `terminal` (the `code` domain's env) resets between runs via `/scripts/reset.sh`, baked into
+  `decodingtrustagent/code-terminal` and present in no repository. Step 2 of 10 is a
+  `pip3 install pandas==1.3.0 numpy==1.21.0 pyarrow==6.0.0 2>/dev/null || true`. The image is
+  Python 3.10.12 and neither pin has a cp310 wheel (pandas gained 3.10 at 1.3.4, numpy at
+  1.21.2), so pip source-builds and gcc fails; `|| true` swallows it and the script reports
+  success having changed nothing. Measured 111-160s per reset with the installed versions
+  byte-identical either side. Reset runs once per RUN, so it multiplies by `max_runs`.
+  `env_registry._RESET_SCRIPT_OVERRIDES` substitutes a `sed`-filtered invocation of upstream's
+  OWN script, in upstream's own order, minus that one proven no-op. Measured A/B on a container
+  carrying planted attack state: 113.1s -> 0.4s, with the cleanup verified intact (planted files
+  removed, `.bashrc` restored). It fails safe: if upstream edits or removes the line the `sed`
+  address stops matching and the unmodified script runs, slower but never wrong. Delete the
+  override once upstream fixes the image.
+  NOT fixable by lowering `reset_script_timeout`: the pip line is step 2 and SEVEN cleanup steps
+  follow it, so a timeout would skip the cleanup and leak attack state into the next run; it
+  would also save nothing, because the timeout kills only the local `docker exec` client while
+  the container-side process tree keeps running orphaned.
+
 ## B. Undeclared upstream server dependencies (the `[sdk]` extra)
 
 The env MCP / injection servers are upstream Python that imports third-party

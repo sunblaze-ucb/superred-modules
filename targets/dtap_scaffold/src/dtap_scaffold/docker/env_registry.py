@@ -75,6 +75,41 @@ _DEFAULT_RESET_SCRIPT_TIMEOUT = 60
 # against a service that is not up yet. An explicit env.yaml ``health_timeout`` still wins.
 _HEALTH_TIMEOUT_OVERRIDES = {"calendar": 30}
 
+# TEMPORARY upstream workaround; delete this once upstream fixes the image.
+#
+# ``terminal`` (the env behind the ``code`` domain) resets between runs by running
+# ``/scripts/reset.sh``, which is baked into ``decodingtrustagent/code-terminal`` and exists in
+# no repository. Step 2 of that script is::
+#
+#     pip3 install --no-cache-dir pandas==1.3.0 numpy==1.21.0 pyarrow==6.0.0 2>/dev/null || true
+#
+# The image is Python 3.10.12 and neither pin has a cp310 wheel (pandas gained 3.10 at 1.3.4,
+# numpy at 1.21.2), so pip source-builds and gcc fails. ``2>/dev/null || true`` swallows it, so
+# the script reports success having changed nothing: measured 111-160s per reset, with the
+# already-installed pandas 2.3.3 / numpy 2.2.6 / pyarrow 23.0.1 byte-identical either side.
+# It is presumably why ``terminal`` is the only env with a non-default ``reset_script_timeout``
+# (180 vs 60): the headroom was granted rather than the line fixed.
+#
+# ``reset.reset_environment`` passes each ``reset_scripts`` value verbatim to ``/bin/sh -c``, so
+# the value need not be a path. Filtering the line out with ``sed`` runs upstream's own script,
+# from upstream's own image, in upstream's own order, minus one proven no-op: measured 0.39s
+# instead of 136s, with the attack-state cleanup verified intact. It also FAILS SAFE, because a
+# ``sed`` address that stops matching (upstream edits or removes the line) simply yields the
+# unmodified script: slower, never wrong.
+#
+# NOT fixed by lowering ``reset_script_timeout``: the pip line is step 2 of 10 and SEVEN cleanup
+# steps follow it (restoring ``.bashrc``/``.profile``, removing planted files), so a timeout
+# would skip the cleanup and leak attack state into the next run. It would also save nothing,
+# because the timeout kills only the local ``docker exec`` client while the container-side
+# process tree keeps running orphaned.
+_RESET_SCRIPT_OVERRIDES: dict[str, dict[str, str]] = {
+    "terminal": {
+        "terminal-env": (
+            "sed '/pip3 install --no-cache-dir pandas==1.3.0/d' /scripts/reset.sh | /bin/bash"
+        )
+    }
+}
+
 
 class EnvRegistryError(RuntimeError):
     """Raised when the registry cannot resolve or parse the DTAP config YAMLs."""
@@ -152,8 +187,20 @@ class EnvRegistry:
 
     @property
     def env_config(self) -> dict[str, Any]:
-        """The raw parsed ``env.yaml`` (shape :func:`reset.reset_environment` expects)."""
-        return self._env
+        """The raw parsed ``env.yaml`` (shape :func:`reset.reset_environment` expects).
+
+        With :data:`_RESET_SCRIPT_OVERRIDES` applied to the affected environments'
+        ``reset_scripts``. The override is a shell command, not a path, which is what
+        :func:`reset.reset_environment` already passes to ``/bin/sh -c``.
+        """
+        if not any(env in self._environments for env in _RESET_SCRIPT_OVERRIDES):
+            return self._env
+        envs = dict(self._environments)
+        for env, scripts in _RESET_SCRIPT_OVERRIDES.items():
+            if env in envs:
+                merged = {**envs[env]["reset_scripts"], **scripts}
+                envs[env] = {**envs[env], "reset_scripts": merged}
+        return {**self._env, "environments": envs}
 
     def mcp_base_dir(self) -> Path:
         """Directory holding the env MCP server trees (``global.base_dir``)."""
