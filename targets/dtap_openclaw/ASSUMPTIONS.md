@@ -147,7 +147,11 @@ run is a clean OpenClaw episode. Attacks are an optimizer's concern.
   `litellm.get_max_tokens`, which is the same per-model table the proxy enforces, falling back
   to `FALLBACK_MAX_TOKENS = 4096` only when litellm does not know the model. Verified:
   gpt-4o-2024-05-13 -> 4096, gpt-4o-2024-08-06 -> 16384, claude-opus-4-6 -> 128000, unknown ->
-  4096, and an explicit `max_tokens=` still overrides. The mechanism that makes this necessary:
+  OMITTED (OpenClaw's stock 8192 applies), and an explicit `max_tokens=` still overrides.
+  Checked against the planned victims: opus/haiku/sonnet 4.x 64000, gpt-5 128000, grok 256000,
+  deepseek exactly 8192, qwen3-vl unknown. Since the clamp is one-directional, EVERY one of
+  those is a no-op and behaves identically to stock OpenClaw; the mechanism only engages for a
+  model that genuinely cannot take the 8192 request. The mechanism that makes this necessary:
   OpenClaw's `clampOpenAICompletionsMaxTokens` is a one-directional CEILING
   (`modelMaxTokens === void 0 || requested <= modelMaxTokens ? requested : modelMaxTokens`), so
   the field only ever pulls OpenClaw's own 8192 request DOWN; omitting it lets the unclamped

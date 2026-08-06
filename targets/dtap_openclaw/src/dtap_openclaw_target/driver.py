@@ -99,25 +99,29 @@ _WEB_DENY: tuple[str, ...] = ("group:web",)
 # supports"; it means "do not restrain my request", so the 8192 goes out unclamped and 400s.
 DEFAULT_MAX_TOKENS: int | None = None
 
-#: Completion cap used when litellm does not know the model.  Cross-family floor.
-FALLBACK_MAX_TOKENS = 4096
+#: Context window advertised alongside the model entry. Purely informational to OpenClaw
+#: (its consumers guard with ``typeof x === "number"``); omitting it was verified harmless.
 DEFAULT_CONTEXT_WINDOW = 128000
 
 
-def _model_max_tokens(model: str) -> int:
-    """The model's real completion cap, or :data:`FALLBACK_MAX_TOKENS` if unknown.
+def _model_max_tokens(model: str) -> int | None:
+    """The model's real completion cap, or ``None`` to leave OpenClaw's default alone.
 
-    litellm ships the same per-model cost/limit table the proxy enforces, so this is the
-    provider's own number rather than a guess. Unknown models (a proxy alias, a private
-    deployment) fall back to the cross-family floor: too low truncates one answer, too high
-    kills the whole episode silently.
+    litellm ships the same per-model table the proxy enforces, so a hit is the provider's own
+    number rather than a guess. A MISS returns ``None`` and the key is omitted, which restores
+    OpenClaw's stock behaviour (it asks for 8192 unclamped). That is the right default for an
+    unrecognised model: every victim in the planned matrix whose cap litellm knows is at or
+    above 8192, so guessing a lower floor would only truncate a capable model for no reason.
+    The clamp is one-directional, so a known cap above 8192 is a no-op too: this only ever
+    engages for a model that genuinely cannot take OpenClaw's request.
     """
     try:
         import litellm
 
-        return int(litellm.get_max_tokens(model) or FALLBACK_MAX_TOKENS)
+        cap = litellm.get_max_tokens(model)
     except Exception:
-        return FALLBACK_MAX_TOKENS
+        return None
+    return int(cap) if cap else None
 
 
 def _profile_config_rel(profile: str) -> str:
@@ -180,8 +184,12 @@ def build_openclaw_config(
                             "name": model_id,
                             "input": ["text"],
                             "contextWindow": context_window,
-                            # None -> derive the model's real cap (see _model_max_tokens)
-                            "maxTokens": max_tokens or _model_max_tokens(model_id),
+                            # omitted when unknown -> OpenClaw's stock 8192 (_model_max_tokens)
+                            **(
+                                {"maxTokens": resolved}
+                                if (resolved := max_tokens or _model_max_tokens(model_id))
+                                else {}
+                            ),
                         }
                     ],
                 }

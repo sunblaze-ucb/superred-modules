@@ -451,5 +451,9 @@ def test_max_tokens_is_derived_per_model_not_pinned_to_the_floor() -> None:
     """
     assert driver._model_max_tokens("openai/gpt-4o-2024-05-13") == 4096
     assert driver._model_max_tokens("openai/gpt-4o-2024-08-06") == 16384
-    # a model litellm does not know falls back to the cross-family floor, never to None
-    assert driver._model_max_tokens("litellm/no-such-model-xyz") == driver.FALLBACK_MAX_TOKENS
+    # every planned victim litellm knows is at or above OpenClaw's 8192 request, so the
+    # clamp is a no-op for them and only the sub-8192 model is actually restrained
+    assert driver._model_max_tokens("anthropic/claude-opus-4-5") == 64000
+    # an unrecognised model returns None so the key is OMITTED and OpenClaw's stock
+    # behaviour applies, rather than guessing a floor that would truncate it
+    assert driver._model_max_tokens("litellm/no-such-model-xyz") is None
