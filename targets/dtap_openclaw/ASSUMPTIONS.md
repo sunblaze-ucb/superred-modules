@@ -122,6 +122,19 @@ run is a clean OpenClaw episode. Attacks are an optimizer's concern.
   `provider_api="anthropic-messages"` to match. The model is a **construction
   concern**, never a config slot (the base enforces this); generation `temperature`
   is fixed per experiment and only written when set.
+- **C.3 `maxTokens` must not exceed the model's completion cap (live-found).** OpenClaw
+  sends the generated `models.providers.<p>.models[0].maxTokens` VERBATIM as the
+  provider's `max_tokens`. A value above the model's real cap makes EVERY request fail
+  400; OpenClaw then misclassifies that 400 as a context overflow, burns its three
+  auto-compaction retries (which 400 identically), and ends the turn with no assistant
+  message and no tool call while still exiting 0. The episode looks "completed" and
+  scores 0.0, which is indistinguishable from a defended attack. Measured 2026-08: with
+  the previous hardcoded 8192 against `openai/gpt-4o-2024-05-13` (cap 4096) every
+  episode on this host was dead. `DEFAULT_MAX_TOKENS = 4096` is the completion floor
+  across the GPT-4o / Claude / Gemini families in use, so it is the safe default;
+  `max_tokens=` / `context_window=` on the constructor raise it for a model known to
+  allow more. The failure is asymmetric (too low truncates one answer, too high kills
+  the episode silently), hence the conservative floor.
 
 ## D. MCP wiring (env tools via the host proxy)
 

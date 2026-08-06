@@ -68,6 +68,20 @@ _PROVIDER = "litellm"
 # (``utils/agent_helpers.py:OS_FILESYSTEM_OPENCLAW_DISALLOWED_TOOLS``).
 _WEB_DENY: tuple[str, ...] = ("group:web",)
 
+# Per-request completion cap and declared context window advertised to OpenClaw in
+# the generated ``models.providers.<p>.models[0]`` entry. OpenClaw sends maxTokens
+# VERBATIM as the provider's ``max_tokens``, so a value ABOVE the model's real
+# completion cap makes every request fail 400 -- and OpenClaw misclassifies that 400
+# as a context overflow, burns its three auto-compaction retries (which 400 for the
+# same reason), then ends the turn with NO assistant message and NO tool call while
+# still exiting 0. The episode then looks "completed" and scores 0.0, which is
+# indistinguishable from a defended attack. Measured 2026-08 against
+# ``openai/gpt-4o-2024-05-13``, whose cap is 4096: with maxTokens 8192 every episode
+# was dead. 4096 is the floor across the GPT-4o / Claude / Gemini families used here,
+# so it is the safe default; raise it per target only for a model known to allow more.
+DEFAULT_MAX_TOKENS = 4096
+DEFAULT_CONTEXT_WINDOW = 128000
+
 
 def _profile_config_rel(profile: str) -> str:
     """Profile-config path relative to the state dir (mirrors upstream
@@ -93,6 +107,8 @@ def build_openclaw_config(
     provider_api: str = "openai-completions",
     workspace_dir: str = CONTAINER_WORKSPACE,
     skills_dir: str | None = None,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
+    context_window: int = DEFAULT_CONTEXT_WINDOW,
 ) -> dict[str, Any]:
     """Build the per-profile ``openclaw.json`` for one episode.
 
@@ -126,8 +142,8 @@ def build_openclaw_config(
                             "id": model_id,
                             "name": model_id,
                             "input": ["text"],
-                            "contextWindow": 200000,
-                            "maxTokens": 8192,
+                            "contextWindow": context_window,
+                            "maxTokens": max_tokens,
                         }
                     ],
                 }
@@ -234,6 +250,8 @@ def write_episode_inputs(
     profile: str,
     thinking: str,
     provider_api: str = "openai-completions",
+    max_tokens: int = DEFAULT_MAX_TOKENS,
+    context_window: int = DEFAULT_CONTEXT_WINDOW,
 ) -> dict[str, str]:
     """Materialize ``openclaw.json`` + ``AGENTS.md`` + skills + ``task.json`` under
     *state_dir* (the host side of the ``/state`` bind mount). Returns the host paths."""
@@ -261,7 +279,13 @@ def write_episode_inputs(
             except (OSError, ValueError):
                 continue
 
-    config = build_openclaw_config(spec, provider_api=provider_api, skills_dir=skills_container)
+    config = build_openclaw_config(
+        spec,
+        provider_api=provider_api,
+        skills_dir=skills_container,
+        max_tokens=max_tokens,
+        context_window=context_window,
+    )
     config_host = os.path.join(state_dir, _profile_config_rel(profile))
     os.makedirs(os.path.dirname(config_host), exist_ok=True)
     with open(config_host, "w", encoding="utf-8") as handle:
@@ -310,6 +334,8 @@ def run_openclaw_container(
     network: str | None = None,
     provider_api: str = "openai-completions",
     episode_dir: str | None = None,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
+    context_window: int = DEFAULT_CONTEXT_WINDOW,
 ) -> str:
     """Run ONE OpenClaw episode in a container; return the episode output dir.
 
@@ -344,6 +370,8 @@ def run_openclaw_container(
         profile=profile,
         thinking=thinking,
         provider_api=provider_api,
+        max_tokens=max_tokens,
+        context_window=context_window,
     )
 
     mount = f"{episode_dir}:{CONTAINER_STATE}"

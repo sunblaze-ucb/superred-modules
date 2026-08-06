@@ -265,13 +265,17 @@ async def test_run_episode_wraps_docker_run(monkeypatch, trace_dir) -> None:
 async def test_docker_run_offloads_to_driver(monkeypatch) -> None:
     captured: dict = {}
 
-    def fake_run_container(spec, *, image, timeout, thinking, network, provider_api):  # noqa: ANN001
+    def fake_run_container(  # noqa: ANN001
+        spec, *, image, timeout, thinking, network, provider_api, max_tokens, context_window
+    ):
         captured.update(
             image=image,
             timeout=timeout,
             thinking=thinking,
             network=network,
             provider_api=provider_api,
+            max_tokens=max_tokens,
+            context_window=context_window,
         )
         return "/episode/out"
 
@@ -301,6 +305,8 @@ async def test_docker_run_offloads_to_driver(monkeypatch) -> None:
         "thinking": "high",
         "network": "netX",
         "provider_api": "anthropic-messages",
+        "max_tokens": driver.DEFAULT_MAX_TOKENS,
+        "context_window": driver.DEFAULT_CONTEXT_WINDOW,
     }
 
 
