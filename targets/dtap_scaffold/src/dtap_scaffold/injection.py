@@ -28,9 +28,12 @@ monkeypatch, so no network or ``fastmcp`` import happens under test.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from dtap_scaffold.types import InjectionPoint
+
+logger = logging.getLogger(__name__)
 
 
 class McpEnvInjector:
@@ -60,7 +63,19 @@ class McpEnvInjector:
         url = self._urls.get(point.server)
         if not url:
             return
-        for tool, kwargs in _parse_injection_calls(value):
+        calls = _parse_injection_calls(value)
+        if value and not calls:
+            # A non-empty injected value that parsed to zero calls is discarded
+            # below with no other trace -- the run proceeds and scores exactly as
+            # if the vector had been exercised. Log it so a genuinely-failed
+            # injection is distinguishable from a defended one.
+            logger.warning(
+                "env_inject: value for server %r did not parse into any injection "
+                "call and was discarded: %r",
+                point.server,
+                value,
+            )
+        for tool, kwargs in calls:
             if not tool:
                 continue
             try:

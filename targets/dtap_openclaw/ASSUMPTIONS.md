@@ -122,6 +122,40 @@ run is a clean OpenClaw episode. Attacks are an optimizer's concern.
   `provider_api="anthropic-messages"` to match. The model is a **construction
   concern**, never a config slot (the base enforces this); generation `temperature`
   is fixed per experiment and only written when set.
+- **C.3 `maxTokens` must not exceed the model's completion cap (live-found).** OpenClaw
+  sends the generated `models.providers.<p>.models[0].maxTokens` VERBATIM as the
+  provider's `max_tokens`. A value above the model's real cap makes EVERY request fail
+  400; OpenClaw then misclassifies that 400 as a context overflow, burns its three
+  auto-compaction retries (which 400 identically), and ends the turn with no assistant
+  message and no tool call while still exiting 0. The episode looks "completed" and
+  scores 0.0, which is indistinguishable from a defended attack. Measured 2026-08: with
+  the previous hardcoded 8192 against `openai/gpt-4o-2024-05-13` (cap 4096) every
+  episode on this host was dead. `DEFAULT_MAX_TOKENS = 4096` is the completion floor
+  across the GPT-4o / Claude / Gemini families in use, so it is the safe default;
+  `max_tokens=` / `context_window=` on the constructor raise it for a model known to
+  allow more. The failure is asymmetric (too low truncates one answer, too high kills
+  the episode silently), hence the conservative floor.
+  Provenance: upstream hardcodes a pair per provider BRANCH, each matched to the one model
+  that branch serves (`agent/openclaw/src/agent.py`): litellm declares 200000/64000 for
+  `claude-opus-4-6`, llama declares 128000/8192, and the `openai/` branch emits no models
+  block at all. This port's previous 200000/8192 was a MIX of two branches, correct for
+  neither. OMITTING both keys was TESTED and does NOT work: OpenClaw's zod schema marks them
+  `.optional()` and its consumers guard with `typeof x === "number"`, yet a live episode with
+  both absent reproduced the dead-episode signature (0 agent messages) while the same task
+  with an explicit 4096 produced a real assistant turn. An explicit value is REQUIRED, so
+  DERIVE it instead: `max_tokens=None` (the default) resolves the model's real cap via
+  `litellm.get_max_tokens`, which is the same per-model table the proxy enforces, falling back
+  to `FALLBACK_MAX_TOKENS = 4096` only when litellm does not know the model. Verified:
+  gpt-4o-2024-05-13 -> 4096, gpt-4o-2024-08-06 -> 16384, claude-opus-4-6 -> 128000, unknown ->
+  OMITTED (OpenClaw's stock 8192 applies), and an explicit `max_tokens=` still overrides.
+  Checked against the planned victims: opus/haiku/sonnet 4.x 64000, gpt-5 128000, grok 256000,
+  deepseek exactly 8192, qwen3-vl unknown. Since the clamp is one-directional, EVERY one of
+  those is a no-op and behaves identically to stock OpenClaw; the mechanism only engages for a
+  model that genuinely cannot take the 8192 request. The mechanism that makes this necessary:
+  OpenClaw's `clampOpenAICompletionsMaxTokens` is a one-directional CEILING
+  (`modelMaxTokens === void 0 || requested <= modelMaxTokens ? requested : modelMaxTokens`), so
+  the field only ever pulls OpenClaw's own 8192 request DOWN; omitting it lets the unclamped
+  8192 through, which is why omission fails despite the schema marking it optional.
 
 ## D. MCP wiring (env tools via the host proxy)
 

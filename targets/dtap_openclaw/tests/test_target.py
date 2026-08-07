@@ -265,13 +265,17 @@ async def test_run_episode_wraps_docker_run(monkeypatch, trace_dir) -> None:
 async def test_docker_run_offloads_to_driver(monkeypatch) -> None:
     captured: dict = {}
 
-    def fake_run_container(spec, *, image, timeout, thinking, network, provider_api):  # noqa: ANN001
+    def fake_run_container(  # noqa: ANN001
+        spec, *, image, timeout, thinking, network, provider_api, max_tokens, context_window
+    ):
         captured.update(
             image=image,
             timeout=timeout,
             thinking=thinking,
             network=network,
             provider_api=provider_api,
+            max_tokens=max_tokens,
+            context_window=context_window,
         )
         return "/episode/out"
 
@@ -301,6 +305,8 @@ async def test_docker_run_offloads_to_driver(monkeypatch) -> None:
         "thinking": "high",
         "network": "netX",
         "provider_api": "anthropic-messages",
+        "max_tokens": driver.DEFAULT_MAX_TOKENS,
+        "context_window": driver.DEFAULT_CONTEXT_WINDOW,
     }
 
 
@@ -433,3 +439,21 @@ async def test_exec_on_host_builds_docker_cmd(tmp_path, monkeypatch) -> None:
     workspace = os.path.join(str(tmp_path), "workspace")
     assert f"{workspace}:{driver.CONTAINER_WORKSPACE}" in cmd  # attacker + agent share it
     assert cmd[-3:] == [t._image, "-c", "echo hi"]
+
+
+def test_max_tokens_is_derived_per_model_not_pinned_to_the_floor() -> None:
+    """``max_tokens=None`` resolves the model's REAL completion cap.
+
+    OpenClaw's ``clampOpenAICompletionsMaxTokens`` is a one-directional ceiling, so this
+    value only ever pulls its own 8192 request DOWN. Pinning every victim to the 4096
+    floor would silently truncate the capable ones; omitting it entirely lets the
+    unclamped 8192 through and kills the episode (both verified live).
+    """
+    assert driver._model_max_tokens("openai/gpt-4o-2024-05-13") == 4096
+    assert driver._model_max_tokens("openai/gpt-4o-2024-08-06") == 16384
+    # every planned victim litellm knows is at or above OpenClaw's 8192 request, so the
+    # clamp is a no-op for them and only the sub-8192 model is actually restrained
+    assert driver._model_max_tokens("anthropic/claude-opus-4-5") == 64000
+    # an unrecognised model returns None so the key is OMITTED and OpenClaw's stock
+    # behaviour applies, rather than guessing a floor that would truncate it
+    assert driver._model_max_tokens("litellm/no-such-model-xyz") is None

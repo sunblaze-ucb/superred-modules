@@ -68,6 +68,40 @@ _PROVIDER = "litellm"
 # (``utils/agent_helpers.py:OS_FILESYSTEM_OPENCLAW_DISALLOWED_TOOLS``).
 _WEB_DENY: tuple[str, ...] = ("group:web",)
 
+# ``maxTokens`` is a one-directional CEILING on OpenClaw's OWN request, not a fallback:
+# ``clampOpenAICompletionsMaxTokens`` returns the request unchanged when the field is
+# absent. OpenClaw independently asks for 8192, so omitting the key does not mean "ask
+# what the model supports", it means "do not restrain me" -- and a model capped below
+# 8192 then 400s every request, which OpenClaw misreads as context overflow and ends the
+# turn silently, scoring 0.0 exactly like a defended attack. Hence: ``None`` DERIVES the
+# real cap per model (a no-op for any model at or above 8192), and a model litellm cannot
+# size falls back to OpenClaw's stock behaviour. Full evidence in ASSUMPTIONS.md C.3.
+DEFAULT_MAX_TOKENS: int | None = None
+
+#: Context window advertised alongside the model entry. Purely informational to OpenClaw
+#: (its consumers guard with ``typeof x === "number"``); omitting it was verified harmless.
+DEFAULT_CONTEXT_WINDOW = 128000
+
+
+def _model_max_tokens(model: str) -> int | None:
+    """The model's real completion cap, or ``None`` to leave OpenClaw's default alone.
+
+    litellm ships the same per-model table the proxy enforces, so a hit is the provider's own
+    number rather than a guess. A MISS returns ``None`` and the key is omitted, which restores
+    OpenClaw's stock behaviour (it asks for 8192 unclamped). That is the right default for an
+    unrecognised model: every victim in the planned matrix whose cap litellm knows is at or
+    above 8192, so guessing a lower floor would only truncate a capable model for no reason.
+    The clamp is one-directional, so a known cap above 8192 is a no-op too: this only ever
+    engages for a model that genuinely cannot take OpenClaw's request.
+    """
+    try:
+        import litellm
+
+        cap = litellm.get_max_tokens(model)
+    except Exception:
+        return None
+    return int(cap) if cap else None
+
 
 def _profile_config_rel(profile: str) -> str:
     """Profile-config path relative to the state dir (mirrors upstream
@@ -93,6 +127,8 @@ def build_openclaw_config(
     provider_api: str = "openai-completions",
     workspace_dir: str = CONTAINER_WORKSPACE,
     skills_dir: str | None = None,
+    max_tokens: int | None = DEFAULT_MAX_TOKENS,
+    context_window: int = DEFAULT_CONTEXT_WINDOW,
 ) -> dict[str, Any]:
     """Build the per-profile ``openclaw.json`` for one episode.
 
@@ -126,8 +162,13 @@ def build_openclaw_config(
                             "id": model_id,
                             "name": model_id,
                             "input": ["text"],
-                            "contextWindow": 200000,
-                            "maxTokens": 8192,
+                            "contextWindow": context_window,
+                            # omitted when unknown -> OpenClaw's stock 8192 (_model_max_tokens)
+                            **(
+                                {"maxTokens": resolved}
+                                if (resolved := max_tokens or _model_max_tokens(model_id))
+                                else {}
+                            ),
                         }
                     ],
                 }
@@ -234,6 +275,8 @@ def write_episode_inputs(
     profile: str,
     thinking: str,
     provider_api: str = "openai-completions",
+    max_tokens: int | None = DEFAULT_MAX_TOKENS,
+    context_window: int = DEFAULT_CONTEXT_WINDOW,
 ) -> dict[str, str]:
     """Materialize ``openclaw.json`` + ``AGENTS.md`` + skills + ``task.json`` under
     *state_dir* (the host side of the ``/state`` bind mount). Returns the host paths."""
@@ -261,7 +304,13 @@ def write_episode_inputs(
             except (OSError, ValueError):
                 continue
 
-    config = build_openclaw_config(spec, provider_api=provider_api, skills_dir=skills_container)
+    config = build_openclaw_config(
+        spec,
+        provider_api=provider_api,
+        skills_dir=skills_container,
+        max_tokens=max_tokens,
+        context_window=context_window,
+    )
     config_host = os.path.join(state_dir, _profile_config_rel(profile))
     os.makedirs(os.path.dirname(config_host), exist_ok=True)
     with open(config_host, "w", encoding="utf-8") as handle:
@@ -310,6 +359,8 @@ def run_openclaw_container(
     network: str | None = None,
     provider_api: str = "openai-completions",
     episode_dir: str | None = None,
+    max_tokens: int | None = DEFAULT_MAX_TOKENS,
+    context_window: int = DEFAULT_CONTEXT_WINDOW,
 ) -> str:
     """Run ONE OpenClaw episode in a container; return the episode output dir.
 
@@ -344,6 +395,8 @@ def run_openclaw_container(
         profile=profile,
         thinking=thinking,
         provider_api=provider_api,
+        max_tokens=max_tokens,
+        context_window=context_window,
     )
 
     mount = f"{episode_dir}:{CONTAINER_STATE}"

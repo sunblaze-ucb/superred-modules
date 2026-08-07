@@ -75,6 +75,25 @@ _DEFAULT_RESET_SCRIPT_TIMEOUT = 60
 # against a service that is not up yet. An explicit env.yaml ``health_timeout`` still wins.
 _HEALTH_TIMEOUT_OVERRIDES = {"calendar": 30}
 
+# TEMPORARY upstream workaround; delete once upstream fixes the image.
+#
+# ``terminal``'s ``/scripts/reset.sh`` (baked into the image, in no repository) runs a
+# pip install of versions with no wheel for its Python, so it source-builds, fails, and is
+# swallowed by ``|| true`` -- costing 111-160s per reset while provably changing nothing.
+# Reset runs once per RUN, so it multiplies by max_runs. ``reset_environment`` passes each
+# ``reset_scripts`` value verbatim to ``/bin/sh -c``, so filtering that one line out runs
+# upstream's own script, in its own order, minus a proven no-op: measured 113.1s -> 0.4s
+# with cleanup intact. Fails safe (a non-matching ``sed`` yields the full script).
+# NOT fixable by lowering ``reset_script_timeout``: see ASSUMPTIONS.md A.5 for why that
+# would skip the cleanup AND save nothing, plus the full measurements.
+_RESET_SCRIPT_OVERRIDES: dict[str, dict[str, str]] = {
+    "terminal": {
+        "terminal-env": (
+            "sed '/pip3 install --no-cache-dir pandas==1.3.0/d' /scripts/reset.sh | /bin/bash"
+        )
+    }
+}
+
 
 class EnvRegistryError(RuntimeError):
     """Raised when the registry cannot resolve or parse the DTAP config YAMLs."""
@@ -152,8 +171,20 @@ class EnvRegistry:
 
     @property
     def env_config(self) -> dict[str, Any]:
-        """The raw parsed ``env.yaml`` (shape :func:`reset.reset_environment` expects)."""
-        return self._env
+        """The raw parsed ``env.yaml`` (shape :func:`reset.reset_environment` expects).
+
+        With :data:`_RESET_SCRIPT_OVERRIDES` applied to the affected environments'
+        ``reset_scripts``. The override is a shell command, not a path, which is what
+        :func:`reset.reset_environment` already passes to ``/bin/sh -c``.
+        """
+        if not any(env in self._environments for env in _RESET_SCRIPT_OVERRIDES):
+            return self._env
+        envs = dict(self._environments)
+        for env, scripts in _RESET_SCRIPT_OVERRIDES.items():
+            if env in envs:
+                merged = {**envs[env]["reset_scripts"], **scripts}
+                envs[env] = {**envs[env], "reset_scripts": merged}
+        return {**self._env, "environments": envs}
 
     def mcp_base_dir(self) -> Path:
         """Directory holding the env MCP server trees (``global.base_dir``)."""

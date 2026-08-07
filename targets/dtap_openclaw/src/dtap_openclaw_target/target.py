@@ -61,6 +61,12 @@ class DtapOpenClawTarget(DtapAgentTarget):
         thinking: str = "off",
         docker_timeout: float = 1000.0,
         network: str | None = None,
+        # Advertised to OpenClaw verbatim as the provider's ``max_tokens`` /
+        # context window. The default is the cross-family floor; RAISING it above
+        # the model's real completion cap makes every request 400 and produces a
+        # silent dead episode (see driver.DEFAULT_MAX_TOKENS).
+        max_tokens: int | None = driver.DEFAULT_MAX_TOKENS,
+        context_window: int = driver.DEFAULT_CONTEXT_WINDOW,
     ) -> None:
         super().__init__(
             model=model,
@@ -79,6 +85,8 @@ class DtapOpenClawTarget(DtapAgentTarget):
         self._thinking = thinking
         self._docker_timeout = docker_timeout
         self._network = network
+        self._max_tokens = max_tokens
+        self._context_window = context_window
 
     # ----- abstract agent hooks -------------------------------------------- #
 
@@ -129,6 +137,8 @@ class DtapOpenClawTarget(DtapAgentTarget):
             thinking=self._thinking,
             network=self._network,
             provider_api=self._provider_api,
+            max_tokens=self._max_tokens,
+            context_window=self._context_window,
         )
         if self._run_dir:
             kwargs["episode_dir"] = self._run_dir

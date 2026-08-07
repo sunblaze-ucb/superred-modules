@@ -80,6 +80,21 @@ def test_env_metadata(reg: EnvRegistry) -> None:
     assert reg.reset_script_timeout("travel") == 60
 
 
+def test_reset_script_override_is_applied_to_terminal_only(reg: EnvRegistry) -> None:
+    """`terminal`'s reset script is replaced by the sed-filtered variant; others untouched.
+
+    The override is a SHELL COMMAND, not a path, which is what `reset.reset_environment`
+    already feeds to `/bin/sh -c`. Measured live: 113.1s -> 0.4s, cleanup verified intact.
+    """
+    envs = reg.env_config["environments"]
+    assert envs["terminal"]["reset_scripts"]["terminal-env"].startswith("sed ")
+    assert "pip3 install" in envs["terminal"]["reset_scripts"]["terminal-env"]
+    # sibling envs and terminal's other keys are untouched
+    assert envs["travel"]["reset_scripts"] == {"travel-api": "/app/reset.sh"}
+    assert envs["terminal"]["reset_script_timeout"] == 180
+    assert "docker_compose" in envs["terminal"]
+
+
 def test_health_timeout_override(reg: EnvRegistry, monkeypatch: pytest.MonkeyPatch) -> None:
     # `calendar` has no env.yaml health_timeout, so our override for its unsatisfiable
     # (curl-less) healthcheck applies instead of the 120s default.
