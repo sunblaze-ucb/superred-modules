@@ -68,35 +68,14 @@ _PROVIDER = "litellm"
 # (``utils/agent_helpers.py:OS_FILESYSTEM_OPENCLAW_DISALLOWED_TOOLS``).
 _WEB_DENY: tuple[str, ...] = ("group:web",)
 
-# Per-request completion cap and declared context window advertised to OpenClaw in
-# the generated ``models.providers.<p>.models[0]`` entry. OpenClaw sends maxTokens
-# VERBATIM as the provider's ``max_tokens``, so a value ABOVE the model's real
-# completion cap makes every request fail 400 -- and OpenClaw misclassifies that 400
-# as a context overflow, burns its three auto-compaction retries (which 400 for the
-# same reason), then ends the turn with NO assistant message and NO tool call while
-# still exiting 0. The episode then looks "completed" and scores 0.0, which is
-# indistinguishable from a defended attack. Measured 2026-08 against
-# ``openai/gpt-4o-2024-05-13``, whose cap is 4096: with maxTokens 8192 every episode
-# was dead. 4096 is the floor across the GPT-4o / Claude / Gemini families used here,
-# so it is the safe default; raise it per target only for a model known to allow more.
-# Upstream hardcodes a pair per provider BRANCH, matched to the one model that branch
-# serves (``agent/openclaw/src/agent.py``): the litellm branch declares 200000/64000 for
-# ``claude-opus-4-6``; the llama branch declares 128000/8192 for its own model; the
-# ``openai/`` branch emits NO models block at all (it relies on OpenClaw's built-in
-# provider). The previous 200000/8192 here was a MIX of two branches, correct for neither.
-# Omitting both keys was TESTED and does NOT work: OpenClaw's zod schema marks them
-# ``.optional()``, but a live episode with both absent produced the same dead-episode
-# signature as the oversized value (0 agent messages), while the same task with an
-# explicit 4096 produced a real assistant turn. An explicit value is therefore REQUIRED.
-# Since this port serves an arbitrary model over an OpenAI-compatible proxy, and the
-# victims span very different caps, ``None`` (the default) DERIVES the value per model via
-# :func:`_model_max_tokens` rather than pinning every model to the floor.
-#
-# WHY an explicit value is needed at all: OpenClaw's ``clampOpenAICompletionsMaxTokens`` is a
-# one-directional CEILING, not a fallback -- ``modelMaxTokens === void 0 || requested <=
-# modelMaxTokens ? requested : modelMaxTokens``. OpenClaw independently requests 8192, and this
-# field only ever pulls that request DOWN. Omitting it does not mean "ask for what the model
-# supports"; it means "do not restrain my request", so the 8192 goes out unclamped and 400s.
+# ``maxTokens`` is a one-directional CEILING on OpenClaw's OWN request, not a fallback:
+# ``clampOpenAICompletionsMaxTokens`` returns the request unchanged when the field is
+# absent. OpenClaw independently asks for 8192, so omitting the key does not mean "ask
+# what the model supports", it means "do not restrain me" -- and a model capped below
+# 8192 then 400s every request, which OpenClaw misreads as context overflow and ends the
+# turn silently, scoring 0.0 exactly like a defended attack. Hence: ``None`` DERIVES the
+# real cap per model (a no-op for any model at or above 8192), and a model litellm cannot
+# size falls back to OpenClaw's stock behaviour. Full evidence in ASSUMPTIONS.md C.3.
 DEFAULT_MAX_TOKENS: int | None = None
 
 #: Context window advertised alongside the model entry. Purely informational to OpenClaw
