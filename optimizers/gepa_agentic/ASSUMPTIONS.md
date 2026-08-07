@@ -118,3 +118,37 @@ targets without changing the algorithm:
   (a side-effecting nondeterminism hazard) and consumed the injection budget that
   `env_tool` needs. `code_execution` has no faithful natural-language payload, so it is
   no longer treated as a content surface.
+
+## DTAP fitness: content-surface deferral is no longer unconditional
+
+A planned content surface is a deferred delivery channel: `env_tool:<server>` (and
+AgentDojo/inspect-agent equivalents) is a PostCall that only fires if the agent calls
+that tool. Until now, planning such a surface made `_handle_pre_call` decline
+`user_prompt` and `system_prompt` for the whole task, on the assumption that the
+deferred surface would eventually fire.
+
+On a DTAP `threat_model="direct"` task that assumption is false and unrecoverable. The
+task carries no user instructions, so `dtap_scaffold`'s agent loop launches the agent
+with the empty-string prompt (`for turn in (self._user_instructions or ("",))`). The
+agent has nothing to act on, calls no tool, and the PostCall never fires. Every run
+therefore delivered nothing at all and scored 0.0, for the entire attempt budget.
+
+The optimizer cannot detect this at decision time: DTAP emits both prompt PreCalls
+before any PostCall, so when `user_prompt` is decided it is structurally unknown
+whether the content surface will fire this run. The only available evidence is the
+previous run. `_update_surface_stats` already computes which planned content surfaces
+actually delivered; that same computation now also sets `_content_delivered_recently`,
+and the decline branch requires it. The flag starts `True`, so run 1 is unchanged and
+still prefers the content surface. The first run that plans a content surface and
+delivers nothing flips it, and from run 2 on the prompt channels are eligible again,
+in parallel with the content surface still being attempted on the same run.
+
+Fidelity cost: none against the GEPA paper (Agrawal et al., arXiv:2507.19457), which
+defines reflective mutation over scored rollouts and says nothing about multi-surface
+agent delivery. The surface-selection policy is this port's own invention (see
+"Surface Model" above), so this is a delivery-plumbing change, not a method change. The
+one property given up is a port-local one: "at most one clean attributable surface per
+run". After a missed run, a stochastic content surface that does fire can now coincide
+with a prompt injection in the same run, so the rollout record lists both surfaces and
+attribution between them is ambiguous. Cost on a genuinely dead task is one wasted run
+instead of `max_attempts` (default 20).

@@ -539,6 +539,72 @@ class TestPromptFallback:
 
         assert isinstance(resp, ControllableNoInjection)
 
+    @pytest.mark.asyncio
+    async def test_prompt_channels_reopen_after_content_surface_never_fires(
+        self,
+    ) -> None:
+        # A deferred content surface (tool PostCall) only fires if the agent calls
+        # that tool. On a DTAP direct task the agent is launched with an empty user
+        # prompt, so it takes no action, the PostCall never fires, and the run
+        # delivers nothing at all. After one such run the prompt surfaces must
+        # become eligible again instead of being declined for the whole budget.
+        opt = await _init_optimizer(
+            controllables=[_user_ctrl(), _read_ctrl()], max_attempts=3
+        )
+
+        # Run 1: content surface planned, prompt declined, PostCall never fires.
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        first = await _dispatch_event(
+            opt,
+            ControllablePreCallEvent(controllable=_user_ctrl(), request=""),
+        )
+        assert isinstance(first, ControllableNoInjection)
+        with patch.object(opt._reflector, "propose", new=AsyncMock(return_value=None)):
+            await _dispatch_event(
+                opt,
+                RunEndEvent(evaluation=_failure_eval(0.0), security_domain=USER_TAG),
+            )
+
+        # Run 2: the content surface missed last run, so the prompt reopens.
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        second = await _dispatch_event(
+            opt,
+            ControllablePreCallEvent(controllable=_user_ctrl(), request=""),
+        )
+
+        assert isinstance(second, ControllableInjection)
+        assert second.value
+
+    @pytest.mark.asyncio
+    async def test_prompt_channels_stay_skipped_while_content_surface_delivers(
+        self,
+    ) -> None:
+        read_ctrl = _read_ctrl()
+        opt = await _init_optimizer(
+            controllables=[_user_ctrl(), read_ctrl], max_attempts=3
+        )
+
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(
+            opt,
+            ControllablePostCallEvent(
+                controllable=read_ctrl, request="read", answer="legitimate page"
+            ),
+        )
+        with patch.object(opt._reflector, "propose", new=AsyncMock(return_value=None)):
+            await _dispatch_event(
+                opt,
+                RunEndEvent(evaluation=_failure_eval(0.2), security_domain=USER_TAG),
+            )
+
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        resp = await _dispatch_event(
+            opt,
+            ControllablePreCallEvent(controllable=_user_ctrl(), request="hello"),
+        )
+
+        assert isinstance(resp, ControllableNoInjection)
+
 
 class TestRolloutContext:
     @pytest.mark.asyncio

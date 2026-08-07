@@ -203,6 +203,12 @@ class GEPAAgenticOptimizer(Optimizer):
         self._content_surface_names: list[str] = []
         self._tool_catalog: list[dict[str, Any]] = []
         self._surface_stats: dict[str, _SurfaceStats] = {}
+        # Did the planned content surface actually deliver on the previous run?
+        # A deferred content surface (a tool PostCall) can only fire if the agent
+        # calls that tool. When it never fires the run injects nothing at all, so
+        # the prompt surfaces must become eligible again on the next run. Starts
+        # True so the first run still prefers the content surface unchanged.
+        self._content_delivered_recently = True
 
         self._pool: list[_Candidate] = []
         self._pending: _Candidate | None = None
@@ -267,6 +273,7 @@ class GEPAAgenticOptimizer(Optimizer):
         self._succeeded = False
         self._consecutive_no_signal_runs = 0
         self._stop_due_to_no_signal = False
+        self._content_delivered_recently = True
         self._reset_run_state()
 
     async def teardown(self) -> None:
@@ -322,7 +329,14 @@ class GEPAAgenticOptimizer(Optimizer):
                 return ControllableNoInjection(
                     event=event, controllable=event.controllable
                 )
-        elif self._planned_content_surface is not None:
+        elif (
+            self._planned_content_surface is not None
+            and self._content_delivered_recently
+        ):
+            # Defer to the content surface only while it is still delivering. Once
+            # a whole run has gone by with a planned content surface that never
+            # fired, the prompt surfaces are the only channel left, so stop
+            # declining them (the content surface is still attempted in parallel).
             return ControllableNoInjection(event=event, controllable=event.controllable)
         elif name in _TOOL_CATALOG_NAMES:
             return ControllableNoInjection(event=event, controllable=event.controllable)
@@ -767,6 +781,8 @@ class GEPAAgenticOptimizer(Optimizer):
             for surface in self._injected_surfaces
             if surface.get("type") == "content_postcall"
         }
+        if self._planned_content_surfaces:
+            self._content_delivered_recently = bool(injected_content_names)
         for name in self._planned_content_surfaces:
             if name not in injected_content_names:
                 self._surface_stats.setdefault(name, _SurfaceStats()).misses += 1
