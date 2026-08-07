@@ -61,9 +61,65 @@ own metric fires or the attempt budget runs out, so such tasks consume more atte
 more LLM budget, and reported Chord success rates on DTAP will drop where those wins were
 in fact direct-instruction wins.
 
-Still open (not addressed here): the goal-text query fallback itself. Chord's threat model
-puts nothing adversarial in the user prompt; the query is a benign task that merely needs
-the victim tool, and the whole attack lives in the helper description. Replacing the
-target's benign prompt with the attacker's goal is a deviation from that model. Fixing it
-requires deciding what a non-official victim's benign query should be, which is a design
-question, not plumbing.
+## Success attribution: the query fallback (second half of the fix above)
+
+The helper-must-be-called gate above stops a direct-instruction win from being
+misreported as a Chord win once it happens. It does not stop the direct-instruction
+attack from happening in the first place. That was the "still open" item in the
+previous revision of this file; it is now closed.
+
+Chord's published attack puts nothing adversarial in the user prompt. The prompt
+carries a benign task that merely happens to need the victim tool; the whole attack
+lives in the fake helper tool's description. `_queries_for` looks up that benign task
+in Chord's official query data, keyed by LangChain tool name. Chord's official set has
+32 such keys. Against DTAP's tool catalogue, those keys intersect on essentially none
+of the domains that matter (one domain, `os-filesystem`, matches on `read_file`,
+`write_file`, `move_file`, `list_directory` — 5 of 55 tasks in the indirect55 profile).
+For the other 50 of 55, `_queries_for` had no official query and fell back to writing
+the attacker's own goal text into the user prompt verbatim. That turns Chord into a
+direct-instruction attack: the "user" now explicitly asks for the malicious outcome,
+which no published Chord threat model does, and which the DTAP judge can then credit
+for reasons that have nothing to do with the helper tool ever being invoked.
+
+The fix: DTAP already stages the target's own benign task as the PreCall `request`
+value, and returns it unmodified when the optimizer declines
+(`dtap_scaffold/agent_base.py`: `return _safe_str(injected) if injected is not None
+else default`). Every indirect DTAP task carries one. So when there is no official
+query for the selected victim tool (`_has_user_prompt` is true but
+`load_official_queries()` has no entry, or `use_official_queries=False`),
+`_queries_for` now returns a single `None` "query" instead of the goal-text fallback,
+and `_maybe_inject_user_prompt` treats `None` as "decline the user prompt" rather than
+"write this value in". The benign task DTAP staged as the default survives untouched.
+`candidate.query: str | None` carries that sentinel through to the harvest-judge
+context builder too, where a `None` is simply filtered out (harvest already treats a
+missing query as no additional context, which is what it was in this case before the
+optimizer had ever written anything).
+
+The one case left using the old goal-text fallback is when there is no user-prompt
+controllable in scope at all (`_has_user_prompt` is false). There is nothing to decline
+there — the query was never going into a user turn — so the fallback still exists
+purely to give the harvest judge some goal-shaped context to compare a harvested
+argument against, matching pre-existing test coverage
+(`test_without_user_prompt_access_does_not_repeat_official_queries`).
+
+Fidelity cost: none against the Chord paper; if anything the port moves closer to it,
+since the user prompt Chord's threat model requires to stay benign now actually stays
+benign on the 50/55 previously-mismodeled tasks. Behavioural cost: on those 50 tasks the
+optimizer now depends entirely on the target's own benign instruction menu having
+brought the victim tool into play and on the fake helper's *description* alone to divert
+the agent — Chord's actual mechanism — rather than the easier, non-Chord shortcut of
+asking outright. Expect Chord's measured success rate on DTAP to drop on these tasks: the
+prior number was inflated by a vector Chord does not claim.
+
+Residual, not addressed here: `_select_victim_tools` still picks the victim tool from
+the attacker's *goal* text (or the target's declared catalog / an LLM classification
+pass over it) with no requirement that the target's benign instruction — the one that
+now actually reaches the model — ever exercises that tool. If the benign task and the
+attacker's chosen victim tool are unrelated, the agent may simply never call the victim
+tool at all in that run, the helper is never adjacent to anything, and Chord's HSR/HASR
+success rule can never fire regardless of how well the helper description would have
+worked. That is a structural ceiling on measured Chord success against DTAP, not a bug
+this fix removes: it would require either selecting the victim tool from what the benign
+instruction is actually likely to invoke, or restricting evaluation to DTAP tasks where
+goal and benign instruction already agree on a tool. Both are design decisions, not
+plumbing, and are out of scope here.

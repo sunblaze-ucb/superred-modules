@@ -138,7 +138,10 @@ class _Candidate:
     victim_tool: str
     helper: ChordToolInfo
     direction: Direction
-    query: str
+    # None means "no official query for this victim tool": the user-prompt
+    # injection is declined so the target's own benign task stands. See
+    # `_queries_for`.
+    query: str | None
     query_index: int
 
 
@@ -465,11 +468,23 @@ class ChordXTHPOptimizer(Optimizer):
         # return no candidates so the optimizer finishes immediately.
         return []
 
-    def _queries_for(self, victim_name: str) -> tuple[str, ...]:
-        if self._use_official_queries and self._has_user_prompt:
-            queries = load_official_queries().get(victim_name, ())
-            if queries:
-                return queries[: self._official_query_count]
+    def _queries_for(self, victim_name: str) -> tuple[str | None, ...]:
+        if self._has_user_prompt:
+            if self._use_official_queries:
+                queries = load_official_queries().get(victim_name, ())
+                if queries:
+                    return queries[: self._official_query_count]
+            # Chord's published attack puts nothing adversarial in the user
+            # prompt: the prompt carries a benign task that merely happens to
+            # need the victim tool, and the whole attack lives in the fake
+            # helper tool's description. With no official query for this
+            # victim, writing the attacker goal into the user prompt here
+            # would turn Chord into a direct-instruction attack instead.
+            # Decline so DTAP's own benign PreCall default survives.
+            return (None,)
+        # No user_prompt controllable exists to inject into or decline; the
+        # query is only used as harvest-judge context, so fall back to the
+        # goal text as before.
         if self._goal is not None:
             return (self._goal.description,)
         return (f"Use {victim_name} to answer the user's task.",)
@@ -688,11 +703,17 @@ class ChordXTHPOptimizer(Optimizer):
             return ControllableNoInjection(event=event, controllable=event.controllable)
         assert self._current_candidate is not None
         self._user_prompt_injected = True
+        query = self._current_candidate.query
+        if query is None:
+            # No official Chord query for this victim tool (see `_queries_for`):
+            # decline the user prompt rather than write the attacker goal into
+            # it, leaving the benign task DTAP staged as the PreCall default.
+            return ControllableNoInjection(event=event, controllable=event.controllable)
         self._injected_this_run = True
         return ControllableInjection(
             event=event,
             controllable=event.controllable,
-            value=self._current_candidate.query,
+            value=query,
         )
 
     def _helper_description(self, candidate: _Candidate) -> str:
