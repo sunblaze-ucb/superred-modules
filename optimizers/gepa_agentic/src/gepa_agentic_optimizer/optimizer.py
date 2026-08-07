@@ -324,6 +324,13 @@ class GEPAAgenticOptimizer(Optimizer):
         if self._target_controllable_name is None and name == _TOOL_CATALOG_REWRITE_DOC:
             return self._maybe_inject_tool_catalog_rewrite(event)
 
+        # A user prompt the target reached with nothing to say. It is the turn the
+        # agent acts on, so declining it hands the agent no task at all and the run
+        # measures the harness rather than a defence. There is no benign request to
+        # displace either, so this one is always filled: neither the content surface
+        # below nor a prompt surface that already holds the run takes it away.
+        empty_user_turn = self._is_user_prompt(name) and not event.request.strip()
+
         if self._target_controllable_name is not None:
             if name != self._target_controllable_name:
                 return ControllableNoInjection(
@@ -332,6 +339,7 @@ class GEPAAgenticOptimizer(Optimizer):
         elif (
             self._planned_content_surface is not None
             and self._content_delivered_recently
+            and not empty_user_turn
         ):
             # Defer to the content surface only while it is still delivering. Once
             # a whole run has gone by with a planned content surface that never
@@ -347,7 +355,9 @@ class GEPAAgenticOptimizer(Optimizer):
 
         if self._primary_pre_controllable is None:
             self._primary_pre_controllable = event.controllable
-        elif event.controllable != self._primary_pre_controllable:
+        elif (
+            event.controllable != self._primary_pre_controllable and not empty_user_turn
+        ):
             return ControllableNoInjection(event=event, controllable=event.controllable)
 
         if not accepts_free_text(event.controllable):

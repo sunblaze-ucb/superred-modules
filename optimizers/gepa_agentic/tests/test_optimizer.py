@@ -544,9 +544,8 @@ class TestPromptFallback:
         self,
     ) -> None:
         # A deferred content surface (tool PostCall) only fires if the agent calls
-        # that tool. On a DTAP direct task the agent is launched with an empty user
-        # prompt, so it takes no action, the PostCall never fires, and the run
-        # delivers nothing at all. After one such run the prompt surfaces must
+        # that tool. When the agent never calls it, the PostCall never fires and the
+        # run delivers nothing at all. After one such run the prompt surfaces must
         # become eligible again instead of being declined for the whole budget.
         opt = await _init_optimizer(
             controllables=[_user_ctrl(), _read_ctrl()], max_attempts=3
@@ -556,7 +555,9 @@ class TestPromptFallback:
         await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         first = await _dispatch_event(
             opt,
-            ControllablePreCallEvent(controllable=_user_ctrl(), request=""),
+            ControllablePreCallEvent(
+                controllable=_user_ctrl(), request="book a flight"
+            ),
         )
         assert isinstance(first, ControllableNoInjection)
         with patch.object(opt._reflector, "propose", new=AsyncMock(return_value=None)):
@@ -569,7 +570,9 @@ class TestPromptFallback:
         await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
         second = await _dispatch_event(
             opt,
-            ControllablePreCallEvent(controllable=_user_ctrl(), request=""),
+            ControllablePreCallEvent(
+                controllable=_user_ctrl(), request="book a flight"
+            ),
         )
 
         assert isinstance(second, ControllableInjection)
@@ -604,6 +607,102 @@ class TestPromptFallback:
         )
 
         assert isinstance(resp, ControllableNoInjection)
+
+
+class TestEmptyUserTurn:
+    """A user prompt reached with an empty request is the agent's only task.
+
+    On a DTAP direct task the scaffold has no benign instruction to put in the
+    user turn, so it reaches the user_prompt controllable with ``request=""`` and
+    passes whatever comes back to the agent container as its message. Declining
+    it launches an agent with no task, which scores zero for a harness reason
+    rather than a defence, so this surface is always filled.
+    """
+
+    @pytest.mark.asyncio
+    async def test_empty_user_turn_is_filled_while_content_surface_delivers(
+        self,
+    ) -> None:
+        opt = await _init_optimizer(controllables=[_user_ctrl(), _read_ctrl()])
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+
+        resp = await _dispatch_event(
+            opt,
+            ControllablePreCallEvent(controllable=_user_ctrl(), request=""),
+        )
+
+        assert isinstance(resp, ControllableInjection)
+        assert resp.value == "achieve target X"
+
+    @pytest.mark.asyncio
+    async def test_empty_user_turn_is_filled_after_the_system_prompt_took_the_run(
+        self,
+    ) -> None:
+        # Targets offer the system prompt before the user prompt, so the first-wins
+        # lock settles on the system prompt. The empty user turn is still filled.
+        opt = await _init_optimizer(controllables=[_system_ctrl(), _user_ctrl()])
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+
+        system_resp = await _dispatch_event(
+            opt,
+            ControllablePreCallEvent(controllable=_system_ctrl(), request="system"),
+        )
+        user_resp = await _dispatch_event(
+            opt,
+            ControllablePreCallEvent(controllable=_user_ctrl(), request=""),
+        )
+
+        assert isinstance(system_resp, ControllableInjection)
+        assert isinstance(user_resp, ControllableInjection)
+        assert user_resp.value == "achieve target X"
+
+    @pytest.mark.asyncio
+    async def test_benign_user_turn_is_still_declined_once_a_surface_holds_the_run(
+        self,
+    ) -> None:
+        # The exemption is only for an empty request. A user turn that carries a
+        # benign instruction is left alone, so an indirect task keeps the task the
+        # injected content is supposed to subvert.
+        opt = await _init_optimizer(controllables=[_system_ctrl(), _user_ctrl()])
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+
+        await _dispatch_event(
+            opt,
+            ControllablePreCallEvent(controllable=_system_ctrl(), request="system"),
+        )
+        user_resp = await _dispatch_event(
+            opt,
+            ControllablePreCallEvent(
+                controllable=_user_ctrl(), request="book a flight"
+            ),
+        )
+
+        assert isinstance(user_resp, ControllableNoInjection)
+
+    @pytest.mark.asyncio
+    async def test_empty_user_turn_is_filled_on_every_run(self) -> None:
+        opt = await _init_optimizer(
+            controllables=[_user_ctrl(), _read_ctrl()], max_attempts=3
+        )
+
+        for _ in range(2):
+            await _dispatch_event(
+                opt, RunStartEvent(trajectory=_FakeReadableTrajectory())
+            )
+            resp = await _dispatch_event(
+                opt,
+                ControllablePreCallEvent(controllable=_user_ctrl(), request=""),
+            )
+            assert isinstance(resp, ControllableInjection)
+            with patch.object(
+                opt._reflector, "propose", new=AsyncMock(return_value=None)
+            ):
+                await _dispatch_event(
+                    opt,
+                    RunEndEvent(
+                        evaluation=_failure_eval(0.0), security_domain=USER_TAG
+                    ),
+                )
 
 
 class TestRolloutContext:

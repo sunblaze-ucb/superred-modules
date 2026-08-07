@@ -152,3 +152,37 @@ run". After a missed run, a stochastic content surface that does fire can now co
 with a prompt injection in the same run, so the rollout record lists both surfaces and
 attribution between them is ambiguous. Cost on a genuinely dead task is one wasted run
 instead of `max_attempts` (default 20).
+
+## DTAP fitness: an empty user turn is always filled
+
+The previous section made the prompt channels eligible again after a content surface
+missed. It did not make them eligible on the runs where the content surface does
+deliver, and on a DTAP `threat_model="direct"` task that is not enough.
+
+The reason is that the DTAP user prompt is not one payload channel among several. It
+is the only thing that gives the agent a turn. `dtap_scaffold` reaches the
+`user_prompt` controllable with `request=""` on a direct task (there are no benign
+instructions to put there), and whatever comes back becomes the agent container's
+message. `dtap_openclaw` then launches with `--message ""`, which its CLI rejects, so
+the container exits 1 before the agent runs. The task is recorded as defended when
+nothing was ever tried.
+
+So the rule is not "prefer this surface", it is "this surface cannot be left empty".
+`_handle_pre_call` computes `empty_user_turn` (a reserved user-prompt name whose
+`request` is blank) and exempts it from two declines: the content-surface deferral,
+and the first-wins `_primary_pre_controllable` lock. Nothing else changes. A user
+prompt that carries a benign request is untouched, so an indirect task keeps the
+legitimate instruction that its injected content is supposed to subvert, and every
+other target (AgentDojo, ASB, chatbot, inspect-agent) passes a non-empty user request
+and is unaffected.
+
+Fidelity cost: none against the GEPA paper (Agrawal et al., arXiv:2507.19457). The
+payload is unchanged, the reflective loop is unchanged, and only the delivery of an
+otherwise empty field changes. The port-local cost is the same one the previous
+section already accepted: on a run where another surface already holds the lock, the
+rollout record lists two injected surfaces (both carrying the same evolved text), so
+attribution between them is ambiguous. `_selected_surface` still reports the first.
+
+What this does not do: it does not decide anything when the target hands the optimizer
+a non-empty user request, so a scope that grants both prompts still settles on
+whichever surface the target offers first (the system prompt on DTAP).
