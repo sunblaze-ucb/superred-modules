@@ -74,7 +74,7 @@ lives in the fake helper tool's description. `_queries_for` looks up that benign
 in Chord's official query data, keyed by LangChain tool name. Chord's official set has
 32 such keys. Against DTAP's tool catalogue, those keys intersect on essentially none
 of the domains that matter (one domain, `os-filesystem`, matches on `read_file`,
-`write_file`, `move_file`, `list_directory` — 5 of 55 tasks in the indirect55 profile).
+`write_file`, `move_file`, `list_directory`, 5 of 55 tasks in the indirect55 profile).
 For the other 50 of 55, `_queries_for` had no official query and fell back to writing
 the attacker's own goal text into the user prompt verbatim. That turns Chord into a
 direct-instruction attack: the "user" now explicitly asks for the malicious outcome,
@@ -97,7 +97,7 @@ optimizer had ever written anything).
 
 The one case left using the old goal-text fallback is when there is no user-prompt
 controllable in scope at all (`_has_user_prompt` is false). There is nothing to decline
-there — the query was never going into a user turn — so the fallback still exists
+there (the query was never going into a user turn) so the fallback still exists
 purely to give the harvest judge some goal-shaped context to compare a harvested
 argument against, matching pre-existing test coverage
 (`test_without_user_prompt_access_does_not_repeat_official_queries`).
@@ -107,14 +107,14 @@ since the user prompt Chord's threat model requires to stay benign now actually 
 benign on the 50/55 previously-mismodeled tasks. Behavioural cost: on those 50 tasks the
 optimizer now depends entirely on the target's own benign instruction menu having
 brought the victim tool into play and on the fake helper's *description* alone to divert
-the agent — Chord's actual mechanism — rather than the easier, non-Chord shortcut of
+the agent (Chord's actual mechanism) rather than the easier, non-Chord shortcut of
 asking outright. Expect Chord's measured success rate on DTAP to drop on these tasks: the
 prior number was inflated by a vector Chord does not claim.
 
 Residual, not addressed here: `_select_victim_tools` still picks the victim tool from
 the attacker's *goal* text (or the target's declared catalog / an LLM classification
-pass over it) with no requirement that the target's benign instruction — the one that
-now actually reaches the model — ever exercises that tool. If the benign task and the
+pass over it) with no requirement that the target's benign instruction (the one that
+now actually reaches the model) ever exercises that tool. If the benign task and the
 attacker's chosen victim tool are unrelated, the agent may simply never call the victim
 tool at all in that run, the helper is never adjacent to anything, and Chord's HSR/HASR
 success rule can never fire regardless of how well the helper description would have
@@ -172,24 +172,28 @@ instruction is carried by accumulating the earlier descriptions into the generat
 messages, exactly as upstream does. So the port already implements upstream's optimisation
 loop, folded onto the candidate walk.
 
-Recommended bound: 2 (author once, regenerate once), down from upstream's 3. The argument
-is the shared budget. Upstream's 3 was amortised over five queries per description and a
-dedicated optimisation phase separate from the frozen-grid evaluation. This port has
-neither: on DTAP there is no official query for these victims, so each description gets a
-single run (`_queries_for` yields one entry), and a single 20-run-per-task budget is shared
-across both directions and every selected victim. The schedule is
-`2 directions x V victims x N descriptions x 1 query`, and only the first 20 candidates
-ever execute. With `N = 2` that is `4V` candidates, which runs to completion for up to five
-victims; with `N = 3` it is `6V`, which already exceeds 20 at `V = 4`, so the nominal third
-regeneration would never execute and the "3" would be a fidelity claim the runtime cannot
-honour. The interaction with the medical predecessor dead end below sharpens this: because
-predecessor candidates cannot win there and the schedule tries all predecessor candidates
-before any successor candidate, `N = 2` also keeps the winnable successor direction inside
-the budget (10 predecessor runs, then 10 successor runs, at `V = 5`), whereas `N = 3` spends
-15 runs on the unwinnable direction and starves successor. 2 is the largest bound that runs
-honestly to completion in the medical configuration, and it preserves upstream's essential
-property that a failed description is fed back at least once. The bound stays a constructor
-argument, so a target with a smaller victim count or an official query set can raise it.
+Recommended bound: 2 (author once, regenerate once), down from upstream's 3. Upstream's 3
+was amortised over five queries per description and a dedicated optimisation phase separate
+from the frozen-grid evaluation. This port has neither: on DTAP there is no official query
+for these victims, so each description gets a single run (`_queries_for` yields one entry),
+and a single 20-run-per-task budget is shared across both directions and every selected
+victim. The schedule is `2 directions x V victims x N descriptions x 1 query`, direction-outer
+(all predecessor candidates first, then all successor), and only the first 20 candidates ever
+execute.
+
+The case for 2 over 3 is fidelity under that shared budget, not a tidy arithmetic fit. 2
+preserves upstream's essential property that a failed description is fed back at least once
+(author once, regenerate once), which is the "once or twice" this bound is meant to be; 3
+adds a third description per (victim, direction) that the runtime rarely reaches, so a nominal
+"3" would be a fidelity claim the schedule cannot honour. Raising N does not buy adaptation
+depth here, because on DTAP the binding constraint is victim count, not regeneration depth:
+victim selection is broad (a medical indirect task selected about sixteen victims live), so
+the `V x N` predecessor candidates alone meet or exceed the 20-run budget for any `N >= 1`.
+Because the schedule is direction-outer, that also means the winnable successor direction may
+not be reached within budget at all, regardless of N. That is a property of the schedule order
+and the victim count, recorded here and not engineered around; it does not move the N
+recommendation. The bound stays a constructor argument, so a target with a small victim count
+or an official query set, where deeper regeneration would actually execute, can raise it.
 
 ## Medical indirect tasks: the predecessor dead end (FAITHFUL BUT FAILS HERE)
 

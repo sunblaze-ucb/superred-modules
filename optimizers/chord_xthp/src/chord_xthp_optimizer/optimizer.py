@@ -214,10 +214,12 @@ class ChordXTHPOptimizer(Optimizer):
         # collapsed onto the candidate walk. Upstream used 3, amortised over a
         # 5-query test per description and a dedicated optimisation phase. This port
         # shares one 20-run-per-task budget across both directions and every victim
-        # and gives each description a single run, so 2 (retry once) is the largest
-        # bound that still runs to completion for the medical config (up to 5
-        # victims, both directions); 3 would leave later regenerations unexecuted.
-        # See ASSUMPTIONS.md, "Bounded regeneration".
+        # and gives each description a single run. 2 (author once, regenerate once)
+        # preserves upstream's "feed a failed description back at least once"
+        # property with the smallest footprint; 3 adds a third description per
+        # (victim, direction) the shared budget rarely reaches, because on DTAP
+        # victim count alone fills the 20-run budget (a medical task selected ~16
+        # victims live). See ASSUMPTIONS.md, "Bounded regeneration".
         self._description_generation_limit = description_generation_limit
         # Transient-error retry for a single generation call (parse/transport
         # failure), distinct from the regeneration bound above.
