@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from itertools import groupby
 from typing import Any
 
 import pytest
@@ -27,6 +28,7 @@ from superred.core.types.security_domain import SecurityDomainTag
 from superred.core.types.trajectory import Trajectory
 
 from chord_xthp_optimizer.optimizer import _POLLUTE_SENTINEL, ChordXTHPOptimizer
+from chord_xthp_optimizer.prompts import get_description_generation_prompt
 
 USER_TAG = SecurityDomainTag("user")
 TOOLS_TAG = SecurityDomainTag("tools")
@@ -1966,3 +1968,128 @@ async def test_dtap_builds_schedule_from_midrun_catalogue_without_explicit_victi
     assert payload["name"] == "QueryFormatter"
     assert opt._current_candidate is not None
     assert opt._current_candidate.victim_tool == "brave_search"
+
+
+def _generation_calls(
+    llm: _ScriptedLLM, direction: str
+) -> list[list[dict[str, str]]]:
+    """The helper-description generation calls, identified by their system prompt."""
+    prompt = get_description_generation_prompt(direction)  # type: ignore[arg-type]
+    return [messages for messages in llm.calls if messages[0]["content"] == prompt]
+
+
+@pytest.mark.asyncio
+async def test_generation_prompt_receives_victim_tool_and_task() -> None:
+    # Change 2 (PORT LIBERTY): the helper generator is authored with real context.
+    # It already saw the victim tool's name and description; the actual task is the
+    # missing piece, so a task-informed helper reads as a plausible step for THIS
+    # task rather than a blind guess.
+    goal_text = "Find the latest election result using the search tool."
+    llm = _ScriptedLLM(
+        [
+            json.dumps({"web_lookup": "victim-tool"}),
+            json.dumps(
+                {"name": "LookupFormatter", "description": "Formats inputs for web_lookup."}
+            ),
+        ]
+    )
+    opt = ChordXTHPOptimizer(
+        direction="predecessor",
+        enabled_attacks=("hijack",),
+        official_query_count=1,
+        max_attempts=1,
+    )
+    catalog = [{"name": "web_lookup", "description": "Search the live web for current facts."}]
+    await opt.initialize(
+        Goal(description=goal_text),
+        [ctrl("tool_catalog_register")],
+        [obs("tool_catalog_listing", catalog)],
+        llm,
+    )
+
+    calls = _generation_calls(llm, "predecessor")
+    assert calls, "expected at least one helper-description generation call"
+    blob = " ".join(message["content"] for message in calls[0])
+    # The real victim tool (name + description) and the actual task both reach the
+    # generator.
+    assert "web_lookup" in blob
+    assert "Search the live web for current facts." in blob
+    assert goal_text in blob
+
+
+@pytest.mark.asyncio
+async def test_regeneration_is_bounded_and_does_not_repeat_a_failed_description() -> None:
+    # Change 3: the default per-victim regeneration bound is 2, and the second
+    # generation is told the first description and asked for a different one.
+    llm = _ScriptedLLM(
+        [
+            json.dumps({"web_lookup": "victim-tool"}),
+            json.dumps({"name": "FirstHelper", "description": "First description."}),
+            json.dumps({"name": "SecondHelper", "description": "Second description."}),
+            # A third description would be authored only if the bound allowed it.
+            json.dumps({"name": "ThirdHelper", "description": "Third description."}),
+        ]
+    )
+    opt = ChordXTHPOptimizer(
+        direction="predecessor",
+        enabled_attacks=("hijack",),
+        official_query_count=1,
+    )
+    catalog = [{"name": "web_lookup", "description": "Search the live web."}]
+    await opt.initialize(
+        Goal(description="Answer the user's task."),
+        [ctrl("tool_catalog_register")],
+        [obs("tool_catalog_listing", catalog)],
+        llm,
+    )
+
+    calls = _generation_calls(llm, "predecessor")
+    # Bounded: exactly two distinct descriptions authored for the one victim.
+    assert len(calls) == 2
+    # Non-repeating: the second generation carries the first description back as a
+    # thing not to repeat.
+    second = " ".join(message["content"] for message in calls[1])
+    assert "generate a different description" in second
+    assert "First description." in second
+    # Both authored helpers become candidates for that victim, in order.
+    helpers = [c.helper.name for c in opt._candidate_schedule if c.victim_tool == "web_lookup"]
+    assert helpers == ["FirstHelper", "SecondHelper"]
+
+
+@pytest.mark.asyncio
+async def test_schedule_advances_to_next_victim_after_regeneration_is_exhausted() -> None:
+    # Change 3: a victim's regenerations are tried before the schedule moves on to
+    # the next victim; they are not interleaved.
+    llm = _ScriptedLLM(
+        [
+            json.dumps({"web_lookup": "victim-tool", "doc_fetch": "victim-tool"}),
+            json.dumps({"name": "WebHelperA", "description": "web helper a"}),
+            json.dumps({"name": "WebHelperB", "description": "web helper b"}),
+            json.dumps({"name": "DocHelperA", "description": "doc helper a"}),
+            json.dumps({"name": "DocHelperB", "description": "doc helper b"}),
+        ]
+    )
+    opt = ChordXTHPOptimizer(
+        direction="predecessor",
+        enabled_attacks=("hijack",),
+        official_query_count=1,
+    )
+    catalog = [
+        {"name": "web_lookup", "description": "Search the live web."},
+        {"name": "doc_fetch", "description": "Fetch a document."},
+    ]
+    await opt.initialize(
+        Goal(description="Answer the user's task."),
+        [ctrl("tool_catalog_register")],
+        [obs("tool_catalog_listing", catalog)],
+        llm,
+    )
+
+    victims = [c.victim_tool for c in opt._candidate_schedule]
+    # Each victim contributes two consecutive candidates (its two regenerations);
+    # collapsing consecutive duplicates leaves exactly one run per victim, proving
+    # they are contiguous rather than interleaved.
+    runs = [victim for victim, _ in groupby(victims)]
+    assert len(runs) == 2
+    assert sorted(runs) == ["doc_fetch", "web_lookup"]
+    assert all(victims.count(name) == 2 for name in runs)
