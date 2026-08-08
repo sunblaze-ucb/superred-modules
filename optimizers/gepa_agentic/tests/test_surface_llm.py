@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from superred.core.types.controllable import Controllable
+from superred.core.types.llm import BudgetExhaustedError, LLMUsage
 from superred.core.types.security_domain import SecurityDomainTag
 
 from gepa_agentic_optimizer.surface_llm import (
@@ -45,6 +46,18 @@ def _raising_llm() -> Any:
     class _LLM:
         async def complete(self, _messages: Any, **_kwargs: Any) -> Any:
             raise RuntimeError("budget exhausted")
+
+    return _LLM()
+
+
+def _exhausted_llm(cost: float) -> Any:
+    """An LLM stub that raises BudgetExhaustedError carrying ``cost`` already spent."""
+
+    class _LLM:
+        async def complete(self, _messages: Any, **_kwargs: Any) -> Any:
+            raise BudgetExhaustedError(
+                "budget exhausted", usage=LLMUsage(calls=1, cost=cost)
+            )
 
     return _LLM()
 
@@ -140,6 +153,62 @@ class TestClassifyControllables:
     async def test_degrades_to_empty_on_error(self) -> None:
         ctrls = [Controllable(name="user_prompt", security_domain=TAG)]
         roles = await classify_controllables(_raising_llm(), ctrls, ("user-prompt",))
+        assert roles == {}
+
+    @pytest.mark.asyncio
+    async def test_no_user_prompt_surface_yields_no_user_prompt_label(self) -> None:
+        # A scope of content surfaces only, no user-prompt surface. With the
+        # improved prompt the model labels each surface by its own description and
+        # leaves the empty user-prompt category empty; our code fabricates no
+        # user-prompt label to fill it (the vacuity collapse this guards).
+        env = Controllable(
+            name="env_tool:gmail",
+            security_domain=TAG,
+            description=(
+                "Replace the value any gmail MCP tool returns to the agent "
+                "(indirect prompt injection). PostCall, once per tool call."
+            ),
+        )
+        llm = _llm('{"env_tool:gmail": "content-injection"}')
+        roles = await classify_controllables(
+            llm, [env], ("content-injection", "environment-write", "user-prompt")
+        )
+        assert "user-prompt" not in roles.values()
+        assert roles == {"env_tool:gmail": "content-injection"}
+
+    @pytest.mark.asyncio
+    async def test_prompt_forbids_inventing_category_members(self) -> None:
+        # The fix lives in the prompt: it must state a category may match zero
+        # surfaces and forbid filling an empty one. Guards a silent text revert.
+        llm = _llm("{}")
+        await classify_controllables(
+            llm,
+            [Controllable(name="env_tool:gmail", security_domain=TAG)],
+            ("content-injection", "user-prompt"),
+        )
+        system = llm.messages[0]["content"]
+        assert "zero surfaces" in system
+        assert "must stay empty" in system
+
+    @pytest.mark.asyncio
+    async def test_genuine_budget_exhaustion_propagates(self) -> None:
+        # An attacker that consumed a real budget (cost > 0) must escape rather
+        # than degrade to {} (a false zero indistinguishable from a defended
+        # target).
+        ctrls = [Controllable(name="env_tool:gmail", security_domain=TAG)]
+        with pytest.raises(BudgetExhaustedError):
+            await classify_controllables(
+                _exhausted_llm(0.05), ctrls, ("content-injection",)
+            )
+
+    @pytest.mark.asyncio
+    async def test_noop_budget_client_degrades_to_backstop(self) -> None:
+        # The budget-less noop client (nothing spent, cost == 0) is "no LLM", not
+        # "out of money"; it degrades to {} so the name-based backstop still runs.
+        ctrls = [Controllable(name="env_tool:gmail", security_domain=TAG)]
+        roles = await classify_controllables(
+            _exhausted_llm(0.0), ctrls, ("content-injection",)
+        )
         assert roles == {}
 
 

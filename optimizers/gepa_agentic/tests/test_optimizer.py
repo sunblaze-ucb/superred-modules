@@ -219,6 +219,44 @@ class TestSurfaceClassification:
         assert opt._content_surface_names == ["tool:get_balance"]
 
     @pytest.mark.asyncio
+    async def test_precall_only_surface_not_armed_as_postcall_content(self) -> None:
+        # Content is a ROLE; PostCall firing is a TIMING fact about the target. The
+        # LLM answers only the role question, so it labels a PreCall-only surface
+        # (dtap_scaffold's filesystem: attacker files the agent later reads) as
+        # content. That role is real, but the surface never returns a value the
+        # agent reads back, so it must not be armed as a PostCall content surface.
+        # Timing is read from the target's own description ("PreCall").
+        precall = Controllable(
+            name="filesystem",
+            security_domain=TOOL_TAG,
+            description=(
+                "Attacker write access to the target machine's filesystem BEFORE "
+                "the run: place files the agent later reads. PreCall, fired once "
+                "during run setup."
+            ),
+            value_type="json",
+        )
+        postcall = Controllable(
+            name="env_tool:gmail",
+            security_domain=TOOL_TAG,
+            description=(
+                "Replace the value any gmail MCP tool returns to the agent "
+                "(indirect prompt injection). PostCall, once per tool call."
+            ),
+            value_type="text",
+        )
+        llm = _classifying_llm(
+            {"filesystem": "content-injection", "env_tool:gmail": "content-injection"}
+        )
+        opt = await _init_optimizer(controllables=[precall, postcall], llm=llm)
+
+        # The PreCall surface is excluded despite its content role; the PostCall
+        # surface with the identical role is armed.
+        assert opt._content_surface_names == ["env_tool:gmail"]
+        assert opt._can_fire_postcall(postcall) is True
+        assert opt._can_fire_postcall(precall) is False
+
+    @pytest.mark.asyncio
     async def test_discovers_html_environment_surface_at_runtime(self) -> None:
         ctrl = Controllable(name="opaque_surface", security_domain=TOOL_TAG)
         opt = await _init_optimizer(controllables=[], max_attempts=2)

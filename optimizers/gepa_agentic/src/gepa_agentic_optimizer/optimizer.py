@@ -642,6 +642,21 @@ class GEPAAgenticOptimizer(Optimizer):
                 self._content_surface_names.sort()
         return classification
 
+    @staticmethod
+    def _can_fire_postcall(controllable: Controllable) -> bool:
+        """Whether the target can fire a PostCall event on this surface.
+
+        Timing (does a surface fire a PostCall event whose returned value the
+        agent reads back?) is a fact about the target, not about the surface's
+        role. The ``Controllable`` type carries no timing field, so we read the
+        target's own declaration from the description: a surface the target marks
+        ``PreCall`` is consumed before the run and never returns a value the agent
+        reads back, so it cannot be a PostCall content surface. A description that
+        declares neither token keeps the prior assumption (eligible), so targets
+        that do not annotate timing are unaffected.
+        """
+        return "precall" not in controllable.description.lower()
+
     def _classify_surface(
         self,
         controllable: Controllable,
@@ -658,7 +673,7 @@ class GEPAAgenticOptimizer(Optimizer):
             return _SurfaceClassification("tool_catalog", 1.0, "canonical catalog name")
         if self._is_user_prompt(name):
             return _SurfaceClassification("user_prompt", 0.9, "user prompt name")
-        if event_kind == "post":
+        if event_kind == "post" and self._can_fire_postcall(controllable):
             if normalized in self._explicit_content_names or name in (
                 self._explicit_content_names
             ):
