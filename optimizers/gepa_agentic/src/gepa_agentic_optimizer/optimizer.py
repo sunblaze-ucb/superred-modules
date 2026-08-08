@@ -203,6 +203,13 @@ class GEPAAgenticOptimizer(Optimizer):
         self._content_surface_names: list[str] = []
         self._tool_catalog: list[dict[str, Any]] = []
         self._surface_stats: dict[str, _SurfaceStats] = {}
+        # How far down the surface ladder this optimizer is willing to reach.
+        # Depth 0 defers to the planned content surface and declines the prompt
+        # channels; any greater depth also writes the prompt. It grows by one for
+        # every run whose planned content surface never fired, and never shrinks,
+        # so a surface that fires once does not re-blind the optimizer to the only
+        # channel that has actually delivered.
+        self._ladder_depth = 0
 
         self._pool: list[_Candidate] = []
         self._pending: _Candidate | None = None
@@ -267,6 +274,7 @@ class GEPAAgenticOptimizer(Optimizer):
         self._succeeded = False
         self._consecutive_no_signal_runs = 0
         self._stop_due_to_no_signal = False
+        self._ladder_depth = 0
         self._reset_run_state()
 
     async def teardown(self) -> None:
@@ -317,12 +325,30 @@ class GEPAAgenticOptimizer(Optimizer):
         if self._target_controllable_name is None and name == _TOOL_CATALOG_REWRITE_DOC:
             return self._maybe_inject_tool_catalog_rewrite(event)
 
+        # A user prompt the target reached with nothing to say. It is the turn the
+        # agent acts on, so declining it hands the agent no task at all and the run
+        # measures the harness rather than a defence. There is no benign request to
+        # displace either, so this one is always filled: neither the content surface
+        # below nor a prompt surface that already holds the run takes it away.
+        empty_user_turn = self._is_user_prompt(name) and not event.request.strip()
+
         if self._target_controllable_name is not None:
             if name != self._target_controllable_name:
                 return ControllableNoInjection(
                     event=event, controllable=event.controllable
                 )
-        elif self._planned_content_surface is not None:
+        elif (
+            self._planned_content_surface is not None
+            and self._ladder_depth == 0
+            and not empty_user_turn
+        ):
+            # Rung 0 of the ladder: defer to the planned content surface. A content
+            # surface is a deferred channel (a PostCall that only fires if the agent
+            # calls that tool), and whether it will fire is structurally unknowable
+            # when this PreCall is decided, so the only evidence is past runs. Each
+            # run that plans a content surface and delivers nothing deepens the
+            # ladder, permanently, and the prompt channels open alongside the content
+            # surface for the rest of the task.
             return ControllableNoInjection(event=event, controllable=event.controllable)
         elif name in _TOOL_CATALOG_NAMES:
             return ControllableNoInjection(event=event, controllable=event.controllable)
@@ -333,7 +359,9 @@ class GEPAAgenticOptimizer(Optimizer):
 
         if self._primary_pre_controllable is None:
             self._primary_pre_controllable = event.controllable
-        elif event.controllable != self._primary_pre_controllable:
+        elif (
+            event.controllable != self._primary_pre_controllable and not empty_user_turn
+        ):
             return ControllableNoInjection(event=event, controllable=event.controllable)
 
         if not accepts_free_text(event.controllable):
@@ -437,8 +465,14 @@ class GEPAAgenticOptimizer(Optimizer):
         rationale = ""
         evaluation = event.evaluation
         if evaluation is not None:
-            score = evaluation.primary_score.value
             rationale = evaluation.rationale
+            if self._injected_this_run:
+                score = evaluation.primary_score.value
+            # A run that injected nothing measured the target, not the candidate.
+            # Leaving ``score`` at None keeps that zero out of ``effective_score``
+            # and out of ``_should_accept_fresh_candidate``, which already requires
+            # a non-None score. The rollout is still recorded, so the reflection LM
+            # sees the miss and can react to it.
 
         signal_seen = (
             response is not None
@@ -782,6 +816,10 @@ class GEPAAgenticOptimizer(Optimizer):
             for surface in self._injected_surfaces
             if surface.get("type") == "content_postcall"
         }
+        if self._planned_content_surfaces and not injected_content_names:
+            # Every planned content surface missed this run, so deepen the ladder.
+            # Monotone by construction: a later delivery does not undo it.
+            self._ladder_depth += 1
         for name in self._planned_content_surfaces:
             if name not in injected_content_names:
                 self._surface_stats.setdefault(name, _SurfaceStats()).misses += 1
