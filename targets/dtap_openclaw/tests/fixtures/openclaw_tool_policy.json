@@ -1,0 +1,130 @@
+{
+ "source": "dtap-openclaw:openclaw-2026.6.10",
+ "tool_groups": {
+  "group:openclaw": [
+   "code_execution",
+   "web_search",
+   "web_fetch",
+   "x_search",
+   "memory_search",
+   "memory_get",
+   "sessions_list",
+   "sessions_history",
+   "sessions_send",
+   "sessions_spawn",
+   "sessions_yield",
+   "subagents",
+   "session_status",
+   "browser",
+   "message",
+   "heartbeat_respond",
+   "cron",
+   "gateway",
+   "nodes",
+   "agents_list",
+   "get_goal",
+   "create_goal",
+   "update_goal",
+   "update_plan",
+   "skill_workshop",
+   "image",
+   "image_generate",
+   "music_generate",
+   "video_generate",
+   "tts"
+  ],
+  "group:fs": [
+   "read",
+   "write",
+   "edit",
+   "apply_patch"
+  ],
+  "group:runtime": [
+   "exec",
+   "process",
+   "code_execution"
+  ],
+  "group:web": [
+   "web_search",
+   "web_fetch",
+   "x_search"
+  ],
+  "group:memory": [
+   "memory_search",
+   "memory_get"
+  ],
+  "group:sessions": [
+   "sessions_list",
+   "sessions_history",
+   "sessions_send",
+   "sessions_spawn",
+   "sessions_yield",
+   "subagents",
+   "session_status"
+  ],
+  "group:ui": [
+   "browser",
+   "canvas"
+  ],
+  "group:messaging": [
+   "message"
+  ],
+  "group:automation": [
+   "heartbeat_respond",
+   "cron",
+   "gateway"
+  ],
+  "group:nodes": [
+   "nodes"
+  ],
+  "group:agents": [
+   "agents_list",
+   "get_goal",
+   "create_goal",
+   "update_goal",
+   "update_plan",
+   "skill_workshop"
+  ],
+  "group:media": [
+   "image",
+   "image_generate",
+   "music_generate",
+   "video_generate",
+   "tts"
+  ]
+ },
+ "tools_offered": [
+  "agents_list",
+  "apply_patch",
+  "browser",
+  "canvas",
+  "create_goal",
+  "cron",
+  "dir_fetch",
+  "dir_list",
+  "edit",
+  "exec",
+  "file_fetch",
+  "file_write",
+  "gateway",
+  "get_goal",
+  "memory_get",
+  "memory_search",
+  "message",
+  "nodes",
+  "process",
+  "read",
+  "session_status",
+  "sessions_history",
+  "sessions_list",
+  "sessions_send",
+  "sessions_spawn",
+  "sessions_yield",
+  "skill_workshop",
+  "subagents",
+  "tts",
+  "update_goal",
+  "update_plan",
+  "write"
+ ]
+}

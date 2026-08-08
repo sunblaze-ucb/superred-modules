@@ -34,24 +34,27 @@ from dtap_scaffold.types import AgentLaunchSpec, EpisodeResult, TrajectoryArtifa
 
 from dtap_openclaw_target import driver, trajectory
 
-__all__ = ["DtapOpenClawTarget", "OS_FILESYSTEM_DISALLOWED_TOOLS"]
+__all__ = [
+    "DtapOpenClawTarget",
+    "OS_FILESYSTEM_DISALLOWED_TOOLS",
+    "UPSTREAM_OS_FILESYSTEM_DISALLOWED_TOOLS",
+]
 
-# OpenClaw native tools gated off when the native-tools policy is "disabled".
 # Byte-faithful copy of upstream's OS_FILESYSTEM_OPENCLAW_DISALLOWED_TOOLS
 # (``utils/agent_helpers.py:30``).
 #
-# OpenClaw's ``tools.deny`` matcher (``toolListCoversTool`` in the pinned image
-# ``dtap-openclaw:openclaw-2026.6.10``) accepts exactly four entry forms: ``"*"``, a
-# literal tool id, a key of its ``POLICY_TOOL_GROUPS`` table (every key is prefixed
-# ``"group:"``), or a glob. There is no prefix matching and no validation error path,
-# so an unrecognised entry is silently ignored. The previous value here, ``("exec",
-# "fs")``, was a mistranscription: ``"exec"`` is a literal tool id and resolves, but
-# ``"fs"`` is neither a tool id nor a group key and resolves to NOTHING. That shipped
-# "disabled" setting therefore stripped the shell and left every file tool
+# OpenClaw's ``tools.deny`` matcher (``makeToolPolicyMatcher`` over ``CORE_TOOL_GROUPS``
+# in the pinned image ``dtap-openclaw:openclaw-2026.6.10``) expands group keys (every
+# key is prefixed ``"group:"``) and then glob-matches the result against each tool
+# name. There is no prefix matching and no validation error path, so an unrecognised
+# entry is silently ignored. The previous value here, ``("exec", "fs")``, was a
+# mistranscription: ``"exec"`` is a literal tool id and resolves, but ``"fs"`` is
+# neither a tool id nor a group key and resolves to NOTHING. That shipped "disabled"
+# setting therefore stripped the shell and left every file tool
 # (``read``/``write``/``edit``/``apply_patch``) live -- the wrong half of the intended
-# denial. Resolved against the pinned image: all twelve entries below are non-inert
+# denial. Measured against the pinned image: all twelve entries below are non-inert
 # (see ASSUMPTIONS B.2 and ``tests/test_target.py``).
-OS_FILESYSTEM_DISALLOWED_TOOLS: tuple[str, ...] = (
+UPSTREAM_OS_FILESYSTEM_DISALLOWED_TOOLS: tuple[str, ...] = (
     "group:fs",
     "group:runtime",
     "group:web",
@@ -64,6 +67,26 @@ OS_FILESYSTEM_DISALLOWED_TOOLS: tuple[str, ...] = (
     "image",
     "nodes",
     "tts",
+)
+
+# The pinned image also ships the ``file-transfer`` plugin (enabled by default),
+# whose four tools belong to NO core tool group and so survive every group entry
+# above. Measured by running the image against a recording endpoint and reading the
+# tool list it offers the model: with the twelve upstream entries denied, exactly
+# ``file_fetch``, ``dir_list``, ``dir_fetch`` and ``file_write`` remain, and they are
+# a complete read/write file toolset against the agent's own container. Denying them
+# is a divergence from upstream (ASSUMPTIONS B.2.4).
+_FILE_TRANSFER_PLUGIN_TOOLS: tuple[str, ...] = (
+    "file_fetch",
+    "dir_list",
+    "dir_fetch",
+    "file_write",
+)
+
+# OpenClaw native tools gated off when the native-tools policy is "disabled".
+OS_FILESYSTEM_DISALLOWED_TOOLS: tuple[str, ...] = (
+    *UPSTREAM_OS_FILESYSTEM_DISALLOWED_TOOLS,
+    *_FILE_TRANSFER_PLUGIN_TOOLS,
 )
 
 # OpenClaw CLI reasoning-depth levels (upstream ``OpenClawAgent.VALID_THINKING_LEVELS``).
@@ -125,7 +148,8 @@ class DtapOpenClawTarget(DtapAgentTarget):
         """Map the native-tools policy to OpenClaw's ``tools.deny`` list.
 
         - ``"enabled"`` (default) -> ``[]`` (all native tools available)
-        - ``"disabled"`` -> the upstream-faithful os-filesystem deny list
+        - ``"disabled"`` -> ``OS_FILESYSTEM_DISALLOWED_TOOLS`` (upstream's list plus
+          the image's file-transfer plugin tools; ASSUMPTIONS B.2.4)
         - anything else -> a JSON list of explicit OpenClaw deny entries
 
         The JSON branch is the contract ``config_specs.NATIVE_TOOLS_POLICY``

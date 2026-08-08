@@ -27,6 +27,7 @@ from dtap_scaffold.agent_base import (
     _normalize_tool_adds,
     _normalize_tool_removes,
 )
+from dtap_scaffold.system_specification import RUNTIME_TOPOLOGY_NOTICE
 from dtap_scaffold.types import (
     AgentLaunchSpec,
     EnvHandle,
@@ -278,6 +279,15 @@ def test_observable_contents():
     assert "MCP proxy" in spec and "handle_tool_call" in spec  # architecture + wiring
     assert "openai/gpt-4o-2024-05-13" not in spec  # model has its own observable
     assert "travel-suite" not in spec  # active servers have their own observable
+    # The ATTACKER channel of the two-container disclosure. An attacker holding this
+    # observable must be able to see that host_filesystem / host_code_execution act
+    # on a different machine than the graded state, or it cannot choose vectors
+    # intelligently. Guarded here because the AGENT channel is tested separately and
+    # confusing the two channels is the error this text exists to correct.
+    assert "Runtime topology: two containers, two filesystems" in spec
+    assert "environment container" in spec and "agent container" in spec.lower()
+    # ...and it stays the attacker's text: never a copy of the agent's notice.
+    assert RUNTIME_TOPOLOGY_NOTICE not in spec
 
 
 def test_attacker_context_observable_carries_additional_information():

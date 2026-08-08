@@ -90,35 +90,39 @@ run is a clean OpenClaw episode. Attacks are an optimizer's concern.
   -- `tools.fs: Invalid input` -- so the profile form is the correct one.)
 - **B.2** `_native_tool_deny(policy)` maps the base's `native_tools_policy`
   ConfigSpec: `"enabled"` (default) -> `[]` (deny nothing); `"disabled"` ->
-  `OS_FILESYSTEM_DISALLOWED_TOOLS`, a byte-faithful copy of upstream's twelve-entry
-  `OS_FILESYSTEM_OPENCLAW_DISALLOWED_TOOLS` (`utils/agent_helpers.py:30`); anything
-  else -> a JSON list of explicit deny entries, passed to OpenClaw verbatim
-  (B.2.2). The deny list feeds `openclaw.json` `tools.deny`, mirroring upstream's
-  mechanism, so `"disabled"` now reproduces upstream's `os-filesystem` behaviour
-  exactly with no construction argument.
+  `OS_FILESYSTEM_DISALLOWED_TOOLS` = upstream's twelve-entry
+  `OS_FILESYSTEM_OPENCLAW_DISALLOWED_TOOLS` (`utils/agent_helpers.py:30`, copied
+  byte-faithfully as `UPSTREAM_OS_FILESYSTEM_DISALLOWED_TOOLS`) **plus four
+  image-specific additions** (B.2.4); anything else -> a JSON list of explicit deny
+  entries, passed to OpenClaw verbatim (B.2.2). The deny list feeds `openclaw.json`
+  `tools.deny`, mirroring upstream's mechanism.
 - **B.2.1 Fixed: the `"disabled"` list was mistranscribed and denied the wrong
-  half.** It previously read `("exec", "fs")`. OpenClaw's deny matcher
-  (`toolListCoversTool`, extracted from the pinned image
-  `dtap-openclaw:openclaw-2026.6.10`) accepts exactly four entry forms: `"*"`, a
-  literal tool id, a key of its `POLICY_TOOL_GROUPS` table (every key is prefixed
-  `group:`), or a glob. There is **no prefix matching and no validation error
-  path**, so an unrecognised entry is silently ignored. Resolved against that image:
+  half.** It previously read `("exec", "fs")`. OpenClaw's enforcing deny matcher
+  (`makeToolPolicyMatcher` over `CORE_TOOL_GROUPS`, `dist/tool-policy-match-*.js` and
+  `dist/tool-catalog-*.js` in the pinned image `dtap-openclaw:openclaw-2026.6.10`)
+  expands group keys (every key is prefixed `group:`) and glob-matches the result
+  against each tool name. There is **no prefix matching and no validation error
+  path**, so an unrecognised entry is silently ignored. Measured by running the image
+  against a recording endpoint and reading the tool list it hands the model:
 
-  | entry | resolves to |
+  | `tools.deny` | file / shell tools left alive |
   | --- | --- |
-  | `["exec", "fs"]` | `["exec"]` |
-  | `["fs"]` | `[]` (matches NOTHING) |
-  | `["group:fs"]` | `["read", "write", "edit", "apply_patch"]` |
+  | `[]` | `read write edit apply_patch exec process file_fetch file_write dir_list dir_fetch` |
+  | `["exec", "fs"]` (the bug) | all of the above except `exec` |
+  | upstream's twelve | `file_fetch file_write dir_list dir_fetch` (B.2.4) |
+  | the shipped list | none |
 
   So the shipped setting stripped the shell and left **every file tool live** while
   looking configured, and the failure was silent in both directions (no error, and
-  the missing shell made the setting look applied). All twelve upstream entries were
-  re-resolved against the image and none is inert; `tests/test_target.py` asserts
-  that against the image's own group table (checked in at
-  `tests/fixtures/openclaw_policy_tool_groups.json`) rather than against a literal
-  expected string, and keeps the `["exec", "fs"]` case as a regression guard. Refresh
-  the fixture when the image is repinned. The sibling Claude Code target's list was
-  always a faithful copy; only OpenClaw was affected.
+  the missing shell made the setting look applied). `tests/test_target.py` resolves
+  every entry against `tests/fixtures/openclaw_tool_policy.json` -- the image's
+  ENFORCING group table plus the tool list it really offers -- rather than against a
+  literal expected string, and keeps the `["exec", "fs"]` case as a regression guard.
+  Refresh that fixture when the image is repinned. Note the image also carries a
+  second, already-drifted group table used only by its policy-conformance doctor;
+  asserting against that one would let a rename in the enforcing table go unnoticed.
+  The sibling Claude Code target's list was always a faithful copy; only OpenClaw was
+  affected.
 - **B.2.2 Fixed: the advertised JSON deny list denied nothing.**
   `config_specs.NATIVE_TOOLS_POLICY` documents the slot as accepting `"enabled"`,
   `"disabled"`, **or a JSON deny list of native tool names**. The OpenClaw
@@ -141,6 +145,20 @@ run is a clean OpenClaw episode. Attacks are an optimizer's concern.
   so their cells must be reported NOT-APPLICABLE rather than 0 percent. DTAP's own
   four vectors are unaffected, because they inject into the environment container or
   the model's context, not into the agent container's filesystem.
+- **B.2.4 Divergence: four image-specific entries on top of upstream's list.** The
+  pinned image ships the `file-transfer` plugin (enabled by default,
+  `dist/extensions/file-transfer/openclaw.plugin.json`) whose tools `file_fetch`,
+  `dir_list`, `dir_fetch` and `file_write` belong to **no** core tool group, so all
+  twelve upstream entries leave them alive: a complete read/write file toolset
+  against the agent's own container. Upstream never had to cover them because it
+  applied the list only on `os-filesystem`, where the residue changed nothing;
+  applying it on `code` too (B.2.3) is what exposes the gap. Measured with only the
+  twelve denied: the agent reached for `file_fetch` instead of `read`, got
+  `gateway node.list requires credentials before opening a websocket`, read that as
+  an authentication problem rather than a topology one, and stopped to ask the user
+  for a token -- worse than the plain `ENOENT` the topology notice explains. The two
+  halves of the list are kept as separate constants so the upstream half stays
+  diffable against `utils/agent_helpers.py:30`.
 - **B.3** Web search/fetch are **denied** for determinism, mirroring upstream's
   unconditional web-disable (`agent.py:392-405`, which sets
   `tools.web.search.enabled = false` / `tools.web.fetch.enabled = false`). That
