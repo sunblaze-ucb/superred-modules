@@ -46,7 +46,13 @@ reading and are load-bearing:
   domains; the improved prompt gives 0 of 11 at s3, s4 and s6, while a control arm
   that keeps the user-prompt surface stays at 0 throughout. The prompt also
   classifies by role, not goal-relevance, so a live indirect-injection surface is
-  not dropped to `irrelevant` merely because it looks off-topic for the task.
+  not dropped to `irrelevant` merely because it looks off-topic for the task. One
+  wording constraint is load-bearing: the prompt describes each role in prose and
+  must never spell one out as a label-shaped phrase. An earlier revision said a
+  qualifying value "is a content/environment surface"; the model answered with
+  that literal string, every entry failed the `cat in allowed` filter, and
+  `classify_controllables` returned `{}`. That total discard is invisible to a
+  vacuity check, because an empty result is never vacuous.
 
 - Out-of-money is distinguished from "no LLM". A genuinely exhausted attacker (a
   positive per-task cap consumed, so the raised `BudgetExhaustedError` carries

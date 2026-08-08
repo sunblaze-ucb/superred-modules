@@ -189,6 +189,10 @@ class TestClassifyControllables:
         system = llm.messages[0]["content"]
         assert "zero surfaces" in system
         assert "must stay empty" in system
+        # The prompt must never spell a role out as a label-shaped phrase the
+        # model can echo: an invented label fails the "cat in allowed" filter
+        # and silently discards the whole answer.
+        assert "copy one label verbatim" in system
 
     @pytest.mark.asyncio
     async def test_genuine_budget_exhaustion_propagates(self) -> None:

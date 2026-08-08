@@ -80,15 +80,18 @@ category is fatal rather than merely lossy:
   `_can_write_user_prompt`, which shrinks `_available_surface_ranks()` to length 1,
   so `_is_done()` fires after run 1 and the cell ends in seconds with a zero
   indistinguishable from a defence. Measured on the DTAP indirect claim at scope
-  s3 (11 text domains, one task each), this collapse hit 5 of 11 domains; the
-  improved prompt gives 0 of 11 at s3, s4 and s6, while the control arm that keeps
-  the user-prompt surface stays at 0 throughout. The prompt also classifies by
-  role, not goal-relevance, so a live indirect-injection surface is not dropped to
-  `irrelevant` merely because it looks off-topic for the task. A residual, softer
-  loss remains: on a rare borderline task the model over-drops every content
-  surface to `irrelevant`, leaving no reachable rank; that is not the fatal
-  single-lie-rank collapse (it never fabricates the user-prompt rank) and is a
-  strict improvement over the vacuous baseline it replaces.
+  s3 (11 text domains, one task each), this collapse hit 5 of 11 domains, and 2 of
+  11 at s4 and 3 of 11 at s6; the improved prompt gives 0 of 11 at all three, while
+  the control arm that keeps the user-prompt surface stays at 0 throughout. The
+  prompt also classifies by role, not goal-relevance, so a live indirect-injection
+  surface is not dropped to `irrelevant` merely because it looks off-topic for the
+  task: at s3, s4 and s6 every granted surface received a category, in both arms.
+  One wording constraint is load-bearing: the prompt describes each role in prose
+  and must never spell one out as a label-shaped phrase. An earlier revision said a
+  qualifying value "is a content/environment surface"; the model answered with that
+  literal string, every entry failed the `cat in allowed` filter, and
+  `classify_controllables` returned `{}`. That total discard is invisible to a
+  vacuity check, because an empty result is never vacuous.
 
 - Out-of-money is distinguished from "no LLM". A genuinely exhausted attacker (a
   positive per-task cap consumed, so the raised `BudgetExhaustedError` carries
