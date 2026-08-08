@@ -795,9 +795,12 @@ class GEPAAgenticOptimizer(Optimizer):
     def _maybe_pair_post_call_response(self, event: ControllablePostCallEvent) -> None:
         if self._primary_post_controllable is None:
             same_ctrl = event.controllable == self._primary_pre_controllable
-            request_matches_pre = (
-                self._last_pre_request is not None
-                and event.request == self._last_pre_request
+            # Truthiness, not `is not None`: an empty user turn is injected into
+            # with `event.request == ""`, and an empty string matches every other
+            # PostCall that also carries an empty request. That is not evidence
+            # the two are the same channel, so it must not adopt one.
+            request_matches_pre = bool(self._last_pre_request) and (
+                event.request == self._last_pre_request
             )
             request_matches_injected = (
                 self._last_injected_value is not None

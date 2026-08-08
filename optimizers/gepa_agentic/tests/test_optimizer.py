@@ -884,6 +884,32 @@ class TestEmptyUserTurn:
                     ),
                 )
 
+    @pytest.mark.asyncio
+    async def test_empty_user_turn_does_not_adopt_an_unrelated_empty_post_call(
+        self,
+    ) -> None:
+        # Filling the empty user turn records `request=""` as the run's PreCall
+        # request. An unrelated PostCall that also carries an empty request is not
+        # the same channel, so it must not be adopted as the response surface.
+        opt = await _init_optimizer(controllables=[_user_ctrl(), _read_ctrl()])
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(
+            opt,
+            ControllablePreCallEvent(controllable=_user_ctrl(), request=""),
+        )
+
+        await _dispatch_event(
+            opt,
+            ControllablePostCallEvent(
+                controllable=_read_ctrl("weather_tool"),
+                request="",
+                answer="SUNNY 25C",
+            ),
+        )
+
+        assert opt._primary_post_controllable is None
+        assert opt._pending_post_answer is None
+
 
 class TestRolloutContext:
     @pytest.mark.asyncio

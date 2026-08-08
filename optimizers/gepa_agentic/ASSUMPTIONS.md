@@ -81,7 +81,8 @@ rollout, so the reflection LM can see the miss, but its score is `None` rather
 than the reported value: an undelivered candidate did not earn that number, the
 target did. `None` propagates correctly, because `effective_score` averages only
 non-`None` scores and `_should_accept_fresh_candidate` already requires a
-non-`None` score before growing the pool.
+non-`None` score on every path except a reported success, which ends the task
+anyway.
 
 `response_observable_names` is an override for exact response channels. When it
 is set, heuristic response-name detection is disabled; when it is unset, the
