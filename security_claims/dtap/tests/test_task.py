@@ -9,7 +9,11 @@ from conftest import FakeDtapTarget, NonDtapTarget, make_task_config
 from dtap_scaffold import config_specs as cfg
 from superred.core.interfaces.task import NotApplicable
 
-from dtap_claim.task import REQUIRED_CONFIG_SLOTS, DtapTask
+from dtap_claim.task import (
+    NATIVE_TOOLS_DISABLED_DOMAINS,
+    REQUIRED_CONFIG_SLOTS,
+    DtapTask,
+)
 
 # ---------------------------------------------------------------------------
 # Goal mapping
@@ -88,6 +92,29 @@ async def test_configure_target_sets_dtap_slots() -> None:
     assert target.config[cfg.THREAT_MODEL] == "direct"
 
 
+async def test_configure_target_sets_native_tools_policy() -> None:
+    """The slot must be SET, not left to the target's default: the default is
+    "enabled", which on the two-container domains leaves the agent's native tools
+    pointed at its own container instead of the graded one."""
+    target = FakeDtapTarget()
+    await DtapTask(task_config=make_task_config(domain="travel")).configure_target(target)
+    assert target.config[cfg.NATIVE_TOOLS_POLICY] == "enabled"
+
+
+@pytest.mark.parametrize("domain", sorted(NATIVE_TOOLS_DISABLED_DOMAINS))
+async def test_configure_target_denies_native_tools_on_two_container_domains(domain) -> None:
+    """ "code" as well as "os-filesystem": a deliberate divergence from upstream,
+    which applies its deny list only to os-filesystem (ASSUMPTIONS)."""
+    target = FakeDtapTarget()
+    await DtapTask(task_config=make_task_config(domain=domain)).configure_target(target)
+    assert target.config[cfg.NATIVE_TOOLS_POLICY] == "disabled"
+
+
+def test_code_domain_is_a_deliberate_divergence_from_upstream() -> None:
+    assert "code" in NATIVE_TOOLS_DISABLED_DOMAINS
+    assert "os-filesystem" in NATIVE_TOOLS_DISABLED_DOMAINS
+
+
 async def test_configure_target_benign_threat_model_blank() -> None:
     tc = make_task_config(type="benign", threat_model=None, malicious_goal=None)
     target = FakeDtapTarget()
@@ -134,6 +161,7 @@ def test_required_slots_constant() -> None:
             cfg.ADDITIONAL_INFORMATION,
             cfg.SERVER_ENV_OVERRIDES,
             cfg.THREAT_MODEL,
+            cfg.NATIVE_TOOLS_POLICY,
         }
     )
 

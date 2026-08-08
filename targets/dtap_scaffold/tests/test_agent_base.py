@@ -27,6 +27,7 @@ from dtap_scaffold.agent_base import (
     _normalize_tool_adds,
     _normalize_tool_removes,
 )
+from dtap_scaffold.system_specification import RUNTIME_TOPOLOGY_NOTICE
 from dtap_scaffold.types import (
     AgentLaunchSpec,
     EnvHandle,
@@ -278,6 +279,15 @@ def test_observable_contents():
     assert "MCP proxy" in spec and "handle_tool_call" in spec  # architecture + wiring
     assert "openai/gpt-4o-2024-05-13" not in spec  # model has its own observable
     assert "travel-suite" not in spec  # active servers have their own observable
+    # The ATTACKER channel of the two-container disclosure. An attacker holding this
+    # observable must be able to see that host_filesystem / host_code_execution act
+    # on a different machine than the graded state, or it cannot choose vectors
+    # intelligently. Guarded here because the AGENT channel is tested separately and
+    # confusing the two channels is the error this text exists to correct.
+    assert "Runtime topology: two containers, two filesystems" in spec
+    assert "environment container" in spec and "agent container" in spec.lower()
+    # ...and it stays the attacker's text: never a copy of the agent's notice.
+    assert RUNTIME_TOPOLOGY_NOTICE not in spec
 
 
 def test_attacker_context_observable_carries_additional_information():
@@ -689,6 +699,30 @@ def test_normalize_tool_adds_accepts_single_list_and_grouped_forms():
     assert [(x["server"], x["name"]) for x in grouped] == [("grp", "x"), ("grp", "y")]
     # invalid entries (missing server or name) are dropped
     assert _normalize_tool_adds([{"name": "no_server"}, {"server": "s"}, "junk"]) == []
+
+
+def test_malformed_tool_add_is_logged_not_silently_dropped(caplog):
+    """A discarded tool_add leaves no other trace: the run scores exactly as if the
+    vector had never fired. Log it so a failed injection is distinguishable from a
+    defended one (the reasoning injection.py:70 already applies to env writes)."""
+    with caplog.at_level("WARNING", logger="dtap_scaffold.agent_base"):
+        assert _normalize_tool_adds([{"name": "no_server"}, "junk"]) == []
+    assert len(caplog.records) == 1
+    assert "tool_add" in caplog.records[0].getMessage()
+    assert "discarded 2" in caplog.records[0].getMessage()
+
+
+def test_malformed_tool_remove_is_logged_not_silently_dropped(caplog):
+    with caplog.at_level("WARNING", logger="dtap_scaffold.agent_base"):
+        assert _normalize_tool_removes([{"name": "no_server"}, "junk"]) == []
+    assert len(caplog.records) == 1
+    assert "tool_remove" in caplog.records[0].getMessage()
+
+
+def test_well_formed_tool_add_logs_nothing(caplog):
+    with caplog.at_level("WARNING", logger="dtap_scaffold.agent_base"):
+        assert len(_normalize_tool_adds({"server": "s1", "name": "t1"})) == 1
+    assert caplog.records == []
 
 
 def test_normalize_tool_removes_accepts_single_list_and_grouped_forms():

@@ -145,6 +145,37 @@ async def _dispatch_event(opt: GEPAAgenticOptimizer, event: Any) -> Any:
     return await future
 
 
+async def _deliver_run(
+    opt: GEPAAgenticOptimizer,
+    score: float,
+    *,
+    ctrl: Controllable | None = None,
+    propose: AsyncMock | None = None,
+) -> None:
+    """Drive one run in which the content surface actually fires.
+
+    A run that injects nothing is deliberately left unscored, so any test about
+    scoring or candidate acceptance has to deliver the payload first.
+    """
+    ctrl = ctrl if ctrl is not None else _read_ctrl()
+    await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+    await _dispatch_event(
+        opt,
+        ControllablePostCallEvent(
+            controllable=ctrl, request="read", answer="legitimate content"
+        ),
+    )
+    with patch.object(
+        opt._reflector,
+        "propose",
+        new=propose if propose is not None else AsyncMock(return_value=None),
+    ):
+        await _dispatch_event(
+            opt,
+            RunEndEvent(evaluation=_failure_eval(score), security_domain=USER_TAG),
+        )
+
+
 async def _init_optimizer(
     *,
     controllables: list[Controllable] | None = None,
@@ -217,6 +248,44 @@ class TestSurfaceClassification:
         opt = await _init_optimizer(controllables=[ctrl])
 
         assert opt._content_surface_names == ["tool:get_balance"]
+
+    @pytest.mark.asyncio
+    async def test_precall_only_surface_not_armed_as_postcall_content(self) -> None:
+        # Content is a ROLE; PostCall firing is a TIMING fact about the target. The
+        # LLM answers only the role question, so it labels a PreCall-only surface
+        # (dtap_scaffold's filesystem: attacker files the agent later reads) as
+        # content. That role is real, but the surface never returns a value the
+        # agent reads back, so it must not be armed as a PostCall content surface.
+        # Timing is read from the target's own description ("PreCall").
+        precall = Controllable(
+            name="filesystem",
+            security_domain=TOOL_TAG,
+            description=(
+                "Attacker write access to the target machine's filesystem BEFORE "
+                "the run: place files the agent later reads. PreCall, fired once "
+                "during run setup."
+            ),
+            value_type="json",
+        )
+        postcall = Controllable(
+            name="env_tool:gmail",
+            security_domain=TOOL_TAG,
+            description=(
+                "Replace the value any gmail MCP tool returns to the agent "
+                "(indirect prompt injection). PostCall, once per tool call."
+            ),
+            value_type="text",
+        )
+        llm = _classifying_llm(
+            {"filesystem": "content-injection", "env_tool:gmail": "content-injection"}
+        )
+        opt = await _init_optimizer(controllables=[precall, postcall], llm=llm)
+
+        # The PreCall surface is excluded despite its content role; the PostCall
+        # surface with the identical role is armed.
+        assert opt._content_surface_names == ["env_tool:gmail"]
+        assert opt._can_fire_postcall(postcall) is True
+        assert opt._can_fire_postcall(precall) is False
 
     @pytest.mark.asyncio
     async def test_discovers_html_environment_surface_at_runtime(self) -> None:
@@ -540,6 +609,308 @@ class TestPromptFallback:
         assert isinstance(resp, ControllableNoInjection)
 
 
+class TestSurfaceLadder:
+    """The prompt channels reopen, monotonically, when nothing was delivered.
+
+    A planned content surface is a deferred channel: a PostCall that only fires if
+    the agent calls the corresponding tool. Whether it will fire is unknowable when
+    the prompt PreCall is decided, so the only evidence is the previous runs. Each
+    run whose planned content surfaces all missed deepens the ladder by one, and the
+    depth never shrinks.
+    """
+
+    @pytest.mark.asyncio
+    async def test_prompt_channel_reopens_after_the_content_surface_never_fires(
+        self,
+    ) -> None:
+        opt = await _init_optimizer(
+            controllables=[_user_ctrl(), _read_ctrl()], max_attempts=4
+        )
+
+        # Run 1: content surface planned, prompt declined, PostCall never fires.
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        first = await _dispatch_event(
+            opt,
+            ControllablePreCallEvent(
+                controllable=_user_ctrl(), request="book a flight"
+            ),
+        )
+        assert isinstance(first, ControllableNoInjection)
+        with patch.object(opt._reflector, "propose", new=AsyncMock(return_value=None)):
+            await _dispatch_event(
+                opt,
+                RunEndEvent(evaluation=_failure_eval(0.0), security_domain=USER_TAG),
+            )
+        assert opt._ladder_depth == 1
+
+        # Run 2: the content surface missed, so the prompt is eligible again.
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        second = await _dispatch_event(
+            opt,
+            ControllablePreCallEvent(
+                controllable=_user_ctrl(), request="book a flight"
+            ),
+        )
+
+        assert isinstance(second, ControllableInjection)
+        assert second.value == "achieve target X"
+
+    @pytest.mark.asyncio
+    async def test_reopening_is_monotone_across_a_later_delivery(self) -> None:
+        # The resetting predecessor closed the prompt channel again as soon as one
+        # content delivery landed, so a flaky surface could re-blind the optimizer
+        # every other run. Depth only grows.
+        read_ctrl = _read_ctrl()
+        opt = await _init_optimizer(
+            controllables=[_user_ctrl(), read_ctrl], max_attempts=5
+        )
+
+        # Run 1: nothing fires -> depth 1.
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        with patch.object(opt._reflector, "propose", new=AsyncMock(return_value=None)):
+            await _dispatch_event(
+                opt,
+                RunEndEvent(evaluation=_failure_eval(0.0), security_domain=USER_TAG),
+            )
+        assert opt._ladder_depth == 1
+
+        # Run 2: prompt is written AND the content surface fires this time.
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        prompt_resp = await _dispatch_event(
+            opt,
+            ControllablePreCallEvent(
+                controllable=_user_ctrl(), request="book a flight"
+            ),
+        )
+        content_resp = await _dispatch_event(
+            opt,
+            ControllablePostCallEvent(
+                controllable=read_ctrl, request="read", answer="legitimate page"
+            ),
+        )
+        assert isinstance(prompt_resp, ControllableInjection)
+        assert isinstance(content_resp, ControllableInjection)
+        with patch.object(opt._reflector, "propose", new=AsyncMock(return_value=None)):
+            await _dispatch_event(
+                opt,
+                RunEndEvent(evaluation=_failure_eval(0.2), security_domain=USER_TAG),
+            )
+
+        # Run 3: the delivery did not close the channel again.
+        assert opt._ladder_depth == 1
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        third = await _dispatch_event(
+            opt,
+            ControllablePreCallEvent(
+                controllable=_user_ctrl(), request="book a flight"
+            ),
+        )
+
+        assert isinstance(third, ControllableInjection)
+
+    @pytest.mark.asyncio
+    async def test_prompt_channel_stays_closed_while_the_content_surface_delivers(
+        self,
+    ) -> None:
+        # No miss has occurred, so the ladder never leaves rung 0 and the run keeps
+        # exactly one attributable surface.
+        read_ctrl = _read_ctrl()
+        opt = await _init_optimizer(
+            controllables=[_user_ctrl(), read_ctrl], max_attempts=3
+        )
+
+        await _deliver_run(opt, 0.2, ctrl=read_ctrl)
+
+        assert opt._ladder_depth == 0
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        resp = await _dispatch_event(
+            opt,
+            ControllablePreCallEvent(controllable=_user_ctrl(), request="hello"),
+        )
+
+        assert isinstance(resp, ControllableNoInjection)
+
+    @pytest.mark.asyncio
+    async def test_precall_only_scope_eventually_injects_instead_of_declining(
+        self,
+    ) -> None:
+        # The s5 shape: the scope grants the system prompt plus surfaces that are
+        # only ever written before the run, so no PostCall can ever fire. When such
+        # a surface is armed as content (a target that does not annotate timing in
+        # its description), rung 0 declines the system prompt. The ladder must not
+        # leave it declined for the whole 20-run budget.
+        filesystem = Controllable(
+            name="filesystem",
+            security_domain=TOOL_TAG,
+            description="Place files on the target machine that the agent reads.",
+            value_type="text",
+        )
+        skill = Controllable(
+            name="skill",
+            security_domain=TOOL_TAG,
+            description="Install a skill document the agent loads.",
+            value_type="text",
+        )
+        llm = _classifying_llm(
+            {"filesystem": "content-injection", "skill": "content-injection"}
+        )
+        opt = await _init_optimizer(
+            controllables=[_system_ctrl(), filesystem, skill],
+            max_attempts=4,
+            llm=llm,
+        )
+        assert opt._content_surface_names == ["filesystem", "skill"]
+
+        injected: list[bool] = []
+        for _ in range(3):
+            await _dispatch_event(
+                opt, RunStartEvent(trajectory=_FakeReadableTrajectory())
+            )
+            # Only PreCall events ever arrive at this scope.
+            resp = await _dispatch_event(
+                opt,
+                ControllablePreCallEvent(controllable=_system_ctrl(), request="system"),
+            )
+            await _dispatch_event(
+                opt,
+                ControllablePreCallEvent(controllable=filesystem, request="{}"),
+            )
+            injected.append(isinstance(resp, ControllableInjection))
+            with patch.object(
+                opt._reflector, "propose", new=AsyncMock(return_value=None)
+            ):
+                await _dispatch_event(
+                    opt,
+                    RunEndEvent(
+                        evaluation=_failure_eval(0.0), security_domain=USER_TAG
+                    ),
+                )
+
+        assert injected == [False, True, True]
+
+
+class TestEmptyUserTurn:
+    """A user prompt reached with an empty request is the agent's only task.
+
+    On a DTAP direct task the scaffold has no benign instruction to put in the
+    user turn, so it reaches the user_prompt controllable with ``request=""`` and
+    passes whatever comes back to the agent container as its message. Declining
+    it launches an agent with no task, which scores zero for a harness reason
+    rather than a defence, so this surface is always filled.
+    """
+
+    @pytest.mark.asyncio
+    async def test_empty_user_turn_is_filled_while_content_surface_delivers(
+        self,
+    ) -> None:
+        opt = await _init_optimizer(controllables=[_user_ctrl(), _read_ctrl()])
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+
+        resp = await _dispatch_event(
+            opt,
+            ControllablePreCallEvent(controllable=_user_ctrl(), request=""),
+        )
+
+        assert isinstance(resp, ControllableInjection)
+        assert resp.value == "achieve target X"
+
+    @pytest.mark.asyncio
+    async def test_empty_user_turn_is_filled_after_the_system_prompt_took_the_run(
+        self,
+    ) -> None:
+        # Targets offer the system prompt before the user prompt, so the first-wins
+        # lock settles on the system prompt. The empty user turn is still filled.
+        opt = await _init_optimizer(controllables=[_system_ctrl(), _user_ctrl()])
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+
+        system_resp = await _dispatch_event(
+            opt,
+            ControllablePreCallEvent(controllable=_system_ctrl(), request="system"),
+        )
+        user_resp = await _dispatch_event(
+            opt,
+            ControllablePreCallEvent(controllable=_user_ctrl(), request=""),
+        )
+
+        assert isinstance(system_resp, ControllableInjection)
+        assert isinstance(user_resp, ControllableInjection)
+        assert user_resp.value == "achieve target X"
+
+    @pytest.mark.asyncio
+    async def test_benign_user_turn_is_still_declined_once_a_surface_holds_the_run(
+        self,
+    ) -> None:
+        # The exemption is only for an empty request. A user turn that carries a
+        # benign instruction is left alone, so an indirect task keeps the task the
+        # injected content is supposed to subvert.
+        opt = await _init_optimizer(controllables=[_system_ctrl(), _user_ctrl()])
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+
+        await _dispatch_event(
+            opt,
+            ControllablePreCallEvent(controllable=_system_ctrl(), request="system"),
+        )
+        user_resp = await _dispatch_event(
+            opt,
+            ControllablePreCallEvent(
+                controllable=_user_ctrl(), request="book a flight"
+            ),
+        )
+
+        assert isinstance(user_resp, ControllableNoInjection)
+
+    @pytest.mark.asyncio
+    async def test_empty_user_turn_is_filled_on_every_run(self) -> None:
+        opt = await _init_optimizer(
+            controllables=[_user_ctrl(), _read_ctrl()], max_attempts=3
+        )
+
+        for _ in range(2):
+            await _dispatch_event(
+                opt, RunStartEvent(trajectory=_FakeReadableTrajectory())
+            )
+            resp = await _dispatch_event(
+                opt,
+                ControllablePreCallEvent(controllable=_user_ctrl(), request=""),
+            )
+            assert isinstance(resp, ControllableInjection)
+            with patch.object(
+                opt._reflector, "propose", new=AsyncMock(return_value=None)
+            ):
+                await _dispatch_event(
+                    opt,
+                    RunEndEvent(
+                        evaluation=_failure_eval(0.0), security_domain=USER_TAG
+                    ),
+                )
+
+    @pytest.mark.asyncio
+    async def test_empty_user_turn_does_not_adopt_an_unrelated_empty_post_call(
+        self,
+    ) -> None:
+        # Filling the empty user turn records `request=""` as the run's PreCall
+        # request. An unrelated PostCall that also carries an empty request is not
+        # the same channel, so it must not be adopted as the response surface.
+        opt = await _init_optimizer(controllables=[_user_ctrl(), _read_ctrl()])
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        await _dispatch_event(
+            opt,
+            ControllablePreCallEvent(controllable=_user_ctrl(), request=""),
+        )
+
+        await _dispatch_event(
+            opt,
+            ControllablePostCallEvent(
+                controllable=_read_ctrl("weather_tool"),
+                request="",
+                answer="SUNNY 25C",
+            ),
+        )
+
+        assert opt._primary_post_controllable is None
+        assert opt._pending_post_answer is None
+
+
 class TestRolloutContext:
     @pytest.mark.asyncio
     async def test_reflection_receives_surface_metadata_and_tool_return(self) -> None:
@@ -762,22 +1133,13 @@ class TestToolCatalogRewrite:
 class TestAcceptance:
     @pytest.mark.asyncio
     async def test_rejects_non_improving_reflected_candidate_from_pool(self) -> None:
+        # Both runs deliver: only a run that actually injected earns a score, so a
+        # delivery is what makes the acceptance gate reachable at all.
         opt = await _init_optimizer(max_attempts=3)
         propose = AsyncMock(return_value=_refl("candidate two"))
 
-        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
-        with patch.object(opt._reflector, "propose", new=propose):
-            await _dispatch_event(
-                opt,
-                RunEndEvent(evaluation=_failure_eval(0.4), security_domain=USER_TAG),
-            )
-
-        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
-        with patch.object(opt._reflector, "propose", new=AsyncMock(return_value=None)):
-            await _dispatch_event(
-                opt,
-                RunEndEvent(evaluation=_failure_eval(0.1), security_domain=USER_TAG),
-            )
+        await _deliver_run(opt, 0.4, propose=propose)
+        await _deliver_run(opt, 0.1)
 
         assert [candidate.prompt for candidate in opt._pool] == ["achieve target X"]
 
@@ -786,24 +1148,53 @@ class TestAcceptance:
         opt = await _init_optimizer(max_attempts=3)
         propose = AsyncMock(return_value=_refl("candidate two"))
 
-        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
-        with patch.object(opt._reflector, "propose", new=propose):
-            await _dispatch_event(
-                opt,
-                RunEndEvent(evaluation=_failure_eval(0.1), security_domain=USER_TAG),
-            )
-
-        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
-        with patch.object(opt._reflector, "propose", new=AsyncMock(return_value=None)):
-            await _dispatch_event(
-                opt,
-                RunEndEvent(evaluation=_failure_eval(0.4), security_domain=USER_TAG),
-            )
+        await _deliver_run(opt, 0.1, propose=propose)
+        await _deliver_run(opt, 0.4)
 
         assert [candidate.prompt for candidate in opt._pool] == [
             "achieve target X",
             "candidate two",
         ]
+
+    @pytest.mark.asyncio
+    async def test_run_that_injected_nothing_does_not_score_the_candidate(self) -> None:
+        # The content surface never fired, so the candidate was never delivered.
+        # The zero the claim reports belongs to the target, not to the candidate:
+        # it must not be written onto it, and it must not admit a fresh candidate
+        # into the pool either.
+        opt = await _init_optimizer(max_attempts=3)
+        propose = AsyncMock(return_value=_refl("candidate two"))
+
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        with patch.object(opt._reflector, "propose", new=propose):
+            await _dispatch_event(
+                opt,
+                RunEndEvent(evaluation=_failure_eval(0.0), security_domain=USER_TAG),
+            )
+
+        seed = opt._pool[0]
+        assert seed.score is None
+        assert seed.rollouts[-1].score is None
+        assert seed.effective_score == 0.0
+
+        # A fresh candidate that also delivers nothing cannot enter the pool.
+        await _dispatch_event(opt, RunStartEvent(trajectory=_FakeReadableTrajectory()))
+        with patch.object(opt._reflector, "propose", new=AsyncMock(return_value=None)):
+            await _dispatch_event(
+                opt,
+                RunEndEvent(evaluation=_failure_eval(0.9), security_domain=USER_TAG),
+            )
+
+        assert [candidate.prompt for candidate in opt._pool] == ["achieve target X"]
+
+    @pytest.mark.asyncio
+    async def test_a_delivered_run_is_still_scored(self) -> None:
+        opt = await _init_optimizer(max_attempts=3)
+
+        await _deliver_run(opt, 0.3)
+
+        assert opt._pool[0].score == 0.3
+        assert opt._pool[0].effective_score == 0.3
 
     @pytest.mark.asyncio
     async def test_does_not_grow_pool_without_score_signal(self) -> None:

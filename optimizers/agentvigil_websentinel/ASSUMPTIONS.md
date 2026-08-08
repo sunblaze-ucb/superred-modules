@@ -63,3 +63,42 @@ is declined WITHOUT consuming the run, so the later free-text surface (e.g.
 `env_tool:<server>`, which replaces a tool return) is still selected. Detection is
 unchanged (the surface is still classified as content); only emission is gated. On
 AgentDojo/ASB/inspect_agent every content surface is `text`, so this is a no-op there.
+## Surface classifier: empty categories and out-of-money budget
+
+The shared LLM surface classifier (`surface_llm.classify_controllables`,
+byte-identical across the agentic optimizers) sorts each granted surface into a
+role category by reading its description. Two behaviours deviate from a naive
+reading and are load-bearing here, because this module is where a misclassified
+category is fatal rather than merely lossy:
+
+- Categories are roles to match, not a partition to fill. When a scope grants no
+  user-prompt surface -- the experiment drops it from threat models s3, s4 and s6
+  -- the prompt tells the model a category may match zero surfaces and forbids
+  relabelling content surfaces to populate it. Without this, gpt-4o-2024-05-13 put
+  every DTAP `env_tool:<server>` surface into `user-prompt` under
+  category-completion pressure. A false `user-prompt` label sets
+  `_can_write_user_prompt`, which shrinks `_available_surface_ranks()` to length 1,
+  so `_is_done()` fires after run 1 and the cell ends in seconds with a zero
+  indistinguishable from a defence. Measured on the DTAP indirect claim at scope
+  s3 (11 text domains, one task each), this collapse hit 5 of 11 domains, and 2 of
+  11 at s4 and 3 of 11 at s6; the improved prompt gives 0 of 11 at all three, while
+  the control arm that keeps the user-prompt surface stays at 0 throughout. The
+  prompt also classifies by role, not goal-relevance, so a live indirect-injection
+  surface is not dropped to `irrelevant` merely because it looks off-topic for the
+  task: at s3, s4 and s6 every granted surface received a category, in both arms.
+  One wording constraint is load-bearing: the prompt describes each role in prose
+  and must never spell one out as a label-shaped phrase. An earlier revision said a
+  qualifying value "is a content/environment surface"; the model answered with that
+  literal string, every entry failed the `cat in allowed` filter, and
+  `classify_controllables` returned `{}`. That total discard is invisible to a
+  vacuity check, because an empty result is never vacuous.
+
+- Out-of-money is distinguished from "no LLM". A genuinely exhausted attacker (a
+  positive per-task cap consumed, so the raised `BudgetExhaustedError` carries
+  `usage.cost > 0`) is re-raised, so the controller records the task as
+  budget-exhausted instead of the bare handler swallowing it into an empty
+  classification that a dead proxy or a target with nothing to attack would also
+  produce. The deliberately budget-less noop client the controller hands a
+  non-LLM optimizer raises the same error with nothing spent (`usage.cost == 0`);
+  that is "no LLM configured", not "out of money", and still degrades to the
+  caller's name-based backstop. `fill_value` gates on the same distinction.

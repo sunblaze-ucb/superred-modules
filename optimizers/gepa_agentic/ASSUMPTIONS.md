@@ -73,9 +73,16 @@ This lets the reflection LM reason about whether the candidate worked as
 indirect tool content, memory/RAG/environment content, catalog setup, or a
 prompt-channel fallback.
 
-If no payload reached the target and there is no feedback or trajectory signal,
-the run does not spend a GEPA attempt. This avoids penalizing a candidate for a
-surface-delivery miss.
+A run that delivered no payload is never allowed to penalize a candidate, and
+that holds whether or not the threat model returned feedback. If there is also no
+feedback and no trajectory signal, the run does not spend a GEPA attempt at all.
+If there is feedback, the run does spend an attempt and is still recorded as a
+rollout, so the reflection LM can see the miss, but its score is `None` rather
+than the reported value: an undelivered candidate did not earn that number, the
+target did. `None` propagates correctly, because `effective_score` averages only
+non-`None` scores and `_should_accept_fresh_candidate` already requires a
+non-`None` score on every path except a reported success, which ends the task
+anyway.
 
 `response_observable_names` is an override for exact response channels. When it
 is set, heuristic response-name detection is disabled; when it is unset, the
@@ -118,3 +125,147 @@ targets without changing the algorithm:
   (a side-effecting nondeterminism hazard) and consumed the injection budget that
   `env_tool` needs. `code_execution` has no faithful natural-language payload, so it is
   no longer treated as a content surface.
+## Surface classifier: empty categories and out-of-money budget
+
+The shared LLM surface classifier (`surface_llm.classify_controllables`,
+byte-identical across the agentic optimizers) sorts each granted surface into a
+role category by reading its description. Two behaviours deviate from a naive
+reading and are load-bearing:
+
+- Categories are roles to match, not a partition to fill. When a scope grants no
+  surface of a given role -- e.g. the experiment drops the user-prompt surface
+  from a threat model -- the prompt tells the model a category may match zero
+  surfaces and forbids relabelling content surfaces to populate it. Without this,
+  gpt-4o-2024-05-13 put every DTAP `env_tool:<server>` surface into `user-prompt`
+  under category-completion pressure. Measured on the DTAP indirect claim at scope
+  s3 (11 text domains, one task each), the false label made the primary consumer
+  of this signal (the AgentVigil chain) vacuous -- its reachable surface set
+  collapsed to one and it finished after a single non-delivering run -- in 5 of 11
+  domains; the improved prompt gives 0 of 11 at s3, s4 and s6, while a control arm
+  that keeps the user-prompt surface stays at 0 throughout. The prompt also
+  classifies by role, not goal-relevance, so a live indirect-injection surface is
+  not dropped to `irrelevant` merely because it looks off-topic for the task. One
+  wording constraint is load-bearing: the prompt describes each role in prose and
+  must never spell one out as a label-shaped phrase. An earlier revision said a
+  qualifying value "is a content/environment surface"; the model answered with
+  that literal string, every entry failed the `cat in allowed` filter, and
+  `classify_controllables` returned `{}`. That total discard is invisible to a
+  vacuity check, because an empty result is never vacuous.
+
+- Out-of-money is distinguished from "no LLM". A genuinely exhausted attacker (a
+  positive per-task cap consumed, so the raised `BudgetExhaustedError` carries
+  `usage.cost > 0`) is re-raised, so the controller records the task as
+  budget-exhausted instead of the bare handler swallowing it into an empty
+  classification that a dead proxy or a target with nothing to attack would also
+  produce. The deliberately budget-less noop client the controller hands a
+  non-LLM optimizer raises the same error with nothing spent (`usage.cost == 0`);
+  that is "no LLM configured", not "out of money", and still degrades to the
+  caller's name-based backstop. `fill_value` gates on the same distinction.
+## PostCall timing is read from the target, not presumed
+
+GEPA arms a surface as a PostCall content surface -- one whose returned value the
+agent reads back as data -- only if the target can actually fire a PostCall event
+on it. Content is a ROLE (does the agent read the value back?); PostCall firing is
+a TIMING fact about the target. The shared LLM classifier answers only the role
+question, so it labels a PreCall-only surface such as DTAP's `filesystem`
+(attacker files the agent later reads) as content: true as a role, wrong as
+timing, because that surface is consumed before the run and never returns a value
+for the agent to read back. Arming it would send the search to inject content into
+a surface that never fires the event it waits for; measured on 20 real DTAP
+surfaces, the prior code (which hard-coded `event_kind="post"` during discovery)
+armed most PreCall-only surfaces wrongly. The `Controllable` type carries no
+timing field, so timing is read from the target's own declaration in the
+description: a surface the target marks `PreCall` is excluded from PostCall content
+(`_can_fire_postcall`). A description that declares neither token keeps the prior
+assumption (eligible), so targets that do not annotate timing -- AgentDojo, ASB,
+inspect_agent -- are unaffected, and the runtime path is unchanged because a
+surface that actually fires a PostCall event genuinely can. Sourcing timing from a
+description string rather than a typed field is a deliberate minimal choice: a
+structured `Controllable` timing field would be the robust fix but is a
+framework-wide change for the target authors to weigh, not something to slip into
+an attacker.
+
+## The surface ladder: deferral to a content surface is bounded, and monotone
+
+A planned content surface is a *deferred* delivery channel. `env_tool:<server>`
+(and the AgentDojo/inspect-agent equivalents) is a PostCall that fires only if the
+agent happens to call that tool. Until now, planning any such surface made
+`_handle_pre_call` decline `user_prompt` and `system_prompt` for the whole task,
+on the standing assumption that the deferred surface would eventually fire. Since
+`_choose_content_surfaces` returns every classified content surface, the plan is
+non-empty whenever a single content surface exists at all, so the assumption was
+never re-examined: a surface planned and missed twenty times running still made
+the prompt channels ineligible on run twenty.
+
+That is a silent zero, not a slow attack. Measured over 40 persisted DTAP runs,
+`user_prompt` was offered 40 times and written 0 times, and 22 of the 40 runs
+injected nothing anywhere. At scope s5 (`{SYSTEM, HOST}`) the failure is total: all
+seven surfaces the scope grants besides the system prompt are PreCall-only, so on
+the pre-`_can_fire_postcall` classifier every one of them was armed as a content
+surface, the plan was never empty, and the optimizer declined the one surface it
+could actually write for all 20 runs across all 11 domains.
+
+The optimizer cannot detect this at decision time: the DTAP scaffold emits both
+prompt PreCalls before any PostCall, so when `user_prompt` is decided it is
+structurally unknown whether the content surface will fire this run. The only
+available evidence is the previous runs, and it already exists. `_SurfaceStats`
+already counts a `misses` entry for every planned surface that was not injected.
+`_ladder_depth` now reads that same computation: every run whose planned content
+surfaces all missed increments it by one. Depth 0 is the old behaviour (defer to
+the content surface, decline the prompts) and is what run 1 still does unchanged;
+any greater depth also writes the prompt, alongside the content surface, which is
+still attempted on the same run.
+
+The depth is **monotone**: it grows on a miss and is never reset by a subsequent
+delivery. This is a deliberate choice over the resetting alternative, which
+reopened the prompt channel after a miss and closed it again on the next delivery.
+A stochastic content surface that fires every other run would, under the resetting
+rule, re-blind the optimizer to the only channel that has provably delivered,
+every other run, for the whole budget. With a 20-run budget, repeated misses
+against a channel that may be dead are the expensive failure, and a redundant
+prompt injection is the cheap one.
+
+Attribution cost, accepted: from the first miss onward a prompt injection and a
+content injection can coexist in the same run, both carrying the same evolved
+text. The rollout record then lists both surfaces under `all_injected_surfaces`
+and which one earned the score is ambiguous. `_selected_surface` still reports the
+first. This is the port-local property being given up ("at most one clean
+attributable surface per run"); the alternative is a guaranteed zero.
+
+Fidelity cost against the GEPA paper (Agrawal et al., arXiv:2507.19457): none.
+GEPA defines reflective mutation over scored rollouts and says nothing about
+delivery surfaces at all. The surface-selection layer is this port's own addition
+(see "Surface Model" above), so the ladder is a change to our own plumbing, not a
+deviation from the published method.
+
+## DTAP fitness: an empty user turn is always filled
+
+The ladder makes the prompt channels eligible again *after* a content surface has
+missed once. On a DTAP `threat_model="direct"` task that one wasted run is one too
+many, for a reason specific to the user prompt.
+
+The DTAP user prompt is not one payload channel among several. It is the only
+thing that gives the agent a turn. `dtap_scaffold` reaches the `user_prompt`
+controllable with `request=""` on a direct task (there are no benign instructions
+to put there), and whatever comes back becomes the agent container's message.
+`dtap_openclaw` then launches with `--message ""`, which its CLI rejects, so the
+container exits 1 before the agent runs. The task is recorded as defended when
+nothing was ever tried.
+
+So the rule for this one case is not "prefer this surface", it is "this surface
+cannot be left empty". `_handle_pre_call` computes `empty_user_turn` (a reserved
+user-prompt name whose `request` is blank) and exempts it from two declines: the
+ladder's rung-0 deferral, and the first-wins `_primary_pre_controllable` lock.
+Nothing else changes. A user prompt that carries a benign request is untouched, so
+an indirect task keeps the legitimate instruction that its injected content is
+supposed to subvert, and every other target (AgentDojo, ASB, chatbot,
+inspect-agent) passes a non-empty user request and is unaffected.
+
+Fidelity cost: none, for the same reason as the ladder. The payload is unchanged
+and the reflective loop is unchanged; only the delivery of an otherwise empty
+field changes. The port-local cost is the same attribution ambiguity the ladder
+already accepts.
+
+What this does not do: it decides nothing when the target hands the optimizer a
+non-empty user request, so a scope that grants both prompts still settles on
+whichever surface the target offers first (the system prompt on DTAP).

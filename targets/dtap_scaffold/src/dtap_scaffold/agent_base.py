@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import errno
 import json
+import logging
 import os
 import shutil
 import tempfile
@@ -79,6 +80,8 @@ from dtap_scaffold.types import (
     InjectionPoint,
     TrajectoryArtifact,
 )
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_MAX_TURNS = 200
 
@@ -757,6 +760,24 @@ def _normalize_instructions(value: str) -> tuple[str, ...]:
     return (str(parsed),)
 
 
+def _warn_dropped(vector: str, dropped: int, parsed: Any) -> None:
+    """Report injected catalogue entries discarded as malformed.
+
+    A discarded entry leaves no other trace: the run proceeds and scores exactly as
+    if the vector had never been exercised. Log it so a genuinely-failed injection is
+    distinguishable from a defended one (same reasoning as ``injection.py:70``).
+    """
+    if dropped:
+        logger.warning(
+            "%s: discarded %d malformed injected entr%s (not an object, or naming no "
+            "server/tool); the run proceeds as if the vector had not fired: %r",
+            vector,
+            dropped,
+            "y" if dropped == 1 else "ies",
+            parsed,
+        )
+
+
 def _one_tool_add(spec: dict[str, Any], group_server: str) -> dict[str, Any]:
     """One tool_add spec -> a normalized fake-tool dict (server falls back to the group)."""
     return {
@@ -773,32 +794,41 @@ def _normalize_tool_adds(parsed: Any) -> list[dict[str, Any]]:
 
     Accepts a single spec ``{server, name, ...}``, a list of specs, or a grouped
     ``{server, tools: [{name, ...}, ...]}`` (the group's server fills in any inner
-    spec that omits one). Specs missing a server or name are dropped.
+    spec that omits one). Specs missing a server or name are dropped, and the drop
+    is logged (see :func:`_warn_dropped`).
     """
     out: list[dict[str, Any]] = []
     items = parsed if isinstance(parsed, list) else [parsed]
+    dropped = 0
     for item in items:
         if not isinstance(item, dict):
+            dropped += 1
             continue
         inner = item.get("tools")
         if isinstance(inner, list):
             group_server = str(item.get("server", ""))
             out += [_one_tool_add(s, group_server) for s in inner if isinstance(s, dict)]
+            dropped += sum(1 for s in inner if not isinstance(s, dict))
         else:
             out.append(_one_tool_add(item, ""))
-    return [t for t in out if t["server"] and t["name"]]
+    kept = [t for t in out if t["server"] and t["name"]]
+    _warn_dropped("tool_add", dropped + len(out) - len(kept), parsed)
+    return kept
 
 
 def _normalize_tool_removes(parsed: Any) -> list[tuple[str, str]]:
     """A tool_remove injection -> a list of ``(server, name)`` pairs.
 
     Accepts a single ``{server, name}``, a list of such, or a grouped
-    ``{server, names: [name, ...]}``. Entries missing a server or name are dropped.
+    ``{server, names: [name, ...]}``. Entries missing a server or name are dropped,
+    and the drop is logged (see :func:`_warn_dropped`).
     """
     out: list[tuple[str, str]] = []
     items = parsed if isinstance(parsed, list) else [parsed]
+    dropped = 0
     for item in items:
         if not isinstance(item, dict):
+            dropped += 1
             continue
         names = item.get("names")
         if isinstance(names, list):
@@ -806,7 +836,9 @@ def _normalize_tool_removes(parsed: Any) -> list[tuple[str, str]]:
             out += [(server, str(n)) for n in names]
         else:
             out.append((str(item.get("server", "")), str(item.get("name", ""))))
-    return [(s, n) for s, n in out if s and n]
+    kept = [(s, n) for s, n in out if s and n]
+    _warn_dropped("tool_remove", dropped + len(out) - len(kept), parsed)
+    return kept
 
 
 __all__ = ["DtapAgentTarget"]
