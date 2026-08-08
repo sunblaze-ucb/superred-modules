@@ -29,6 +29,7 @@ import tempfile
 import uuid
 from typing import Any
 
+from dtap_scaffold.system_specification import RUNTIME_TOPOLOGY_NOTICE
 from dtap_scaffold.types import AgentLaunchSpec
 
 _log = logging.getLogger(__name__)
@@ -207,8 +208,14 @@ def build_openclaw_config(
 
 
 def build_agents_md(spec: AgentLaunchSpec) -> str:
-    """The system prompt OpenClaw injects as a bootstrap file (``AGENTS.md``)."""
-    return spec.system_prompt or ""
+    """The system prompt OpenClaw injects as a bootstrap file (``AGENTS.md``).
+
+    ``RUNTIME_TOPOLOGY_NOTICE`` is appended BELOW ``spec.system_prompt``. The system
+    prompt is an attacker injection point; this function is not, so a topology
+    statement placed here survives an attacker override of the system prompt.
+    """
+    prompt = spec.system_prompt or ""
+    return f"{prompt}\n\n{RUNTIME_TOPOLOGY_NOTICE}" if prompt else RUNTIME_TOPOLOGY_NOTICE
 
 
 def build_task_json(

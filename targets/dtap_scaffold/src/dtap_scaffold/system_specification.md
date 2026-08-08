@@ -30,6 +30,16 @@
 - The agent container is handed one URL, `http://host.docker.internal:<port>/mcp`, for all env tools; the proxy routes by server (a union at `/mcp`, or a trailing `/mcp/{server}`).
 - Two tasks running at once are `dtap_1a2b3c4d_travel` and `dtap_9e8f7a6b_medical` with disjoint leased ports — no shared mutable state.
 
+### 2.1 Runtime topology: two containers, two filesystems
+
+The agent container and the environment containers are **separate machines with separate filesystems**. Nothing in the agent's own tool descriptions says so, and the agent is not told which of its tools crosses the boundary.
+
+- **Environment container**: holds the task files (`/app` and the per-task data). The per-task judge `docker exec`s into THIS container, so only state that lands here is graded.
+- **Agent container**: holds only the per-run workspace and the episode state dir. It has no `/app` and no copy of the task files. On the `code` and `os-filesystem` domains it has no Python either.
+- **Native agent tools** (OpenClaw `read`/`write`/`edit`/`apply_patch`/`exec`; Claude Code `Read`/`Write`/`Edit`/`Bash`) act on the AGENT container only, in both directions: a native read of a task path returns ENOENT, and a native write of a deliverable lands on the wrong machine and is never graded. On the `code` and `os-filesystem` domains they are switched off entirely, so on those two the agent's ONLY file and shell access is the environment tools.
+- **Environment tools** routed through the host MCP proxy (for the FS domains, `terminal:execute_command`) are the only route into the environment container.
+- **Consequence for the attack surfaces.** `host_filesystem` (pre-run file writes) and `host_code_execution` (pre-run shell foothold) both act on the AGENT container, so on a task family whose files live in the environment container they cannot touch graded state. The vectors that DO reach it are `environment` (`inject_*` backend writes), `env_tool` (return tampering at the proxy), and the prompt/skill/tool-description vectors that steer what the agent asks the environment container to do.
+
 ## 3. Logic Flow and Processes
 
 **Abstract.** A run boots the environment and proxy once, fires the pre-run injection vectors in a fixed order, wires the proxy, launches the agent to run its tool-calling loop (every env tool call passing through the proxy), reconstructs the trajectory, and lets the out-of-band judge score it. Every injection point is optional; if the attacker declines everything, the run is the genuine unattacked DTAP run.

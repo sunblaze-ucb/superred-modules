@@ -242,8 +242,10 @@ def env_inject_controllable(server: str, security_domain: SecurityDomainTag) -> 
     ``ControllableInjection`` value (JSON ``{injection_mcp_tool, kwargs}``, or a list
     of such) is written into the LIVE backend via the injection MCP tool (DTAP
     ``inject_*``), so the agent later reads attacker data through its normal tools
-    (or, for FS domains, via native bash on the shared volume). *security_domain*
-    is the (cached) ``environment.<server>`` leaf.
+    (for FS domains, through the environment's own shell tool: the agent's NATIVE
+    bash runs in a different container and cannot see the environment filesystem,
+    so there is no shared volume). *security_domain* is the (cached)
+    ``environment.<server>`` leaf.
     """
     return Controllable(
         name=f"env_inject:{server}",
