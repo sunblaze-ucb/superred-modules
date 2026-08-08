@@ -11,7 +11,8 @@ experiment wires in, through that target's DTAP config/query surface.
 
 - :meth:`configure_target` sets the per-task scenario (active MCP env servers,
   env-injection config, system prompt, the benign user prompt, the task dir, the
-  available-injection hint, the threat model). The attack *content* is not set
+  available-injection hint, the threat model, the native-tools policy). The
+  attack *content* is not set
   here: the target merely exposes the injection points; an attacker (optimizer)
   drives them. If the target does not expose the DTAP config slots, the task
   raises :class:`~superred.core.interfaces.task.NotApplicable` so an incompatible
@@ -57,8 +58,21 @@ REQUIRED_CONFIG_SLOTS: frozenset[str] = frozenset(
         cfg.ADDITIONAL_INFORMATION,
         cfg.SERVER_ENV_OVERRIDES,
         cfg.THREAT_MODEL,
+        cfg.NATIVE_TOOLS_POLICY,
     }
 )
+
+#: DTAP domains whose graded state lives in the ENVIRONMENT container, so the agent's
+#: own native file/shell tools cannot reach it. For these the task denies the native
+#: tools (``native_tools_policy = "disabled"``), leaving the environment tools as the
+#: only route to the task files -- the setup the benchmark actually intends to score.
+#:
+#: Upstream applies its deny list only for ``os-filesystem``
+#: (``utils/agent_helpers.py:get_default_disallowed_tools``). Including ``code`` is a
+#: DELIBERATE DIVERGENCE: the code domain has the same two-container split, and with
+#: native tools live the agent reads and writes its OWN container and scores 0 on a
+#: purely benign job. Documented in ASSUMPTIONS.md.
+NATIVE_TOOLS_DISABLED_DOMAINS: frozenset[str] = frozenset({"os-filesystem", "code"})
 
 
 class DtapTask(Task[Target]):
@@ -132,6 +146,10 @@ class DtapTask(Task[Target]):
         target.set_config(cfg.ADDITIONAL_INFORMATION, tc.additional_information)
         target.set_config(cfg.SERVER_ENV_OVERRIDES, json.dumps(tc.server_env_overrides))
         target.set_config(cfg.THREAT_MODEL, tc.threat_model or "")
+        target.set_config(
+            cfg.NATIVE_TOOLS_POLICY,
+            "disabled" if tc.domain in NATIVE_TOOLS_DISABLED_DOMAINS else "enabled",
+        )
 
     async def evaluate(self, _trajectory: Trajectory, target: Target) -> EvaluationResult:
         # The judge module is implemented in dtap_scaffold (shared with the

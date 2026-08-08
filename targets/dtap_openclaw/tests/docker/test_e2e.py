@@ -15,6 +15,7 @@ import pytest
 from dtap_scaffold.types import AgentLaunchSpec
 
 from dtap_openclaw_target import driver
+from dtap_openclaw_target.target import OS_FILESYSTEM_DISALLOWED_TOOLS
 
 pytestmark = [pytest.mark.docker, pytest.mark.live]
 
@@ -36,7 +37,7 @@ def test_real_openclaw_container_runs_and_emits_trace(tmp_path) -> None:
         instructions=("Say the word READY and nothing else.",),
         proxy_url="http://host.docker.internal:9999/mcp",
         mcp_server_names=(),
-        native_tool_deny=("exec", "fs"),  # no tools needed for this smoke
+        native_tool_deny=OS_FILESYSTEM_DISALLOWED_TOOLS,  # no tools needed for this smoke
         output_dir=str(tmp_path),
     )
 

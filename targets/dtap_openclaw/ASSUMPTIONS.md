@@ -90,11 +90,57 @@ run is a clean OpenClaw episode. Attacks are an optimizer's concern.
   -- `tools.fs: Invalid input` -- so the profile form is the correct one.)
 - **B.2** `_native_tool_deny(policy)` maps the base's `native_tools_policy`
   ConfigSpec: `"enabled"` (default) -> `[]` (deny nothing); `"disabled"` ->
-  the constructor's `disabled_native_tools` (default `("exec", "fs")`). Any other
-  value is treated as enabled (never crash on an unknown policy). The deny list
-  feeds `openclaw.json` `tools.deny`, mirroring upstream's mechanism. To reproduce
-  upstream's exact `os-filesystem` behaviour, construct the target with
-  `disabled_native_tools=("group:fs", "group:runtime", ...)`.
+  `OS_FILESYSTEM_DISALLOWED_TOOLS`, a byte-faithful copy of upstream's twelve-entry
+  `OS_FILESYSTEM_OPENCLAW_DISALLOWED_TOOLS` (`utils/agent_helpers.py:30`); anything
+  else -> a JSON list of explicit deny entries, passed to OpenClaw verbatim
+  (B.2.2). The deny list feeds `openclaw.json` `tools.deny`, mirroring upstream's
+  mechanism, so `"disabled"` now reproduces upstream's `os-filesystem` behaviour
+  exactly with no construction argument.
+- **B.2.1 Fixed: the `"disabled"` list was mistranscribed and denied the wrong
+  half.** It previously read `("exec", "fs")`. OpenClaw's deny matcher
+  (`toolListCoversTool`, extracted from the pinned image
+  `dtap-openclaw:openclaw-2026.6.10`) accepts exactly four entry forms: `"*"`, a
+  literal tool id, a key of its `POLICY_TOOL_GROUPS` table (every key is prefixed
+  `group:`), or a glob. There is **no prefix matching and no validation error
+  path**, so an unrecognised entry is silently ignored. Resolved against that image:
+
+  | entry | resolves to |
+  | --- | --- |
+  | `["exec", "fs"]` | `["exec"]` |
+  | `["fs"]` | `[]` (matches NOTHING) |
+  | `["group:fs"]` | `["read", "write", "edit", "apply_patch"]` |
+
+  So the shipped setting stripped the shell and left **every file tool live** while
+  looking configured, and the failure was silent in both directions (no error, and
+  the missing shell made the setting look applied). All twelve upstream entries were
+  re-resolved against the image and none is inert; `tests/test_target.py` asserts
+  that against the image's own group table (checked in at
+  `tests/fixtures/openclaw_policy_tool_groups.json`) rather than against a literal
+  expected string, and keeps the `["exec", "fs"]` case as a regression guard. Refresh
+  the fixture when the image is repinned. The sibling Claude Code target's list was
+  always a faithful copy; only OpenClaw was affected.
+- **B.2.2 Fixed: the advertised JSON deny list denied nothing.**
+  `config_specs.NATIVE_TOOLS_POLICY` documents the slot as accepting `"enabled"`,
+  `"disabled"`, **or a JSON deny list of native tool names**. The OpenClaw
+  implementation was `if policy == "disabled": ... ; return []`, so a JSON deny list
+  fell through to "deny nothing" without complaint. The JSON branch is now
+  implemented, matching the Claude Code target, so the advertised contract holds on
+  both. A value that is neither keyword nor a JSON list raises: this slot is set by
+  the claim, not by an attacker, so a malformed one is a configuration error and
+  must fail loudly rather than silently disable the denial. Entries are passed to
+  OpenClaw verbatim, so each must be a form its matcher recognises (B.2.1); the
+  caller owns that choice, and superred does not second-guess it.
+- **B.2.3 Who sets the policy, and what it costs.** The DTAP-BENCH claim now sets
+  this slot per task instead of leaving it at the construction default: `"disabled"`
+  on `os-filesystem` **and `code`**, `"enabled"` on the other nine domains. Extending
+  it to `code` is a deliberate divergence from upstream, which applies its deny list
+  only to `os-filesystem`. Two consequences, both owned by
+  `security_claim_dtap` ASSUMPTIONS D.5 to D.7: `code`-domain scores stop being
+  comparable to published DTAP `code` numbers, and the superred `host_filesystem` /
+  `host_code_execution` surfaces become structurally unusable on those two domains,
+  so their cells must be reported NOT-APPLICABLE rather than 0 percent. DTAP's own
+  four vectors are unaffected, because they inject into the environment container or
+  the model's context, not into the agent container's filesystem.
 - **B.3** Web search/fetch are **denied** for determinism, mirroring upstream's
   unconditional web-disable (`agent.py:392-405`, which sets
   `tools.web.search.enabled = false` / `tools.web.fetch.enabled = false`). That
@@ -227,6 +273,14 @@ run is a clean OpenClaw episode. Attacks are an optimizer's concern.
   `agent_kwargs.get("thinking_level", "medium")`); pass `thinking="medium"` to match
   upstream. `max_turns` is carried in `task.json` for record only (it bounds the
   conversation-turn count upstream; the superred run budget bounds re-runs).
+- **F.3 `AGENTS.md` carries the runtime-topology notice below the system prompt
+  (addition, not upstream).** `build_agents_md` emits `spec.system_prompt`, then
+  `dtap_scaffold.system_specification.RUNTIME_TOPOLOGY_NOTICE`. Rationale in
+  `dtap_scaffold` ASSUMPTIONS K; the OpenClaw-specific point is **placement**: the
+  system prompt is an attacker injection point and `build_agents_md` is not, so
+  putting the notice below it means a system-prompt override cannot remove the
+  statement of fact. This is additive text the benchmark does not ship, so it is a
+  deviation from an upstream-faithful replay and must be recorded with results.
 
 ## G. Out of scope for the target
 

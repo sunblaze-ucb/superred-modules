@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
+from collections.abc import Iterable
 from pathlib import Path
 
 import pytest
@@ -25,10 +27,47 @@ from superred.core.types.events import (
 )
 
 from dtap_openclaw_target import DtapOpenClawTarget, driver
+from dtap_openclaw_target.target import OS_FILESYSTEM_DISALLOWED_TOOLS
 from dtap_openclaw_target.target import DtapOpenClawTarget as TargetClass
 
 FIXTURE = Path(__file__).parent / "fixtures" / "openclaw_session.jsonl"
 GENUINE_RETURN = "GENUINE_TOOL_RETURN"
+
+#: OpenClaw's own tool-group table, extracted verbatim from the pinned image
+#: ``dtap-openclaw:openclaw-2026.6.10`` (``POLICY_TOOL_GROUPS`` in
+#: ``dist/register-*.js``). Refresh it when the image is repinned.
+POLICY_TOOL_GROUPS: dict[str, list[str]] = json.loads(
+    (Path(__file__).parent / "fixtures" / "openclaw_policy_tool_groups.json").read_text()
+)
+
+#: Every native tool id the group table names: the universe a deny entry can hit.
+ALL_NATIVE_TOOLS: frozenset[str] = frozenset(
+    t for tools in POLICY_TOOL_GROUPS.values() for t in tools
+)
+
+
+def _covers(deny: Iterable[str], tool: str) -> bool:
+    """OpenClaw's ``toolListCoversTool``, transcribed from the pinned image.
+
+    An entry matches ``"*"``, a literal tool id, a ``POLICY_TOOL_GROUPS`` key, or a
+    glob. Anything else matches nothing AND raises nothing, which is exactly why a
+    mistranscribed entry is invisible.
+    """
+    for entry in deny:
+        normalized = {"bash": "exec", "apply-patch": "apply_patch"}.get(entry, entry)
+        if normalized in ("*", tool):
+            return True
+        if tool in POLICY_TOOL_GROUPS.get(normalized, ()):
+            return True
+        if "*" in normalized and re.fullmatch(re.escape(normalized).replace("\\*", ".*"), tool):
+            return True
+    return False
+
+
+def _resolve(deny: Iterable[str]) -> set[str]:
+    """The set of native tools a ``tools.deny`` list actually switches off."""
+    deny = list(deny)
+    return {t for t in ALL_NATIVE_TOOLS if _covers(deny, t)}
 
 
 # --------------------------- fake collaborators ---------------------------
@@ -203,15 +242,59 @@ def test_native_tool_deny_enabled_denies_nothing() -> None:
     assert t._native_tool_deny("enabled") == []
 
 
-def test_native_tool_deny_disabled_denies_exec_fs() -> None:
+def test_native_tool_deny_disabled_is_upstream_list() -> None:
     t = DtapOpenClawTarget(model="m")
-    assert t._native_tool_deny("disabled") == ["exec", "fs"]
+    assert t._native_tool_deny("disabled") == list(OS_FILESYSTEM_DISALLOWED_TOOLS)
 
 
-def test_native_tool_deny_unknown_policy_treated_as_enabled() -> None:
-    # Never crash on an unexpected policy; default to enabled (deny nothing).
+def test_every_deny_entry_resolves_to_at_least_one_tool() -> None:
+    """No entry in the deny list may be inert.
+
+    OpenClaw's matcher silently ignores an entry it does not recognise (no prefix
+    match, no validation error), so a mistranscribed name denies nothing while
+    looking configured. This asserts against the image's own group table rather
+    than a literal expected string, so it keeps its meaning if the image changes.
+    """
+    inert = [e for e in OS_FILESYSTEM_DISALLOWED_TOOLS if not _resolve([e])]
+    assert inert == []
+
+
+def test_disabled_denies_every_file_and_shell_tool() -> None:
+    """The point of the deny list: no native filesystem or runtime tool survives."""
+    denied = _resolve(OS_FILESYSTEM_DISALLOWED_TOOLS)
+    assert set(POLICY_TOOL_GROUPS["group:fs"]) <= denied
+    assert set(POLICY_TOOL_GROUPS["group:runtime"]) <= denied
+
+
+def test_regression_exec_fs_left_every_file_tool_live() -> None:
+    """The mistranscribed list this fix replaces: "fs" matches NOTHING.
+
+    Kept as a regression guard because the failure is silent: the shell went away,
+    so the setting looked applied, while read/write/edit stayed available.
+    """
+    assert _resolve(["fs"]) == set()
+    assert _resolve(["exec", "fs"]) == {"exec"}
+    assert set(POLICY_TOOL_GROUPS["group:fs"]).isdisjoint(_resolve(["exec", "fs"]))
+
+
+def test_native_tool_deny_json_list_denies_exactly_those_tools() -> None:
+    """The JSON-deny-list branch config_specs advertises (previously a no-op)."""
     t = DtapOpenClawTarget(model="m")
-    assert t._native_tool_deny("garbage") == []
+    assert t._native_tool_deny(json.dumps(["group:fs", "exec"])) == ["group:fs", "exec"]
+    assert _resolve(t._native_tool_deny(json.dumps(["group:fs"]))) == set(
+        POLICY_TOOL_GROUPS["group:fs"]
+    )
+    assert t._native_tool_deny(json.dumps([])) == []
+
+
+def test_native_tool_deny_rejects_a_policy_that_is_neither() -> None:
+    # A claim-set config slot, not an attacker surface: fail loudly rather than
+    # silently denying nothing. Matches the Claude Code target.
+    t = DtapOpenClawTarget(model="m")
+    with pytest.raises(ValueError, match="must be 'enabled', 'disabled', or a JSON list"):
+        t._native_tool_deny(json.dumps({"deny": "everything"}))
+    with pytest.raises(json.JSONDecodeError):
+        t._native_tool_deny("garbage")
 
 
 def test_invalid_thinking_level_rejected() -> None:
@@ -354,7 +437,15 @@ async def test_native_tools_disabled_threads_deny_into_spec(trace_dir) -> None:
     t.set_config("native_tools_policy", "disabled")
     emit, send_event, *_ = _recorder(injections={})
     await t.run(emit, send_event)
-    assert t.spec.native_tool_deny == ("exec", "fs")
+    assert t.spec.native_tool_deny == OS_FILESYSTEM_DISALLOWED_TOOLS
+
+
+async def test_native_tools_json_policy_threads_deny_into_spec(trace_dir) -> None:
+    t = _configured(trace_dir)
+    t.set_config("native_tools_policy", json.dumps(["group:fs"]))
+    emit, send_event, *_ = _recorder(injections={})
+    await t.run(emit, send_event)
+    assert t.spec.native_tool_deny == ("group:fs",)
 
 
 async def test_full_injection_lifecycle(trace_dir) -> None:

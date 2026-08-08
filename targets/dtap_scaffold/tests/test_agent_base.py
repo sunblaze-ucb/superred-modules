@@ -691,6 +691,30 @@ def test_normalize_tool_adds_accepts_single_list_and_grouped_forms():
     assert _normalize_tool_adds([{"name": "no_server"}, {"server": "s"}, "junk"]) == []
 
 
+def test_malformed_tool_add_is_logged_not_silently_dropped(caplog):
+    """A discarded tool_add leaves no other trace: the run scores exactly as if the
+    vector had never fired. Log it so a failed injection is distinguishable from a
+    defended one (the reasoning injection.py:70 already applies to env writes)."""
+    with caplog.at_level("WARNING", logger="dtap_scaffold.agent_base"):
+        assert _normalize_tool_adds([{"name": "no_server"}, "junk"]) == []
+    assert len(caplog.records) == 1
+    assert "tool_add" in caplog.records[0].getMessage()
+    assert "discarded 2" in caplog.records[0].getMessage()
+
+
+def test_malformed_tool_remove_is_logged_not_silently_dropped(caplog):
+    with caplog.at_level("WARNING", logger="dtap_scaffold.agent_base"):
+        assert _normalize_tool_removes([{"name": "no_server"}, "junk"]) == []
+    assert len(caplog.records) == 1
+    assert "tool_remove" in caplog.records[0].getMessage()
+
+
+def test_well_formed_tool_add_logs_nothing(caplog):
+    with caplog.at_level("WARNING", logger="dtap_scaffold.agent_base"):
+        assert len(_normalize_tool_adds({"server": "s1", "name": "t1"})) == 1
+    assert caplog.records == []
+
+
 def test_normalize_tool_removes_accepts_single_list_and_grouped_forms():
     """tool_remove normalization mirrors add: single, list, and the grouped
     {server, names:[...]} form all flatten to (server, name); invalid dropped."""
