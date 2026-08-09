@@ -3,6 +3,12 @@
 A **Chord (Cross-Tool Harvesting and Polluting, XTHP)** optimizer for
 [superred](https://superred.simonsure.com) agent targets.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of Chord (Wang et al.) for superred. It is not
+> affiliated with, endorsed by, or maintained by the original authors. See
+> [ASSUMPTIONS.md](ASSUMPTIONS.md) for every deliberate deviation from the
+> paper and reference code.
+
 Chord attacks tool-using LLM agents by slipping a malicious helper tool into the
 agent's pool of tools. Positioned right before or after a legitimate "victim"
 tool in the call sequence, the helper can **harvest** sensitive context the

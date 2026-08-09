@@ -3,6 +3,13 @@
 The **DecodingTrust-Agent (DTAP-BENCH)** security claim for superred.
 Import package: `dtap_claim`.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of DecodingTrust-Agent (DTAP) (the
+> DecodingTrust-Agent authors, AI-secure) for superred. It is not affiliated
+> with, endorsed by, or maintained by the original authors. See
+> [ASSUMPTIONS.md](ASSUMPTIONS.md) for every deliberate deviation from the
+> paper and reference code.
+
 In one sentence: DTAP is a large agent-safety benchmark whose tasks each spin up a
 real tool environment (a travel booking platform, a CRM, a filesystem, ...), give
 an agent a goal, and then check the *actual state of that environment* to decide

@@ -4,6 +4,12 @@ A superred port of **MUZZLE** (arXiv:2602.09222, "Adaptive Agentic Red-Teaming o
 Agents Against Indirect Prompt Injection Attacks"), an adaptive **indirect-prompt-injection
 (IPI)** attacker for tool-using agents.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of MUZZLE (Syros et al.) for superred, and
+> vendors PAIR (Chao et al.). It is not affiliated with, endorsed by, or
+> maintained by the original authors. See [ASSUMPTIONS.md](ASSUMPTIONS.md) for
+> every deliberate deviation from the paper and reference code.
+
 Given an agentic target and an adversarial goal, `MuzzleOptimizer`:
 
 1. **observes** one benign run and summarizes the victim's trajectory into a *playbook*;

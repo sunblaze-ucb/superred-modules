@@ -6,6 +6,12 @@ A [superred](../../../superred) `SecurityClaim` package paired with [`agentdojo-
 2. **Layer 2: bespoke system-purpose-violation goals.**  Standalone goals tailored to the composite multi-suite agent.  Deterministic security predicates, NOT LLM-as-judge.  Each task carries a benign user prompt; the attacker chooses delivery based on scope.
 3. **Layer 3: combined.**  Composition of Layers 1 and 2.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of AgentDojo (Debenedetti et al., ETH Zurich SPY
+> Lab) for superred. It is not affiliated with, endorsed by, or maintained by
+> the original authors. See [ASSUMPTIONS.md](ASSUMPTIONS.md) for every
+> deliberate deviation from the paper and reference code.
+
 ## Install
 
 ```bash

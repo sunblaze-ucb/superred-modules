@@ -3,6 +3,12 @@
 A **DRA (Disguise and Reconstruction Attack)** jailbreak optimizer for the
 [superred](https://superred.simonsure.com) red-teaming framework.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of DRA (Liu et al.) for superred. It is not
+> affiliated with, endorsed by, or maintained by the original authors. See
+> [ASSUMPTIONS.md](ASSUMPTIONS.md) for every deliberate deviation from the
+> paper and reference code.
+
 DRA has two halves. **Disguise** hides the harmful request one character at a
 time inside ordinary cover words, where the real character is the one wrapped in
 parentheses. **Reconstruction** then asks the target to pull those parenthesized

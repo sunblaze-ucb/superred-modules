@@ -3,6 +3,13 @@
 Crescendo multi-turn jailbreak optimizer for the
 [superred](https://superred.simonsure.com) red-teaming framework.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of Crescendo (Russinovich et al.) for superred,
+> and reuses attacker prompts from Microsoft PyRIT. It is not affiliated with,
+> endorsed by, or maintained by the original authors. See
+> [ASSUMPTIONS.md](ASSUMPTIONS.md) for every deliberate deviation from the
+> paper and reference code.
+
 Crescendo escalates a conversation from benign to harmful over several turns,
 backtracking and restoring history when the target refuses, until the
 conversation objective is achieved.

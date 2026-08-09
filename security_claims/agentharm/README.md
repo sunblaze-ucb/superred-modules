@@ -7,6 +7,12 @@ general `inspect-agent-target` and reuses upstream `inspect_evals.agentharm`
 tools, grading functions, and judges **verbatim**, so the *grading* of a run is
 faithful to AgentHarm's own scoring.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of AgentHarm (Andriushchenko et al.) for
+> superred. It is not affiliated with, endorsed by, or maintained by the
+> original authors. See [ASSUMPTIONS.md](ASSUMPTIONS.md) for every deliberate
+> deviation from the paper and reference code.
+
 Threat model (default `benign_cover=True`): each behaviour is reframed as
 **indirect prompt injection**. The agent is given a purpose-built **benign cover
 task** that engages the behaviour's read tools but does not perform the harmful

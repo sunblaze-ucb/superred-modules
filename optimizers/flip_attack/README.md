@@ -3,6 +3,12 @@
 A **FlipAttack** single-turn jailbreak optimizer for the
 [superred](https://superred.simonsure.com) red-teaming framework.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of FlipAttack (Liu et al.) for superred. It is
+> not affiliated with, endorsed by, or maintained by the original authors. See
+> [ASSUMPTIONS.md](ASSUMPTIONS.md) for every deliberate deviation from the
+> paper and reference code.
+
 FlipAttack scrambles the harmful task by flipping it — reversing characters or
 words — and then teaches the target, in the same prompt, how to unflip and
 follow it. The scrambled task slips past refusal filters that only recognize

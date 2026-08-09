@@ -3,6 +3,12 @@
 A **GOAT (Generative Offensive Agent Tester)** multi-turn jailbreak optimizer
 for the [superred](https://superred.simonsure.com) red-teaming framework.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of GOAT (Pavlova et al.) for superred. It is not
+> affiliated with, endorsed by, or maintained by the original authors. See
+> [ASSUMPTIONS.md](ASSUMPTIONS.md) for every deliberate deviation from the
+> paper and reference code.
+
 GOAT plays the attacker in an automated, multi-turn conversation: an attacker
 LLM reasons about which adversarial technique to apply next, then sends a
 message to the target, using the target's own replies (when visible) to adapt.

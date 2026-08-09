@@ -4,6 +4,10 @@
 ([Xie et al., ICLR 2025](https://arxiv.org/abs/2406.14598)) packaged as a
 superred `SecurityClaim` against `ChatbotTarget`.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of SORRY-Bench (Xie et al.) for superred. It is
+> not affiliated with, endorsed by, or maintained by the original authors.
+
 ## What it tests
 
 - 44 fine-grained safety categories, 10 unsafe instructions each → **440 prompts**.

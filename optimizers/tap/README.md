@@ -3,6 +3,12 @@
 A **Tree of Attacks with Pruning (TAP)** jailbreak optimizer for the
 [superred](https://superred.simonsure.com) red-teaming framework.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of TAP (Mehrotra et al.) for superred. It is not
+> affiliated with, endorsed by, or maintained by the original authors. See
+> [ASSUMPTIONS.md](ASSUMPTIONS.md) for every deliberate deviation from the
+> paper and reference code.
+
 TAP treats jailbreaking as a tree search. An attacker LLM proposes candidate
 prompts, off-topic ones are pruned away, every surviving prompt is sent to the
 real target, and each prompt/response pair is scored 1–10. The best branches are
