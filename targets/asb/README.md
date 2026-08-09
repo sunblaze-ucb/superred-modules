@@ -3,6 +3,12 @@
 Agent Security Bench (ASB) agent as a [superred](https://superred.simonsure.com)
 `Target`.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of Agent Security Bench (ASB) (Zhang et al., AGI
+> Research) for superred. It is not affiliated with, endorsed by, or maintained
+> by the original authors. See [ASSUMPTIONS.md](ASSUMPTIONS.md) for every
+> deliberate deviation from the paper and reference code.
+
 This module runs ASB's real, vendored plan-then-execute agent loop (pinned to
 upstream commit `1f561dcc`) against a litellm proxy. It is a bare runtime that
 exposes the four ASB injection surfaces (DPI / OPI / PoT / MP) as superred

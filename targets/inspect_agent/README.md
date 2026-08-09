@@ -5,6 +5,11 @@ A general, benchmark-agnostic superred `Target` that runs an
 whatever tools, prompts, and model it is handed. It is the reusable substrate for
 any inspect-tool agentic SecurityClaim (the AgentHarm claim is the first consumer).
 
+> **Community integration — not an official integration.** This module is an
+> unofficial superred integration with Inspect (inspect_ai) (the UK AI Security
+> Institute). It is not affiliated with, endorsed by, or maintained by the
+> Inspect (inspect_ai) project.
+
 In the project's target taxonomy (chatbot < agent < assistant) this is an
 **agent**: a scoped tool-caller.
 

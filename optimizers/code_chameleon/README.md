@@ -3,6 +3,12 @@
 A **CodeChameleon** jailbreak optimizer for the
 [superred](https://superred.simonsure.com) red-teaming framework.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of CodeChameleon (Lv et al.) for superred. It is
+> not affiliated with, endorsed by, or maintained by the original authors. See
+> [ASSUMPTIONS.md](ASSUMPTIONS.md) for every deliberate deviation from the
+> paper and reference code.
+
 CodeChameleon hides the unsafe request by encrypting it, then hands the target a
 matching decryption function and asks it to complete a `ProblemSolver` class.
 Because the harmful text never appears in plain form, the target's refusal

@@ -6,6 +6,13 @@ controllables/observables, the pre-run/post-run specs, the text-only domain
 allowlist, the env/MCP/Docker lifecycle, the host MCP proxy, the env-injection
 bridge, and the byte-faithful judge runner.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of DecodingTrust-Agent (DTAP) (the
+> DecodingTrust-Agent authors, AI-secure) for superred. It is not affiliated
+> with, endorsed by, or maintained by the original authors. See
+> [ASSUMPTIONS.md](ASSUMPTIONS.md) for every deliberate deviation from the
+> paper and reference code.
+
 The two concrete DTAP targets (Claude Code, OpenClaw) subclass `DtapAgentTarget`
 and implement only a handful of agent-specific hooks. The DTAP task/goal dataset
 lives in the separate `security-claim-dtap` package.

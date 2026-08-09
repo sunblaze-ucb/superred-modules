@@ -3,6 +3,12 @@
 An **AutoDAN-Turbo** lifelong-strategy jailbreak optimizer for the
 [superred](https://superred.simonsure.com) red-teaming framework.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of AutoDAN-Turbo (Liu et al.) for superred. It
+> is not affiliated with, endorsed by, or maintained by the original authors.
+> See [ASSUMPTIONS.md](ASSUMPTIONS.md) for every deliberate deviation from the
+> paper and reference code.
+
 AutoDAN-Turbo discovers jailbreak strategies from scratch, with no
 human-designed seed strategies, and remembers what worked in a strategy
 library that persists across attempts. One superred run is one paper "epoch"

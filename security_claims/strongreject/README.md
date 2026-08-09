@@ -2,6 +2,10 @@
 
 A `superred` `SecurityClaim[ChatbotTarget]` wrapping the StrongREJECT jailbreak benchmark (Souly et al., NeurIPS 2024).
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of StrongREJECT (Souly et al.) for superred. It
+> is not affiliated with, endorsed by, or maintained by the original authors.
+
 ## TL;DR
 
 ```python

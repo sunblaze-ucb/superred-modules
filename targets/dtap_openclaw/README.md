@@ -8,6 +8,13 @@ the security-domain forest, the five DTAP injection vectors, env activation by
 config, the host MCP proxy / Docker-env / injection lifecycle, the emit-once
 observables, and the query surface the DTAP claim's out-of-band judge reads.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of DecodingTrust-Agent (DTAP) (the
+> DecodingTrust-Agent authors, AI-secure) for superred. It is not affiliated
+> with, endorsed by, or maintained by the original authors. See
+> [ASSUMPTIONS.md](ASSUMPTIONS.md) for every deliberate deviation from the
+> paper and reference code.
+
 In the project's target taxonomy (chatbot < agent < assistant) this is an
 **agent**: a tool-calling agent driven over MCP servers, additionally holding its
 own native `exec`/`fs` tools.

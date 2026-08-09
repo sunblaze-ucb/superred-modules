@@ -4,6 +4,11 @@
 ([Mazeika et al., ICML 2024](https://arxiv.org/abs/2402.04249)) packaged as
 a superred `SecurityClaim` against `ChatbotTarget`.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of HarmBench (Mazeika et al., Center for AI
+> Safety) for superred. It is not affiliated with, endorsed by, or maintained
+> by the original authors.
+
 ## What it is
 
 - 400 textual harmful behaviors (320 test split + 80 val split).

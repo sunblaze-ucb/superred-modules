@@ -2,6 +2,12 @@
 
 A composite [superred](../../../superred) Target that ports the [AgentDojo benchmark environment](https://github.com/ethz-spylab/agentdojo) (Debenedetti et al., NeurIPS 2024, [arXiv:2406.13352](https://arxiv.org/abs/2406.13352)) into the framework.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of AgentDojo (Debenedetti et al., ETH Zurich SPY
+> Lab) for superred. It is not affiliated with, endorsed by, or maintained by
+> the original authors. See [ASSUMPTIONS.md](ASSUMPTIONS.md) for every
+> deliberate deviation from the paper and reference code.
+
 ## What it does
 
 One `AgentDojoTarget` instance exposes the **union of all four AgentDojo suites** simultaneously: banking, workspace, slack, travel. Roughly 74 tools and four independent sub-environments are available to the agent at all times; tasks configure the parts of the environment they care about, the agent decides what to call. The benchmark version is pinned to the latest released (`v1.2.2`) via the public `agentdojo_target.BENCHMARK_VERSION` constant.
