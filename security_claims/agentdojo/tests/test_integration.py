@@ -92,8 +92,9 @@ def patch_llm_build(monkeypatch: pytest.MonkeyPatch):
     """Patch :func:`pipeline_bridge._build_llm` to return the fake LLM."""
     from agentdojo_target import pipeline_bridge
 
-    def fake_build(model_id: str, *, api_base, api_key):  # noqa: ARG001
-        return _FakeLLM()
+    def fake_build(model_id: str, *, api_base, api_key, emit=None):  # noqa: ARG001
+        # Real _build_llm returns (element, close_fn) and accepts emit=.
+        return _FakeLLM(), lambda: None
 
     monkeypatch.setattr(pipeline_bridge, "_build_llm", fake_build)
     yield
