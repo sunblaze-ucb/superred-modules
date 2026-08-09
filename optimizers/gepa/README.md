@@ -3,6 +3,12 @@
 A **GEPA (Genetic-Pareto) reflective prompt evolution** optimizer for the
 [superred](https://superred.simonsure.com) red-teaming framework.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of GEPA (Agrawal et al.) for superred. It is not
+> affiliated with, endorsed by, or maintained by the original authors. See
+> [ASSUMPTIONS.md](ASSUMPTIONS.md) for every deliberate deviation from the
+> paper and reference code.
+
 GEPA treats the attack prompt as a single evolving candidate. Each superred
 run rolls out one candidate; at the end of a run, a separate reflection LM
 call inspects that rollout (score, target reply, evaluator feedback) and

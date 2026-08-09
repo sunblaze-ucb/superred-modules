@@ -3,6 +3,12 @@
 A **MINJA (Memory INJection Attack)** optimizer for
 [superred](https://superred.simonsure.com) agent targets.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of MINJA (Dong et al.) for superred. It is not
+> affiliated with, endorsed by, or maintained by the original authors. See
+> [ASSUMPTIONS.md](ASSUMPTIONS.md) for every deliberate deviation from the
+> paper and reference code.
+
 MINJA poisons an LLM agent's long-term memory using only ordinary queries — no
 privileged access. Across a series of innocuous-looking questions it plants a
 "bridge" memory record that links a victim term to an attacker-chosen target.

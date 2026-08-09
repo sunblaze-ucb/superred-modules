@@ -3,6 +3,12 @@
 PAIR (Prompt Automatic Iterative Refinement) jailbreak optimizer for the
 [superred](https://superred.simonsure.com) red-teaming framework.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of PAIR (Chao et al.) for superred. It is not
+> affiliated with, endorsed by, or maintained by the original authors. See
+> [ASSUMPTIONS.md](ASSUMPTIONS.md) for every deliberate deviation from the
+> paper and reference code.
+
 PAIR is a query-efficient, black-box jailbreak method: an attacker LLM
 iteratively refines an adversarial prompt against a target model, using a judge
 to score each attempt and feeding the target's response back as the next

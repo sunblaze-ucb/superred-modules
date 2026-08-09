@@ -3,6 +3,12 @@
 A byte-faithful, model-aware replay optimizer for Pliny's
 [L1B3RT4S](https://github.com/elder-plinius/L1B3RT4S) jailbreak prompt corpus.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of L1B3RT4S (Pliny) for superred. It is not
+> affiliated with, endorsed by, or maintained by the original authors. See
+> [ASSUMPTIONS.md](ASSUMPTIONS.md) for every deliberate deviation from the
+> paper and reference code.
+
 L1B3RT4S is a living collection of model-specific jailbreak prompts and
 auxiliary material rather than an executable attack algorithm.
 `LibertasOptimizer` turns the compatible portion of that corpus into a superred

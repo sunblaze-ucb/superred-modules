@@ -99,7 +99,10 @@ Before a module's first release, make sure it has:
 - `authors = [{ name = "<your name>", email = "<your email>" }]` — list the
   people who actually wrote the module, not a placeholder (e.g.
   `superred-optimizer-goat` credits both of its authors),
-- a `README.md` referenced by `readme = "README.md"` (it becomes the PyPI page),
+- a `README.md` referenced by `readme = "README.md"` (it becomes the PyPI page);
+  if the module ports or integrates third-party work, it must carry a
+  community-port notice directly under the opening paragraph so the PyPI page is
+  not mistaken for the upstream authors' own release,
 - attribution for any vendored upstream code or bundled datasets (see
   `security_claims/strongreject/LICENSES/` for the pattern to copy).
 

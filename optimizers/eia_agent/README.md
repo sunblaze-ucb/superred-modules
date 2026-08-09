@@ -3,6 +3,12 @@
 An **EIA (Environmental Injection Attack)** optimizer for
 [superred](https://superred.simonsure.com) web-agent targets.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of EIA (Liao et al., OSU NLP Group) for
+> superred. It is not affiliated with, endorsed by, or maintained by the
+> original authors. See [ASSUMPTIONS.md](ASSUMPTIONS.md) for every deliberate
+> deviation from the paper and reference code.
+
 EIA attacks web agents by changing the environment rather than the instruction.
 It plants hidden or visually subtle HTML elements — persuasive labels, injected
 form fields, aria-labels — on a page the agent reads. The agent then grounds its

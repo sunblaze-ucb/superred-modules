@@ -6,6 +6,10 @@ driven over its Gateway WebSocket protocol) so optimizers can red-team it:
 craft user messages, inject adversarial tool output, optionally intercept
 model calls, and observe the agent's behavior.
 
+> **Community integration — not an official integration.** This module is an
+> unofficial superred integration with OpenClaw. It is not affiliated with,
+> endorsed by, or maintained by the OpenClaw project.
+
 Scope: code/terminal and Browser-Use scenarios. Computer Use is out of scope.
 Security claims (e.g. SafeClawBench-grounded tasks) live in a **separate**
 package/PR; this module is the target only.

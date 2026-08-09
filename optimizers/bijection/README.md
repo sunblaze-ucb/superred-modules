@@ -3,6 +3,12 @@
 A **Bijection Learning** jailbreak optimizer for the
 [superred](https://superred.simonsure.com) red-teaming framework.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of Bijection Learning (Huang et al., Haize Labs)
+> for superred. It is not affiliated with, endorsed by, or maintained by the
+> original authors. See [ASSUMPTIONS.md](ASSUMPTIONS.md) for every deliberate
+> deviation from the paper and reference code.
+
 Bijection learning is a black-box, model-agnostic jailbreak: it randomizes a
 bijective character map ("Language Alpha"), teaches the target model that map
 in-context with a few encode/decode examples, then sends the harmful query

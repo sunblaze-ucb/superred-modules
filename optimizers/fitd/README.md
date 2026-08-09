@@ -3,6 +3,12 @@
 A **FITD (Foot-in-the-Door)** multi-turn jailbreak optimizer for the
 [superred](https://superred.simonsure.com) red-teaming framework.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of Foot-In-The-Door (Ding et al.) for superred.
+> It is not affiliated with, endorsed by, or maintained by the original
+> authors. See [ASSUMPTIONS.md](ASSUMPTIONS.md) for every deliberate deviation
+> from the paper and reference code.
+
 FITD exploits commitment and consistency. It opens with a benign question, then
 walks the model up a ladder of gradually more harmful "bridge" prompts, at each
 step asking it to revise its earlier answers a little further. Because the model

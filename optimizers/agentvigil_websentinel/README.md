@@ -3,6 +3,12 @@
 An **AgentVigil** indirect prompt-injection optimizer for
 [superred](https://superred.simonsure.com) agent targets.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of AgentVigil for superred. It is not affiliated
+> with, endorsed by, or maintained by the original authors. See
+> [ASSUMPTIONS.md](ASSUMPTIONS.md) for every deliberate deviation from the
+> paper and reference code.
+
 AgentVigil is a black-box fuzzer for indirect prompt injection against LLM
 agents. Starting from a corpus of injection seeds, it uses MCTS/UCT selection to
 decide which seeds to reuse and which to explore, and an LLM mutator (expand,

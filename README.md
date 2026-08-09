@@ -107,6 +107,11 @@ them per target.
    `ASSUMPTIONS.md` recording the source paper, the reference implementation,
    and every deliberate deviation. This is the established convention here and
    makes your faithfulness claims auditable.
+6. If the module ports or integrates third-party work, open its `README.md` with
+   a community-port notice directly under the first paragraph, so nobody mistakes
+   it for the upstream authors' own release. The module README is also the PyPI
+   page, so this is the first thing a reader sees. Copy the wording from any
+   existing port, e.g. `optimizers/tap/README.md`.
 
 For how these modules plug into the framework (the Target/Optimizer/Task/
 SecurityClaim interfaces and the Controller), see the framework's

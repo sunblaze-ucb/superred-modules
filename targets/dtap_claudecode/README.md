@@ -5,6 +5,13 @@ Python SDK, which drives the `@anthropic-ai/claude-code` CLI) as one victim of t
 [DecodingTrust-Agent (DTAP)](https://github.com/AI-secure/DecodingTrust-Agent)
 benchmark, wired into superred.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of DecodingTrust-Agent (DTAP) (the
+> DecodingTrust-Agent authors, AI-secure) for superred. It is not affiliated
+> with, endorsed by, or maintained by the original authors. See
+> [ASSUMPTIONS.md](ASSUMPTIONS.md) for every deliberate deviation from the
+> paper and reference code.
+
 It is one of two concrete agents over the shared
 [`dtap-scaffold`](../dtap_scaffold/) base; the other is
 [`dtap-openclaw-target`](../dtap_openclaw/). The base

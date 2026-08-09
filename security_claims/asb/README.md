@@ -6,6 +6,12 @@ with ASB's attack-success / utility / refusal predicates ported verbatim, plus a
 adversarial success judge and hierarchical factories by scenario, aggressiveness, and
 attack type. Pairs with the `superred-target-asb` target.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of Agent Security Bench (ASB) (Zhang et al., AGI
+> Research) for superred. It is not affiliated with, endorsed by, or maintained
+> by the original authors. See [ASSUMPTIONS.md](ASSUMPTIONS.md) for every
+> deliberate deviation from the paper and reference code.
+
 ## Credits / upstream
 
 This module ports **Agent Security Bench (ASB)** into the superred framework.

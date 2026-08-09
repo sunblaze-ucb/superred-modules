@@ -3,6 +3,12 @@
 A **PoisonedRAG** knowledge-corruption optimizer for the
 [superred](https://superred.simonsure.com) red-teaming framework.
 
+> **Community port — not an official implementation.** This module is an
+> unofficial re-implementation of PoisonedRAG (Zou et al.) for superred. It is
+> not affiliated with, endorsed by, or maintained by the original authors. See
+> [ASSUMPTIONS.md](ASSUMPTIONS.md) for every deliberate deviation from the
+> paper and reference code.
+
 PoisonedRAG attacks retrieval-augmented generation (RAG) systems by poisoning
 their knowledge base. It crafts a small number of malicious documents designed to
 be retrieved for a target question and to steer the model toward an
