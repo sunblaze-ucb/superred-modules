@@ -262,7 +262,9 @@ class PoisonedRAGOptimizer(Optimizer):
         self._query_id = self._read_answer_observable(observables, _QUERY_ID_HINTS)
         self._correct_answer = (
             self._correct_answer_override
-            or self._read_answer_observable(observables, _CORRECT_ANSWER_HINTS)
+            or self._read_answer_observable(
+                observables, _CORRECT_ANSWER_HINTS, exclude=_TARGET_ANSWER_HINTS
+            )
         )
         self._target_answer = (
             self._target_answer_override
@@ -815,7 +817,10 @@ class PoisonedRAGOptimizer(Optimizer):
         trajectory = self.current_trajectory
         if trajectory is None:
             return
-        best_count = self._last_retrieved_poison_count
+        # Start from zero: this run's retrieval count must reflect this run's
+        # poison batch. Seeding from the previous run made the figure monotone,
+        # so it reported documents from a batch that is no longer injected.
+        best_count = 0
         for item in trajectory.snapshot():
             if not isinstance(item, ObservableEvent):
                 continue
@@ -966,10 +971,19 @@ class PoisonedRAGOptimizer(Optimizer):
 
     @staticmethod
     def _read_answer_observable(
-        observables: list[ObservableValue], hints: Sequence[str]
+        observables: list[ObservableValue],
+        hints: Sequence[str],
+        *,
+        exclude: Sequence[str] = (),
     ) -> str | None:
         for value in observables:
             name = value.observable.name.lower()
+            # Hints match as substrings, so a bare "answer" hint also matches
+            # "incorrect_answer". Callers pass the competing hint set here to
+            # keep the ground truth and the poison target from collapsing onto
+            # the same observable.
+            if any(hint in name for hint in exclude):
+                continue
             if any(hint in name for hint in hints):
                 text = PoisonedRAGOptimizer._stringify(value.content).strip()
                 if text:
