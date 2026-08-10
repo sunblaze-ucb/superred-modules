@@ -31,9 +31,12 @@ jobs:
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import json, pathlib
 
-          # gptfuzzer pulls torch/transformers; it is exercised by the
-          # opt-in `heavy` job below rather than on every push.
-          HEAVY = {"optimizers/gptfuzzer"}
+          # gptfuzzer pulls torch/transformers; dra pins detoxify==0.5.1, whose
+          # tokenizers dependency has no 3.13 wheel and fails to build from
+          # source, so the module cannot be installed on the version it claims
+          # to support (requires-python >=3.11,<3.14). Both are excluded here
+          # rather than silently failing the matrix.
+          HEAVY = {"optimizers/gptfuzzer", "optimizers/dra"}
 
           mods = sorted(
               str(p.parent)
@@ -71,7 +74,12 @@ jobs:
           # Third-party deps, including `superred` itself, still come from PyPI.
           python .github/scripts/local_deps.py "${{ matrix.module }}" \
             | while read -r pkg; do pip install -e "$pkg"; done
-          pip install pytest pytest-asyncio
+          # Modules name their test extra 'dev' or 'test' and several set an
+          # addopts with --cov, so pytest-cov has to come from the extra rather
+          # than a fixed list here.
+          python .github/scripts/extras_for.py "${{ matrix.module }}" \
+            | while read -r spec; do pip install -e "$spec"; done
+          pip install pytest pytest-asyncio pytest-cov
 
       # HarmBench's copyright matcher needs a spaCy model that cannot be a
       # wheel dependency. Its README documents this step; mirror it here.

@@ -36,7 +36,9 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest", "pytest-asyncio"]
+# test_agentdojo_contract_shapes_are_classified imports agentdojo_target, so the
+# target (and its own `agentdojo` dependency) must be present to run the suite.
+test = ["pytest", "pytest-asyncio", "superred-target-agentdojo>=0.1.0"]
 
 [project.urls]
 Homepage = "https://superred.simonsure.com"

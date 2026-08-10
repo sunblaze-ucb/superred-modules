@@ -20,7 +20,14 @@ for cat in ("optimizers", "targets", "security_claims", "shared"):
 
 def deps_of(d):
     pp = pathlib.Path(d) / "pyproject.toml"
-    data = tomllib.load(open(pp, "rb"))["project"].get("dependencies", [])
+    project = tomllib.load(open(pp, "rb"))["project"]
+    # Test extras can name siblings too (gepa_agentic's suite needs the
+    # AgentDojo target), and those must come from source for the same reason
+    # the runtime ones do.
+    extras = project.get("optional-dependencies", {})
+    data = list(project.get("dependencies", []))
+    for name in ("dev", "test"):
+        data += extras.get(name, [])
     for spec in data:
         n = re.split(r"[<>=!\[; ]", spec.strip())[0].lower()
         if n in name_to_path:
