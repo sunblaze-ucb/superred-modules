@@ -23,7 +23,12 @@ import json
 import os
 
 from attack_anything_optimizer import AttackAnythingConfig, AttackAnythingOptimizer
-from chatbot_target import SYSTEM_PROMPT_TAG, USER_TAG, ChatbotTarget
+from chatbot_target import (
+    RESPONSE_READABLE_TAG,
+    SYSTEM_PROMPT_TAG,
+    USER_TAG,
+    ChatbotTarget,
+)
 from demo_secret_leak_claim import demo_secret_leak_claim
 from superred.core.controller import Controller, TargetFactory
 from superred.core.types.llm import LLMConfig
@@ -48,9 +53,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _scope(name: str) -> Scope:
+    # RESPONSE_READABLE_TAG is required for the attacker to READ the victim's
+    # replies: the chatbot target tags its reply observable there, so without it
+    # a user-only scope leaves the attacker blind and the multi-turn feedback
+    # loop degrades to static probes.
     if name == "user":
-        return frozenset({USER_TAG})
-    return frozenset({SYSTEM_PROMPT_TAG, USER_TAG})
+        return frozenset({USER_TAG, RESPONSE_READABLE_TAG})
+    return frozenset({SYSTEM_PROMPT_TAG, USER_TAG, RESPONSE_READABLE_TAG})
 
 
 async def _run(args: argparse.Namespace) -> int:
