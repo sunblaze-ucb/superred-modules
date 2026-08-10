@@ -56,7 +56,12 @@ def question_jsonl_path() -> str:
             revision=DATASET_REVISION,
         )
     except Exception as exc:
-        pytest.fail(
+        # Locally we fail loudly so nobody mistakes a skipped run for a real
+        # one. CI cannot accept the HuggingFace gate, so there it skips
+        # instead of failing on every push. Set SORRY_BENCH_QUESTION_JSONL or
+        # HF_TOKEN in CI to run these for real.
+        reporter = pytest.skip if os.environ.get("CI") else pytest.fail
+        reporter(
             "Cannot resolve the SORRY-Bench question.jsonl. Either:\n"
             "  1. Download question.jsonl manually and "
             "`export SORRY_BENCH_QUESTION_JSONL=/abs/path/question.jsonl`, OR\n"

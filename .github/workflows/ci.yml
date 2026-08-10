@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Each module is its own distributable package with its own tests. They are
+  # discovered rather than listed so a new module is covered the moment it
+  # lands, without touching this file.
+  discover:
+    name: Discover modules
+    runs-on: ubuntu-latest
+    outputs:
+      modules: ${{ steps.find.outputs.modules }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: find
+        name: List modules that have tests
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, pathlib
+
+          # gptfuzzer pulls torch/transformers; it is exercised by the
+          # opt-in `heavy` job below rather than on every push.
+          HEAVY = {"optimizers/gptfuzzer"}
+
+          mods = sorted(
+              str(p.parent)
+              for cat in ("optimizers", "targets", "security_claims", "shared")
+              for p in pathlib.Path(cat).glob("*/pyproject.toml")
+              if (p.parent / "tests").is_dir() and str(p.parent) not in HEAVY
+          )
+          print("modules=" + json.dumps(mods))
+          PY
+
+  test:
+    name: ${{ matrix.module }}
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJson(needs.discover.outputs.modules) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install module and its in-repo dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Siblings are declared as ordinary PyPI requirements, so a bare
+          # `pip install -e <module>` would pull the last *published* sibling
+          # instead of the one in this commit — and a target change that breaks
+          # a dependent claim would sail through. Install the in-repo closure
+          # from source so the matrix actually sees cross-package regressions.
+          # Third-party deps, including `superred` itself, still come from PyPI.
+          python .github/scripts/local_deps.py "${{ matrix.module }}" \
+            | while read -r pkg; do pip install -e "$pkg"; done
+          pip install pytest pytest-asyncio
+
+      # HarmBench's copyright matcher needs a spaCy model that cannot be a
+      # wheel dependency. Its README documents this step; mirror it here.
+      - name: Install spaCy model (HarmBench only)
+        if: matrix.module == 'security_claims/harmbench'
+        run: python -m spacy download en_core_web_sm
+
+      # Modules are tested from inside their own directory: several share test
+      # basenames (test_target.py, test_optimizer.py) and pytest cannot
+      # distinguish them from the repo root without __init__.py everywhere.
+      - name: Test
+        working-directory: ${{ matrix.module }}
+        env:
+          CI: "true"
+        run: python -m pytest tests -q
+
+  # Opt-in: torch and transformers make this slow enough that it should not
+  # gate every push. Run it from the Actions tab before releasing gptfuzzer.
+  heavy:
+    name: optimizers/gptfuzzer
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install module and its in-repo dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python .github/scripts/local_deps.py optimizers/gptfuzzer \
+            | while read -r pkg; do pip install -e "$pkg"; done
+          pip install pytest pytest-asyncio
+
+      - name: Test
+        working-directory: optimizers/gptfuzzer
+        env:
+          CI: "true"
+        run: python -m pytest tests -q
