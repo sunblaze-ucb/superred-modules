@@ -221,7 +221,13 @@ class _MessageStreamHook(BasePipelineElement):
     not only at run end via the ``conversation_history`` snapshot.
 
     Tracks the highest message index already emitted so re-firing the
-    hook on the same conversation does not re-emit.
+    hook on the same conversation does not re-emit.  The cursor restarts
+    when the incoming list is not an extension of the one being tracked,
+    which is how AgentDojo's empty-output retry appears: it rebuilds the
+    conversation from scratch rather than extending it, so a carried-over
+    cursor would sit past the new list's end and emit nothing.  A run
+    that retries therefore emits each attempt it made, and an
+    ``agent_trace_message_NNNN`` name can recur once per attempt.
 
     Construction is per-run (one instance per :class:`AgentDojoTarget`
     run); the hook holds no shared state across runs.
@@ -587,7 +593,14 @@ def build_pipeline(
 
     The same :class:`_MessageStreamHook` instance is reused across the
     splice points so its ``_next_idx`` cursor advances monotonically
-    over the whole conversation -- emitting each message exactly once.
+    over one pipeline attempt -- emitting each message of that attempt
+    exactly once.  On AgentDojo's empty-output retry the cursor restarts
+    with the rebuilt conversation, so a run that retries emits the
+    messages of every attempt it made: an ``agent_trace_message_NNNN``
+    name can therefore recur within a single run, once per attempt that
+    reached that position.  This is deliberate -- the trajectory is a
+    chronological record of what the pipeline actually did, and a cursor
+    carried across attempts drops the winning attempt entirely.
     The :class:`_CatalogEditHook` is spliced once, before the first LLM
     call, so it fires once per pipeline attempt -- exactly once in the
     normal run.  (AgentDojo's rare empty-output retry re-runs the whole
