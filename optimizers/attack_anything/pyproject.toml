@@ -1,0 +1,69 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "superred-optimizer-attack-anything"
+version = "0.1.0"
+description = "Attack Anything (SEATS) self-evolving attack-tree-search jailbreak optimizer for superred"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "LICENSES/*"]
+authors = [
+    { name = "Simon Sure", email = "info@simonsure.com" },
+]
+keywords = [
+    "superred",
+    "red-teaming",
+    "ai-safety",
+    "security",
+    "llm",
+    "optimizer",
+    "jailbreak",
+    "tree-search",
+]
+dependencies = ["superred>=0.1.0"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security",
+]
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-asyncio", "mypy", "ruff"]
+
+[project.urls]
+Homepage = "https://superred.simonsure.com"
+Documentation = "https://superred.simonsure.com"
+Repository = "https://github.com/RoldSI/superred-modules"
+Issues = "https://github.com/RoldSI/superred-modules/issues"
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+pythonpath = ["src", "tests"]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+
+# The _vendor/ tree is upstream code pinned byte-identical; it is not type-checked
+# (mirrors the _vendor skip in tests/test_no_temperature.py).
+[[tool.mypy.overrides]]
+module = "attack_anything_optimizer._vendor.*"
+ignore_errors = true
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+# _vendor/ is upstream code pinned byte-identical; never lint or reformat it.
+extend-exclude = ["src/attack_anything_optimizer/_vendor"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/attack_anything_optimizer"]

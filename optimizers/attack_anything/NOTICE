@@ -1,0 +1,33 @@
+superred-optimizer-attack-anything
+Copyright 2026 Simon Sure
+
+This product includes software developed for the superred red-teaming framework
+(https://superred.simonsure.com).
+
+------------------------------------------------------------------------------
+Vendored third-party code
+------------------------------------------------------------------------------
+
+This package vendors, byte-identical, the reference implementation of:
+
+    "Attack Anything: Recursive Self-Evolving Attack Tree Search for
+     Multi-Turn LLM Red-Teaming"
+
+The reference code was provided as an anonymous, under-review research
+submission (paper author listed as "Anonymous"; status "Under review"). It
+carries no upstream LICENSE file and no public repository or commit; it is
+redistributed here under the Apache License 2.0 as asserted by the author.
+
+The vendored files live under ``src/attack_anything_optimizer/_vendor/`` and are
+pinned byte-identical (SHA-256 recorded in ``constants.VENDORED_SHA256`` and
+verified by ``tests/test_assets_byte_identical.py``):
+
+    tree.py, archive.py, operators.py, utils.py, seats.py, seats_decon.py,
+    seats_feedback.py, seats_feedback_decon.py, seats_feedback_decon_separate.py
+
+The three benchmark goal CSVs shipped with the upstream (AdvBench, HarmBench,
+JailbreakBench) are NOT vendored: harmful-behaviour datasets are the concern of a
+superred SecurityClaim/Task, not of this optimizer.
+
+See ``ASSUMPTIONS.md`` for the full faithfulness ledger and every deliberate
+deviation from the upstream.
