@@ -361,9 +361,20 @@ def _remove_container(name: str) -> None:
     module's single Docker boundary, and it is what offline tests monkeypatch.
     """
     try:
-        _run_docker(["docker", "rm", "-f", name], _REMOVE_TIMEOUT_S)
-    except Exception:  # noqa: BLE001 - cleanup must not mask the timeout
-        _log.warning("could not remove timed-out container %s", name)
+        returncode, _stdout, stderr = _run_docker(["docker", "rm", "-f", name], _REMOVE_TIMEOUT_S)
+    except Exception as exc:  # noqa: BLE001 - cleanup must not mask the timeout
+        _log.warning("could not remove timed-out container %s: %s", name, exc)
+        return
+    if returncode != 0:
+        # The one failure this function exists to prevent. `docker rm` reports
+        # it as a non-zero exit, not an exception, so without this check the
+        # container stays up and nothing is logged at all.
+        _log.warning(
+            "could not remove timed-out container %s (docker rm exited %s): %s",
+            name,
+            returncode,
+            stderr.strip(),
+        )
 
 
 def _run_docker(cmd: list[str], timeout: float) -> tuple[int, str, str]:  # pragma: no cover

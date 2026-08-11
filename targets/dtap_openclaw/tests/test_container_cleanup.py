@@ -64,3 +64,27 @@ def _spec():
         workspace_dir="/state",
         output_dir=None,
     )
+
+
+def test_a_failed_removal_is_logged(monkeypatch, tmp_path, caplog) -> None:
+    """`docker rm` reports failure as a non-zero exit, not an exception.
+
+    Ignoring the return code meant the one outcome this cleanup exists to
+    prevent -- the container still running -- produced no log line at all.
+    """
+    import subprocess
+
+    def fake(cmd, timeout):
+        if cmd[:3] == ["docker", "rm", "-f"]:
+            return 1, "", "Error response from daemon: no such container"
+        raise subprocess.TimeoutExpired(cmd, timeout)
+
+    monkeypatch.setattr(driver, "_run_docker", fake)
+    monkeypatch.setattr(driver, "write_episode_inputs", lambda *a, **k: None)
+    episode = tmp_path / "episode-ghi789"
+    with caplog.at_level("WARNING"):
+        driver.run_openclaw_container(_spec(), image="img", timeout=0.01, episode_dir=str(episode))
+
+    assert any("could not remove timed-out container" in r.message for r in caplog.records), (
+        "a failing docker rm was silent"
+    )
