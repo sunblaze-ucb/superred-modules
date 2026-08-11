@@ -57,10 +57,10 @@ class Prompter:
                 parsed = extract_json_object(raw)
                 if parsed is None or not isinstance(parsed, dict):
                     raise ValueError("Invalid or missing JSON object in LLM response.")
-                # `.get(..., "")` does not apply its default when the key is
-                # present with a null value, so a `{"prompt": null}` response
-                # would return None from a `-> str` method. Treat anything that
-                # is not a usable string as a failed try.
+                # A default does not apply to a key that is present and null, so
+                # `.get("prompt", "")` returned None from this `-> str` method.
+                # Anything that is not a usable string is a failed try.  Keep it
+                # out of `instruction`, which is what an exhausted loop returns.
                 value = parsed.get("prompt")
                 if not isinstance(value, str) or not value.strip():
                     raise ValueError("Prompter returned no usable 'prompt' string.")

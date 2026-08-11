@@ -221,13 +221,11 @@ class _MessageStreamHook(BasePipelineElement):
     not only at run end via the ``conversation_history`` snapshot.
 
     Tracks the highest message index already emitted so re-firing the
-    hook on the same conversation does not re-emit.  The cursor restarts
-    when the incoming list is not an extension of the one being tracked,
-    which is how AgentDojo's empty-output retry appears: it rebuilds the
-    conversation from scratch rather than extending it, so a carried-over
-    cursor would sit past the new list's end and emit nothing.  A run
-    that retries therefore emits each attempt it made, and an
-    ``agent_trace_message_NNNN`` name can recur once per attempt.
+    hook within one pipeline attempt does not re-emit.  The cursor
+    restarts on AgentDojo's empty-output retry, which rebuilds the
+    conversation instead of extending it, so a run that retries emits
+    every attempt it made and an ``agent_trace_message_NNNN`` name can
+    recur once per attempt.
 
     Construction is per-run (one instance per :class:`AgentDojoTarget`
     run); the hook holds no shared state across runs.
@@ -238,19 +236,9 @@ class _MessageStreamHook(BasePipelineElement):
     def __init__(self, *, emit: EventHandler) -> None:
         self._emit = emit
         self._next_idx: int = 0
-        # First message of the stream currently being tracked; identifies a
-        # retry, which rebuilds the list rather than extending it.
-        self._tracked_head: ChatMessage | None = None
-
-    def _extends_tracked(self, messages: Sequence[ChatMessage]) -> bool:
-        """True if *messages* continues the stream this hook has been emitting.
-
-        Identity of the first message is enough to tell a continuation from a
-        restarted attempt: AgentDojo rebuilds the list per attempt.
-        """
-        if self._next_idx == 0 or self._tracked_head is None:
-            return True
-        return bool(messages) and messages[0] is self._tracked_head
+        # First message of the attempt being tracked; a different object means
+        # a new attempt (see query).
+        self._head: ChatMessage | None = None
 
     def query(
         self,
@@ -260,17 +248,14 @@ class _MessageStreamHook(BasePipelineElement):
         messages: Sequence[ChatMessage] = [],
         extra_args: dict = {},
     ) -> tuple[str, FunctionsRuntime, Env, Sequence[ChatMessage], dict]:
-        # The pipeline is retried (target.py runs up to three attempts when an
-        # attempt yields no model output), and each attempt starts a FRESH
-        # conversation rather than extending the last one. A cursor carried
-        # across that boundary sits past the new list's end, so the winning
-        # attempt emits nothing -- or, if it runs longer than the one before,
-        # splices its tail onto the previous attempt's head and reports a
-        # conversation that never happened. Restart when the stream is not an
-        # extension of what we were tracking.
-        if self._next_idx > len(messages) or not self._extends_tracked(messages):
+        # target.py retries the pipeline up to three times when an attempt
+        # yields no model output, and each attempt rebuilds the conversation
+        # instead of extending it.  A cursor carried across that boundary sits
+        # past the new list's end, so the winning attempt emits nothing.  A
+        # first message we have not seen before means a new attempt: restart.
+        if messages and messages[0] is not self._head:
+            self._head = messages[0]
             self._next_idx = 0
-            self._tracked_head = None
 
         # Emit any messages we have not seen yet.  Within one attempt we never
         # re-emit; the optimizer's view of that stream is append-only.
@@ -295,8 +280,6 @@ class _MessageStreamHook(BasePipelineElement):
                     content=payload,
                 )
             )
-        if messages:
-            self._tracked_head = messages[0]
         return query, runtime, env, messages, extra_args
 
 
@@ -594,13 +577,11 @@ def build_pipeline(
     The same :class:`_MessageStreamHook` instance is reused across the
     splice points so its ``_next_idx`` cursor advances monotonically
     over one pipeline attempt -- emitting each message of that attempt
-    exactly once.  On AgentDojo's empty-output retry the cursor restarts
-    with the rebuilt conversation, so a run that retries emits the
-    messages of every attempt it made: an ``agent_trace_message_NNNN``
-    name can therefore recur within a single run, once per attempt that
-    reached that position.  This is deliberate -- the trajectory is a
-    chronological record of what the pipeline actually did, and a cursor
-    carried across attempts drops the winning attempt entirely.
+    exactly once.  It restarts on the empty-output retry below, so a run
+    that retries emits every attempt it made and an
+    ``agent_trace_message_NNNN`` name can recur once per attempt.  That is
+    deliberate: the trajectory records what the pipeline actually did, and
+    a cursor carried across attempts drops the winning attempt entirely.
     The :class:`_CatalogEditHook` is spliced once, before the first LLM
     call, so it fires once per pipeline attempt -- exactly once in the
     normal run.  (AgentDojo's rare empty-output retry re-runs the whole
