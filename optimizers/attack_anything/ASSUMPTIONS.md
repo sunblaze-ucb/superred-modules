@@ -61,26 +61,37 @@ three benchmark goal CSVs are **not** vendored (they are a SecurityClaim/Task co
    `on_event` state machine in `optimizer.py`. *Why:* the framework contract. *Recover:*
    the vendored evaluators are still present in `_vendor/` for reference.
 
-2. **One attack attempt = one run (assembled-transcript judging).** superred's `Task`
-   judges each **run's** transcript for goal achievement, and the chatbot target owns
-   one accumulating conversation per run. So a decomposition attempt walks all its
-   sub-tasks in sequence **within one run/conversation** (the shared-history protocol,
-   `seats_feedback_decon.py`), letting the framework judge the assembled result. The
-   upstream "separate / turn-fresh" protocols (which reset the conversation per
-   sub-task/turn) cannot be reproduced against a target that owns its conversation;
-   `turn_independent` / `recursive_leaf_attack` are accepted as config but their
-   per-conversation-reset semantics are **not** fully honored under this mapping.
-   *Why:* the target owns conversation state and the Task judges per run. *Recover:*
-   documented; a future target that resets per sub-task could restore it.
+2. **Fresh-conversation = fresh run; the search is a generator (planner) + pump.**
+   The upstream control flow (`_run_goal` / `evaluate` / `_attack_task_recursively` /
+   the v2 `_run_goal` + `_fallback_*`) is re-expressed in `planner.py` as a **Python
+   generator** where each `response = target_client.chat(msgs)` becomes
+   `reply = yield Unit(msg)`. `optimizer.py` is the **pump**: it runs each yielded
+   `Unit` as one superred conversation. A `Unit.fresh` message starts a NEW
+   conversation, which is a fresh superred **run** (the chatbot target resets between
+   runs); a non-fresh message continues the current run. This maps the paper's
+   fresh-per-sub-task / turn-fresh / recursive-leaf / goal-as-root protocols onto runs
+   faithfully (a refusal on one sub-task does not poison the next). *Why:* it preserves
+   the upstream algorithm structurally (copy-code faithfulness) while every victim
+   interaction still flows through the framework's events/scope/trajectory. *Recover:*
+   the vendored engine is present in `_vendor/` for reference.
 
-3. **Sub-task judge internal; framework verdict authoritative.** Upstream uses a dual
-   judge (sub-task-level AND goal-level consensus). superred's
-   `RunEndEvent.evaluation.success` is the authoritative goal verdict, so only the
-   vendored **sub-task** judge is kept, and it steers the within-run turn loop
-   (which probe/feedback next, early-exit on affirmative). A framework success is
-   reward 1.0 (the upstream consensus-goal-affirmative override). *Why:* the superred
-   principle that the SecurityClaim owns success. *Recover:* the internal judge modes
-   (`JUDGE_MODE` / `judge_mode`) are exposed and used verbatim.
+3. **RDRT-lineage assembly run makes the attack framework-judgeable.** superred's `Task`
+   judges each **run's** transcript, but a decomposition attack elicits the goal's
+   pieces across separate innocuous conversations, so no single sub-task run contains
+   the assembled harm. After the sub-tasks are elicited the planner emits one
+   **assembly** `Unit` (prompt copied from `rdrt/deconstruct_multi_step_v6_multi_turn.py:856-902`,
+   which the SEATS engine descends from) that asks the victim to synthesize the verified
+   answers into the goal; the SecurityClaim judges that run, so
+   `TaskResult.success` = the framework verdict on the assembly run (or on any run the
+   judge already scores as goal-achieving). The engine variant omits this call (it relies
+   on its internal all-subtasks judge); adding it is the faithful way to reconcile with
+   superred's per-run verdict. The planner still runs the upstream **internal dual-judge**
+   (sub-task + goal-level `llm_classify_reply`, consensus → reward 1.0 + early-stop) to
+   drive the search; the framework verdict is layered on top as the authoritative
+   reported success. *Why:* the superred principle that the SecurityClaim owns success,
+   without weakening the attack to the shared-history variant. *Recover:* the internal
+   judge modes (`JUDGE_MODE` / `judge_mode`) are exposed and used verbatim; the assembly
+   is a small, isolated addition.
 
 4. **Budget = controller cost/time cap.** Upstream's `max_target_queries_per_goal` is
    still exposed, but the real bound is the controller's `task_cost_cap_usd` /
@@ -115,18 +126,44 @@ three benchmark goal CSVs are **not** vendored (they are a SecurityClaim/Task co
    `autoredteamer.py` are re-implementations of *other* attacks that already exist as
    their own superred modules (`pair`, `tap`, ...); they are not vendored.
 
-## Staged (accepted as config, behavior not yet fully implemented)
+9. **v2 frontier folded in; two utils fixes subsumed by the bridge.** The vendored
+   `seats_feedback_decon_separate.py` and `utils.py` are the **v2** copies (byte-identical
+   supersets of v1); `goal_as_root` and `fallback_enabled` are wired through the planner.
+   The v2 `utils.py` fixes (skip `temperature` for Claude-4.7, coalesce `content=null`→`""`)
+   are already subsumed by `VendorLLMBridge` (it never sends temperature and coalesces
+   `content or ""`), so they are present for faithfulness but functionally inert here.
 
-These upstream refinements are wired as flags but their advanced behavior is a
-follow-up; the default all-on method does not depend on them:
+10. **Judge / validator endpoint decoupling.** Upstream can point the judge and the
+    decomposition validator at a stronger model than the attacker (`--judge_*` /
+    `--validator_*`). `judge_llm_config` / `validator_llm_config` expose this: when set,
+    the optimizer builds separate `LLMClient`s. Like the target's own inference these are
+    **out of** the controller's attacker cost cap. A `None` validator config leaves the
+    validator gate off (accept the first decomposition), the default.
 
-- **UCB wrapper selection** (`wrapper_selection="ucb"`): the port uses the randomly
-  assigned per-sub-task wrappers (`assign_wrappers`) that the vendored `DeconGenerate`
-  produces; the separate-engine's UCB wrapper pool is not yet driving selection.
-- **Decomposition validator** (`validator_threshold` / `validator_max_retries`): the
-  `DeconValidator` prompt is vendored but the regenerate-until-faithful gate is not yet
-  wired into seeding.
-- **Recursive-leaf re-decomposition** (`recursive_leaf_attack`) and per-turn-fresh
-  (`turn_independent`) semantics — see deviation 2.
-- **v2 frontier extension** (`goal_as_root`, `fallback_enabled`): the goal-as-root
-  recursive-ternary tree and A/B/C fallback are not yet ported.
+## Feature parity (all wired; copied from the vendored engine)
+
+The following upstream behaviors are implemented in `planner.py`, copying the vendored
+logic (UCB math, reward formulas, recursion, fallback dispatch) with the target call
+replaced by a `yield`, and are exercised by `tests/test_planner.py`:
+
+- **UCB wrapper selection** (`wrapper_selection` ∈ {ucb, priority, random}, `ucb_c`,
+  `ucb_min_uses`, `wrapper_priority`, `SEATS_WRAPPER_SELECTION`/`_PRIORITY` env).
+- **Decomposition validator gate** (`DeconValidator`, `validator_threshold`,
+  `validator_max_retries`) — active when a validator endpoint is configured.
+- **Dual-judge consensus** (sub-task + goal-level, AND-gate → reward 1.0 + early-stop).
+- **turn_independent**, **recursive_leaf_attack** (with re-decompose-on-refusal),
+  **goal_as_root** (v2 ternary tree), and the **A/B/C fallback** (v2).
+- The strict-all-subtasks reward (`require_all_subtasks`) and both reward formulas.
+
+**One deliberately dropped upstream extra:** the v2 Phase-3 *budget-exhausting retry
+loop* (`_retry_main_tree_fresh_decomp`, which re-decomposes at rising temperatures after
+A/B/C also fail) is not reproduced — under the no-temperature policy each retry round
+would be an identical draw, so it adds no signal; the controller's cost/time cap is the
+real budget bound. Documented here rather than silently omitted.
+
+## Config knob deliberately omitted
+
+- **`seed_temperature`** — superred never sends a sampling temperature to the provider
+  (`tests/test_no_temperature.py`), so the upstream temperature knobs are inert here.
+  Exposing this field would only be a name that trips the guard for no effect, so it is
+  omitted (all other upstream knobs are present; see `tests/test_config_parity.py`).

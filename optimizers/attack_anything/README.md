@@ -40,6 +40,11 @@ plain_tree = lambda: AttackAnythingOptimizer(use_feedback=False, use_decompositi
 tuned = lambda: AttackAnythingOptimizer(
     config=AttackAnythingConfig(n_iterations=30, max_turns=4, n_steps=4),
 )
+
+# Upstream modes, all configurable (full v2 parity):
+recursive = lambda: AttackAnythingOptimizer(recursive_leaf_attack=True)  # decompose-until-benign
+turnfresh = lambda: AttackAnythingOptimizer(turn_independent=True)       # RDRT-style turn-fresh
+frontier  = lambda: AttackAnythingOptimizer(goal_as_root=True, fallback_enabled=True)  # v2
 ```
 
 The optimizer takes **no required construction arguments** (the `OptimizerFactory`
@@ -58,15 +63,27 @@ attacker LLM is granted, and never crashes on a target without a text channel.
 | `use_tree_search` | UCT tree over candidates | flat candidate list |
 | `use_archive` | cross-goal elite transfer + crossover | no archive |
 
+## Modes (full upstream v2 parity)
+
+Every upstream knob is an `AttackAnythingConfig` field (see `tests/test_config_parity.py`):
+UCB wrapper selection (`wrapper_selection`, `ucb_c`, `ucb_min_uses`, `wrapper_priority`),
+the decomposition validator gate (`validator_threshold`, `validator_max_retries` + a
+`validator_llm_config` endpoint), the dual-judge consensus (`use_llm_judge`, `judge_mode`,
+`judge_llm_config`), `recursive_leaf_attack` (decompose-until-benign), `turn_independent`
+(turn-fresh), and the v2 `goal_as_root` ternary tree + `fallback_enabled` A/B/C fallback.
+
 ## Faithfulness
 
-The entire upstream SEATS engine is vendored **byte-identical** under
+The entire upstream SEATS engine (v2) is vendored **byte-identical** under
 `src/attack_anything_optimizer/_vendor/` (verified by
-`tests/test_assets_byte_identical.py`); this package reimplements only the
-event-driven orchestration that the superred controller inverts, and reuses every
-search primitive, prompt, judge, and reward from the vendored code. See
-[`ASSUMPTIONS.md`](ASSUMPTIONS.md) for provenance and every deliberate deviation
-(the framework verdict is always authoritative over the attack's internal judge).
+`tests/test_assets_byte_identical.py`). The search itself is re-expressed as a **generator**
+(`planner.py`) that mirrors the upstream control flow with each victim call replaced by a
+`yield`, driven by a thin **pump** (`optimizer.py`) that maps each yielded message onto a
+superred run. Fresh conversations (per sub-task / turn / leaf) become fresh runs, so the
+paper's strong "separate" protocol is preserved; a final RDRT-lineage **assembly** run lets
+the SecurityClaim judge the assembled attack. See [`ASSUMPTIONS.md`](ASSUMPTIONS.md) for
+provenance and every deliberate deviation (the framework verdict is always authoritative
+over the attack's internal judge).
 
 ## Develop
 
