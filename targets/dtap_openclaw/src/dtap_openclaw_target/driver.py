@@ -345,17 +345,23 @@ def write_episode_inputs(
     }
 
 
+#: Seconds allowed for the ``docker rm -f`` that clears a timed-out episode.
+_REMOVE_TIMEOUT_S = 30.0
+
+
 def _container_name(episode_dir: str) -> str:
     """Name the episode container so a timed-out one can be removed."""
     return f"dtap-openclaw-{os.path.basename(episode_dir)}"
 
 
-def _remove_container(name: str) -> None:  # pragma: no cover - needs Docker
-    """Force-remove *name*, ignoring the case where it is already gone."""
+def _remove_container(name: str) -> None:
+    """Force-remove *name*, ignoring the case where it is already gone.
+
+    Goes through :func:`_run_docker` like every other Docker call: that is the
+    module's single Docker boundary, and it is what offline tests monkeypatch.
+    """
     try:
-        subprocess.run(
-            ["docker", "rm", "-f", name], capture_output=True, text=True, timeout=30
-        )
+        _run_docker(["docker", "rm", "-f", name], _REMOVE_TIMEOUT_S)
     except Exception:  # noqa: BLE001 - cleanup must not mask the timeout
         _log.warning("could not remove timed-out container %s", name)
 
@@ -443,12 +449,14 @@ def run_openclaw_container(
         # _generate_trajectory). Return the episode dir so the converter reads the
         # partial trace and evaluate() re-queries env state -- an attack that mutated
         # state and then timed out is still judged.
-        # subprocess's timeout kills the docker CLIENT, not the container. An
-        # orphan keeps issuing tools/call against the host MCP proxy, which
-        # reset_ephemeral_state() has since rebound to the NEXT run: run 1's
-        # calls then fire controllable events on run 2's trajectory and mutate
-        # its freshly-reset environment. It also outlives teardown(). Remove it
-        # before returning; the partial trace on disk is unaffected.
+        # subprocess's timeout kills the docker CLIENT, not the container. The
+        # host MCP proxy is deliberately long-lived -- DtapAgentTarget builds it
+        # once in _ensure_started and reset_ephemeral_state keeps it, resetting
+        # only the env stack and the workspace -- so an orphan still has a live
+        # path to it on the next run. Run 1's tools/call then fire controllable
+        # events onto run 2's trajectory and mutate the environment run 2 just
+        # reset. It also outlives teardown(). Remove it before returning; the
+        # partial trace on disk is unaffected.
         _log.warning("openclaw container timed out after %ss; extracting partial trace", timeout)
         _remove_container(container)
         return episode_dir

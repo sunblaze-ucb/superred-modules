@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import subprocess
 
-import pytest
 from dtap_openclaw_target import driver
 
 
@@ -19,9 +18,7 @@ def test_container_is_named_so_it_can_be_removed(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(driver, "write_episode_inputs", lambda *a, **k: None)
 
     episode = tmp_path / "episode-abc123"
-    driver.run_openclaw_container(
-        _spec(), image="img", timeout=1.0, episode_dir=str(episode)
-    )
+    driver.run_openclaw_container(_spec(), image="img", timeout=1.0, episode_dir=str(episode))
 
     cmd = seen[0]
     assert "--name" in cmd, "container must be named or a timeout cannot remove it"
