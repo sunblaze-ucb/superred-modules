@@ -101,12 +101,20 @@ jobs:
           CI: "true"
         run: python -m pytest tests -q
 
-  # Opt-in: torch and transformers make this slow enough that it should not
-  # gate every push. Run it from the Actions tab before releasing gptfuzzer.
+  # Opt-in: everything carved out of the matrix above runs here instead, from
+  # the Actions tab. Both are excluded for cost or install reasons, not because
+  # they are unimportant, so neither should be a module whose tests run nowhere
+  # at all. dra is expected to fail its install on 3.13 until the detoxify pin
+  # is resolved; that failure is the point, and it is visible here rather than
+  # silent.
   heavy:
-    name: optimizers/gptfuzzer
+    name: ${{ matrix.module }}
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [optimizers/gptfuzzer, optimizers/dra]
     steps:
       - uses: actions/checkout@v4
 
@@ -119,12 +127,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           set -o pipefail  # see the matrix job: an empty pipeline must not pass
-          python .github/scripts/local_deps.py optimizers/gptfuzzer \
+          python .github/scripts/local_deps.py "${{ matrix.module }}" \
             | while read -r pkg; do pip install -e "$pkg"; done
           pip install pytest pytest-asyncio
 
       - name: Test
-        working-directory: optimizers/gptfuzzer
+        working-directory: ${{ matrix.module }}
         env:
           CI: "true"
         run: python -m pytest tests -q
