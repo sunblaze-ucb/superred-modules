@@ -72,6 +72,11 @@ jobs:
           # a dependent claim would sail through. Install the in-repo closure
           # from source so the matrix actually sees cross-package regressions.
           # Third-party deps, including `superred` itself, still come from PyPI.
+          # pipefail: without it the pipeline reports the `while` loop's status,
+          # which is 0 on empty input, so a crash in the helper script would
+          # install nothing and still pass this step -- failing later as a
+          # confusing import error instead of here as the actual cause.
+          set -o pipefail
           python .github/scripts/local_deps.py "${{ matrix.module }}" \
             | while read -r pkg; do pip install -e "$pkg"; done
           # Modules name their test extra 'dev' or 'test' and several set an
@@ -113,6 +118,7 @@ jobs:
       - name: Install module and its in-repo dependencies
         run: |
           python -m pip install --upgrade pip
+          set -o pipefail  # see the matrix job: an empty pipeline must not pass
           python .github/scripts/local_deps.py optimizers/gptfuzzer \
             | while read -r pkg; do pip install -e "$pkg"; done
           pip install pytest pytest-asyncio
