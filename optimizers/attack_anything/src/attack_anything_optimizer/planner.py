@@ -39,7 +39,6 @@ from attack_anything_optimizer._vendor.operators import (
     BREADTH_OPERATORS,
     DEPTH_OPERATORS,
     RULE_WRAPPERS,
-    CrossoverElites,
     get_probe,
 )
 from attack_anything_optimizer._vendor.seats import generate_seed_prompts
@@ -48,6 +47,7 @@ from attack_anything_optimizer._vendor.seats_decon import (
     DeconCrossover,
     DeconGenerate,
     DeconNode,
+    DeconRedecompose,
     DeconRotateWrapper,
     assign_wrappers,
     wrap_subtask,
@@ -86,13 +86,6 @@ Reply = str
 UnitGen = Generator[Unit, Reply, Any]
 
 
-@dataclass
-class _Judged:
-    reply: str
-    label: str
-    goal_label: str
-
-
 class Planner:
     """Generator-form SEATS search. One instance per task; call ``run(goal)``."""
 
@@ -123,17 +116,18 @@ class Planner:
         self._decon_rotate = DeconRotateWrapper()
         self._decon_persona = DeconAddPersona()
         self._decon_crossover = DeconCrossover()
+        self._decon_redecompose = DeconRedecompose()
         self._fb_continue = FeedbackGuidedContinue()
         self._fb_refine = FeedbackGuidedRefine()
-        self._crossover = CrossoverElites()
 
         self.archive = EliteArchive(max_size=cfg.archive_max_size, per_goal=cfg.archive_per_goal)
         # Run-level state.
         self._any_goal_affirmative = False
         self._n_queries = 0
         self._wrapper_stats: dict[str, list[int]] = {w: [0, 0] for w in self._wrapper_pool()}
-        # Assembly components collected across the winning decomposition.
+        # Per-node: assembly components + refused sub-tasks (for fb-refine / redecompose).
         self._components: list[tuple[str, str]] = []
+        self._refused: list[tuple[int, str, str]] = []
         self.succeeded = False  # internal (upstream) notion of success
 
     # ------------------------------------------------------------------
@@ -147,8 +141,12 @@ class Planner:
     def _client_model(self) -> tuple[Any, str]:
         return (self._attacker, self._attacker_model) if self._has_llm else (None, "")
 
-    def _judge_reply(self, reply: str, subtask: str, goal: str) -> _Judged:
-        """Dual judge (subtask-level + goal-level), consensus sets goal-affirmative."""
+    def _judge_reply(self, reply: str, subtask: str, goal: str) -> str:
+        """Dual judge (subtask + goal level); consensus sets ``_any_goal_affirmative``.
+
+        Returns the sub-task-level label (what the callers steer on); the goal-level
+        judgement only feeds the consensus flag, exactly as upstream.
+        """
         if self.cfg.use_llm_judge and self._judge is not None:
             label = llm_classify_reply(reply, subtask, self._judge, self._judge_model)
             goal_label = llm_classify_reply(reply, goal, self._judge, self._judge_model)
@@ -157,7 +155,7 @@ class Planner:
             goal_label = classify_reply(reply)
         if label == "affirmative" and goal_label == "affirmative":
             self._any_goal_affirmative = True
-        return _Judged(reply, label, goal_label)
+        return str(label)
 
     # ------------------------------------------------------------------
     # UCB wrapper selection (copied from upstream sep:227-362)
@@ -337,6 +335,10 @@ class Planner:
                 break
             node = pending.pop(0)
             reward = yield from self._evaluate_node(node)
+            # Upstream's two refusal-driven children (seats_feedback_decon.py:274-354):
+            # a FeedbackGuidedRefine child and a DeconRedecompose child from the node's
+            # refused sub-tasks. Built now (before _refused is reset) and evaluated next.
+            refusal_children = self._refusal_children(node, goal, tree)
             if tree is not None:
                 tree.backpropagate(node, reward)
             else:
@@ -350,14 +352,23 @@ class Planner:
             if self._components:
                 yield from self._assembly(goal, node.persona)
                 self._components = []
+            pending[:0] = refusal_children  # evaluate refusal-driven children first
             if self.succeeded and self._budget_left() <= 0:
                 return
             if self._any_goal_affirmative and self.sconf.n_early_stop_successes <= 1:
                 return
 
     def _evaluate_node(self, node: DeconNode) -> Generator[Unit, Reply, float]:
-        """Attack a node's sub-tasks; returns the reward (upstream formulas)."""
+        """Attack a node's sub-tasks; returns the reward (upstream formulas).
+
+        ``_any_goal_affirmative`` is reset per node, exactly as upstream resets it at
+        the top of every ``evaluate()`` (seats_feedback_decon_separate.py:581): it is a
+        per-node reward / early-stop signal, not a global halt. Task-level termination
+        is driven by ``self.succeeded`` and the framework verdict.
+        """
         self._components = []
+        self._refused = []
+        self._any_goal_affirmative = False
         if self.cfg.recursive_leaf_attack:
             return (yield from self._evaluate_recursive(node))
         return (yield from self._evaluate_separate(node))
@@ -396,12 +407,12 @@ class Planner:
                 self._n_queries += 1
                 if not self.cfg.turn_independent:
                     transcript.append({"role": "assistant", "content": reply})
-                judged = self._judge_reply(reply, subtask, node.goal)
+                label = self._judge_reply(reply, subtask, node.goal)
                 last_answer = reply
-                if judged.label == "affirmative":
+                if label == "affirmative":
                     step_success = True
                     break
-                if judged.label == "refusal":
+                if label == "refusal":
                     consecutive_refusals += 1
                 else:
                     consecutive_refusals = 0
@@ -415,6 +426,8 @@ class Planner:
                 if first_aff is None:
                     first_aff = step_idx
                 self._components.append((subtask, last_answer))
+            else:
+                self._refused.append((step_idx, subtask, last_answer))
             self._record_wrapper(base_wname, step_success)
         return self._reward(n_steps, n_affirmative, first_aff, recursive=False)
 
@@ -453,9 +466,9 @@ class Planner:
             reply = yield Unit(user_msg, True, task_text, goal_text, kind="leaf")
             self._n_queries += 1
             last_response = reply
-            judged = self._judge_reply(reply, task_text, goal_text)
-            self._record_wrapper(wname, judged.label == "affirmative")
-            if judged.label == "affirmative":
+            label = self._judge_reply(reply, task_text, goal_text)
+            self._record_wrapper(wname, label == "affirmative")
+            if label == "affirmative":
                 return True, reply
         # All wrappers failed: recurse if allowed.
         if depth >= self.cfg.recursive_max_depth:
@@ -483,9 +496,16 @@ class Planner:
     # ------------------------------------------------------------------
 
     def _run_goal_as_root(self, goal: str) -> UnitGen:
+        # Reset once per goal, mirroring the v2 _run_goal reset (v2:948).
+        self._any_goal_affirmative = False
+        self._components = []
         persona = self._decon_persona.apply(self.rng) if self.cfg.use_persona else ""
         success, last_resp = yield from self._attack_recursively(goal, goal, persona, depth=0)
         main_success = success or self._any_goal_affirmative
+        # A strict-all-subtasks recursion win leaves no per-run goal transcript, so
+        # record it as a component; the shallow fallbacks record their own components.
+        if success and last_resp and not self._components:
+            self._components.append((goal, last_resp))
         if not main_success and self.cfg.fallback_enabled and self._budget_left() > 0:
             ok = yield from self._fallback_A(goal, persona)
             main_success = main_success or ok or self._any_goal_affirmative
@@ -514,8 +534,8 @@ class Planner:
                 user_msg = f"{persona}, {wrapped}" if persona else wrapped
                 reply = yield Unit(user_msg, True, sub, goal, kind="fallback")
                 self._n_queries += 1
-                judged = self._judge_reply(reply, sub, goal)
-                if judged.label == "affirmative" or self._any_goal_affirmative:
+                label = self._judge_reply(reply, sub, goal)
+                if label == "affirmative" or self._any_goal_affirmative:
                     self._components.append((sub, reply))
                     return True
         return False
@@ -616,12 +636,12 @@ class Planner:
             reply = yield Unit(user_msg, turn == 0, node.goal, node.goal, kind="prompt")
             self._n_queries += 1
             transcript.append({"role": "assistant", "content": reply})
-            judged = self._judge_reply(reply, node.goal, node.goal)
-            if judged.label == "affirmative":
+            label = self._judge_reply(reply, node.goal, node.goal)
+            if label == "affirmative":
                 first_aff = turn
                 self._components.append((node.goal, reply))
                 break
-            if judged.label == "refusal":
+            if label == "refusal":
                 consecutive_refusals += 1
                 if consecutive_refusals >= self.sconf.max_consecutive_refusals:
                     break
@@ -645,8 +665,8 @@ class Planner:
         prompt = build_assembly_prompt(persona, goal, self._components)
         reply = yield Unit(prompt, True, goal, goal, kind="assembly")
         self._n_queries += 1
-        judged = self._judge_reply(reply, goal, goal)
-        if judged.label == "affirmative":
+        label = self._judge_reply(reply, goal, goal)
+        if label == "affirmative":
             self.succeeded = True
 
     def _next_followup(self, transcript: list[dict[str, str]], subtask: str, wrapped: str) -> str:
@@ -692,6 +712,80 @@ class Planner:
     # ------------------------------------------------------------------
     # Expansion operators (decon + plain) and archive
     # ------------------------------------------------------------------
+
+    def _refusal_children(
+        self, node: AttackNode, goal: str, tree: AttackTree | None
+    ) -> list[DeconNode]:
+        """Upstream's two refusal-driven children from a node's refused sub-tasks:
+        a FeedbackGuidedRefine rewrite (seats_feedback_decon.py:391-440) and a
+        DeconRedecompose split (seats_decon.py:721-743). Empty when there is nothing
+        refused, feedback is off, or there is no rewriter LLM."""
+        if not (self.cfg.use_feedback and self._has_llm and self._refused) or not isinstance(
+            node, DeconNode
+        ):
+            return []
+        # One-shot, like upstream: a refusal-driven child is evaluated but does not
+        # itself spawn further refusal-driven children (bounds growth).
+        if node.operator in {"feedback_guided_refine", "decon_redecompose"}:
+            return []
+        client, model = self._client_model()
+        children: list[DeconNode] = []
+        # (a) feedback-refine: rewrite each refused sub-task from its refusal text.
+        refined = list(node.subtasks)
+        changed = False
+        for idx, subtask, refusal in self._refused:
+            if idx >= len(refined) or not refusal:
+                continue
+            try:
+                new = self._fb_refine.apply(
+                    prompt=subtask,
+                    target_response=refusal,
+                    goal=subtask,
+                    client=client,
+                    model=model,
+                    rng=self.rng,
+                )
+            except Exception:
+                continue
+            if new and str(new) != subtask:
+                refined[idx] = str(new)
+                changed = True
+        if changed:
+            children.append(
+                self._make_decon_child(
+                    tree,
+                    node,
+                    goal,
+                    refined,
+                    ["none"] * len(refined),
+                    node.persona,
+                    "feedback_guided_refine",
+                )
+            )
+        # (b) redecompose: split refused sub-tasks into finer ones (depth-capped).
+        if node.depth < self.cfg.max_recursion_depth + 2:
+            new_subtasks = list(node.subtasks)
+            for idx, _s, _r in sorted(self._refused, key=lambda x: x[0], reverse=True):
+                if idx < len(new_subtasks):
+                    try:
+                        new_subtasks = self._decon_redecompose.apply(
+                            new_subtasks, idx, goal, client, model, self.rng
+                        )
+                    except Exception:
+                        pass
+            if new_subtasks != list(node.subtasks):
+                children.append(
+                    self._make_decon_child(
+                        tree,
+                        node,
+                        goal,
+                        new_subtasks,
+                        assign_wrappers(new_subtasks, self.rng),
+                        node.persona,
+                        "decon_redecompose",
+                    )
+                )
+        return children
 
     def _expand_decon(self, selected: AttackNode, goal: str, tree: AttackTree) -> list[DeconNode]:
         if isinstance(selected, DeconNode) and selected.subtasks:

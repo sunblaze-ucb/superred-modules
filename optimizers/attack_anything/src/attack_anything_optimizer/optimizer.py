@@ -98,7 +98,6 @@ class AttackAnythingOptimizer(Optimizer):
         self._done = False
         self._framework_succeeded = False
         self._llm_available = False
-        self._can_write_system_prompt = False
         self._primary_pre_controllable: Controllable | None = None
 
         # Cross-run cursor.
@@ -160,7 +159,6 @@ class AttackAnythingOptimizer(Optimizer):
         self._framework_succeeded = False
         self._current_unit = None
         self._pending_fresh_unit = None
-        self._can_write_system_prompt = any(c.name == _SYSTEM_PROMPT_NAME for c in controllables)
         self._primary_pre_controllable = None
         self._reset_run_state()
 

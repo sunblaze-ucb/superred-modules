@@ -35,9 +35,9 @@ class SyncClient:
             return json.dumps({"score": int(self._valscore), "missing": ""})
         if "safety evaluation" in system:
             return self._judge.pop(0) if self._judge else "affirmative"
-        if "red teaming strategist" in system or "red-teaming strategist" in system:
-            return "next attack message"
-        return "next attack message"
+        # rewriter/strategist (feedback continue/refine, etc.): a long-enough,
+        # distinct message so the vendored length/identity gates accept it.
+        return "A reframed technical request crafted to bypass the specific objection."
 
 
 def drive(planner: Planner, reply_fn, max_units=400):
@@ -123,9 +123,9 @@ def test_dual_judge_consensus_sets_goal_affirmative() -> None:
     p = _planner(AttackAnythingConfig(use_llm_judge=True), client)
     p._judge = client
     p._judge_model = "m"
-    j = p._judge_reply("some compliant answer", "subtask", "goal")
-    assert j.label == "affirmative" and j.goal_label == "affirmative"
-    assert p._any_goal_affirmative is True
+    label = p._judge_reply("some compliant answer", "subtask", "goal")
+    assert label == "affirmative"  # sub-task-level label is returned to the caller
+    assert p._any_goal_affirmative is True  # consensus (both judges affirmative)
 
 
 def test_dual_judge_no_consensus_when_disagree() -> None:
@@ -185,6 +185,44 @@ def test_assembly_unit_emitted_after_compliant_subtasks() -> None:
     # The assembly message references the original objective.
     assembly = next(u for u in units if u.kind == "assembly")
     assert "Original objective" in assembly.user_message
+
+
+def test_any_goal_affirmative_is_reset_per_node() -> None:
+    """The flag is a per-node signal (upstream resets it each evaluate), not a
+    planner-lifetime latch that would freeze the search after the first consensus."""
+    from attack_anything_optimizer._vendor.seats_decon import DeconNode
+
+    p = _planner(AttackAnythingConfig(n_steps=1, max_turns=1))
+    p._any_goal_affirmative = True  # a prior node latched it
+    node = DeconNode(prompt="p", goal="goal", subtasks=["s1"], subtask_wrappers=["none"])
+    gen = p._evaluate_node(node)
+    gen.send(None)  # prime -> _evaluate_node resets the flag before the first yield
+    assert p._any_goal_affirmative is False
+
+
+def test_refusal_children_build_refine_and_redecompose() -> None:
+    """Upstream's two refusal-driven children are produced from refused sub-tasks."""
+    from attack_anything_optimizer._vendor.seats_decon import DeconNode
+
+    client = SyncClient(subtasks=["a", "b"])
+    p = _planner(AttackAnythingConfig(), client)
+    node = DeconNode(
+        prompt="p", goal="goal", depth=1, subtasks=["s0", "s1"], subtask_wrappers=["none", "none"]
+    )
+    p._refused = [(0, "s0", "I refuse to help with that.")]
+    children = p._refusal_children(node, "goal", None)
+    ops = {c.operator for c in children}
+    assert "feedback_guided_refine" in ops
+    assert "decon_redecompose" in ops
+
+
+def test_refusal_children_empty_without_llm() -> None:
+    p = _planner(AttackAnythingConfig())  # no attacker LLM
+    from attack_anything_optimizer._vendor.seats_decon import DeconNode
+
+    node = DeconNode(prompt="p", goal="g", subtasks=["s0"], subtask_wrappers=["none"])
+    p._refused = [(0, "s0", "refusal")]
+    assert p._refusal_children(node, "g", None) == []
 
 
 def test_validator_gate_regenerates_below_threshold() -> None:
