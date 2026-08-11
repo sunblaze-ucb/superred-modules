@@ -117,6 +117,36 @@ async def test_helpers_recover_on_a_later_retry() -> None:
     assert llm.calls == 2  # failed once, succeeded on the second attempt
 
 
+@pytest.mark.parametrize("payload", ['{"prompt": null}', '{"prompt": 42}', '{"prompt": "   "}'])
+@pytest.mark.asyncio
+async def test_prompter_treats_unusable_prompt_field_as_a_failed_try(payload: str) -> None:
+    """A present-but-unusable ``prompt`` key must retry, not escape the ``-> str``.
+
+    ``parsed.get("prompt", "")`` does not apply its default when the key exists
+    with a null value, so this used to return ``None`` and the caller's
+    ``instruction.strip()`` raised ``AttributeError`` -- which the controller
+    records as ``stop_reason="error"``, discarding the whole task's measurement.
+    """
+    llm = FixedLLM(payload)
+    assert await Prompter(llm, max_tries=2).make_instruction({"x": 1}, "g") == ""
+    assert llm.calls == 2  # retried rather than accepting the bad value
+
+
+@pytest.mark.asyncio
+async def test_prompter_recovers_after_an_unusable_prompt_field() -> None:
+    class NullThenGoodLLM:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete(self, messages: list[dict[str, str]], **_: Any) -> Any:
+            self.calls += 1
+            return mock_response('{"prompt": null}' if self.calls == 1 else '{"prompt": "ok"}')
+
+    llm = NullThenGoodLLM()
+    assert await Prompter(llm, max_tries=3).make_instruction({"x": 1}, "g") == "ok"
+    assert llm.calls == 2
+
+
 # --- json_utils edge cases ---------------------------------------------------
 def test_extract_json_object_edge_cases() -> None:
     assert extract_json_object("not json at all") is None

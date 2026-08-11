@@ -29,9 +29,9 @@ class Prompter:
     async def make_instruction(self, playbook: dict[str, Any], goal: str) -> str:
         """Generate a single-sentence adversarial instruction from ``playbook``.
 
-        Returns the ``"prompt"`` field of the parsed JSON response, or ``""`` if
-        all retries are exhausted. ``BudgetExhaustedError`` propagates immediately
-        and is never swallowed.
+        Returns the ``"prompt"`` field of the parsed JSON response when it is a
+        non-empty string, or ``""`` if all retries are exhausted.
+        ``BudgetExhaustedError`` propagates immediately and is never swallowed.
         """
         playbook_text = str(playbook)
         # Deviation 4: append adversarial objective before "Generate ONLY..." so
@@ -57,7 +57,14 @@ class Prompter:
                 parsed = extract_json_object(raw)
                 if parsed is None or not isinstance(parsed, dict):
                     raise ValueError("Invalid or missing JSON object in LLM response.")
-                instruction = parsed.get("prompt", "")
+                # `.get(..., "")` does not apply its default when the key is
+                # present with a null value, so a `{"prompt": null}` response
+                # would return None from a `-> str` method. Treat anything that
+                # is not a usable string as a failed try.
+                value = parsed.get("prompt")
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError("Prompter returned no usable 'prompt' string.")
+                instruction = value
                 break
             except BudgetExhaustedError:
                 raise

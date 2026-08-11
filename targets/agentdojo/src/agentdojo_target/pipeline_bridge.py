@@ -232,6 +232,19 @@ class _MessageStreamHook(BasePipelineElement):
     def __init__(self, *, emit: EventHandler) -> None:
         self._emit = emit
         self._next_idx: int = 0
+        # First message of the stream currently being tracked; identifies a
+        # retry, which rebuilds the list rather than extending it.
+        self._tracked_head: ChatMessage | None = None
+
+    def _extends_tracked(self, messages: Sequence[ChatMessage]) -> bool:
+        """True if *messages* continues the stream this hook has been emitting.
+
+        Identity of the first message is enough to tell a continuation from a
+        restarted attempt: AgentDojo rebuilds the list per attempt.
+        """
+        if self._next_idx == 0 or self._tracked_head is None:
+            return True
+        return bool(messages) and messages[0] is self._tracked_head
 
     def query(
         self,
@@ -241,8 +254,20 @@ class _MessageStreamHook(BasePipelineElement):
         messages: Sequence[ChatMessage] = [],
         extra_args: dict = {},
     ) -> tuple[str, FunctionsRuntime, Env, Sequence[ChatMessage], dict]:
-        # Emit any messages we have not seen yet.  We never re-emit;
-        # the optimizer's view of the stream is append-only.
+        # The pipeline is retried (target.py runs up to three attempts when an
+        # attempt yields no model output), and each attempt starts a FRESH
+        # conversation rather than extending the last one. A cursor carried
+        # across that boundary sits past the new list's end, so the winning
+        # attempt emits nothing -- or, if it runs longer than the one before,
+        # splices its tail onto the previous attempt's head and reports a
+        # conversation that never happened. Restart when the stream is not an
+        # extension of what we were tracking.
+        if self._next_idx > len(messages) or not self._extends_tracked(messages):
+            self._next_idx = 0
+            self._tracked_head = None
+
+        # Emit any messages we have not seen yet.  Within one attempt we never
+        # re-emit; the optimizer's view of that stream is append-only.
         while self._next_idx < len(messages):
             msg = messages[self._next_idx]
             idx = self._next_idx
@@ -264,6 +289,8 @@ class _MessageStreamHook(BasePipelineElement):
                     content=payload,
                 )
             )
+        if messages:
+            self._tracked_head = messages[0]
         return query, runtime, env, messages, extra_args
 
 

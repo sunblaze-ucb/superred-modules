@@ -21,6 +21,7 @@ import pytest
 from agentdojo.agent_pipeline.agent_pipeline import AgentPipeline
 from agentdojo.agent_pipeline.basic_elements import InitQuery, SystemMessage
 from agentdojo.agent_pipeline.tool_execution import ToolsExecutionLoop, ToolsExecutor
+from agentdojo.functions_runtime import FunctionsRuntime
 from superred.core.types.event import Event, EventResponse
 from superred.core.types.events import (
     ControllableInjection,
@@ -31,6 +32,7 @@ from superred.core.types.events import (
 from agentdojo_target.pipeline_bridge import (
     _CatalogEditHook,
     _build_llm,
+    _MessageStreamHook,
     build_pipeline,
 )
 from agentdojo_target.runtime_wrapper import WrappedFunctionsRuntime
@@ -197,6 +199,92 @@ def test_build_pipeline_catalog_hook_fires_once_not_in_loop(loop) -> None:
     # before the first LLM call (elements[2]).
     assert sum(isinstance(e, _CatalogEditHook) for e in elements) == 1
     assert isinstance(elements[2], _CatalogEditHook)
+
+
+# ---------------------------------------------------------------------------
+# Message-stream cursor
+# ---------------------------------------------------------------------------
+
+
+def _contents(rec: _Rec) -> list[Any]:
+    return [e.content.get("content") for e in rec.emitted]
+
+
+def test_message_stream_hook_restarts_on_a_retried_attempt() -> None:
+    """A retry rebuilds the conversation, so the cursor must restart with it.
+
+    ``target.py`` runs the pipeline up to three times when an attempt yields no
+    model output, and each attempt builds a FRESH message list rather than
+    extending the last.  A cursor carried across that boundary sits past the new
+    list's end, so the winning attempt emitted nothing and its answer never
+    reached the trajectory.
+    """
+    rec = _Rec()
+    hook = _MessageStreamHook(emit=rec.emit)
+    runtime = FunctionsRuntime([])
+
+    failed = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "task"},
+        {"role": "assistant", "content": None},
+    ]
+    hook.query("q", runtime, messages=failed)
+    assert len(rec.emitted) == 3
+
+    retried = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "task"},
+        {"role": "assistant", "content": "the real answer"},
+    ]
+    hook.query("q", runtime, messages=retried)
+    assert _contents(rec)[3:] == ["sys", "task", "the real answer"]
+
+
+def test_message_stream_hook_restarts_when_a_retry_runs_longer() -> None:
+    """The other half of the same bug: a longer retry used to splice its tail
+    onto the failed attempt's head, reporting a conversation that never
+    happened.  Every message of the retry must be emitted, from index 0."""
+    rec = _Rec()
+    hook = _MessageStreamHook(emit=rec.emit)
+    runtime = FunctionsRuntime([])
+
+    hook.query("q", runtime, messages=[{"role": "system", "content": "sys"}])
+    rec.emitted.clear()
+
+    retried = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "task"},
+        {"role": "assistant", "content": "answer"},
+    ]
+    hook.query("q", runtime, messages=retried)
+    assert _contents(rec) == ["sys", "task", "answer"]
+    assert [e.observable.name for e in rec.emitted] == [
+        "agent_trace_message_0000",
+        "agent_trace_message_0001",
+        "agent_trace_message_0002",
+    ]
+
+
+def test_message_stream_hook_stays_append_only_within_one_attempt() -> None:
+    """Within a single attempt the stream still never re-emits: the hook runs
+    twice per turn in the tool-execution loop, and duplicating the history each
+    time would flood the trajectory."""
+    rec = _Rec()
+    hook = _MessageStreamHook(emit=rec.emit)
+    runtime = FunctionsRuntime([])
+
+    first = [{"role": "system", "content": "sys"}, {"role": "user", "content": "task"}]
+    hook.query("q", runtime, messages=first)
+    assert len(rec.emitted) == 2
+
+    # Upstream appends to the same message objects, producing a new list that
+    # still starts with the message we are already tracking.
+    grown = [*first, {"role": "assistant", "content": "turn one"}]
+    hook.query("q", runtime, messages=grown)
+    assert _contents(rec)[2:] == ["turn one"]
+
+    hook.query("q", runtime, messages=grown)
+    assert len(rec.emitted) == 3  # nothing re-emitted
 
 
 def test_build_pipeline_returns_callable_close(loop) -> None:
