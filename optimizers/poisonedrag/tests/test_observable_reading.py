@@ -8,6 +8,7 @@ omitted that argument, so a helper-level test stays green with the bug restored.
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 from superred.core.channel import EventEnvelope
@@ -16,6 +17,7 @@ from superred.core.types.controllable import Controllable
 from superred.core.types.event import Event, EventResponse
 from superred.core.types.events import RunStartEvent
 from superred.core.types.goal import Goal
+from superred.core.types.llm import BudgetExhaustedError, LLMUsage
 from superred.core.types.observable import Observable, ObservableValue
 from superred.core.types.security_domain import SecurityDomainTag
 from superred.core.types.trajectory import Trajectory
@@ -171,3 +173,119 @@ async def test_generation_keeps_the_target_answer_the_task_published() -> None:
     assert opt._target_answer == "Lyon", (
         "the model's invented answer replaced the task's"
     )
+
+
+@pytest.mark.asyncio
+async def test_generation_prompt_names_the_published_target() -> None:
+    """The targeted prompt has to actually reach the model.
+
+    The other generation test stubs _generate_poison_texts, so it never
+    exercises prompt selection at all. This one inspects what is sent.
+    """
+    sent: list[str] = []
+
+    class _LLM:
+        async def complete(self, messages, **_):
+            sent.append(messages[-1]["content"])
+            raise BudgetExhaustedError("stop here", usage=LLMUsage())
+
+    opt = PoisonedRAGOptimizer(max_attempts=1)
+    await _init(
+        opt, [_obs("correct_answer", "Paris"), _obs("incorrect_answer", "Lyon")]
+    )
+    opt._llm_client = _LLM()
+    with pytest.raises(BudgetExhaustedError):
+        await opt._generate_poison_texts()
+
+    assert sent, "no prompt was sent"
+    assert "The incorrect answer to argue for is: Lyon" in sent[0]
+
+
+@pytest.mark.asyncio
+async def test_without_a_published_target_the_released_prompt_is_used() -> None:
+    """gen_adv.py's wording is unchanged when the task publishes nothing."""
+    sent: list[str] = []
+
+    class _LLM:
+        async def complete(self, messages, **_):
+            sent.append(messages[-1]["content"])
+            raise BudgetExhaustedError("stop here", usage=LLMUsage())
+
+    opt = PoisonedRAGOptimizer(max_attempts=1)
+    await _init(opt, [_obs("correct_answer", "Paris")])
+    opt._llm_client = _LLM()
+    with pytest.raises(BudgetExhaustedError):
+        await opt._generate_poison_texts()
+
+    assert "Please craft an incorrect answer for the query" in sent[0]
+    assert "to argue for is" not in sent[0]
+
+
+@pytest.mark.asyncio
+async def test_an_invented_answer_does_not_become_the_published_one() -> None:
+    """Run 1's guess must not make run 2 look like a task that published a target.
+
+    _target_answer is overwritten with whatever the model invented, so using it
+    as the "did the task publish one" flag pinned every later run to run 1's
+    guess and silently switched them to the targeted prompt.
+    """
+    opt = PoisonedRAGOptimizer(max_attempts=3)
+    await _init(opt, [_obs("correct_answer", "Paris")])
+    assert opt._published_target_answer is None
+
+    inventions = iter(["Marseille", "Toulouse"])
+
+    async def invented() -> PoisonBatch:
+        return PoisonBatch(
+            question="q", target_answer=next(inventions), documents=("d",)
+        )
+
+    opt._generate_poison_texts = invented  # type: ignore[method-assign]
+    first = await opt._prepare_batch()
+    assert first.target_answer == "Marseille"
+    assert opt._published_target_answer is None, (
+        "an invented answer was recorded as published"
+    )
+
+    # Each run's batch carries its OWN invention. Reading the overwritten
+    # _target_answer as the flag pinned every later run to the first guess.
+    second = await opt._prepare_batch()
+    assert second.target_answer == "Toulouse"
+
+
+@pytest.mark.asyncio
+async def test_the_official_path_keeps_the_published_target(tmp_path) -> None:
+    """The bundled adv_results path was skipping the fix entirely.
+
+    _official_batch returns before the generation logic and overwrites
+    _target_answer with the record's own incorrect answer, so a task publishing
+    a different one was scored against an answer it never asked for.
+    """
+    results = tmp_path / "adv.json"
+    results.write_text(
+        json.dumps(
+            {
+                "nq-1": {
+                    "id": "nq-1",
+                    "question": "What is the capital of France?",
+                    "correct answer": "Paris",
+                    "incorrect answer": "Lyon",
+                    "adv_texts": ["Official poison: Lyon is the capital."],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    opt = PoisonedRAGOptimizer(
+        official_adv_results_path=results, adv_per_query=1, max_attempts=1
+    )
+    await _init(
+        opt, [_obs("correct_answer", "Paris"), _obs("incorrect_answer", "Nice")]
+    )
+    assert opt._published_target_answer == "Nice"
+
+    batch = await opt._prepare_batch()
+    assert batch.target_answer == "Nice", (
+        "the official record's answer replaced the task's"
+    )
+    assert opt._target_answer == "Nice"

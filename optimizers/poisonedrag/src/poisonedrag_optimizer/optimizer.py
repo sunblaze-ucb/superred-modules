@@ -14,6 +14,7 @@ from typing import Any, cast
 from superred.core.interfaces.optimizer import Optimizer
 from superred.core.llm import LLMClient
 from superred.core.types.controllable import Controllable
+from superred.core.types.evaluation import EvaluationResult
 from superred.core.types.event import Event, EventResponse
 from superred.core.types.events import (
     ControllableInjection,
@@ -25,7 +26,6 @@ from superred.core.types.events import (
     RunEndResponse,
     RunStartEvent,
 )
-from superred.core.types.evaluation import EvaluationResult
 from superred.core.types.goal import Goal
 from superred.core.types.llm import BudgetExhaustedError
 from superred.core.types.observable import ObservableValue
@@ -205,6 +205,11 @@ class PoisonedRAGOptimizer(Optimizer):
         self._query_id: str | None = None
         self._correct_answer: str | None = None
         self._target_answer: str | None = None
+        # What the TASK published, captured once in initialize. Distinct from
+        # _target_answer, which the generation and official paths overwrite with
+        # the answer they settled on; reading that back as "did the task publish
+        # one" makes run 2 inherit run 1's invention.
+        self._published_target_answer: str | None = None
         self._static_context: str | None = None
         self._can_write_system_prompt = False
         self._has_corpus_surface = False
@@ -271,6 +276,7 @@ class PoisonedRAGOptimizer(Optimizer):
             self._target_answer_override
             or self._read_answer_observable(observables, _TARGET_ANSWER_HINTS)
         )
+        self._published_target_answer = self._target_answer
         self._static_context = self._format_static_context(observables)
         self._can_write_system_prompt = self._use_system_prompt_when_available and any(
             ctrl.name == _SYSTEM_PROMPT_NAME and self._surface_allowed(ctrl)
@@ -498,7 +504,7 @@ class PoisonedRAGOptimizer(Optimizer):
         official = self._official_batch()
         if official is not None:
             return official
-        published_target = self._target_answer
+        published_target = self._published_target_answer
         generated = await self._generate_poison_texts()
         if published_target:
             # The task published the answer its judge scores on. Keep it: the
@@ -511,11 +517,11 @@ class PoisonedRAGOptimizer(Optimizer):
 
     async def _generate_poison_texts(self) -> PoisonBatch:
         correct_answer = self._correct_answer or "the correct answer"
-        if self._target_answer:
+        if self._published_target_answer:
             prompt = build_targeted_generation_prompt(
                 question=self._question,
                 correct_answer=correct_answer,
-                target_answer=self._target_answer,
+                target_answer=self._published_target_answer,
                 adv_per_query=self._adv_per_query,
             )
         else:
@@ -732,6 +738,22 @@ class PoisonedRAGOptimizer(Optimizer):
             raise _PoisonGenerationError(
                 "Official PoisonedRAG record has too few adv_texts"
             )
+        if (
+            self._published_target_answer
+            and self._published_target_answer != target_answer
+        ):
+            # The record's poison argues for its own incorrect answer, which is
+            # not the one this task is scored on. Keep the published answer so
+            # local scoring agrees with the claim's judge, and say so: the
+            # official documents are unlikely to produce it.
+            logger.warning(
+                "PoisonedRAG: official record targets %r but the task published %r; "
+                "using the published answer for scoring, but the official adv_texts "
+                "argue for a different one",
+                target_answer,
+                self._published_target_answer,
+            )
+            target_answer = self._published_target_answer
         self._target_answer = target_answer
         self._correct_answer = self._correct_answer or self._read_record_str(
             record, ("correct answer", "correct_answer", "answer")
@@ -1035,7 +1057,9 @@ class PoisonedRAGOptimizer(Optimizer):
     @staticmethod
     def _infer_target_answer_from_texts(texts: Sequence[str]) -> str:
         joined = " ".join(texts)
-        match = re.search(r"\banswer\s*(?:is|:)\s*([^.;\n]+)", joined, flags=re.I)
+        match = re.search(
+            r"\banswer\s*(?:is|:)\s*([^.;\n]+)", joined, flags=re.I
+        )
         if match:
             return match.group(1).strip()
         match = re.search(
