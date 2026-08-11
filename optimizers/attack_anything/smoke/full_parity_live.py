@@ -40,26 +40,39 @@ _CONFIGS = {
         n_iterations=2, n_steps=3, max_turns=2, n_early_stop_successes=1
     ),
     "recursive_leaf": AttackAnythingConfig(
-        recursive_leaf_attack=True, recursive_max_depth=1, recursive_branch=2,
-        recursive_wrappers_per_leaf=2, n_steps=2, max_target_queries_per_goal=12,
-        n_iterations=1, n_early_stop_successes=1,
+        recursive_leaf_attack=True,
+        recursive_max_depth=1,
+        recursive_branch=2,
+        recursive_wrappers_per_leaf=2,
+        n_steps=2,
+        max_target_queries_per_goal=12,
+        n_iterations=1,
+        n_early_stop_successes=1,
     ),
     "goal_as_root": AttackAnythingConfig(
-        goal_as_root=True, fallback_enabled=True, recursive_max_depth=1,
-        recursive_branch=2, recursive_wrappers_per_leaf=2,
-        max_target_queries_per_goal=15, n_early_stop_successes=1,
+        goal_as_root=True,
+        fallback_enabled=True,
+        recursive_max_depth=1,
+        recursive_branch=2,
+        recursive_wrappers_per_leaf=2,
+        max_target_queries_per_goal=15,
+        n_early_stop_successes=1,
     ),
 }
 
 
 async def run_config(name: str, cfg: AttackAnythingConfig, args: argparse.Namespace) -> None:
     claim = SecurityClaim.from_tasks(
-        list(sr.strongreject_small_claim(
-            judge_api_base=args.api_base, judge_api_key=args.api_key, judge_model=args.model
-        ))[: args.tasks]
+        list(
+            sr.strongreject_small_claim(
+                judge_api_base=args.api_base, judge_api_key=args.api_key, judge_model=args.model
+            )
+        )[: args.tasks]
     )
     target_factory = TargetFactory(
-        create=lambda: ChatbotTarget(model=args.model, api_key=args.api_key, api_base=args.api_base),
+        create=lambda: ChatbotTarget(
+            model=args.model, api_key=args.api_key, api_base=args.api_base
+        ),
         concurrency=2,
     )
     controller = Controller(
