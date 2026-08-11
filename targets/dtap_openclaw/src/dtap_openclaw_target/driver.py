@@ -345,6 +345,38 @@ def write_episode_inputs(
     }
 
 
+#: Seconds allowed for the ``docker rm -f`` that clears a timed-out episode.
+_REMOVE_TIMEOUT_S = 30.0
+
+
+def _container_name(episode_dir: str) -> str:
+    """Name the episode container so a timed-out one can be removed."""
+    return f"dtap-openclaw-{os.path.basename(episode_dir)}"
+
+
+def _remove_container(name: str) -> None:
+    """Force-remove *name*, ignoring the case where it is already gone.
+
+    Goes through :func:`_run_docker` like every other Docker call: that is the
+    module's single Docker boundary, and it is what offline tests monkeypatch.
+    """
+    try:
+        returncode, _stdout, stderr = _run_docker(["docker", "rm", "-f", name], _REMOVE_TIMEOUT_S)
+    except Exception as exc:  # noqa: BLE001 - cleanup must not mask the timeout
+        _log.warning("could not remove timed-out container %s: %s", name, exc)
+        return
+    if returncode != 0:
+        # The one failure this function exists to prevent. `docker rm` reports
+        # it as a non-zero exit, not an exception, so without this check the
+        # container stays up and nothing is logged at all.
+        _log.warning(
+            "could not remove timed-out container %s (docker rm exited %s): %s",
+            name,
+            returncode,
+            stderr.strip(),
+        )
+
+
 def _run_docker(cmd: list[str], timeout: float) -> tuple[int, str, str]:  # pragma: no cover
     """The single Docker boundary: run *cmd*, return ``(returncode, stdout, stderr)``.
 
@@ -407,7 +439,9 @@ def run_openclaw_container(
     )
 
     mount = f"{episode_dir}:{CONTAINER_STATE}"
-    cmd = ["docker", "run", "--rm", "-v", mount, "-e", f"HOME={CONTAINER_STATE}"]
+    container = _container_name(episode_dir)
+    cmd = ["docker", "run", "--rm", "--name", container, "-v", mount]
+    cmd += ["-e", f"HOME={CONTAINER_STATE}"]
     if network:
         cmd += ["--network", network]
     else:
@@ -426,7 +460,16 @@ def run_openclaw_container(
         # _generate_trajectory). Return the episode dir so the converter reads the
         # partial trace and evaluate() re-queries env state -- an attack that mutated
         # state and then timed out is still judged.
+        # subprocess's timeout kills the docker CLIENT, not the container. The
+        # host MCP proxy is deliberately long-lived -- DtapAgentTarget builds it
+        # once in _ensure_started and reset_ephemeral_state keeps it, resetting
+        # only the env stack and the workspace -- so an orphan still has a live
+        # path to it on the next run. Run 1's tools/call then fire controllable
+        # events onto run 2's trajectory and mutate the environment run 2 just
+        # reset. It also outlives teardown(). Remove it before returning; the
+        # partial trace on disk is unaffected.
         _log.warning("openclaw container timed out after %ss; extracting partial trace", timeout)
+        _remove_container(container)
         return episode_dir
     if returncode != 0:
         # A non-zero container exit is NON-fatal: do NOT raise. Upstream swallows

@@ -367,12 +367,21 @@ def test_run_container_timeout_is_nonfatal(tmp_path, monkeypatch) -> None:
     # any partial trace flushed to the bound traces dir is still read + judged.
     import subprocess
 
+    calls: list[list[str]] = []
+
     def fake_timeout(cmd, timeout):
+        calls.append(cmd)
         raise subprocess.TimeoutExpired(cmd, timeout)
 
     monkeypatch.setattr(driver, "_run_docker", fake_timeout)
     out = driver.run_openclaw_container(_spec(output_dir=str(tmp_path)))
     assert Path(out).is_dir()
+    # The orphan removal must go through the same monkeypatched boundary. A
+    # direct subprocess call here would shell out to the host's real Docker CLI
+    # from a suite that is meant to run without a daemon.
+    assert any(c[:3] == ["docker", "rm", "-f"] for c in calls), (
+        "the timed-out container was not removed through _run_docker"
+    )
     assert Path(out).name.startswith("episode-")
 
 
