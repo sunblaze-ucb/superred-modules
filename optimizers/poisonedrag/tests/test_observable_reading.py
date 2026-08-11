@@ -137,3 +137,37 @@ async def test_the_count_does_not_carry_across_runs() -> None:
 
     await _dispatch(opt, RunStartEvent(trajectory=Trajectory()))
     assert opt._last_retrieved_poison_count == 0, "the count carried into the next run"
+
+
+@pytest.mark.asyncio
+async def test_generation_keeps_the_target_answer_the_task_published() -> None:
+    """The corpus must argue for the answer the judge scores on.
+
+    ``gen_adv.py``'s prompt asks the model to invent an incorrect answer, and
+    the generated one used to overwrite the task's. The corpus was then poisoned
+    toward an answer the claim's judge never checks for, so a technically
+    successful attack scored zero.
+    """
+    opt = PoisonedRAGOptimizer(max_attempts=1)
+    await _init(
+        opt, [_obs("correct_answer", "Paris"), _obs("incorrect_answer", "Lyon")]
+    )
+    assert opt._target_answer == "Lyon"
+
+    captured: list[str] = []
+
+    async def fake_generate() -> PoisonBatch:
+        captured.append(opt._target_answer or "")
+        # What the released prompt tends to produce: the model's own choice.
+        return PoisonBatch(
+            question=opt._question, target_answer="Marseille", documents=("doc",)
+        )
+
+    opt._generate_poison_texts = fake_generate  # type: ignore[method-assign]
+    batch = await opt._prepare_batch()
+
+    assert captured == ["Lyon"], "the published target was not available to generation"
+    assert batch.target_answer == "Lyon"
+    assert opt._target_answer == "Lyon", (
+        "the model's invented answer replaced the task's"
+    )

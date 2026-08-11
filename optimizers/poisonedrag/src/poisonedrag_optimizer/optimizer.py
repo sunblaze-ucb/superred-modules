@@ -7,7 +7,7 @@ import logging
 import os
 import re
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib.resources import files
 from typing import Any, cast
 
@@ -32,6 +32,7 @@ from superred.core.types.observable import ObservableValue
 
 from poisonedrag_optimizer.prompts import (
     build_joint_generation_prompt,
+    build_targeted_generation_prompt,
     clean_str,
     wrap_prompt,
 )
@@ -497,17 +498,32 @@ class PoisonedRAGOptimizer(Optimizer):
         official = self._official_batch()
         if official is not None:
             return official
+        published_target = self._target_answer
         generated = await self._generate_poison_texts()
+        if published_target:
+            # The task published the answer its judge scores on. Keep it: the
+            # documents were generated to argue for it, and overwriting it with
+            # the model's own wording would aim the run at an answer the judge
+            # never checks for.
+            return replace(generated, target_answer=published_target)
         self._target_answer = generated.target_answer
         return generated
 
     async def _generate_poison_texts(self) -> PoisonBatch:
         correct_answer = self._correct_answer or "the correct answer"
-        prompt = build_joint_generation_prompt(
-            question=self._question,
-            correct_answer=correct_answer,
-            adv_per_query=self._adv_per_query,
-        )
+        if self._target_answer:
+            prompt = build_targeted_generation_prompt(
+                question=self._question,
+                correct_answer=correct_answer,
+                target_answer=self._target_answer,
+                adv_per_query=self._adv_per_query,
+            )
+        else:
+            prompt = build_joint_generation_prompt(
+                question=self._question,
+                correct_answer=correct_answer,
+                adv_per_query=self._adv_per_query,
+            )
         messages = [
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": prompt},
