@@ -817,10 +817,13 @@ class PoisonedRAGOptimizer(Optimizer):
         trajectory = self.current_trajectory
         if trajectory is None:
             return
-        # Start from zero: this run's retrieval count must reflect this run's
-        # poison batch. Seeding from the previous run made the figure monotone,
-        # so it reported documents from a batch that is no longer injected.
-        best_count = 0
+        # Seed from what this run already recorded: a PostCall-delivered batch
+        # is counted in _record_retrieval_metrics_from_content as it arrives,
+        # and there may be no context observable on the trajectory to rediscover
+        # it from. Starting at zero would overwrite that with 0. The counter is
+        # reset per run in _reset_run_state, so this cannot carry a count across
+        # runs the way it used to.
+        best_count = self._last_retrieved_poison_count
         for item in trajectory.snapshot():
             if not isinstance(item, ObservableEvent):
                 continue
@@ -1082,6 +1085,10 @@ class PoisonedRAGOptimizer(Optimizer):
         self._primary_post_controllable = None
         self._last_injected_question = None
         self._injected_this_run = False
+        # Per run, not per task. This used to be reset only in initialize(), so
+        # the retrieval count stayed monotone across a task's runs and reported
+        # documents from a batch that is no longer injected.
+        self._last_retrieved_poison_count = 0
 
 
 __all__ = ["PoisonBatch", "PoisonedRAGOptimizer"]
