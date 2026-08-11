@@ -179,6 +179,15 @@ def write_jsonl(path: str, items: List[Dict[str, Any]]) -> None:
 # OpenAI-compatible LLM client
 # ---------------------------------------------------------------------------
 
+def _claude_rejects_temperature(model: str) -> bool:
+    """Anthropic Claude 4.7+ on Vertex AI returns 400
+    "`temperature` is deprecated for this model"; skip the param for them.
+    Other models (GPT, Gemini, Qwen, Claude 3.x) are unaffected."""
+    m = model.lower()
+    return any(prefix in m for prefix in
+               ("claude-opus-4-7", "claude-sonnet-4-7", "claude-haiku-4-7"))
+
+
 class LLMClient:
     def __init__(self, api_base: str, api_key: str = "EMPTY", timeout_s: int = 120):
         self.api_base = api_base.rstrip("/")
@@ -197,9 +206,10 @@ class LLMClient:
         payload: Dict[str, Any] = {
             "model": model,
             "messages": messages,
-            "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        if not _claude_rejects_temperature(model):
+            payload["temperature"] = temperature
         if extra:
             payload.update(extra)
 
@@ -212,7 +222,11 @@ class LLMClient:
         try:
             with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
                 raw = json.loads(resp.read().decode("utf-8"))
-                return raw["choices"][0]["message"]["content"]
+                # Claude's safety filter can return 200 OK with content=null
+                # (no visible text). Coalesce to "" so downstream judges /
+                # string indexing don't crash on NoneType.
+                content = raw["choices"][0]["message"].get("content")
+                return content if content is not None else ""
         except urllib.error.HTTPError as e:
             body = ""
             try:

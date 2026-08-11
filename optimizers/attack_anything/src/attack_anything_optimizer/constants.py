@@ -21,16 +21,25 @@ UPSTREAM_REPO = ""  # no public repository available
 UPSTREAM_COMMIT = ""  # no public commit SHA available (anonymous submission)
 UPSTREAM_LICENSE = "Apache-2.0"
 
+# Two files are vendored from the upstream's v2 (frontier) package copy
+# (``self_evolving_red_v2/self_evolving_red/``), which is a byte-identical superset
+# of v1 except for these files: ``seats_feedback_decon_separate.py`` (goal-as-root
+# recursive-ternary tree + A/B/C fallback) and ``utils.py`` (the Claude-4.7
+# temperature skip + ``content=null`` coalescing). The other seven vendored files
+# are byte-identical between v1 and v2.
+UPSTREAM_V2_FILES = ("seats_feedback_decon_separate.py", "utils.py")
+
 #: SHA-256 of every byte-identical vendored file, keyed by basename under
 #: ``_vendor/``. Pinned at vendoring time from the provided source.
 VENDORED_SHA256: dict[str, str] = {
     "tree.py": "233c9078fdd125ffba0ad6d54fd40ca6af76afccee763d4e97af6cd2f1ece0d6",
     "archive.py": "2c72ffde2990e40c2f98b0f0b6b6dc2b98431c674f7acc31df075adbb16cc8af",
     "operators.py": "50c93b2ed9c06c24abd83d113d8d0146b816238d9fd147a5d1285538fc266e20",
-    "utils.py": "056ae6f93c005b86f0e5bebeac24a4a7e6128a4bb61153021edc3a59ed064982",
     "seats.py": "52606158397ae92d85fe24b1d812837dbaee8fbee85212bebda747107870cbc7",
     "seats_decon.py": "4e52311dd3bf0f65e6d85309e479e4922d6e8d1c8046c46f93ca503e6a3e24ba",
     "seats_feedback.py": "e92987af71566c8b400b06a456ecb1e0ca676c5a0bfd3a01e99b47b50cb3f197",
     "seats_feedback_decon.py": "e3d1d75f91ec2b1e6352e017ae106f85704447bad9ee4dc712606b899800fc5c",
-    "seats_feedback_decon_separate.py": "0c3282b01c22015573982d2da3577fd358a6435f16ccfbdcb45df160b537ec04",
+    # v2 (frontier) superset — see UPSTREAM_V2_FILES:
+    "seats_feedback_decon_separate.py": "cb0c52ccc3717bd0bb80ce564098b49452dfceb33abd0ed50468063611e11c60",
+    "utils.py": "b4691e90401824aa431dd62a666bbdca48497cf14b4332a1d3d55abf96bfc24e",
 }

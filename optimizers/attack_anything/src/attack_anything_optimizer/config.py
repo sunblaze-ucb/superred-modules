@@ -20,6 +20,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from superred.core.types.llm import LLMConfig
+
 from attack_anything_optimizer._vendor.seats import SEATSConfig
 
 
@@ -63,11 +65,38 @@ class AttackAnythingConfig:
     recursive_wrappers_per_leaf: int = 3
     require_all_subtasks: bool = True
     wrapper_selection: str = "ucb"  # "ucb" | "priority" | "random"
+    #: Legacy fixed order for ``wrapper_selection="priority"`` (upstream sep:180-182).
+    wrapper_priority: tuple[str, ...] = (
+        "code_comment",
+        "audit_ctx",
+        "hypothetical",
+        "json",
+        "table",
+        "reverse_engineer",
+    )
+    ucb_c: float = 1.4  # UCB exploration constant for wrapper selection (upstream sep:185)
+    ucb_min_uses: int = 2  # force-explore wrappers used < this many times (upstream sep:187)
     validator_threshold: int = 6
     validator_max_retries: int = 2
 
+    # NOTE: the upstream ``seed_temperature`` knob is intentionally NOT exposed.
+    # superred never sends a sampling temperature to the provider (see
+    # tests/test_no_temperature.py); the upstream temperature knobs are therefore
+    # inert (the provider default rides and each call is an independent draw), so
+    # exposing the field would only be a name that trips the guard for no effect.
+
     # --- judge mode (upstream JUDGE_MODE env; None -> env/permissive) --------
     judge_mode: str | None = None  # "permissive" | "strict" | "calibrated"
+
+    # --- optional endpoint decoupling (upstream --judge_* / --validator_*) ----
+    #: When set, the optimizer builds a separate LLMClient for the judge and/or
+    #: the decomposition validator (upstream points these at a stronger model).
+    #: Like the target's own inference, these are OUT of the controller's
+    #: attacker cost cap. ``None`` reuses the attacker client (self.llm), and a
+    #: ``None`` validator config leaves the validator gate off (accept first
+    #: decomposition) -- the current default.
+    judge_llm_config: LLMConfig | None = None
+    validator_llm_config: LLMConfig | None = None
 
     # --- component toggles (all on = the paper's headline method) ------------
     use_decomposition: bool = True
