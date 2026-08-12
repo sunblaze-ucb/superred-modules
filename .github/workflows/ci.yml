@@ -33,7 +33,7 @@ jobs:
           - { name: optimizers 1/2, args: optimizers --shard 1/2 }
           - { name: optimizers 2/2, args: optimizers --shard 2/2 }
           - { name: targets, args: targets }
-          - { name: security_claims, args: security_claims }
+          - { name: security_claims + shared, args: security_claims shared }
     steps:
       - uses: actions/checkout@v4
 

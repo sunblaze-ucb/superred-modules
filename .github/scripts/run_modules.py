@@ -12,7 +12,7 @@ Failures do not stop the run: every module in the set is tested and the
 script exits non-zero at the end if any failed, mirroring fail-fast: false.
 
 Usage:
-  python .github/scripts/run_modules.py <category> [--shard K/N]
+  python .github/scripts/run_modules.py <category>... [--shard K/N]
   python .github/scripts/run_modules.py --heavy
 """
 
@@ -87,13 +87,18 @@ def main() -> int:
     if args and args[0] == "--heavy":
         mods = list(HEAVY)
     else:
-        category = args[0]
-        if category not in CATEGORIES:
-            print(f"unknown category {category!r}", file=sys.stderr)
-            return 2
-        mods = discover(category)
-        if len(args) == 3 and args[1] == "--shard":
-            k, n = (int(x) for x in args[2].split("/"))
+        shard = None
+        if "--shard" in args:
+            at = args.index("--shard")
+            shard = args[at + 1]
+            args = args[:at] + args[at + 2 :]
+        for category in args:
+            if category not in CATEGORIES:
+                print(f"unknown category {category!r}", file=sys.stderr)
+                return 2
+        mods = [m for category in args for m in discover(category)]
+        if shard is not None:
+            k, n = (int(x) for x in shard.split("/"))
             mods = [m for i, m in enumerate(mods) if i % n == k - 1]
     results: dict[str, bool] = {}
     for mod in mods:
