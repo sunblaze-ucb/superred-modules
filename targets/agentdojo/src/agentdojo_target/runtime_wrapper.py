@@ -189,12 +189,14 @@ class WrappedFunctionsRuntime(FunctionsRuntime):
 
     @property
     def trace(self) -> list[FunctionCall]:
-        """The full function-call trace accumulated during the run.
+        """Every function call attempted during the run, in order.
 
-        Equivalent to AgentDojo's
-        :func:`functions_stack_trace_from_messages` output but recorded
-        eagerly on the wrapper so it is available even when the
-        pipeline run is aborted mid-way.
+        Recorded eagerly on the wrapper rather than derived from the final
+        messages, so it survives a run aborted mid-way. Matches AgentDojo's
+        :func:`functions_stack_trace_from_messages` for a single-attempt run
+        and is a SUPERSET of it when ``AgentDojoTarget.run`` retried: a
+        discarded attempt's calls ran against the environment the retry
+        continues from, so they are kept. See ASSUMPTIONS.md F.3.
         """
         return list(self._trace)
 
