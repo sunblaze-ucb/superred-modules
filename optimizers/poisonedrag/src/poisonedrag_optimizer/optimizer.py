@@ -14,6 +14,7 @@ from typing import Any, cast
 from superred.core.interfaces.optimizer import Optimizer
 from superred.core.llm import LLMClient
 from superred.core.types.controllable import Controllable
+from superred.core.types.evaluation import EvaluationResult
 from superred.core.types.event import Event, EventResponse
 from superred.core.types.events import (
     ControllableInjection,
@@ -25,7 +26,6 @@ from superred.core.types.events import (
     RunEndResponse,
     RunStartEvent,
 )
-from superred.core.types.evaluation import EvaluationResult
 from superred.core.types.goal import Goal
 from superred.core.types.llm import BudgetExhaustedError
 from superred.core.types.observable import ObservableValue
@@ -58,7 +58,11 @@ _TARGET_ANSWER_HINTS = (
     "poison_answer",
     "attacker_answer",
 )
-_QUERY_ID_HINTS = ("query_id", "question_id", "qid", "id")
+# No bare "id": hints match as substrings, so it also matched the unrelated
+# "model_identity" observable that every agentic target publishes, pinning the
+# query id to the victim's model name. "query_id"/"question_id"/"qid" cover the
+# real spellings; anything else falls through to matching on question text.
+_QUERY_ID_HINTS = ("query_id", "question_id", "qid")
 _CORPUS_HINTS = (
     "knowledge_base",
     "knowledgebase",
@@ -262,7 +266,9 @@ class PoisonedRAGOptimizer(Optimizer):
         self._query_id = self._read_answer_observable(observables, _QUERY_ID_HINTS)
         self._correct_answer = (
             self._correct_answer_override
-            or self._read_answer_observable(observables, _CORRECT_ANSWER_HINTS)
+            or self._read_answer_observable(
+                observables, _CORRECT_ANSWER_HINTS, exclude=_TARGET_ANSWER_HINTS
+            )
         )
         self._target_answer = (
             self._target_answer_override
@@ -815,6 +821,12 @@ class PoisonedRAGOptimizer(Optimizer):
         trajectory = self.current_trajectory
         if trajectory is None:
             return
+        # Seed from what this run already recorded: a PostCall-delivered batch
+        # is counted in _record_retrieval_metrics_from_content as it arrives,
+        # and there may be no context observable on the trajectory to rediscover
+        # it from. Starting at zero would overwrite that with 0. The counter is
+        # reset per run in _reset_run_state, so this cannot carry a count across
+        # runs the way it used to.
         best_count = self._last_retrieved_poison_count
         for item in trajectory.snapshot():
             if not isinstance(item, ObservableEvent):
@@ -966,10 +978,19 @@ class PoisonedRAGOptimizer(Optimizer):
 
     @staticmethod
     def _read_answer_observable(
-        observables: list[ObservableValue], hints: Sequence[str]
+        observables: list[ObservableValue],
+        hints: Sequence[str],
+        *,
+        exclude: Sequence[str] = (),
     ) -> str | None:
         for value in observables:
             name = value.observable.name.lower()
+            # Hints match as substrings, so a bare "answer" hint also matches
+            # "incorrect_answer". Callers pass the competing hint set here to
+            # keep the ground truth and the poison target from collapsing onto
+            # the same observable.
+            if any(hint in name for hint in exclude):
+                continue
             if any(hint in name for hint in hints):
                 text = PoisonedRAGOptimizer._stringify(value.content).strip()
                 if text:
@@ -1068,6 +1089,10 @@ class PoisonedRAGOptimizer(Optimizer):
         self._primary_post_controllable = None
         self._last_injected_question = None
         self._injected_this_run = False
+        # Per run, not per task. This used to be reset only in initialize(), so
+        # the retrieval count stayed monotone across a task's runs and reported
+        # documents from a batch that is no longer injected.
+        self._last_retrieved_poison_count = 0
 
 
 __all__ = ["PoisonBatch", "PoisonedRAGOptimizer"]
