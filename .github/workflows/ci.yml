@@ -13,48 +13,27 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Modules are tested by category, a handful of jobs rather than one per
+# module, so a push stays inside private-repo concurrency limits and does not
+# pay ~36 checkout/setup overheads. Isolation is preserved inside the job:
+# run_modules.py gives every module a fresh venv and installs its in-repo
+# dependency closure from source (see the script header), so the consolidation
+# changes where modules run, not how. Modules are discovered by globbing, so a
+# new module is covered the moment it lands, without touching this file.
 jobs:
-  # Each module is its own distributable package with its own tests. They are
-  # discovered rather than listed so a new module is covered the moment it
-  # lands, without touching this file.
-  discover:
-    name: Discover modules
-    runs-on: ubuntu-latest
-    outputs:
-      modules: ${{ steps.find.outputs.modules }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - id: find
-        name: List modules that have tests
-        run: |
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json, pathlib
-
-          # gptfuzzer pulls torch/transformers; dra pins detoxify==0.5.1, whose
-          # tokenizers dependency has no 3.13 wheel and fails to build from
-          # source, so the module cannot be installed on the version it claims
-          # to support (requires-python >=3.11,<3.14). Both are excluded here
-          # rather than silently failing the matrix.
-          HEAVY = {"optimizers/gptfuzzer", "optimizers/dra"}
-
-          mods = sorted(
-              str(p.parent)
-              for cat in ("optimizers", "targets", "security_claims", "shared")
-              for p in pathlib.Path(cat).glob("*/pyproject.toml")
-              if (p.parent / "tests").is_dir() and str(p.parent) not in HEAVY
-          )
-          print("modules=" + json.dumps(mods))
-          PY
-
   test:
-    name: ${{ matrix.module }}
-    needs: discover
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        module: ${{ fromJson(needs.discover.outputs.modules) }}
+        include:
+          # optimizers is the big category (20 modules); two shards keep its
+          # wall-clock close to the other jobs'.
+          - { name: optimizers 1/2, args: optimizers --shard 1/2 }
+          - { name: optimizers 2/2, args: optimizers --shard 2/2 }
+          - { name: targets, args: targets }
+          - { name: security_claims, args: security_claims }
     steps:
       - uses: actions/checkout@v4
 
@@ -62,59 +41,20 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
+          cache-dependency-path: "**/pyproject.toml"
 
-      - name: Install module and its in-repo dependencies
-        run: |
-          python -m pip install --upgrade pip
-          # Siblings are declared as ordinary PyPI requirements, so a bare
-          # `pip install -e <module>` would pull the last *published* sibling
-          # instead of the one in this commit — and a target change that breaks
-          # a dependent claim would sail through. Install the in-repo closure
-          # from source so the matrix actually sees cross-package regressions.
-          # Third-party deps, including `superred` itself, still come from PyPI.
-          # pipefail: without it the pipeline reports the `while` loop's status,
-          # which is 0 on empty input, so a crash in the helper script would
-          # install nothing and still pass this step -- failing later as a
-          # confusing import error instead of here as the actual cause.
-          set -o pipefail
-          python .github/scripts/local_deps.py "${{ matrix.module }}" \
-            | while read -r pkg; do pip install -e "$pkg"; done
-          # Modules name their test extra 'dev' or 'test' and several set an
-          # addopts with --cov, so pytest-cov has to come from the extra rather
-          # than a fixed list here.
-          python .github/scripts/extras_for.py "${{ matrix.module }}" \
-            | while read -r spec; do pip install -e "$spec"; done
-          pip install pytest pytest-asyncio pytest-cov
+      - name: Test modules
+        run: python .github/scripts/run_modules.py ${{ matrix.args }}
 
-      # HarmBench's copyright matcher needs a spaCy model that cannot be a
-      # wheel dependency. Its README documents this step; mirror it here.
-      - name: Install spaCy model (HarmBench only)
-        if: matrix.module == 'security_claims/harmbench'
-        run: python -m spacy download en_core_web_sm
-
-      # Modules are tested from inside their own directory: several share test
-      # basenames (test_target.py, test_optimizer.py) and pytest cannot
-      # distinguish them from the repo root without __init__.py everywhere.
-      - name: Test
-        working-directory: ${{ matrix.module }}
-        env:
-          CI: "true"
-        run: python -m pytest tests -q
-
-  # Opt-in: everything carved out of the matrix above runs here instead, from
-  # the Actions tab. Both are excluded for cost or install reasons, not because
-  # they are unimportant, so neither should be a module whose tests run nowhere
-  # at all. dra is expected to fail its install on 3.13 until the detoxify pin
-  # is resolved; that failure is the point, and it is visible here rather than
-  # silent.
+  # Opt-in, from the Actions tab: the modules carved out of the categories
+  # above for cost or install reasons, not because they are unimportant, so
+  # neither is a module whose tests run nowhere at all. dra is expected to
+  # fail its install on 3.13 until the detoxify pin is resolved; that failure
+  # is the point, and it is visible here rather than silent.
   heavy:
-    name: ${{ matrix.module }}
+    name: heavy (gptfuzzer, dra)
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        module: [optimizers/gptfuzzer, optimizers/dra]
     steps:
       - uses: actions/checkout@v4
 
@@ -122,17 +62,7 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
+          cache-dependency-path: "**/pyproject.toml"
 
-      - name: Install module and its in-repo dependencies
-        run: |
-          python -m pip install --upgrade pip
-          set -o pipefail  # see the matrix job: an empty pipeline must not pass
-          python .github/scripts/local_deps.py "${{ matrix.module }}" \
-            | while read -r pkg; do pip install -e "$pkg"; done
-          pip install pytest pytest-asyncio
-
-      - name: Test
-        working-directory: ${{ matrix.module }}
-        env:
-          CI: "true"
-        run: python -m pytest tests -q
+      - name: Test modules
+        run: python .github/scripts/run_modules.py --heavy

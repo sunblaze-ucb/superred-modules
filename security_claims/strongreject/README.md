@@ -37,7 +37,7 @@ result = await controller.run()    # -> ThreatModelResult
 
 ```bash
 pip install -e ./superred-modules/security_claims/strongreject
-pip install -e ./superred-modules/security_claims/strongreject[dev]   # for tests
+pip install -e ./superred-modules/security_claims/strongreject[test]   # for tests
 ```
 
 ## Public API

@@ -43,7 +43,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-dev = [
+test = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-cov>=6.0",

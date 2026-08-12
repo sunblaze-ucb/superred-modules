@@ -37,7 +37,7 @@ classifiers = [
 [project.optional-dependencies]
 injection = ["aiohttp"]
 proxy = ["aiohttp"]
-dev = [
+test = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "aiohttp",
@@ -55,7 +55,7 @@ packages = ["src/openclaw_target"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["."]
+testpaths = ["tests"]
 markers = [
     "provider: opt-in tests against a real LLM provider (requires GEMINI_API_KEY)",
     "controller_e2e: full Controller + real gateway + real provider E2E (requires GEMINI_API_KEY)",

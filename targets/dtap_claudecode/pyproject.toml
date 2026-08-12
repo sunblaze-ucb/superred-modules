@@ -51,7 +51,7 @@ Issues = "https://github.com/RoldSI/superred-modules/issues"
 # Docker image (see docker/Dockerfile) and imported only by driver.py, which runs
 # in that image. The host package imports without them.
 [project.optional-dependencies]
-dev = [
+test = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-cov>=6.0",

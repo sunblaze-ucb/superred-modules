@@ -77,7 +77,7 @@ faithfulness assertion (it doesn't compare to upstream).
 
 ```bash
 cd security_claims/agentdojo
-pip install -e ".[dev]"
+pip install -e ".[test]"
 
 # Faithfulness tests (default: included in main run)
 pytest tests/faithfulness/ -v

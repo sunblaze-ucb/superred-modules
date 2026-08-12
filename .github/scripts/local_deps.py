@@ -35,13 +35,11 @@ for cat in ("optimizers", "targets", "security_claims", "shared"):
 def deps_of(d):
     pp = pathlib.Path(d) / "pyproject.toml"
     project = tomllib.load(open(pp, "rb"))["project"]
-    # Test extras can name siblings too (gepa_agentic's suite needs the
+    # The test extra can name siblings too (gepa_agentic's suite needs the
     # AgentDojo target), and those must come from source for the same reason
     # the runtime ones do.
-    extras = project.get("optional-dependencies", {})
     data = list(project.get("dependencies", []))
-    for name in ("dev", "test"):
-        data += extras.get(name, [])
+    data += project.get("optional-dependencies", {}).get("test", [])
     for spec in data:
         # Strip the version specifier, extras and environment marker. ~ and ,
         # matter: "pkg~=1.0" and "pkg>=1,<2" would otherwise keep a trailing

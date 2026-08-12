@@ -50,7 +50,7 @@ Issues = "https://github.com/RoldSI/superred-modules/issues"
 # else point $DTAP_DATASET_ROOT at a local checkout. Defining the Goals is the
 # claim's job, so the enumeration + this extra live here (security_claim_dtap.dataset).
 dataset = ["huggingface_hub>=0.20"]
-dev = [
+test = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-cov>=6.0",
