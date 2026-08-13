@@ -14,13 +14,16 @@ authors = [
     { name = "Simon Sure", email = "info@simonsure.com" },
     { name = "Sarthak Munshi", email = "sarthakmunshi@gmail.com" },
 ]
-dependencies = [
-    "superred>=0.1.0",
-    "torch",
-    "transformers",
-]
+dependencies = ["superred>=0.1.0"]
 
 [project.optional-dependencies]
+# The RoBERTa scorer (hubert233/GPTFuzz) is the only thing here that needs a
+# tensor stack, and predictor.py already treats it as optional: _ensure_loaded
+# imports both lazily and turns ImportError into PredictorUnavailableError,
+# whose message already says to "install the gptfuzzer optimizer with its
+# roberta dependencies" -- an extra that did not exist until now. Without it
+# the optimizer degrades to RefusalStringPredictor and logs a warning.
+roberta = ["torch", "transformers"]
 test = ["pytest", "pytest-asyncio"]
 
 [tool.pytest.ini_options]

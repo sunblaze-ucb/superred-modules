@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
+import types
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -58,6 +60,32 @@ def offline_error() -> OSError:
     return OSError(OFFLINE_MESSAGE)
 
 
+@pytest.fixture
+def unreachable_hub(monkeypatch: Any) -> None:
+    """Drive ``_ensure_loaded`` with a Hub that will not load, without torch.
+
+    torch and transformers are imported inside ``_ensure_loaded``, so seeding
+    ``sys.modules`` exercises the real path with neither package installed --
+    which is the point, since they are a ``[roberta]`` extra and CI does not
+    install them. ``device="cpu"`` short-circuits ``torch.cuda.is_available()``,
+    the only torch attribute reached before the load, so a bare module suffices.
+
+    What is under test is the normalization in ``_ensure_loaded``, not the
+    transformers API: the class names are stubbed, so a rename upstream would
+    not fail here. It would surface as ``PredictorUnavailableError`` at runtime
+    and fall back, which is the designed degradation.
+    """
+
+    def boom(*args: Any, **kwargs: Any) -> Any:
+        raise offline_error()
+
+    transformers = types.ModuleType("transformers")
+    transformers.RobertaForSequenceClassification = MagicMock(from_pretrained=boom)  # type: ignore[attr-defined]
+    transformers.RobertaTokenizer = MagicMock()  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "torch", types.ModuleType("torch"))
+    monkeypatch.setitem(sys.modules, "transformers", transformers)
+
+
 class ExplodingPredictor:
     """Stand-in for a RoBERTaPredictor whose weights will not load."""
 
@@ -75,17 +103,8 @@ class ExplodingPredictor:
 # ---------------------------------------------------------------------------
 
 
-def test_unreachable_hub_surfaces_as_predictor_unavailable(monkeypatch: Any) -> None:
+def test_unreachable_hub_surfaces_as_predictor_unavailable(unreachable_hub: None) -> None:
     """An OSError from the Hub is normalized, not leaked as-is."""
-    import transformers
-
-    def boom(*args: Any, **kwargs: Any) -> Any:
-        raise offline_error()
-
-    monkeypatch.setattr(
-        transformers.RobertaForSequenceClassification, "from_pretrained", boom
-    )
-
     predictor = RoBERTaPredictor(DEFAULT_GPTFUZZ_MODEL, device="cpu")
     with pytest.raises(PredictorUnavailableError) as excinfo:
         predictor.predict(["anything"])
@@ -101,17 +120,8 @@ def test_predictor_unavailable_is_a_runtimeerror() -> None:
     assert issubclass(PredictorUnavailableError, RuntimeError)
 
 
-def test_failed_load_leaves_no_half_initialized_predictor(monkeypatch: Any) -> None:
+def test_failed_load_leaves_no_half_initialized_predictor(unreachable_hub: None) -> None:
     """A load that fails must not publish a partially built predictor."""
-    import transformers
-
-    def boom(*args: Any, **kwargs: Any) -> Any:
-        raise offline_error()
-
-    monkeypatch.setattr(
-        transformers.RobertaForSequenceClassification, "from_pretrained", boom
-    )
-
     predictor = RoBERTaPredictor(DEFAULT_GPTFUZZ_MODEL, device="cpu")
     with pytest.raises(PredictorUnavailableError):
         predictor.predict(["anything"])

@@ -25,11 +25,12 @@ mapping and every deliberate departure.
 ## Install
 
 GPTFuzzer's default success classifier is the official `hubert233/GPTFuzz`
-RoBERTa model, so this package depends on `torch` and `transformers`; they are
-installed automatically.
+RoBERTa model, which needs `torch` and `transformers`. They are a `[roberta]`
+extra rather than base dependencies, because the optimizer runs without them.
 
 ```bash
-pip install superred-optimizer-gptfuzzer
+pip install "superred-optimizer-gptfuzzer[roberta]"   # the paper's classifier
+pip install superred-optimizer-gptfuzzer              # string-matching fallback
 ```
 
 The classifier weights are downloaded lazily on the first response-visible run.
