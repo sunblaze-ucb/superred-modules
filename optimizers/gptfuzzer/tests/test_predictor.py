@@ -120,6 +120,28 @@ def test_predictor_unavailable_is_a_runtimeerror() -> None:
     assert issubclass(PredictorUnavailableError, RuntimeError)
 
 
+def test_a_missing_tensor_stack_names_the_extra_that_supplies_it(monkeypatch: Any) -> None:
+    """The install-without-[roberta] path: ImportError becomes the actionable error.
+
+    This is the branch that makes torch and transformers an extra rather than
+    base dependencies, so it is the one that must not regress. Setting the
+    entry to None makes ``import torch`` raise ImportError the way an absent
+    package does, without needing it absent from the interpreter running this.
+
+    The message is asserted to name the extra: the string and the pyproject
+    key are the same fact in two files, and renaming one silently should fail
+    here rather than reach an operator who then cannot act on it.
+    """
+    monkeypatch.setitem(sys.modules, "torch", None)
+
+    predictor = RoBERTaPredictor(DEFAULT_GPTFUZZ_MODEL, device="cpu")
+    with pytest.raises(PredictorUnavailableError) as excinfo:
+        predictor.predict(["anything"])
+
+    assert "roberta" in str(excinfo.value).lower()
+    assert isinstance(excinfo.value.__cause__, ImportError)
+
+
 def test_failed_load_leaves_no_half_initialized_predictor(unreachable_hub: None) -> None:
     """A load that fails must not publish a partially built predictor."""
     predictor = RoBERTaPredictor(DEFAULT_GPTFUZZ_MODEL, device="cpu")

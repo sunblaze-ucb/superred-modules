@@ -9,10 +9,13 @@ resolves the dataset via:
 2. HuggingFace lazy-load via ``hf_hub_download`` (relies on the user
    having accepted the gate and authenticated via ``hf auth login`` or
    ``HF_TOKEN``), then
-3. ``pytest.fail`` with an actionable error.
+3. ``pytest.fail`` with an actionable error -- except under ``CI``, where it
+   ``pytest.skip``s instead, because the gate cannot be accepted there.
 
-The dataset never gets bundled. CI must configure either the env var or
-``HF_TOKEN`` to run our tests.
+The dataset never gets bundled. Without the env var or ``HF_TOKEN``, the 43
+tests taking ``question_jsonl_path`` skip and the module's other 104 still run.
+Note ``run_modules.py`` sets ``CI=true`` for every module, so a local run
+through that script skips them too; bare ``pytest`` still fails loudly.
 """
 
 from __future__ import annotations

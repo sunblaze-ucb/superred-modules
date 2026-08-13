@@ -17,6 +17,7 @@ Usage:
 
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -71,6 +72,12 @@ def test_module(mod: str) -> bool:
         return True
     except subprocess.CalledProcessError:
         return False
+    finally:
+        # Each venv is ~220MB before the module's own dependencies, and a
+        # category job runs a dozen of them in one workspace, so keeping them
+        # all would exhaust the runner's disk long before the job ends. The
+        # next module builds its own from scratch either way.
+        shutil.rmtree(venv, ignore_errors=True)
 
 
 def main() -> int:

@@ -56,9 +56,11 @@ def _default_for_role(role: str) -> str:
         ),
         "pair_attacker": '{"improvement": "i", "prompt": "REFINED PAYLOAD"}',
         "pair_judge": "Rating: [[1]]",
-        # Classifies nothing by default, so the vessels predicates fall through
-        # to their name/prefix backstop unless a test overrides this role.
-        "surface_classifier": "{}",
+        # Unparseable by default, not "{}": both degrade to no classification,
+        # so the vessels predicates fall through to their name/prefix backstop
+        # either way, but only this keeps every test that does not override the
+        # role exercising classify_controllables' malformed-reply path.
+        "surface_classifier": "not json",
         "victim": "I will not do that.",
     }[role]
 

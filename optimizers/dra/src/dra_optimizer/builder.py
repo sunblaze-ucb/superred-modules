@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 import importlib
+import logging
 from random import Random
 from typing import Any
 
@@ -131,6 +132,8 @@ TOOL_LIST = [
     "a telescope",
 ]
 
+logger = logging.getLogger(__name__)
+
 SENSITIVE_WORDS = ["illegally"]
 OFFICIAL_SYSTEM_PROMPT = "You are a helpful assistant."
 
@@ -159,7 +162,19 @@ def try_create_detoxify_token_detector() -> SensitiveTokenDetector | None:
 
     try:
         return DetoxifyTokenDetector()
-    except Exception:
+    except Exception as exc:
+        # Loud, because since detoxify became a [detoxify] extra this is the
+        # DEFAULT path, and the static fallback holds one word: nearly every
+        # token then takes the benign branch of the word guide. A run without a
+        # detector is a materially weaker attack than the paper's, and nothing
+        # in the trajectory distinguishes the two afterwards.
+        logger.warning(
+            "DRA: Detoxify unavailable (%s: %s); falling back to the static "
+            "sensitive-word list, which weakens the disguise step. Install "
+            'superred-optimizer-dra[detoxify] for the paper\'s behaviour.',
+            type(exc).__name__,
+            exc,
+        )
         return None
 
 

@@ -83,7 +83,7 @@ class RoBERTaPredictor:
         try:
             import torch
             from transformers import RobertaForSequenceClassification, RobertaTokenizer
-        except ImportError as exc:  # pragma: no cover - depends on optional runtime deps
+        except ImportError as exc:
             raise PredictorUnavailableError(
                 "GPTFuzzer RoBERTa predictor requires torch and transformers. "
                 "Install the gptfuzzer optimizer with its roberta dependencies."
