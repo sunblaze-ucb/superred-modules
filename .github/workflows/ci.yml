@@ -15,7 +15,7 @@ concurrency:
 
 # Modules are tested by category, a handful of jobs rather than one per
 # module, so a push stays inside private-repo concurrency limits and does not
-# pay ~36 checkout/setup overheads. Isolation is preserved inside the job:
+# pay ~39 checkout/setup overheads. Isolation is preserved inside the job:
 # run_modules.py gives every module a fresh venv and installs its in-repo
 # dependency closure from source (see the script header), so the consolidation
 # changes where modules run, not how. Modules are discovered by globbing, so a
@@ -28,7 +28,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # optimizers is the big category (20 modules); two shards keep its
+          # optimizers is the big category (23 modules); two shards keep its
           # wall-clock close to the other jobs'.
           - { name: optimizers 1/2, args: optimizers --shard 1/2 }
           - { name: optimizers 2/2, args: optimizers --shard 2/2 }
@@ -45,24 +45,3 @@ jobs:
 
       - name: Test modules
         run: python .github/scripts/run_modules.py ${{ matrix.args }}
-
-  # Opt-in, from the Actions tab: the modules carved out of the categories
-  # above for cost or install reasons, not because they are unimportant, so
-  # neither is a module whose tests run nowhere at all. dra is expected to
-  # fail its install on 3.13 until the detoxify pin is resolved; that failure
-  # is the point, and it is visible here rather than silent.
-  heavy:
-    name: heavy (gptfuzzer, dra)
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-          cache: pip
-          cache-dependency-path: "**/pyproject.toml"
-
-      - name: Test modules
-        run: python .github/scripts/run_modules.py --heavy

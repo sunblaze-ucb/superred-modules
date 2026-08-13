@@ -5,15 +5,14 @@ gets it (its in-repo dependency closure from source via local_deps.py,
 everything else from PyPI), and no sibling's install can mask a missing or
 wrong dependency. Consolidating modules into one job per category -- rather
 than one job per module -- keeps that isolation while cutting the job count
-from ~36 to 4, so a push does not fan out past private-repo concurrency
-limits or pay 36 checkout/setup overheads.
+from ~39 to 4, so a push does not fan out past private-repo concurrency
+limits or pay 39 checkout/setup overheads.
 
 Failures do not stop the run: every module in the set is tested and the
 script exits non-zero at the end if any failed, mirroring fail-fast: false.
 
 Usage:
   python .github/scripts/run_modules.py <category>... [--shard K/N]
-  python .github/scripts/run_modules.py --heavy
 """
 
 import os
@@ -22,14 +21,6 @@ import subprocess
 import sys
 import tomllib
 
-# gptfuzzer pulls torch/transformers; dra pins detoxify==0.5.1, whose
-# tokenizers dependency has no 3.13 wheel and fails to build from source, so
-# the module cannot be installed on the version it claims to support
-# (requires-python >=3.11,<3.14). Excluded from the per-push categories and
-# run by the opt-in job instead; dra's install failure there is the point,
-# visible rather than silent.
-HEAVY = ["optimizers/gptfuzzer", "optimizers/dra"]
-
 CATEGORIES = ("optimizers", "targets", "security_claims", "shared")
 
 
@@ -37,7 +28,7 @@ def discover(category: str) -> list[str]:
     return sorted(
         str(p.parent)
         for p in pathlib.Path(category).glob("*/pyproject.toml")
-        if (p.parent / "tests").is_dir() and str(p.parent) not in HEAVY
+        if (p.parent / "tests").is_dir()
     )
 
 
@@ -84,22 +75,19 @@ def test_module(mod: str) -> bool:
 
 def main() -> int:
     args = sys.argv[1:]
-    if args and args[0] == "--heavy":
-        mods = list(HEAVY)
-    else:
-        shard = None
-        if "--shard" in args:
-            at = args.index("--shard")
-            shard = args[at + 1]
-            args = args[:at] + args[at + 2 :]
-        for category in args:
-            if category not in CATEGORIES:
-                print(f"unknown category {category!r}", file=sys.stderr)
-                return 2
-        mods = [m for category in args for m in discover(category)]
-        if shard is not None:
-            k, n = (int(x) for x in shard.split("/"))
-            mods = [m for i, m in enumerate(mods) if i % n == k - 1]
+    shard = None
+    if "--shard" in args:
+        at = args.index("--shard")
+        shard = args[at + 1]
+        args = args[:at] + args[at + 2 :]
+    for category in args:
+        if category not in CATEGORIES:
+            print(f"unknown category {category!r}", file=sys.stderr)
+            return 2
+    mods = [m for category in args for m in discover(category)]
+    if shard is not None:
+        k, n = (int(x) for x in shard.split("/"))
+        mods = [m for i, m in enumerate(mods) if i % n == k - 1]
     results: dict[str, bool] = {}
     for mod in mods:
         print(f"::group::{mod}", flush=True)
