@@ -25,16 +25,19 @@ mapping and every deliberate departure.
 
 ## Install
 
-DRA depends on [Detoxify](https://github.com/unitaryai/detoxify) to decide which
-guide words are sensitive; it is a normal dependency of this package and is
-installed automatically.
+DRA uses [Detoxify](https://github.com/unitaryai/detoxify) to decide which guide
+words are sensitive. It is an extra rather than a base dependency, because it
+pulls torch and a ~440MB checkpoint for what the code uses as one boolean.
 
 ```bash
-pip install superred-optimizer-dra
+pip install "superred-optimizer-dra[detoxify]"   # the paper's behaviour
+pip install superred-optimizer-dra               # static word list only
 ```
 
-If Detoxify cannot load in a constrained environment, the optimizer falls back
-to the official static sensitive-word list so the attack can still run.
+Without it the optimizer falls back to the official static sensitive-word list,
+which is one word (`illegally`). The attack still runs, but nearly every token
+then takes the benign branch of the word guide, so the disguise step is much
+weaker than the paper's. Prefer the extra, or pass your own token classifier.
 
 ## Usage
 

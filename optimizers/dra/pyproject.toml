@@ -14,9 +14,19 @@ authors = [
     { name = "Simon Sure", email = "info@simonsure.com" },
     { name = "Sarthak Munshi", email = "sarthakmunshi@gmail.com" },
 ]
-dependencies = ["superred>=0.1.0", "detoxify==0.5.1"]
+dependencies = ["superred>=0.1.0"]
 
 [project.optional-dependencies]
+# Optional because builder.py already treats it that way: the import is lazy and
+# try_create_detoxify_token_detector() returns None when it is missing, so the
+# declaration was the only thing claiming it was required. It costs torch plus a
+# ~440MB checkpoint, which every DRA install paid for one boolean.
+#
+# >=0.5.2 separately: 0.5.1 requires transformers==4.22.1, which requires
+# tokenizers<0.13, while superred's litellm requires tokenizers>=0.21.0. Those
+# ranges are disjoint, so `pip install superred-optimizer-dra` could not resolve
+# on any Python. 0.5.2 leaves transformers unpinned.
+detoxify = ["detoxify>=0.5.2"]
 test = ["pytest", "pytest-asyncio"]
 
 [tool.pytest.ini_options]

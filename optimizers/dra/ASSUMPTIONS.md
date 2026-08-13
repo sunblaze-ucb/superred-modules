@@ -76,11 +76,17 @@ only the lightweight GCG/EM gate.
 ## Deliberate Differences
 
 The official scripts use Detoxify to decide which guide words are sensitive.
-Because this optimizer is its own installable package, Detoxify is a normal DRA
-dependency rather than a dependency of all SuperRed users. At runtime, the
-optimizer uses Detoxify by default. If Detoxify cannot load in a constrained
-environment, it falls back to the official static sensitive-word list so the
-attack can still run. Callers can also pass an explicit token classifier.
+Here it is a `[detoxify]` extra rather than a base dependency: the import is
+lazy, a missing package degrades rather than raises, and requiring it made every
+install pay torch and a ~440MB checkpoint for one boolean. At runtime the
+optimizer uses Detoxify whenever it is importable. Callers can also pass an
+explicit token classifier.
+
+Without either, `_is_sensitive` falls back to the official static list, which
+holds a single word (`illegally`). This keeps the attack running but is not
+close to the paper's behaviour: nearly every token then takes the benign branch
+of the word guide, so the disguise step is substantially weakened. Treat a run
+without a detector as a different configuration, not as the same attack.
 
 The paper defines exact match more broadly than the released script: it allows
 word overlap or embedding similarity. The official public attack script only
