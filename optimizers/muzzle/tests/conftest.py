@@ -56,6 +56,9 @@ def _default_for_role(role: str) -> str:
         ),
         "pair_attacker": '{"improvement": "i", "prompt": "REFINED PAYLOAD"}',
         "pair_judge": "Rating: [[1]]",
+        # Classifies nothing by default, so the vessels predicates fall through
+        # to their name/prefix backstop unless a test overrides this role.
+        "surface_classifier": "{}",
         "victim": "I will not do that.",
     }[role]
 
@@ -81,6 +84,8 @@ def role_of(messages: list[dict[str, str]]) -> str:
         return "pair_judge"
     if "adversarial jailbreaking prompt" in system or "red teaming assistant" in system:
         return "pair_attacker"
+    if "You analyse the injection points" in system:
+        return "surface_classifier"
     # No (or victim) system prompt + a user message => the surrogate victim.
     if user:
         return "victim"

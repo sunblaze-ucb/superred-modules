@@ -10,6 +10,8 @@ observables) -- the optimizer has to run against arbitrary, unseen targets.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from muzzle_optimizer.optimizer import MuzzleOptimizer
@@ -96,20 +98,6 @@ async def test_initialize_stores_controllables_and_observables() -> None:
     [
         ("tool:lookup", TOOL_A_TAG, True),  # content surface via the tool: prefix
         ("read__file", TOOL_A_TAG, True),  # content surface via the read__ prefix
-        pytest.param(
-            "retrieved_document",
-            TOOL_B_TAG,
-            True,
-            marks=pytest.mark.xfail(
-                reason=(
-                    "is_content_surface's backstop is prefix-only (read__/tool:/tool_call:) "
-                    "plus explicit extra_names; there is no name-hint match for "
-                    "'retrieved_document'. Either add the hint or drop this case - needs the "
-                    "module author's intent."
-                ),
-                strict=True,
-            ),
-        ),
         ("user_prompt", USER_TAG, True),  # user-prompt fallback surface
         ("query", USER_TAG, True),  # reserved user-prompt name
         ("system_prompt", SYSTEM_PROMPT_TAG, True),  # last-resort system-prompt vessel
@@ -123,6 +111,33 @@ async def test_can_inject_reflects_injectable_surface(
     optimizer = MuzzleOptimizer()
     controllable = make_controllable(name, tag)  # type: ignore[arg-type]
     await optimizer.initialize(Goal(description="g"), [controllable], [], ScriptedLLM())
+    assert optimizer._can_inject is expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "roles, expected",
+    [
+        ({"retrieved_document": "content-injection"}, True),
+        ({}, False),
+    ],
+)
+async def test_a_named_surface_is_injectable_only_once_classified(
+    roles: dict[str, str], expected: bool
+) -> None:
+    """``retrieved_document`` is a content surface by classification, not by name.
+
+    Name-hint matching was removed in favour of the LLM surface classification,
+    so the prefix backstop (``read__``/``tool:``/``tool_call:`` plus explicit
+    ``extra_content_names``) no longer has anything to match here. The pair
+    below pins both halves: classified, it is injectable; unclassified, the
+    backstop correctly declines it.
+    """
+    optimizer = MuzzleOptimizer()
+    controllable = make_controllable("retrieved_document", TOOL_B_TAG)  # type: ignore[arg-type]
+    llm = ScriptedLLM(overrides={"surface_classifier": json.dumps(roles)})
+    await optimizer.initialize(Goal(description="g"), [controllable], [], llm)
+
     assert optimizer._can_inject is expected
 
 
