@@ -131,7 +131,7 @@ async def test_reset_environment_falls_back_to_scripts(monkeypatch, tmp_path):
     assert "exec" in execs[0] and "travel-api" in execs[0]
 
 
-async def test_reset_via_scripts_raises_on_nonzero_rc(monkeypatch, tmp_path):
+async def test_reset_via_scripts_raises_contextual_error_on_nonzero_rc(monkeypatch, tmp_path):
     async def _exec(cmd, *, cwd=None, env=None, timeout=None):
         return (1, "", "boom")
 
@@ -139,5 +139,35 @@ async def test_reset_via_scripts_raises_on_nonzero_rc(monkeypatch, tmp_path):
     cfg = _cfg("travel", scripts={"travel-api": "/app/reset.sh"})
     compose_file = tmp_path / "docker-compose.yml"
     compose_file.write_text("services: {}\n")
-    with pytest.raises(RuntimeError, match="reset script"):
+    with pytest.raises(reset.ResetScriptError, match="exit code 1") as raised:
         await reset.reset_via_scripts("travel", "dtap_x_travel", compose_file, cfg, sudo=False)
+    message = str(raised.value)
+    assert "travel/travel-api" in message
+    assert "dtap_x_travel" in message
+    assert "/app/reset.sh" in message
+    assert "boom" in message
+
+
+async def test_reset_via_scripts_wraps_timeout_with_context(monkeypatch, tmp_path):
+    async def _exec(cmd, *, cwd=None, env=None, timeout=None):
+        raise TimeoutError
+
+    monkeypatch.setattr(compose, "_exec", _exec)
+    cfg = _cfg("research", scripts={"research-api": "/reset.sh"})
+    compose_file = tmp_path / "docker-compose.yml"
+    compose_file.write_text("services: {}\n")
+    with pytest.raises(reset.ResetScriptError, match="timed out") as raised:
+        await reset.reset_via_scripts(
+            "research",
+            "dtap_x_research",
+            compose_file,
+            cfg,
+            sudo=False,
+            timeout=7,
+        )
+    message = str(raised.value)
+    assert "research/research-api" in message
+    assert "after 7s" in message
+    assert "dtap_x_research" in message
+    assert "/reset.sh" in message
+    assert isinstance(raised.value.__cause__, TimeoutError)

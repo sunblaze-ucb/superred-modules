@@ -57,6 +57,9 @@ class FakeRegistry:
     def reset_script_timeout(self, env):
         return 180  # distinctive per-env value (mimics env.yaml terminal=180)
 
+    def disable_reuse(self, env):
+        return False
+
     def mcp_server(self, server):
         if server == "travel-suite":
             return {
@@ -111,6 +114,7 @@ def patched(monkeypatch, tmp_path):
     monkeypatch.setenv("DT_PORT_LOCK_DIR", str(tmp_path / "port_locks"))
     rec: dict = {
         "compose_up": [],
+        "compose_up_pull": [],
         "compose_down": [],
         "setup": [],
         "reset_env": [],
@@ -127,6 +131,7 @@ def patched(monkeypatch, tmp_path):
 
     async def _compose_up(project, cf, *, ports=None, sudo=None, pull=True):
         rec["compose_up"].append((project, str(cf), dict(ports or {})))
+        rec["compose_up_pull"].append(pull)
 
     async def _wait_healthy(project, cf, *, sudo=None, timeout=120, interval=2.0):
         return True
@@ -492,6 +497,87 @@ async def test_reset_resets_each_env(patched, tmp_path):
     assert [e for e, _ in patched["reset_env"]] == ["travelenv"]
 
 
+async def test_reset_script_failure_recreates_same_project_and_ports(
+    patched, tmp_path, monkeypatch, caplog
+):
+    reset_calls = 0
+
+    async def _fail(env_name, ports, env_config, **kw):
+        nonlocal reset_calls
+        reset_calls += 1
+        raise reset_mod.ResetScriptError("script timed out")
+
+    monkeypatch.setattr(reset_mod, "reset_environment", _fail)
+    stack = _stack(tmp_path)
+    await stack.up()
+    project, compose_file, ports = patched["compose_up"][0]
+
+    with caplog.at_level("WARNING", logger="dtap_scaffold.docker.lifecycle"):
+        await stack.reset()
+
+    assert patched["compose_down"] == [(project, compose_file)]
+    assert patched["compose_up"][-1] == (project, compose_file, ports)
+    assert patched["compose_up_pull"][-1] is False
+    assert "script timed out" in caplog.text
+    assert "recreating environment travelenv" in caplog.text
+    assert stack._recreate_on_reset == {"travelenv"}
+
+    # The failure is sticky for this task stack: later optimizer rounds recreate
+    # directly instead of paying the same reset timeout again.
+    await stack.reset()
+    assert reset_calls == 1
+    assert patched["compose_down"] == [(project, compose_file), (project, compose_file)]
+    assert patched["compose_up"][-1] == (project, compose_file, ports)
+
+
+async def test_reset_disable_reuse_recreates_without_running_script(patched, tmp_path):
+    patched["registry"].disable_reuse = lambda env: True
+    stack = _stack(tmp_path)
+    await stack.up()
+    project, compose_file, ports = patched["compose_up"][0]
+
+    await stack.reset()
+
+    assert patched["reset_env"] == []
+    assert patched["compose_down"] == [(project, compose_file)]
+    assert patched["compose_up"][-1] == (project, compose_file, ports)
+    assert patched["compose_up_pull"][-1] is False
+
+
+async def test_reset_recreate_requires_healthy_replacement(patched, tmp_path, monkeypatch):
+    async def _fail(env_name, ports, env_config, **kw):
+        raise reset_mod.ResetScriptError("script timed out")
+
+    async def _unhealthy(project, compose_file, **kw):
+        return False
+
+    stack = _stack(tmp_path)
+    await stack.up()
+    monkeypatch.setattr(reset_mod, "reset_environment", _fail)
+    monkeypatch.setattr(compose, "wait_healthy", _unhealthy)
+
+    with pytest.raises(RuntimeError, match="travelenv.*did not become healthy"):
+        await stack.reset()
+
+    # Setup must not run against the unhealthy replacement.
+    assert patched["setup"] == []
+
+
+async def test_reset_does_not_mask_unrelated_errors(patched, tmp_path, monkeypatch):
+    async def _fail(env_name, ports, env_config, **kw):
+        raise ValueError("programming error")
+
+    monkeypatch.setattr(reset_mod, "reset_environment", _fail)
+    stack = _stack(tmp_path)
+    await stack.up()
+
+    with pytest.raises(ValueError, match="programming error"):
+        await stack.reset()
+
+    assert patched["compose_down"] == []
+    assert len(patched["compose_up"]) == 1
+
+
 async def test_reset_threads_env_script_timeout(patched, tmp_path, monkeypatch):
     # The env's reset_script_timeout (env.yaml; terminal=180) must reach
     # reset_environment, not be silently dropped to the default. Upstream
@@ -517,9 +603,11 @@ async def test_down_terminates_procs_and_releases_leases(patched, tmp_path):
     state_dir = stack._state.state_dir
     logs_dir = Path(stack._state_root) / f"dtap_logs_{stack._iid}"
     assert state_dir.is_dir() and logs_dir.is_dir()
+    stack._recreate_on_reset.add("travelenv")
     await stack.down()
     assert all(p.terminated for p in procs)
     assert patched["compose_down"], "compose_down not called"
+    assert stack._recreate_on_reset == set()
     assert stack._mcp_procs == {} and stack._inj_procs == {}
     assert stack._leaser.leased == ()  # all port leases released
     # down() reclaims the host state + log dirs (no per-task leak)

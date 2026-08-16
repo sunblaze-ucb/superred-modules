@@ -80,6 +80,18 @@ process must be reproduced here:
   would also save nothing, because the timeout kills only the local `docker exec` client while
   the container-side process tree keeps running orphaned.
 
+- **A.6 Script-reset failures recreate the environment (fail closed).** A timed-out
+  or non-zero `reset_scripts` command means the environment is not known-clean. Retrying
+  in place is unsafe because the container-side exec may still be running. The stack
+  therefore tears down that environment and its volumes, brings it back under the same
+  Compose project and leased ports, waits for health, and then runs the task setup once.
+  This both kills orphaned reset processes and prevents attack state leaking into the
+  next optimizer run. The stack remembers that failure and recreates the environment
+  directly on later rounds, rather than paying the same timeout repeatedly. Only typed
+  script failures take this path; endpoint/configuration and unrelated programming errors
+  still propagate. Environments marked `disable_reuse` skip scripts and recreate directly,
+  matching upstream for multi-run tasks.
+
 ## B. Undeclared upstream server dependencies (the `[sdk]` extra)
 
 The env MCP / injection servers are upstream Python that imports third-party
@@ -361,25 +373,12 @@ here for auditability:
 
 ## I. Accepted non-substantial residuals (coverage-audit)
 
-Two upstream behaviours the port does not fully reproduce. The coverage audit rated
-both non-substantial; they are recorded here as accepted, bounded residuals (worth
-fixing only if a future experiment makes them relevant):
+One upstream behaviour the port does not fully reproduce. The coverage audit rated it
+non-substantial; it is recorded here as an accepted, bounded residual (worth fixing only
+if a future experiment makes it relevant). The prior `disable_reuse` residual is now
+implemented as part of the fail-closed reset recovery in A.6.
 
-- **I.1 `disable_reuse` recreate-on-reset (intra-task multi-run only).** Upstream
-  RECREATES a `disable_reuse` env between reuses (its reset scripts are deemed
-  insufficient for these stateful envs; `utils/task_executor._acquire_instances_for_task`).
-  `DockerEnvStack.reset` runs the env's reset scripts and does NOT branch to
-  `down()`+`up()` for a `disable_reuse` env. Bounded: of the six `disable_reuse` envs
-  (`ecommerce`, `custom-website`, `windows`, `macos`, `gitlab`, `bigquery`) only
-  `gitlab`/`bigquery` are in the text-only scope, and the divergence bites ONLY under
-  `max_runs_per_task >= 2` (the optimizer retrying the same task) -- no shipped
-  experiment configures multi-run, and single-run (the default) is already fully
-  faithful (a fresh Target + stack per task recreates from scratch). Section A covers
-  the cross-task pool collapse; this is the intra-task multi-run residual. Fix, if
-  multi-run on gitlab/bigquery is ever run: branch `reset()` to `down()`+`up()` when
-  `self._registry.disable_reuse(env)`.
-
-- **I.2 Environment injections applied once up-front, not per user turn.** Upstream
+- **I.1 Environment injections applied once up-front, not per user turn.** Upstream
   re-applies env injections per turn (`turn_id`-filtered) immediately before each
   `agent.run(turn_instruction)` (`eval/task_runner.py`); `agent_base._apply_env_injections`
   applies all env injections ONCE before the single episode. Faithful for the shipped
