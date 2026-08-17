@@ -92,6 +92,15 @@ process must be reproduced here:
   still propagate. Environments marked `disable_reuse` skip scripts and recreate directly,
   matching upstream for multi-run tasks.
 
+- **A.7 Workflow judges need the upstream utility import root (live-found).**
+  Workflow `judge.py` files import `slack.helpers` and `gmail.helpers` as top-level
+  packages. In the SDK wheel those packages are installed below `dt_arena/utils`,
+  while `utils.judge_helpers` adds only `dt_arena/src/types` and the site-packages
+  root to `sys.path`. The OOB judge child therefore exposes the installed
+  `dt_arena/utils` directory before dynamically importing a task judge, recreating
+  the source-checkout layout expected by upstream. This changes no judge logic and
+  should be removed once the upstream loader exposes its own utility directory.
+
 ## B. Undeclared upstream server dependencies (the `[sdk]` extra)
 
 The env MCP / injection servers are upstream Python that imports third-party

@@ -15,6 +15,7 @@ import json
 import os
 import subprocess
 import sys
+from types import ModuleType
 from typing import Any
 
 import pytest
@@ -481,12 +482,55 @@ def test_child_judge_model_override_noop_without_env(monkeypatch):
     assert fake.BaseJudge(domain="code").judge_model == "gpt-5.4"  # unchanged
 
 
+def test_child_adds_dt_arena_utils_for_bare_workflow_imports(monkeypatch, tmp_path):
+    package_root = tmp_path / "dt_arena"
+    utils_root = package_root / "utils"
+    (utils_root / "slack").mkdir(parents=True)
+    (utils_root / "gmail").mkdir()
+
+    fake = ModuleType("dt_arena")
+    fake.__path__ = [str(package_root)]  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "dt_arena", fake)
+
+    ns: dict = {"__name__": "dtap_judge_child_test"}
+    exec(jr._CHILD_SOURCE, ns)
+    original = list(sys.path)
+    try:
+        ns["_install_upstream_utility_imports"]()
+        assert sys.path[0] == str(utils_root.resolve())
+        ns["_install_upstream_utility_imports"]()
+        assert sys.path.count(str(utils_root.resolve())) == 1
+    finally:
+        sys.path[:] = original
+
+
+def test_child_utility_import_setup_is_optional(monkeypatch):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def import_without_dt_arena(name, *args, **kwargs):
+        if name == "dt_arena":
+            raise ImportError("not installed")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_dt_arena)
+    ns: dict = {"__name__": "dtap_judge_child_test"}
+    exec(jr._CHILD_SOURCE, ns)
+    original = list(sys.path)
+    ns["_install_upstream_utility_imports"]()
+    assert sys.path == original
+
+
 @pytest.mark.faithfulness
 def test_child_calls_run_judge_with_faithful_kwargs():
     src = jr._CHILD_SOURCE
     assert "run_judge(" in src
     assert 'response=payload.get("final_response"' in src
     assert 'trajectory=payload.get("trajectory_json")' in src
+    assert src.index("from utils.judge_helpers import run_judge") < src.index(
+        "_install_upstream_utility_imports()", src.index("def _main()")
+    )
     # we must NOT override the upstream defaults for these
     assert "check_task" not in src
     assert "check_attack" not in src
@@ -506,8 +550,11 @@ def test_child_routes_judge_prints_off_stdout():
 _FAKE_RUN_JUDGE = """
 from pathlib import Path
 
-
 def run_judge(task_dir, response="", *, trajectory=None, check_task=True, check_attack=True):
+    # Real workflow judges import these while run_judge dynamically loads judge.py.
+    # The fake stores them in the same dt_arena/utils layout.
+    from gmail.helpers import GMAIL_MARKER
+    from slack.helpers import SLACK_MARKER
     # Regression guard for the str-vs-Path bug found in live verification: the
     # real upstream run_judge does ``task_dir / "judge.py"`` (utils/judge_helpers),
     # which raises TypeError on a str. We replicate BOTH the type assertion and
@@ -532,19 +579,30 @@ def run_judge(task_dir, response="", *, trajectory=None, check_task=True, check_
 
 
 def _write_fake_sdk(root) -> str:
-    pkg = root / "fakesdk" / "utils"
+    sdk = root / "fakesdk"
+    pkg = sdk / "utils"
     pkg.mkdir(parents=True)
     (pkg / "__init__.py").write_text("", encoding="utf-8")
     (pkg / "judge_helpers.py").write_text(_FAKE_RUN_JUDGE, encoding="utf-8")
-    return str(root / "fakesdk")
+
+    dt_utils = sdk / "dt_arena" / "utils"
+    for package, marker in (("slack", "SLACK_MARKER"), ("gmail", "GMAIL_MARKER")):
+        helper_pkg = dt_utils / package
+        helper_pkg.mkdir(parents=True)
+        (helper_pkg / "__init__.py").write_text("", encoding="utf-8")
+        (helper_pkg / "helpers.py").write_text(f'{marker} = "loaded"\n', encoding="utf-8")
+    (sdk / "dt_arena" / "__init__.py").write_text("", encoding="utf-8")
+    (dt_utils / "__init__.py").write_text("", encoding="utf-8")
+    return str(sdk)
 
 
 def test_real_subprocess_roundtrip_with_fake_sdk(monkeypatch, tmp_path):
     """Spawn the actual child against a fake ``utils.judge_helpers`` (no real
     process is a server / makes a network or LLM call). Validates: stdin payload
     delivery, ``response=final_response`` forwarding, trajectory forwarding,
-    stdout JSON parsing, and that chatty judge ``print()`` is redirected so it
-    cannot corrupt the result."""
+    upstream-style bare ``slack.helpers``/``gmail.helpers`` imports, stdout JSON
+    parsing, and that chatty judge ``print()`` is redirected so it cannot corrupt
+    the result."""
     fake_root = _write_fake_sdk(tmp_path)
     existing = os.environ.get("PYTHONPATH", "")
     monkeypatch.setenv("PYTHONPATH", fake_root + (os.pathsep + existing if existing else ""))
