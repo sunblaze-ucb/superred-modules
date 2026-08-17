@@ -8,10 +8,11 @@ version = "0.1.0"
 description = "MINJA memory-injection optimizer for superred agent targets"
 requires-python = ">=3.11,<3.14"
 readme = "README.md"
-license-files = ["LICENSE"]
+license = "MIT"
+license-files = ["LICENSE", "NOTICE", "LICENSES/*"]
 authors = [
-    { name = "Simon Sure", email = "info@simonsure.com" },
     { name = "Sarthak Munshi", email = "sarthakmunshi@gmail.com" },
+    { name = "Simon Sure", email = "info@simonsure.com" },
 ]
 dependencies = ["superred>=0.1.0"]
 
@@ -31,6 +32,3 @@ line-length = 100
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/minja_optimizer"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"src/minja_optimizer/data" = "minja_optimizer/data"

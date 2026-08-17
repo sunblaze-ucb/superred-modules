@@ -8,10 +8,11 @@ version = "0.1.0"
 description = "AgentVigil/WebSentinel indirect prompt-injection optimizer for superred agent targets"
 requires-python = ">=3.11,<3.14"
 readme = "README.md"
-license-files = ["LICENSE"]
+license = "MIT"
+license-files = ["LICENSE", "NOTICE", "LICENSES/*"]
 authors = [
-    { name = "Simon Sure", email = "info@simonsure.com" },
     { name = "Sarthak Munshi", email = "sarthakmunshi@gmail.com" },
+    { name = "Simon Sure", email = "info@simonsure.com" },
 ]
 dependencies = ["superred>=0.1.0"]
 
@@ -24,6 +25,3 @@ pythonpath = ["src"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agentvigil_websentinel_optimizer"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"src/agentvigil_websentinel_optimizer/data" = "agentvigil_websentinel_optimizer/data"

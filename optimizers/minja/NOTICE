@@ -1,0 +1,49 @@
+# NOTICE
+
+superred-optimizer-minja (import package `minja_optimizer`)
+
+This module is a superred optimizer that reimplements the MINJA (Memory
+INJection Attack) against LLM agents. Our own integration code is MIT licensed
+(see LICENSE). It additionally bundles official RAP/WebShop scenario data taken
+from the official MINJA repository, which is MIT licensed. This NOTICE preserves
+the required upstream attribution.
+
+## Code (this module)
+
+MIT, Copyright (c) 2026 Sarthak Munshi, Simon Sure. See LICENSE.
+
+## Bundled official MINJA scenario data
+
+Source: https://github.com/dsh3n77/MINJA, the `rap/` directory.
+Paper: Dong et al., "Memory Injection Attacks on LLM Agents via Query-Only
+Interaction," arXiv:2503.03704 (NeurIPS 2025).
+
+The following ship inside this wheel under `src/minja_optimizer/data/rap/`:
+
+- `victim_target_pair/victim_target.json` — the official victim -> target pair
+  (`toothbrush` -> DenTek, price 20), from upstream
+  `rap/victim_target_pair/victim_target.json`.
+- `indication_prompt_template.json` — the five official indication prompts used
+  by the Progressive Shortening Strategy, from upstream
+  `rap/indication_prompt_template.json`.
+- `victim_questions.json` — a compact subset of upstream
+  `rap/webshop_instructions.json` containing exactly the rows that mention an
+  official victim term, which is the data this optimizer reads.
+
+Also ported: the official memory-record shape
+`(attack_query, [bridging_steps, target_reasoning_steps])` and the defaults
+`inject_num=15`, `num_benign=50`, `test_num=30` from upstream `rap/minja.py`.
+
+The full upstream WebShop / QA / EHR corpora are not bundled here.
+
+License: MIT, Copyright (c) 2026 MINJA Authors. Full text in
+`LICENSES/MINJA-MIT.txt`.
+
+Deviations from upstream, including scenario parameterization, the optional LLM
+scenario synthesis, and the budget-adaptive schedule, are documented in
+`ASSUMPTIONS.md`.
+
+## Citation
+
+When reporting numbers produced with this module, cite the MINJA paper (Dong
+et al., arXiv:2503.03704).

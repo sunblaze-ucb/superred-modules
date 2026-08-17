@@ -1,0 +1,49 @@
+# NOTICE
+
+superred-optimizer-fitd (import package `fitd_optimizer`)
+
+This module is a superred optimizer that reimplements the FITD
+(Foot-In-The-Door) multi-turn jailbreak. Our own integration code is MIT
+licensed (see LICENSE). It additionally ships prompt text ported from the
+official FITD repository. This NOTICE preserves the required upstream
+attribution.
+
+## Code (this module)
+
+MIT, Copyright (c) 2026 Sarthak Munshi, Simon Sure. See LICENSE.
+
+## FITD prompt text, judge prompts, and refusal dictionaries
+
+Source: https://github.com/Jinxiaolong1129/Foot-in-the-door-Jailbreak
+Paper: Ding et al., "Foot-In-The-Door: A Multi-turn Jailbreak for LLMs,"
+arXiv:2502.19820 (EMNLP 2025).
+
+The following are ported verbatim (or near-verbatim) from the upstream repo and
+ship inside this wheel, chiefly in `src/fitd_optimizer/prompts.py`:
+
+- The refusal-phrase dictionaries used to detect victim refusals
+  (`REFUSAL_RE`, `REFUSAL_SEARCH_RE`) and the sensitive-word replacements.
+- The polish-content template, the realign-response template, and the
+  intermediate-prompt generation prompt with its `Step 1..N` output format.
+- The similarity judge prompt, the harmfulness judge prompt, and the
+  `safe` / `unsafe` evaluator prompt.
+- The `change_prompt` soften shape, including helper-model refusal retries and
+  the sentence-structure alignment pass after each successful rewrite.
+- The defaults `level=10`, `max_attempts=5`, `control_history=False`,
+  `max_history_length=22`, `max_soften_retries=10`, `max_slippery_retries=2`.
+
+### License status
+
+The upstream repository carries no LICENSE file. The upstream authors granted
+the superred maintainers permission, in private correspondence, to redistribute
+the ported material under MIT terms. On that basis the ported material is treated as MIT licensed,
+Copyright (c) 2026 Jinxiaolong1129; the license text applied is reproduced in
+`LICENSES/Foot-in-the-door-Jailbreak-MIT.txt`. If upstream later publishes its
+own LICENSE file, this NOTICE should be updated to point at it.
+
+Deviations from upstream are documented in `ASSUMPTIONS.md`.
+
+## Citation
+
+When reporting numbers produced with this module, cite the FITD paper (Ding
+et al., arXiv:2502.19820).

@@ -64,12 +64,12 @@ example.
 
 ## License
 
-MIT for this port's code. The upstream reference implementation,
+MIT for this port's code (see [LICENSE](LICENSE)). The upstream reference
+implementation,
 [`haizelabs/bijection-learning`](https://github.com/haizelabs/bijection-learning),
-carries **no license file** (default all-rights-reserved). This port does not
-vendor or copy any of its files — `src/bijection_optimizer/bijection.py` is an
-independent reimplementation of the bijection construction/encode/decode
-*algorithm* described in the paper and observable in the upstream repo (new
-classes, new structure, new docstrings), not a copy of upstream's source text.
-If upstream publishes a license in the future, or if any literal upstream code
-is ever vendored here, this notice should be revisited.
+carries no LICENSE file; its authors granted the superred maintainers permission,
+in private correspondence, to redistribute the ported material under MIT terms.
+The bijection
+construction/encode/decode ports and the teaching-intro prompt text are credited
+in [`NOTICE`](NOTICE), and the MIT text applied to them is reproduced in
+[`LICENSES/bijection-learning-MIT.txt`](LICENSES/bijection-learning-MIT.txt).

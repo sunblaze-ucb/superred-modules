@@ -48,17 +48,14 @@ framework's [architecture overview](https://superred.simonsure.com).
 
 ## License
 
-**No license is granted yet** (see [LICENSE](LICENSE)). The upstream reference
+MIT for this port's code (see [LICENSE](LICENSE)). The upstream reference
 implementation,
 [`OSU-NLP-Group/EIA_against_webagent`](https://github.com/OSU-NLP-Group/EIA_against_webagent),
-carries **no license file** (default all-rights-reserved), and this module
-bundles HTML/form templates reproduced verbatim from its `injection/` code for
-template fidelity. Because there is no upstream license to redistribute that
-material under, this module is withheld pending the upstream author's permission
-and is not released under MIT (unlike other superred optimizers). Once
-permission is obtained or the templates are fully replaced with original text, a
-proper license will be applied here.
+is MIT licensed. The HTML form, style, and submit-script templates ported from
+its `injection/` code are credited in [`NOTICE`](NOTICE), and its MIT copyright
+notice is preserved in
+[`LICENSES/EIA_against_webagent-MIT.txt`](LICENSES/EIA_against_webagent-MIT.txt).
 
 (The separate `SeeAct/` directory in that repository is under the AI PUBS
 OpenRAIL-S license; this module does **not** use or copy from it — the bundled
-templates come only from the unlicensed `injection/` code.)
+templates come only from the MIT-licensed `injection/` code.)

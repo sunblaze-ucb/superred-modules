@@ -11,8 +11,8 @@ requires-python = ">=3.11,<3.14"
 license = "MIT"
 license-files = ["LICENSE", "NOTICE", "LICENSES/*"]
 authors = [
-    { name = "Simon Sure", email = "info@simonsure.com" },
     { name = "Sarthak Munshi", email = "sarthakmunshi@gmail.com" },
+    { name = "Simon Sure", email = "info@simonsure.com" },
 ]
 keywords = [
     "superred",

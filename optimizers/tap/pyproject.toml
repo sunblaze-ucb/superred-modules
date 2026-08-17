@@ -11,8 +11,8 @@ readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [
-    { name = "Simon Sure", email = "info@simonsure.com" },
     { name = "Sarthak Munshi", email = "sarthakmunshi@gmail.com" },
+    { name = "Simon Sure", email = "info@simonsure.com" },
 ]
 dependencies = [
     "superred>=0.1.0",

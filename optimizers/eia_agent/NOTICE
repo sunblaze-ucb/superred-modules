@@ -1,0 +1,53 @@
+# NOTICE
+
+superred-optimizer-eia-agent (import package `eia_agent_optimizer`)
+
+This module is a superred optimizer that reimplements the EIA (Environmental
+Injection Attack) against web agents. Our own integration code is MIT licensed
+(see LICENSE). It additionally ships HTML injection templates ported from the
+official EIA repository, which is MIT licensed. This NOTICE preserves the
+required upstream attribution.
+
+## Code (this module)
+
+MIT, Copyright (c) 2026 Sarthak Munshi, Simon Sure. See LICENSE.
+
+## EIA HTML injection templates
+
+Source: https://github.com/OSU-NLP-Group/EIA_against_webagent, the `injection/`
+code.
+Paper: Liao et al. (OSU NLP Group), "EIA: Environmental Injection Attack on
+Generalist Web Agents for Privacy Leakage," arXiv:2409.11295 (ICLR 2025).
+
+The following are ported verbatim (or near-verbatim) from the upstream repo and
+ship inside this wheel, in `src/eia_agent_optimizer/templates.py`:
+
+- The form, style, and submit-script HTML templates for the released attack
+  subtypes `form_type0`, `form_type1` (aria-label form injection), `form_type2`,
+  and `copy`, plus the relaxed `action_generation` variant.
+- The persuasive label text, including the `ALERT ! ! !` full-request wording
+  used by `form_type2` and relaxed action-generation EIA.
+- The zero-opacity styling used for action-grounding EIA and the released
+  insertion positions (`most_top`, `most_bot`, `near_top_0..2`,
+  `near_bot_0..2`), including anchoring around a visible target element.
+- The ASR1 / ASR_o / ASR2 success checks mirrored by the local no-feedback
+  evaluator, and the dataset field names they read (`detail_risk_type`,
+  `target_element_HTML`).
+
+License: MIT, Copyright (c) 2023 OSU Natural Language Processing. Full text in
+`LICENSES/EIA_against_webagent-MIT.txt`.
+
+Deviations from upstream, including the superred capability extensions
+(tool-description rewriting and the grounding hint on a writable system prompt),
+are documented in `ASSUMPTIONS.md`.
+
+## Material NOT used from that repository
+
+The upstream repository also vendors a `SeeAct/` directory under the AI PUBS
+OpenRAIL-S license. This module does not use, copy, or derive from `SeeAct/`.
+Everything ported here comes from the MIT-licensed `injection/` code.
+
+## Citation
+
+When reporting numbers produced with this module, cite the EIA paper (Liao
+et al., arXiv:2409.11295).
