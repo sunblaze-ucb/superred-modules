@@ -11,12 +11,17 @@ monkeypatch both.
 from __future__ import annotations
 
 import asyncio
+import shlex
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
 
 from dtap_scaffold.docker import compose
+
+
+class ResetScriptError(RuntimeError):
+    """A container reset script timed out or returned a non-zero exit code."""
 
 
 def render_template(template: str, values: dict[str, int]) -> str:
@@ -97,9 +102,23 @@ async def reset_via_scripts(
             ["exec", "-T", service, "/bin/sh", "-c", str(script_path)],
             sudo=sudo,
         )
-        rc, _, err = await compose._exec(cmd, cwd=Path(compose_file).parent, timeout=timeout)
+        try:
+            rc, _, err = await compose._exec(
+                cmd,
+                cwd=Path(compose_file).parent,
+                timeout=timeout,
+            )
+        except TimeoutError as exc:
+            raise ResetScriptError(
+                f"reset script timed out for {env_name}/{service} after {timeout:g}s "
+                f"(project={project_name!r}, command={shlex.join(cmd)!r})"
+            ) from exc
         if rc != 0:
-            raise RuntimeError(f"reset script for {env_name}/{service} failed: {err.strip()}")
+            detail = err.strip() or "(no stderr)"
+            raise ResetScriptError(
+                f"reset script failed for {env_name}/{service} with exit code {rc} "
+                f"(project={project_name!r}, command={shlex.join(cmd)!r}): {detail}"
+            )
 
 
 async def reset_environment(
@@ -151,6 +170,7 @@ async def reset_environment(
 
 
 __all__ = [
+    "ResetScriptError",
     "render_template",
     "reset_via_endpoints",
     "reset_via_scripts",

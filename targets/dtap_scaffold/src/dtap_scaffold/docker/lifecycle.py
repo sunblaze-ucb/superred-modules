@@ -23,6 +23,7 @@ without a Docker daemon.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import shutil
 import socket
@@ -37,6 +38,8 @@ from dtap_scaffold.docker import compose, env_registry, reset
 from dtap_scaffold.docker import ports as ports_mod
 from dtap_scaffold.docker import state as state_mod
 from dtap_scaffold.types import EnvHandle
+
+logger = logging.getLogger(__name__)
 
 SETUP_TIMEOUT = 600
 _READY_TIMEOUT = 150.0
@@ -196,6 +199,7 @@ class DockerEnvStack:
         self._sudo: bool | None = None
         self._container_ports: dict[str, int] = {}  # env.yaml VAR -> leased host port
         self._projects: dict[str, str] = {}  # env name -> compose project name
+        self._recreate_on_reset: set[str] = set()  # script reset failed; recreate thereafter
         self._mcp_procs: dict[str, Any] = {}  # server name -> process
         self._inj_procs: dict[str, Any] = {}  # injection server name -> process
         self._server_urls: dict[str, str] = {}
@@ -249,20 +253,63 @@ class DockerEnvStack:
     async def reset(self) -> None:
         env_config = self._registry.env_config
         for env, project in self._projects.items():
+            compose_file: Path | None
             try:
                 compose_file = self._registry.compose_file(env)
             except env_registry.EnvRegistryError:
                 compose_file = None
-            await reset.reset_environment(
-                env,
-                self._container_ports,
-                env_config,
-                project_name=project,
-                compose_file=compose_file,
-                sudo=self._sudo,
-                script_timeout=self._registry.reset_script_timeout(env),
-            )
+            if compose_file is not None and (
+                env in self._recreate_on_reset or self._registry.disable_reuse(env)
+            ):
+                await self._recreate_environment(env, project, compose_file)
+                continue
+            try:
+                await reset.reset_environment(
+                    env,
+                    self._container_ports,
+                    env_config,
+                    project_name=project,
+                    compose_file=compose_file,
+                    sudo=self._sudo,
+                    script_timeout=self._registry.reset_script_timeout(env),
+                )
+            except reset.ResetScriptError as exc:
+                if compose_file is None:
+                    raise
+                self._recreate_on_reset.add(env)
+                logger.warning("%s; recreating environment %s", exc, env)
+                await self._recreate_environment(env, project, compose_file)
         await self._run_setup()
+
+    async def _recreate_environment(
+        self,
+        env: str,
+        project: str,
+        compose_file: Path,
+    ) -> None:
+        """Replace an env from its image after an unsafe or insufficient reset.
+
+        Removing the container kills any reset process left behind by a timed-out
+        ``docker compose exec``. The same project name and leased host ports are reused,
+        so the already-running MCP processes keep their configured endpoints.
+        """
+        await compose.compose_down(project, compose_file, sudo=self._sudo)
+        env_ports = {var: self._container_ports[var] for var in self._registry.env_ports(env)}
+        await compose.compose_up(
+            project,
+            compose_file,
+            ports=env_ports,
+            sudo=self._sudo,
+            pull=False,
+        )
+        healthy = await compose.wait_healthy(
+            project,
+            compose_file,
+            sudo=self._sudo,
+            timeout=self._registry.health_timeout(env),
+        )
+        if not healthy:
+            raise RuntimeError(f"recreated environment {env!r} did not become healthy")
 
     async def down(self) -> None:
         for proc in (*self._mcp_procs.values(), *self._inj_procs.values()):
@@ -278,6 +325,7 @@ class DockerEnvStack:
             except Exception:  # noqa: BLE001 - teardown is best-effort
                 pass
         self._projects.clear()
+        self._recreate_on_reset.clear()
         self._leaser.release_all()
         self._server_urls.clear()
         self._inj_urls.clear()

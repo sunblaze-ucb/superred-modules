@@ -68,6 +68,13 @@ Faithfulness notes
   honor ``OPENAI_BASE_URL`` and route to the proxy, so the rewrite is a no-op for them
   (their URLs never start with ``api.openai.com``). No upstream file is edited; nothing
   is sent to OpenAI directly.
+* **Upstream utility imports.** Workflow judges import ``slack.helpers`` and
+  ``gmail.helpers`` as top-level packages. Those packages live under
+  ``dt_arena/utils``; the installed ``utils.judge_helpers`` loader exposes
+  ``dt_arena/src/types`` but not that utility directory. Before dynamically loading
+  a judge, the child adds the installed package's ``utils`` directory to
+  ``sys.path``. This recreates upstream's source-checkout import layout without
+  editing or aliasing judge modules.
 """
 
 from __future__ import annotations
@@ -120,6 +127,7 @@ import json
 import os
 import sys
 import traceback
+from pathlib import Path
 
 
 def _emit(obj):
@@ -128,6 +136,28 @@ def _emit(obj):
     out = sys.__stdout__
     out.write(json.dumps(obj))
     out.flush()
+
+
+def _install_upstream_utility_imports():
+    # Upstream workflow judges use bare imports such as `slack.helpers` and
+    # `gmail.helpers`. In the SDK wheel those packages live under
+    # dt_arena/utils, but utils.judge_helpers exposes only dt_arena/src/types and
+    # the site-packages root. Restore the source-checkout import layout before
+    # any task judge is dynamically imported. Keep the path for the child
+    # lifetime because judges can import helpers lazily during evaluation.
+    try:
+        import dt_arena
+    except ImportError:
+        return
+
+    for package_root in getattr(dt_arena, "__path__", ()):
+        try:
+            utils_root = Path(package_root).resolve() / "utils"
+        except OSError:
+            continue
+        path = str(utils_root)
+        if utils_root.is_dir() and path not in sys.path:
+            sys.path.insert(0, path)
 
 
 def _install_judge_model_override():
@@ -195,8 +225,14 @@ def _install_openai_endpoint_redirect():
 
 def _main():
     payload = json.loads(sys.stdin.read())
+    # Capture the SDK loader before exposing dt_arena/utils: that directory is
+    # itself a package named `utils` and would otherwise shadow the separate
+    # top-level `utils.judge_helpers` package installed by the SDK.
+    from utils.judge_helpers import run_judge
+
     # Send any judge/import-time print() to stderr; stdout = result JSON only.
     sys.stdout = sys.stderr
+    _install_upstream_utility_imports()
     try:
         _install_judge_model_override()
         _install_openai_endpoint_redirect()
@@ -204,9 +240,7 @@ def _main():
         # dt_arena absent / layout differs: fall back to endpoint-only routing
         # (judges keep their default model) -- no regression vs. the pre-fix path.
         pass
-    from pathlib import Path
 
-    from utils.judge_helpers import run_judge  # installed decodingtrust-agent-sdk
     result = run_judge(
         Path(payload["task_dir"]),  # upstream run_judge does task_dir / "judge.py"
         response=payload.get("final_response", ""),
