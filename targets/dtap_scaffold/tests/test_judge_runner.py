@@ -482,44 +482,97 @@ def test_child_judge_model_override_noop_without_env(monkeypatch):
     assert fake.BaseJudge(domain="code").judge_model == "gpt-5.4"  # unchanged
 
 
-def test_child_adds_dt_arena_utils_for_bare_workflow_imports(monkeypatch, tmp_path):
+def test_child_aliases_only_required_workflow_packages(monkeypatch):
+    slack_package = ModuleType("dt_arena.utils.slack")
+    gmail_package = ModuleType("dt_arena.utils.gmail")
+    packages = {
+        "dt_arena.utils.slack": slack_package,
+        "dt_arena.utils.gmail": gmail_package,
+    }
+
+    ns: dict = {"__name__": "dtap_judge_child_test"}
+    exec(jr._CHILD_SOURCE, ns)
+    monkeypatch.setattr(ns["importlib"], "import_module", packages.__getitem__)
+    monkeypatch.delitem(sys.modules, "slack", raising=False)
+    monkeypatch.delitem(sys.modules, "gmail", raising=False)
+
+    ns["_install_upstream_utility_aliases"]()
+    assert sys.modules["slack"] is slack_package
+    assert sys.modules["gmail"] is gmail_package
+
+    # Repeated setup remains idempotent and preserves the established aliases.
+    ns["_install_upstream_utility_aliases"]()
+    assert sys.modules["slack"] is slack_package
+    assert sys.modules["gmail"] is gmail_package
+
+
+def test_child_utility_aliases_preserve_existing_top_level_package(monkeypatch):
+    existing_slack = ModuleType("slack")
+    sdk_slack = ModuleType("dt_arena.utils.slack")
+    sdk_gmail = ModuleType("dt_arena.utils.gmail")
+    packages = {
+        "dt_arena.utils.slack": sdk_slack,
+        "dt_arena.utils.gmail": sdk_gmail,
+    }
+
+    ns: dict = {"__name__": "dtap_judge_child_test"}
+    exec(jr._CHILD_SOURCE, ns)
+    monkeypatch.setattr(ns["importlib"], "import_module", packages.__getitem__)
+    monkeypatch.setitem(sys.modules, "slack", existing_slack)
+    monkeypatch.delitem(sys.modules, "gmail", raising=False)
+
+    ns["_install_upstream_utility_aliases"]()
+    assert sys.modules["slack"] is existing_slack
+    assert sys.modules["gmail"] is sdk_gmail
+
+
+def test_child_utility_alias_setup_is_optional(monkeypatch):
+    def missing_package(name):
+        raise ModuleNotFoundError(name=name)
+
+    ns: dict = {"__name__": "dtap_judge_child_test"}
+    exec(jr._CHILD_SOURCE, ns)
+    monkeypatch.setattr(ns["importlib"], "import_module", missing_package)
+    monkeypatch.delitem(sys.modules, "slack", raising=False)
+    monkeypatch.delitem(sys.modules, "gmail", raising=False)
+
+    ns["_install_upstream_utility_aliases"]()
+    assert "slack" not in sys.modules
+    assert "gmail" not in sys.modules
+
+
+def test_child_utility_aliases_do_not_shadow_stdlib_calendar(monkeypatch, tmp_path):
     package_root = tmp_path / "dt_arena"
     utils_root = package_root / "utils"
-    (utils_root / "slack").mkdir(parents=True)
-    (utils_root / "gmail").mkdir()
+    for package in ("slack", "gmail", "calendar"):
+        package_dir = utils_root / package
+        package_dir.mkdir(parents=True)
+        (package_dir / "__init__.py").write_text("", encoding="utf-8")
+    (utils_root / "__init__.py").write_text("", encoding="utf-8")
 
-    fake = ModuleType("dt_arena")
-    fake.__path__ = [str(package_root)]  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "dt_arena", fake)
+    fake_dt_arena = ModuleType("dt_arena")
+    fake_dt_arena.__path__ = [str(package_root)]  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "dt_arena", fake_dt_arena)
+    for name in (
+        "dt_arena.utils",
+        "dt_arena.utils.slack",
+        "dt_arena.utils.gmail",
+        "slack",
+        "gmail",
+        "calendar",
+    ):
+        monkeypatch.delitem(sys.modules, name, raising=False)
 
     ns: dict = {"__name__": "dtap_judge_child_test"}
     exec(jr._CHILD_SOURCE, ns)
-    original = list(sys.path)
-    try:
-        ns["_install_upstream_utility_imports"]()
-        assert sys.path[0] == str(utils_root.resolve())
-        ns["_install_upstream_utility_imports"]()
-        assert sys.path.count(str(utils_root.resolve())) == 1
-    finally:
-        sys.path[:] = original
+    original_path = list(sys.path)
+    ns["_install_upstream_utility_aliases"]()
 
-
-def test_child_utility_import_setup_is_optional(monkeypatch):
-    import builtins
-
-    real_import = builtins.__import__
-
-    def import_without_dt_arena(name, *args, **kwargs):
-        if name == "dt_arena":
-            raise ImportError("not installed")
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", import_without_dt_arena)
-    ns: dict = {"__name__": "dtap_judge_child_test"}
-    exec(jr._CHILD_SOURCE, ns)
-    original = list(sys.path)
-    ns["_install_upstream_utility_imports"]()
-    assert sys.path == original
+    calendar = __import__("calendar")
+    assert hasattr(calendar, "timegm")
+    assert hasattr(calendar, "day_abbr")
+    assert "dt_arena/utils/calendar" not in str(calendar.__file__).replace("\\", "/")
+    assert sys.path == original_path
 
 
 @pytest.mark.faithfulness
@@ -528,9 +581,10 @@ def test_child_calls_run_judge_with_faithful_kwargs():
     assert "run_judge(" in src
     assert 'response=payload.get("final_response"' in src
     assert 'trajectory=payload.get("trajectory_json")' in src
-    assert src.index("from utils.judge_helpers import run_judge") < src.index(
-        "_install_upstream_utility_imports()", src.index("def _main()")
-    )
+    alias_call = src.index("_install_upstream_utility_aliases()", src.index("def _main()"))
+    assert src.index("from utils.judge_helpers import run_judge") < alias_call
+    assert alias_call < src.index("result = run_judge(")
+    assert "sys.path.insert" not in src
     # we must NOT override the upstream defaults for these
     assert "check_task" not in src
     assert "check_attack" not in src
@@ -555,6 +609,10 @@ def run_judge(task_dir, response="", *, trajectory=None, check_task=True, check_
     # The fake stores them in the same dt_arena/utils layout.
     from gmail.helpers import GMAIL_MARKER
     from slack.helpers import SLACK_MARKER
+    # The compatibility setup must leave colliding standard-library names alone.
+    import calendar
+    assert hasattr(calendar, "timegm") and hasattr(calendar, "day_abbr")
+    assert "dt_arena/utils/calendar" not in str(calendar.__file__).replace("\\\\", "/")
     # Regression guard for the str-vs-Path bug found in live verification: the
     # real upstream run_judge does ``task_dir / "judge.py"`` (utils/judge_helpers),
     # which raises TypeError on a str. We replicate BOTH the type assertion and
@@ -591,6 +649,9 @@ def _write_fake_sdk(root) -> str:
         helper_pkg.mkdir(parents=True)
         (helper_pkg / "__init__.py").write_text("", encoding="utf-8")
         (helper_pkg / "helpers.py").write_text(f'{marker} = "loaded"\n', encoding="utf-8")
+    calendar_pkg = dt_utils / "calendar"
+    calendar_pkg.mkdir()
+    (calendar_pkg / "__init__.py").write_text("", encoding="utf-8")
     (sdk / "dt_arena" / "__init__.py").write_text("", encoding="utf-8")
     (dt_utils / "__init__.py").write_text("", encoding="utf-8")
     return str(sdk)
