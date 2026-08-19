@@ -123,7 +123,6 @@ DEFAULT_JUDGE_TIMEOUT = 1200.0  # seconds (20 min)
 # JSON, and writes that JSON via the original stdout fd. Per-instance env (ports,
 # OPENAI_*, JUDGE_MODEL) is supplied by the parent through `env=`.
 _CHILD_SOURCE = r"""
-import importlib
 import json
 import os
 import sys
@@ -139,18 +138,26 @@ def _emit(obj):
     out.flush()
 
 
-def _install_upstream_utility_aliases():
+def _install_upstream_utility_imports():
     # Upstream workflow judges use bare imports such as `slack.helpers` and
-    # `gmail.helpers`, while the SDK wheel installs those packages below
-    # dt_arena.utils. Alias only the two packages judges require: exposing the
-    # whole utility directory on sys.path would shadow standard-library modules
-    # with colliding SDK package names (notably `calendar`).
-    for package_name in ("slack", "gmail"):
+    # `gmail.helpers`. In the SDK wheel those packages live under
+    # dt_arena/utils, but utils.judge_helpers exposes only dt_arena/src/types and
+    # the site-packages root. Restore the source-checkout import layout before
+    # any task judge is dynamically imported. Keep the path for the child
+    # lifetime because judges can import helpers lazily during evaluation.
+    try:
+        import dt_arena
+    except ImportError:
+        return
+
+    for package_root in getattr(dt_arena, "__path__", ()):
         try:
-            module = importlib.import_module(f"dt_arena.utils.{package_name}")
-        except ImportError:
+            utils_root = Path(package_root).resolve() / "utils"
+        except OSError:
             continue
-        sys.modules.setdefault(package_name, module)
+        path = str(utils_root)
+        if utils_root.is_dir() and path not in sys.path:
+            sys.path.insert(0, path)
 
 
 def _install_judge_model_override():
@@ -218,13 +225,14 @@ def _install_openai_endpoint_redirect():
 
 def _main():
     payload = json.loads(sys.stdin.read())
-    # Capture the canonical SDK loader, then install only the explicit aliases
-    # needed by workflow judges before their judge.py modules are imported.
+    # Capture the SDK loader before exposing dt_arena/utils: that directory is
+    # itself a package named `utils` and would otherwise shadow the separate
+    # top-level `utils.judge_helpers` package installed by the SDK.
     from utils.judge_helpers import run_judge
 
     # Send any judge/import-time print() to stderr; stdout = result JSON only.
     sys.stdout = sys.stderr
-    _install_upstream_utility_aliases()
+    _install_upstream_utility_imports()
     try:
         _install_judge_model_override()
         _install_openai_endpoint_redirect()
