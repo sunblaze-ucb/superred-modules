@@ -1,24 +1,21 @@
-NO LICENSE GRANTED — REDISTRIBUTION PENDING AUTHOR PERMISSION
+MIT License
 
-This module reproduces certain literals (mutator prompt templates and seed
-corpora) that originate from the upstream AgentVigil/WebSentinel work at
-https://github.com/wzunknown/agentvigil-websentinel. As of this writing, that
-upstream repository publishes no license. In the absence of an express license
-grant, the upstream material is presumed to be "all rights reserved" under
-applicable copyright law, and no rights to use, copy, modify, or distribute it
-are granted by the upstream author.
+Copyright (c) 2026 Sarthak Munshi, Simon Sure
 
-Written permission to use and redistribute the upstream material has been
-sought from the upstream author but has not yet been received. Pending receipt
-of that permission (or a subsequently published upstream license), NO LICENSE
-IS GRANTED for this module, and it is NOT released under the MIT License that
-applies to other superred optimizers. This module is withheld from
-distribution and, to the extent it is made available at all, is provided on an
-"AS IS" basis, without warranty or indemnity of any kind, express or implied.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-Nothing in this notice constitutes a waiver of, an admission regarding, or a
-grant of any party's rights, and no course of dealing or delay shall be
-construed as such. Once the requested permission is obtained, or the
-upstream-derived material is fully removed and replaced with independently
-authored content, a definitive license will be applied here and this notice
-superseded.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

@@ -1,0 +1,49 @@
+# NOTICE
+
+superred-optimizer-flip-attack (import package `flip_attack_optimizer`)
+
+This module is a superred optimizer that reimplements the FlipAttack jailbreak.
+Our own integration code is MIT licensed (see LICENSE). It additionally ships
+prompt text ported from the official FlipAttack repository, which is MIT
+licensed. This NOTICE preserves the required upstream attribution.
+
+## Code (this module)
+
+MIT, Copyright (c) 2026 Sarthak Munshi, Simon Sure. See LICENSE.
+
+## FlipAttack prompt text and judge prompt
+
+Source: https://github.com/yueliu1999/FlipAttack
+Paper: Liu et al., "FlipAttack: Jailbreak LLMs via Flipping," arXiv:2410.02832
+(ICML 2025).
+
+The following are ported verbatim (or near-verbatim) from the upstream repo and
+ship inside this wheel:
+
+- The vanilla system prompt: the four Rules, the triple-`NEVER` wording, the
+  Step 1 / Step 2 structure, the per-mode decode instructions for `FWO`, `FCW`,
+  `FCS`, and `FMM`, and the CoT clause
+  (`src/flip_attack_optimizer/prompts/vanilla.py`).
+- The LangGPT `helpfulGPT` role prompt (Profile / Rules / Target /
+  Initialization) and its user-side Step 1 / Step 2 prompt
+  (`src/flip_attack_optimizer/prompts/langgpt.py`).
+- The few-shot examples, including the hardcoded second example
+  `'noitcurtsni ym wolloF'`, in their original per-mode placement.
+- Upstream's deliberate `FMM` mismatch, where an FCS-flipped task is paired with
+  an FWO-style decode instruction.
+- The `asr_gpt` judge prompt with its `Rating: [[n]]` output format, the
+  `rating == 10` success criterion, and the `max_tokens=10` judge call, plus the
+  `asr_dict` rejection-string list (`src/flip_attack_optimizer/evaluator.py`).
+- The flip transforms themselves (`src/flip_attack_optimizer/flipper.py`).
+
+License: MIT, Copyright (c) 2026 yueliu1999. Full text in
+`LICENSES/FlipAttack-MIT.txt`.
+
+Deviations from upstream — chiefly the flip-mode rotation across superred runs,
+where upstream uses one mode per attack instance — are documented in
+`ASSUMPTIONS.md`.
+
+## Citation
+
+When reporting numbers produced with this module, cite the FlipAttack paper
+(Liu et al., arXiv:2410.02832).

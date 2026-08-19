@@ -1,0 +1,57 @@
+# NOTICE
+
+superred-optimizer-agentvigil-websentinel (import package
+`agentvigil_websentinel_optimizer`)
+
+This module is a superred optimizer that reimplements the AgentVigil/WebSentinel
+black-box fuzzer for indirect prompt injection. Our own integration code is MIT
+licensed (see LICENSE). It additionally bundles seed corpora and mutator prompt
+text extracted from the official AgentVigil/WebSentinel repository. This NOTICE
+preserves the required upstream attribution.
+
+## Code (this module)
+
+MIT, Copyright (c) 2026 Sarthak Munshi, Simon Sure. See LICENSE.
+
+## Bundled official AgentVigil/WebSentinel data and literals
+
+Source: https://github.com/wzunknown/agentvigil-websentinel
+Papers: "AgentVigil: Generic Black-Box Red-teaming for Indirect Prompt Injection
+against LLM Agents," arXiv:2505.05849; "WebSentinel: Detecting and Localizing
+Prompt Injection Attacks for Web Agents," arXiv:2602.03792.
+
+The following ship inside this wheel under
+`src/agentvigil_websentinel_optimizer/data/official/`, each JSON artifact
+recording the SHA-256 of the upstream source file it was extracted from:
+
+- `new_seeds.json` — the exact seed values from upstream `new_seeds.py`, the
+  web/content injection corpus used by default.
+- `text_seeds.json` — the exact seed values from upstream `seeds.py`, the older
+  text-seed corpus available via `include_text_seeds=True`.
+- `mutation_prompts.json` — the exact mutator system prompt and the mutation
+  templates (expand, shorten, rephrase, crossover, generate-similar) from
+  upstream `mutate_prompts.py`.
+
+Also ported: the MCTS/UCT seed-selection shape and the defaults
+`population_size=10` and `max_attempts=20`, which mirror the official fuzz-loop
+count.
+
+The official runtime implementation is not vendored here — only data and literal
+artifacts.
+
+### License status
+
+The upstream repository carries no LICENSE file. The upstream authors granted
+the superred maintainers permission, in private correspondence, to redistribute
+the ported material under MIT terms. On that basis the ported material is
+treated as MIT licensed, Copyright (c) 2026 wzunknown; the license text applied
+is reproduced in `LICENSES/agentvigil-websentinel-MIT.txt`. If upstream later
+publishes its own LICENSE file, this NOTICE should be updated to point at it.
+
+Deviations from upstream, including the surface-selection ladder and the opt-in
+LLM-authored tool descriptions, are documented in `ASSUMPTIONS.md`.
+
+## Citation
+
+When reporting numbers produced with this module, cite both papers: AgentVigil
+(arXiv:2505.05849) and WebSentinel (arXiv:2602.03792).

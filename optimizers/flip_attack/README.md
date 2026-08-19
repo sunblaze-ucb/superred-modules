@@ -45,11 +45,10 @@ target's README (e.g. `superred-target-chatbot`) for a full `Controller.run()` e
 
 ## License
 
-**No license is granted yet** (see [LICENSE](LICENSE)). The upstream reference
-implementation, [`yueliu1999/FlipAttack`](https://github.com/yueliu1999/FlipAttack),
-carries **no license file** (default all-rights-reserved), and this module
-bundles prompt text reproduced from it. Because there is no upstream license to
-redistribute that material under, this module is withheld pending the upstream
-author's permission and is not released under MIT (unlike other superred
-optimizers). Once permission is obtained or the prompts are fully replaced with
-original text, a proper license will be applied here.
+MIT for this port's code (see [LICENSE](LICENSE)). The upstream reference
+implementation,
+[`yueliu1999/FlipAttack`](https://github.com/yueliu1999/FlipAttack), is MIT
+licensed. The vanilla and LangGPT prompt text, few-shot examples, and judge
+prompt ported from it are credited in [`NOTICE`](NOTICE), and its MIT copyright
+notice is preserved in
+[`LICENSES/FlipAttack-MIT.txt`](LICENSES/FlipAttack-MIT.txt).

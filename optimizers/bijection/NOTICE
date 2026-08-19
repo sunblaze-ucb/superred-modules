@@ -1,0 +1,53 @@
+# NOTICE
+
+superred-optimizer-bijection (import package `bijection_optimizer`)
+
+This module is a superred optimizer that reimplements the Bijection Learning
+jailbreak. Our own integration code is MIT licensed (see LICENSE). It
+additionally ships prompt text and algorithm ports taken from the official
+bijection-learning repository. This NOTICE preserves the required upstream
+attribution.
+
+## Code (this module)
+
+MIT, Copyright (c) 2026 Rishabh Sinha, Simon Sure. See LICENSE.
+
+## Bijection Learning algorithm ports and prompt text
+
+Source: https://github.com/haizelabs/bijection-learning, specifically
+`that_good_infra/transformations.py` (bijection construction, encoding,
+decoding) and `run_bijection_attacks.py` (prompt construction).
+Paper: Brian R. Y. Huang, Maximilian Li, Leonard Tang, "Endless Jailbreaks with
+Bijection Learning," arXiv:2410.01294 (ICLR 2025, Haize Labs).
+
+The following are ported from the upstream repo and ship inside this wheel:
+
+- `src/bijection_optimizer/bijection.py`: verbatim ports of
+  `BijectionLanguage.create_bijective_mapping`,
+  `DigitBijectionLanguage.create_bijective_mapping_digits`, `permute_string`
+  (both encode and decode directions), `DigitBijectionLanguage._f`, and
+  `permute_digits_to_string` — including upstream's leading-delimiter behaviour
+  in digit decoding, which is retained deliberately and pinned by tests.
+- `src/bijection_optimizer/prompts.py`: the teaching-intro template (the
+  "Language Alpha" preamble and alphabet table) from the letter / digit branches
+  of `full_attack_construction`, and `MULTITURN_INDICATOR` from
+  `run_bijection_attacks.py`.
+- The run-script defaults `max_attempts = 6` and `num_teaching_shots = 10`, and
+  the paper's main-table digit configuration (`num_digits = 2`,
+  `digit_delimiter = "  "`, `fixed_size = 10`).
+
+### License status
+
+The upstream repository carries no LICENSE file. The upstream authors granted
+the superred maintainers permission, in private correspondence, to redistribute
+the ported material under MIT terms. On that basis the ported material is treated as MIT licensed,
+Copyright (c) 2026 Haize Labs; the license text applied is reproduced in
+`LICENSES/bijection-learning-MIT.txt`. If upstream later publishes its own
+LICENSE file, this NOTICE should be updated to point at it.
+
+Deviations from upstream are documented in `ASSUMPTIONS.md`.
+
+## Citation
+
+When reporting numbers produced with this module, cite the Bijection Learning
+paper (Huang, Li, Tang, arXiv:2410.01294).

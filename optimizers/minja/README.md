@@ -49,11 +49,10 @@ see the framework's [architecture overview](https://superred.simonsure.com).
 
 ## License
 
-**No license is granted yet** (see [LICENSE](LICENSE)). The upstream reference
-implementation, [`dsh3n77/MINJA`](https://github.com/dsh3n77/MINJA), carries
-**no license file** (default all-rights-reserved), and this module bundles
-RAP/WebShop scenario data reproduced from it. Because there is no upstream
-license to redistribute that material under, this module is withheld pending the
-upstream author's permission and is not released under MIT (unlike other superred
-optimizers). Once permission is obtained or the data is fully replaced with
-original content, a proper license will be applied here.
+MIT for this port's code (see [LICENSE](LICENSE)). The upstream reference
+implementation, [`dsh3n77/MINJA`](https://github.com/dsh3n77/MINJA), is MIT
+licensed. The bundled RAP/WebShop scenario data originates from that repository;
+it is credited in [`NOTICE`](NOTICE) and the upstream MIT copyright notice is
+preserved in [`LICENSES/MINJA-MIT.txt`](LICENSES/MINJA-MIT.txt). This port
+reimplements the attack against superred's event model rather than vendoring
+upstream runtime source.

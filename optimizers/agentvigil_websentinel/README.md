@@ -16,8 +16,10 @@ shorten, rephrase, crossover, generate-similar) to evolve them — searching for
 injections that land through content the agent reads (web pages, retrieved
 documents, tool results, memory).
 
-Reference: "AgentVigil/WebSentinel: Generic Black-Box Red-teaming for Indirect
-Prompt Injection against LLM Agents,"
+References: "AgentVigil: Generic Black-Box Red-teaming for Indirect Prompt
+Injection against LLM Agents,"
+[arXiv:2505.05849](https://arxiv.org/abs/2505.05849), and "WebSentinel: Detecting
+and Localizing Prompt Injection Attacks for Web Agents,"
 [arXiv:2602.03792](https://arxiv.org/abs/2602.03792). Official implementation:
 [`wzunknown/agentvigil-websentinel`](https://github.com/wzunknown/agentvigil-websentinel).
 See [ASSUMPTIONS.md](ASSUMPTIONS.md) for the full paper-to-code mapping and every
@@ -53,16 +55,14 @@ MCP agents) that expose a content or tool-result surface. Wire it into a
 
 ## License
 
-**No license is granted yet** (see [LICENSE](LICENSE)). The upstream reference
-implementation,
-[`wzunknown/agentvigil-websentinel`](https://github.com/wzunknown/agentvigil-websentinel),
-publishes **no license file**. This module reproduces literals it references
+This module is licensed under the [MIT License](LICENSE).
+
+It bundles seed corpora and mutator prompt text extracted from the upstream
+reference implementation,
+[`wzunknown/agentvigil-websentinel`](https://github.com/wzunknown/agentvigil-websentinel)
 (the mutator prompts from `mutate_prompts.py` and the seed corpora from
-`new_seeds.py`/`seeds.py`). Absent an express upstream license grant, that
-material is presumed all-rights-reserved. Written permission to use and
-redistribute it **has been sought from the upstream author but not yet
-received**; pending that permission (or a subsequently published upstream
-license), this module is withheld and is **not** released under the MIT License
-that applies to other superred optimizers. Once permission is obtained or the
-upstream-derived literals are fully replaced with original content, a definitive
-license will be applied here.
+`new_seeds.py`/`seeds.py`). That repository publishes no license file; the
+upstream authors granted the superred maintainers permission, in private
+correspondence, to redistribute the ported material under MIT terms. See
+[NOTICE](NOTICE) for the full attribution and [LICENSES/](LICENSES) for the
+license text applied to the upstream material.

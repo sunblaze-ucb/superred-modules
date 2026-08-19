@@ -1,6 +1,6 @@
 # AgentVigil/WebSentinel Optimizer Assumptions
 
-This module implements the AgentVigil/WebSentinel attack idea for SuperRed agent targets.
+This module implements the AgentVigil/WebSentinel attack idea for SuperRed agent targets. Both papers are the reference: AgentVigil, "Generic Black-Box Red-teaming for Indirect Prompt Injection against LLM Agents" (arXiv:2505.05849), and WebSentinel, "Detecting and Localizing Prompt Injection Attacks for Web Agents" (arXiv:2602.03792).
 
 ## What Matches The Papers And Code
 

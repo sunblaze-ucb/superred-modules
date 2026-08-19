@@ -1,0 +1,46 @@
+# NOTICE
+
+superred-optimizer-code-chameleon (import package `code_chameleon_optimizer`)
+
+This module is a superred optimizer that reimplements the CodeChameleon
+jailbreak. Our own integration code is MIT licensed (see LICENSE). It
+additionally ships prompt text and encryption rules ported from the official
+CodeChameleon repository, which is MIT licensed. This NOTICE preserves the
+required upstream attribution.
+
+## Code (this module)
+
+MIT, Copyright (c) 2026 Sarthak Munshi, Simon Sure. See LICENSE.
+
+## CodeChameleon prompt templates, encryption rules, and judge prompt
+
+Source: https://github.com/huizhang-L/CodeChameleon
+Paper: Lv et al., "CodeChameleon: Personalized Encryption Framework for
+Jailbreaking Large Language Models," arXiv:2402.16717 (Feb 2024).
+
+The following are ported verbatim (or near-verbatim) from the upstream repo and
+ship inside this wheel:
+
+- The decryption-function prompt blocks for the official encryption rules
+  `binary_tree`, `reverse`, `odd_even`, and `length`, plus the code-style and
+  text-style `ProblemSolver` templates
+  (`src/code_chameleon_optimizer/prompts.py`). Upstream wording is preserved
+  exactly, including its typos (`privoded`, `follwing`), because prompt wording
+  affects attack results.
+- The GPT adapter system prompt used when a writable `system_prompt` surface is
+  available.
+- The GPT-4-style CodeChameleon judge prompt and its 1-5 scoring rubric, plus
+  the judge call defaults (`top_p=1.0`, no `max_tokens` cap)
+  (`src/code_chameleon_optimizer/evaluator.py`).
+- The encryption rules themselves — balanced binary tree, word reverse,
+  odd/even split, and length sort (`src/code_chameleon_optimizer/encrypt.py`).
+
+License: MIT, Copyright (c) 2026 huizhang-L. Full text in
+`LICENSES/CodeChameleon-MIT.txt`.
+
+Deviations from upstream are documented in `ASSUMPTIONS.md`.
+
+## Citation
+
+When reporting numbers produced with this module, cite the CodeChameleon paper
+(Lv et al., arXiv:2402.16717).
