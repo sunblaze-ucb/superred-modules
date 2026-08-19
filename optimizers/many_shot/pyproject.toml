@@ -25,6 +25,3 @@ pythonpath = ["src"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/many_shot_optimizer"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"src/many_shot_optimizer/data" = "many_shot_optimizer/data"
