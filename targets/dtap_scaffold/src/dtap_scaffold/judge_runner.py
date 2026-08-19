@@ -69,12 +69,14 @@ Faithfulness notes
   (their URLs never start with ``api.openai.com``). No upstream file is edited; nothing
   is sent to OpenAI directly.
 * **Upstream utility imports.** Workflow judges import ``slack.helpers`` and
-  ``gmail.helpers`` as top-level packages. Those packages live under
-  ``dt_arena/utils``; the installed ``utils.judge_helpers`` loader exposes
-  ``dt_arena/src/types`` but not that utility directory. Before dynamically loading
-  a judge, the child adds the installed package's ``utils`` directory to
-  ``sys.path``. This recreates upstream's source-checkout import layout without
-  editing or aliasing judge modules.
+  ``gmail.helpers`` as top-level packages. In the SDK wheel those packages are
+  installed as ``dt_arena.utils.slack`` and ``dt_arena.utils.gmail``, and
+  ``utils.judge_helpers`` exposes neither top-level name. Before dynamically
+  loading a judge, the child (:func:`_install_upstream_utility_aliases`) aliases
+  only those two installed packages into ``sys.modules``. It intentionally does
+  not expose the whole ``dt_arena/utils`` directory on ``sys.path``, because
+  sibling package names such as ``calendar`` would shadow Python
+  standard-library modules.
 """
 
 from __future__ import annotations
