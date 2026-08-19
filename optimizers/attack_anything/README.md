@@ -3,6 +3,12 @@
 A faithful superred port of **Attack Anything** (SEATS: Self-Evolving Attack Tree
 Search) — an automated multi-turn chatbot jailbreak.
 
+> **Community port — not an official implementation.** This module vendors the
+> reference implementation of Attack Anything (SEATS), an anonymous paper under
+> review, for superred. It is not affiliated with, endorsed by, or maintained by
+> the original authors. See [ASSUMPTIONS.md](ASSUMPTIONS.md) for provenance and
+> every deliberate deviation from the reference code.
+
 ## What it does, in plain terms
 
 You give it a harmful goal and point it at a chatbot target. It tries to get the
