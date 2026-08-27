@@ -27,16 +27,26 @@
   the next. The static hint removes that variance and spends one fewer classification call per
   task at s3/s4/s6.
 
-  Its delivery effect is real but small, and must not be overstated: **most non-delivery at these
-  scopes is the scope filter, not the classifier.** An `env_tool` controllable is declared per
-  authorization node of every active server at `initialize()`, but only fires when a tool at that
-  node returns, and the controller's `security_domain_filter` auto-declines any event outside the
-  granted tags before the optimizer sees it. Measured with hierarchical tag matching, 30 of 55 s6
-  tasks and 5 of 55 s3 tasks never had a single in-scope surface fire at all: at s6 the agent calls
-  `terminal` tools while the scope grants only the `gmail`/`slack` bundle. Those are structurally
-  unreachable and no optimizer change can touch them. The hint fixes only the tasks where an
-  in-scope surface DID fire and was declined: s3 46/55 -> 50/55, s6 23/55 -> 25/55. The three
-  remaining s4 misses are poison-generation failures, which it also does not touch.
+  It changes NO delivery on the measured sweep, and the earlier claim that it
+  rescued tasks was wrong twice over. First, most non-delivery at s3/s6 is the
+  controller's `security_domain_filter` declining an out-of-scope event before this
+  optimizer is consulted: measured with `scope_includes`, 30 of 55 s6 tasks and 5 of
+  55 s3 tasks never had a single in-scope surface fire, because the agent calls
+  `terminal` tools while the scope grants only the `gmail`/`slack` bundle. Those are
+  structurally unreachable. Second, the remaining six tasks that WERE offered an
+  in-scope surface and still delivered nothing failed at poison GENERATION, upstream
+  of any surface decision: `llm_usage.calls` is 0 at s1 (where the surface is matched
+  statically so no classification call is spent) and 1 at s3/s4/s6 (the classifier
+  alone), with every one terminating in a single run at `stop_reason="done"` via the
+  `_PoisonGenerationError` path. The generator was refused by the provider on those
+  goals. Surface selection never runs for them.
+
+  The hint is kept for what it does do: it makes reachability DETERMINISTIC. The
+  classification runs once per task, so the same `env_tool:gmail.public` was blessed
+  in one task and declined in the next, meaning what the attacker could reach varied
+  run to run for identical inputs. It also spends one fewer classification call per
+  task at s3/s4/s6. Neither is a delivery improvement, and it should not be reported
+  as one.
 
 - If only `user_message` is writable, the optimizer uses the official RAG wrapper in the user prompt. This is a capability fallback, not true database poisoning.
 - If only `system_prompt` is writable, the optimizer can place the official RAG wrapper and poison contexts there. This is also a SuperRed capability extension.
@@ -48,7 +58,8 @@
   as an attempt. Without this bound the retry was unbounded, because `_is_done()` reads only
   `_attempt_index`: a task whose classified surface the target never called answered `done=False`
   until the controller's run or time cap. Measured over the DTAP indirect sweep (cc-opus-4.8 /
-  gpt-5-4, 55 tasks x 7 scopes), that consumed 593 of 978 runs (60.6%) and rescued no delivery at
+  gpt-5-4, six scopes with trajectories on disk), that consumed 647 of the 923 runs read (70.1%),
+  538 of them at s6, and rescued no delivery at
   all: every task that ever delivered poison delivered it on its FIRST run (46/46 at s3, 23/23 at
   s6). Set a larger value, or `None`, to restore the old unbounded retry. If only speculative
   runtime context poisoning was possible and no context event appears, the optimizer gives up

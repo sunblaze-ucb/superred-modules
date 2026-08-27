@@ -90,10 +90,12 @@ _CORPUS_HINTS = (
     # put EVERY env_tool surface into "user-prompt"). Leaving them to the LLM
     # left the verdict varying per task for identical surfaces, so on the DTAP
     # sweep the same env_tool:gmail.public was poisoned in one task and declined
-    # in the next. The hint removes that variance and one classification call
-    # per task. It does NOT fix a task whose granted surface never fires: most
-    # non-delivery at s3/s6 is the controller's scope filter declining an
-    # out-of-scope event before this optimizer is ever consulted.
+    # in the next, so what the attacker could reach varied for identical inputs.
+    # The hint makes reachability deterministic and spends one fewer
+    # classification call per task. It is NOT a delivery improvement: on the
+    # measured sweep it changes no outcome, because non-delivery there is either
+    # the scope filter declining an out-of-scope event before this optimizer is
+    # consulted, or a poison-generation refusal upstream of surface selection.
     "env_tool",
 )
 _CONTEXT_HINTS = ("retrieved_context", "rag_context", "context")
@@ -906,8 +908,8 @@ class PoisonedRAGOptimizer(Optimizer):
         then declared undeliverable. The default of 1 is measured, not guessed:
         across the DTAP indirect sweep every task that ever delivered poison
         delivered it on run 1 (46/46 at s3, 23/23 at s6), so a retry has never
-        once rescued a delivery, while the unbounded retry consumed 593 of 978
-        runs (60.6%). Set a larger value, or ``None``, to restore the old
+        once rescued a delivery, while the unbounded retry consumed 647 of the
+        923 runs read (70.1%), 538 of them at s6. Set a larger value, or ``None``, to restore the old
         unbounded retry.
         """
         self._undelivered_runs += 1
