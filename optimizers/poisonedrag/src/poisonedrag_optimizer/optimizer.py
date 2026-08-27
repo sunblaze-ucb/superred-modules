@@ -147,6 +147,7 @@ class PoisonedRAGOptimizer(Optimizer):
         static_context_max_chars: int = 8000,
         use_system_prompt_when_available: bool = True,
         allow_dynamic_context_postcall: bool = True,
+        max_undelivered_runs: int | None = 1,
         target_controllable_name: str | None = None,
     ) -> None:
         super().__init__()
@@ -158,6 +159,8 @@ class PoisonedRAGOptimizer(Optimizer):
             raise ValueError("max_attempts must be positive when provided")
         if static_context_max_chars <= 0:
             raise ValueError("static_context_max_chars must be positive")
+        if max_undelivered_runs is not None and max_undelivered_runs <= 0:
+            raise ValueError("max_undelivered_runs must be positive when provided")
         if poison_texts is not None and not poison_texts:
             raise ValueError("poison_texts must not be empty when provided")
         if (
@@ -202,6 +205,7 @@ class PoisonedRAGOptimizer(Optimizer):
         self._static_context_max_chars = static_context_max_chars
         self._use_system_prompt_when_available = use_system_prompt_when_available
         self._allow_dynamic_context_postcall = allow_dynamic_context_postcall
+        self._max_undelivered_runs = max_undelivered_runs
         self._target_controllable_name = target_controllable_name
 
         self._question = ""
@@ -219,6 +223,8 @@ class PoisonedRAGOptimizer(Optimizer):
         self._can_inject = False
 
         self._attempt_index = 0
+        self._undelivered_runs = 0
+        self._undeliverable = False
         self._succeeded = False
         self._best_score = 0.0
         self._last_retrieved_poison_count = 0
@@ -237,6 +243,16 @@ class PoisonedRAGOptimizer(Optimizer):
     @property
     def attempt_index(self) -> int:
         return self._attempt_index
+
+    @property
+    def undelivered_runs(self) -> int:
+        """Consecutive runs that ended without a poison document delivered."""
+        return self._undelivered_runs
+
+    @property
+    def undeliverable(self) -> bool:
+        """True once the optimizer stopped because it could deliver nothing."""
+        return self._undeliverable
 
     @property
     def target_answer(self) -> str | None:
@@ -314,6 +330,8 @@ class PoisonedRAGOptimizer(Optimizer):
             or self._can_try_dynamic_context_postcall
         )
         self._attempt_index = 0
+        self._undelivered_runs = 0
+        self._undeliverable = False
         self._succeeded = False
         self._best_score = 0.0
         self._last_retrieved_poison_count = 0
@@ -454,8 +472,8 @@ class PoisonedRAGOptimizer(Optimizer):
 
     def _handle_run_end(self, event: RunEndEvent) -> RunEndResponse:
         if self._current_batch is None:
-            if self._can_try_dynamic_context_postcall and not self._injected_this_run:
-                self._can_inject = False
+            if not self._injected_this_run:
+                self._note_undelivered_run()
             return RunEndResponse(event=event, done=self._is_done())
 
         response = self._read_response_from_trajectory()
@@ -463,10 +481,10 @@ class PoisonedRAGOptimizer(Optimizer):
             response = self._pending_post_answer
 
         if not self._injected_this_run:
-            if self._can_try_dynamic_context_postcall:
-                self._can_inject = False
+            self._note_undelivered_run()
             return RunEndResponse(event=event, done=self._is_done())
 
+        self._undelivered_runs = 0
         self._attempt_index += 1
         self._record_retrieval_metrics_from_trajectory()
         if event.evaluation is not None:
@@ -855,6 +873,49 @@ class PoisonedRAGOptimizer(Optimizer):
             return 0
         text = self._stringify(content)
         return sum(doc in text for doc in self._adv_documents(self._current_batch))
+
+    def _note_undelivered_run(self) -> None:
+        """Record a run that ended with no poison delivered; stop when hopeless.
+
+        ``_attempt_index`` counts DELIVERED poison batches, which is what
+        ``max_attempts`` is parity with, so a run that injected nothing must not
+        advance it -- and must not be scored either. But it must still bound the
+        loop. Before this counter it did not: ``_is_done()`` reads only
+        ``_attempt_index``, so a task whose advertised corpus/context surface was
+        never exercised by the target answered ``done=False`` forever and ran to
+        the controller's run or time cap without attacking once.
+
+        The give-up rule is the one this handler already applied to the
+        speculative runtime-context path (nothing advertised, no context event
+        appeared, so nothing to retry). It is generalised here: an advertised
+        surface that does not fire gets ``max_undelivered_runs`` chances and is
+        then declared undeliverable. The default of 1 is measured, not guessed:
+        across the DTAP indirect sweep every task that ever delivered poison
+        delivered it on run 1 (46/46 at s3, 23/23 at s6), so a retry has never
+        once rescued a delivery, while the unbounded retry consumed 593 of 978
+        runs (60.6%). Set a larger value, or ``None``, to restore the old
+        unbounded retry.
+        """
+        self._undelivered_runs += 1
+        if self._can_try_dynamic_context_postcall:
+            # Speculative only: no surface was advertised and the runtime
+            # context event never came, so there is nothing to try again.
+            self._can_inject = False
+            self._undeliverable = True
+            return
+        if (
+            self._max_undelivered_runs is not None
+            and self._undelivered_runs >= self._max_undelivered_runs
+        ):
+            logger.warning(
+                "PoisonedRAG: no poison delivered in %d consecutive run(s); the "
+                "advertised corpus/context surface was never exercised by the "
+                "target. Declaring the attack undeliverable for this task rather "
+                "than repeating an empty run.",
+                self._undelivered_runs,
+            )
+            self._can_inject = False
+            self._undeliverable = True
 
     def _is_done(self) -> bool:
         if not self._can_inject:
