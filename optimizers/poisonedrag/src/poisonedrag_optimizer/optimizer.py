@@ -81,6 +81,18 @@ _CORPUS_HINTS = (
     # drop, so it needs this static name backstop rather than relying on the
     # LLM pass.
     "env_inject",
+    # DTAP tool-return vector, named "env_tool:<server>": replaces the value a
+    # tool returns TO the agent, which is read-time retrieved content and so is
+    # exactly what PoisonedRAG poisons -- the read-later sibling of env_inject
+    # above. It needs the same static backstop for the same reason, and the
+    # evidence that it does is already in this package's ASSUMPTIONS: the LLM
+    # classifier has a documented history of misreading these surfaces (it once
+    # put EVERY env_tool surface into "user-prompt"). Leaving them to the LLM
+    # left the verdict varying per task for identical surfaces, so on the DTAP
+    # sweep the same tool was poisoned in one task and declined in the next; 41
+    # tasks delivered nothing at all despite an env_tool surface firing in every
+    # single run.
+    "env_tool",
 )
 _CONTEXT_HINTS = ("retrieved_context", "rag_context", "context")
 # Role categories the attacker asks its LLM to sort raw surfaces into, read from
