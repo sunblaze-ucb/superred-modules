@@ -89,9 +89,11 @@ _CORPUS_HINTS = (
     # classifier has a documented history of misreading these surfaces (it once
     # put EVERY env_tool surface into "user-prompt"). Leaving them to the LLM
     # left the verdict varying per task for identical surfaces, so on the DTAP
-    # sweep the same tool was poisoned in one task and declined in the next; 41
-    # tasks delivered nothing at all despite an env_tool surface firing in every
-    # single run.
+    # sweep the same env_tool:gmail.public was poisoned in one task and declined
+    # in the next. The hint removes that variance and one classification call
+    # per task. It does NOT fix a task whose granted surface never fires: most
+    # non-delivery at s3/s6 is the controller's scope filter declining an
+    # out-of-scope event before this optimizer is ever consulted.
     "env_tool",
 )
 _CONTEXT_HINTS = ("retrieved_context", "rag_context", "context")

@@ -22,15 +22,22 @@
   is recognized by a static `env_tool` name hint for the same reason. It is the read-later sibling
   of `env_inject`: the value a tool hands back is read-time retrieved content, which is exactly
   what PoisonedRAG poisons. Leaving it to the LLM pass made the verdict vary per task for
-  identical surfaces, because the classification runs once per task; measured on the DTAP indirect
-  sweep (cc-opus-4.8 / gpt-5-4), the same `env_tool:gmail.public` was poisoned in one task and
-  declined in the next, and 41 tasks (9 at s3, 32 at s6) delivered nothing at all even though an
-  `env_tool` surface fired in 100% of their runs. The static hint blesses them at `initialize()`,
-  so all 41 deliver on run 1: s3 goes 46/55 to 55/55, s6 23/55 to 55/55, with no extra run and one
-  fewer classification call per task. This package's own history is the precedent: see the surface
-  classifier note below, where gpt-4o-2024-05-13 put *every* `env_tool:<server>` surface into
-  `user-prompt`. Poisoning what the agent reads back is the published attack, so this changes only
-  which surface is chosen, never the poison, its document count or the success criterion.
+  identical surfaces, because the classification runs once per task; on the DTAP indirect sweep
+  (cc-opus-4.8 / gpt-5-4) the same `env_tool:gmail.public` was poisoned in one task and declined in
+  the next. The static hint removes that variance and spends one fewer classification call per
+  task at s3/s4/s6.
+
+  Its delivery effect is real but small, and must not be overstated: **most non-delivery at these
+  scopes is the scope filter, not the classifier.** An `env_tool` controllable is declared per
+  authorization node of every active server at `initialize()`, but only fires when a tool at that
+  node returns, and the controller's `security_domain_filter` auto-declines any event outside the
+  granted tags before the optimizer sees it. Measured with hierarchical tag matching, 30 of 55 s6
+  tasks and 5 of 55 s3 tasks never had a single in-scope surface fire at all: at s6 the agent calls
+  `terminal` tools while the scope grants only the `gmail`/`slack` bundle. Those are structurally
+  unreachable and no optimizer change can touch them. The hint fixes only the tasks where an
+  in-scope surface DID fire and was declined: s3 46/55 -> 50/55, s6 23/55 -> 25/55. The three
+  remaining s4 misses are poison-generation failures, which it also does not touch.
+
 - If only `user_message` is writable, the optimizer uses the official RAG wrapper in the user prompt. This is a capability fallback, not true database poisoning.
 - If only `system_prompt` is writable, the optimizer can place the official RAG wrapper and poison contexts there. This is also a SuperRed capability extension.
 - Framework `RunEndEvent.evaluation` is authoritative when visible; otherwise the optimizer reads response observables from trajectory first, then scoped PostCall answers.
