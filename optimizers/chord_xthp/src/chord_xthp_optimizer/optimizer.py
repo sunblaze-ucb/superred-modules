@@ -306,7 +306,7 @@ class ChordXTHPOptimizer(Optimizer):
 
     def _handle_run_start(self, event: RunStartEvent) -> EventResponse:
         self._reset_run_state()
-        if self._succeeded or self._attempt_index >= self._max_attempts:
+        if self._succeeded or self._candidate_index >= self._max_attempts:
             return EventResponse(event=event)
         if not self._candidate_schedule or not self._can_inject:
             self._current_candidate = None
@@ -1167,7 +1167,17 @@ class ChordXTHPOptimizer(Optimizer):
         if not self._candidate_schedule or not self._can_inject:
             # No candidates, or no writable surface to inject into: nothing to do.
             return True
-        return self._succeeded or self._attempt_index >= self._max_attempts
+        # Budget on grid points CONSUMED, not attempts SCORED. A run that
+        # delivered nothing is still never scored -- _attempt_index remains the
+        # scored counter and the early returns above are unchanged -- but it did
+        # spend a victim episode on the candidate it was handed. Budgeting on
+        # the scored counter left _is_done() unreachable for such a task while
+        # _candidate_index advanced anyway and wrapped modulo the schedule, so a
+        # four-candidate task re-walked the same four payloads five times to the
+        # harness ceiling. Re-offering a candidate the target has already seen
+        # is i.i.d. repetition of a fixed payload, which is neither Chord's
+        # evaluation grid nor its regeneration loop.
+        return self._succeeded or self._candidate_index >= self._max_attempts
 
     @property
     def _max_attempts(self) -> int:

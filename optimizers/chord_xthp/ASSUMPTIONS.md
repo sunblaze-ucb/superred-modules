@@ -153,6 +153,26 @@ deviation from upstream's generation inputs. It is bounded and local: the direct
 HSR/HASR/pollute rule are unchanged. Only the context the generator reads grows, and only
 on the regeneration path DTAP forces anyway.
 
+## The per-task budget is spent in grid points, not in scored attempts
+
+A run that delivered nothing (the catalogue PreCall never fired, or the agent
+called no tool) is deliberately not scored: the candidate never got a chance, so
+charging it would burn a real attempt for a non-attack. But it does consume the
+candidate it was offered, so the walk must still terminate. `_is_done()` and the
+run-start guard therefore compare `_candidate_index`, which advances whenever a
+candidate is served, against the budget; `_attempt_index` stays the scored
+counter and the public `attempt_index` property keeps its meaning.
+
+Budgeting on the scored counter instead left `_is_done()` unreachable for such a
+task while `_candidate_index` advanced anyway and wrapped modulo the schedule,
+so the same payloads were re-offered until the controller's run budget stopped
+it. Measured on the DTAP indirect sweep, 165 of 440 tasks (37.5%) ended at
+`max_runs` and 106 more timed out, with 0 successes anywhere; 22 burned all 20
+runs on 9 or fewer attacker LLM calls, far too few to have built a schedule long
+enough to justify 20 attempts. Re-offering a candidate the target has already
+seen is i.i.d. repetition of a fixed payload, which is neither Chord's
+evaluation grid nor its regeneration loop.
+
 ## Bounded regeneration (`description_generation_limit`, default 2)
 
 Chord has two loops. The evaluation loop that produced the published numbers is a fixed
