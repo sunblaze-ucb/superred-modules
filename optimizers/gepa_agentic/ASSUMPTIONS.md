@@ -127,6 +127,17 @@ sibling `gepa` package, and none of them is silent:
    attempts re-sending one payload. Set the knob to 0 to restore unbounded
    re-rolling.
 
+Two consequences to state plainly. **The bound changes measured ASR relative to
+runs of the same cells made before it**, because a task that would have spent 20
+runs re-sending one payload now stops at three; the two are not directly
+comparable, and a mixed tree should not be pooled. And **a failure on the last
+permitted run is not visible**: classes 1 and 2 are stored and raised at the next
+`RunStartEvent`, so if `max_runs_per_task` is already reached there is no next
+run and the task records `stop_reason="max_runs"` rather than the failure. Fixing
+that would mean raising from `RunEndEvent`, which makes the controller discard
+that run's real evaluation for a synthetic zero, so the deferral is the lesser
+harm.
+
 Classes 1 and 2 are raised at the *next* `RunStartEvent` rather than from the
 `RunEndEvent` that detected them. The controller sends `RunStartEvent` before it
 calls the target, so the task ends without paying for another victim episode

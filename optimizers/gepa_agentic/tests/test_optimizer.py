@@ -15,6 +15,7 @@ import pytest
 from superred.core.channel import EventEnvelope
 from superred.core.types.controllable import Controllable
 from superred.core.types.evaluation import EvaluationResult, Score
+from superred.core.types.event import EventResponse
 from superred.core.types.events import (
     ControllableInjection,
     ControllableNoInjection,
@@ -156,7 +157,7 @@ async def _deliver_run(
     *,
     ctrl: Controllable | None = None,
     propose: AsyncMock | None = None,
-) -> None:
+) -> EventResponse:
     """Drive one run in which the content surface actually fires.
 
     A run that injects nothing is deliberately left unscored, so any test about
@@ -175,7 +176,7 @@ async def _deliver_run(
         "propose",
         new=propose if propose is not None else AsyncMock(return_value=None),
     ):
-        await _dispatch_event(
+        return await _dispatch_event(
             opt,
             RunEndEvent(evaluation=_failure_eval(score), security_domain=USER_TAG),
         )
@@ -190,6 +191,11 @@ async def _init_optimizer(
     observables: list[ObservableValue] | None = None,
     max_content_injections_per_run: int = 3,
     max_pool_size: int = 8,
+    # Disabled by default here, as in the sibling gepa package: many tests stub
+    # reflection out with `propose -> None`, which IS a no-mutation, and would
+    # otherwise stop the task on the third such run and quietly stop exercising
+    # whatever the test was written for.
+    max_consecutive_no_mutation: int = 0,
     response_observable_names: list[str] | None = None,
     llm: MagicMock | None = None,
     **kwargs: Any,
@@ -200,6 +206,7 @@ async def _init_optimizer(
         content_controllable_names=content_controllable_names,
         max_content_injections_per_run=max_content_injections_per_run,
         max_pool_size=max_pool_size,
+        max_consecutive_no_mutation=max_consecutive_no_mutation,
         response_observable_names=response_observable_names,
         **kwargs,
     )
@@ -1331,15 +1338,16 @@ class TestReflectionGuards:
 
         dones = []
         for _ in range(3):
-            await _deliver_run(opt, 0.0, propose=propose)
-            dones.append(opt._pending is None)
+            resp = await _deliver_run(opt, 0.0, propose=propose)
+            assert isinstance(resp, RunEndResponse)
+            dones.append(resp.done)
 
-        # Third consecutive miss ends the task rather than spending the other 17.
+        # The third consecutive miss ends the task instead of spending the
+        # other 17 runs re-sending one payload. Asserting the SEQUENCE matters:
+        # asserting only the final value would still pass if the stop fired too
+        # early, and asserting nothing at all lets the stop be deleted outright.
+        assert dones == [False, False, True]
         assert opt._consecutive_no_mutation == 3
-        last = await _dispatch_event(
-            opt, RunEndEvent(evaluation=_failure_eval(0.0), security_domain=USER_TAG)
-        )
-        assert isinstance(last, RunEndResponse)
 
     @pytest.mark.asyncio
     async def test_a_successful_mutation_resets_the_streak(self) -> None:
