@@ -88,6 +88,62 @@ anyway.
 is set, heuristic response-name detection is disabled; when it is unset, the
 optimizer uses default response names plus broad agent-trace heuristics.
 
+## When Reflection Does Not Produce a Mutation
+
+Reflection is the only thing that makes one run differ from the last. When it
+produces nothing, the next run re-sends the *identical* payload to the victim:
+full victim cost, zero search progress, and a record that looks like a
+legitimate multi-run search that failed. Measured on the DTAP indirect sweep,
+that was **2,974 of 18,013 reflections (16.5%)**, and the rate is a property of
+the attacker model rather than the task (no-fence misses per cell ran from 2 on
+deepseek-v3-2 to 1,719 on opus-4-8), so it silently biased the attacker-model
+axis the experiment exists to compare.
+
+The three ways reflection can produce nothing are now kept apart, matching the
+sibling `gepa` package, and none of them is silent:
+
+1. **Cost cap spent** (`BudgetExhaustedError`). Re-raised untouched and never
+   retried, since retrying a spent cap is a cap escape. The controller records
+   `stop_reason="budget_exhausted"`. Previously a bare `except Exception`
+   swallowed this, so an attacker that was out of money silently carried on
+   spending victim episodes.
+2. **The call failed** (provider or transport error). Retried
+   `reflection_retries` times (default 2, so 3 attempts) with full-jitter
+   exponential backoff, jittered because a whole matrix cell retries against one
+   provider at the same instant. Retrying stops early once
+   `reflection_retry_deadline` seconds (default 120) have passed, because a
+   single provider timeout can itself be minutes and retrying into the
+   controller's `task_time_cap_s` would discard the task outright. If every
+   attempt fails, `ReflectionUnavailable` is raised and the controller records
+   `stop_reason="error"`. A dead reflection LM means GEPA never searched, and
+   that must not be recorded as a target that held.
+3. **The LM answered but proposed nothing parseable** (no fenced block, in
+   practice an attacker model declining to improve an attack). Legitimate
+   attacker output, not an infrastructure failure, so the parent is re-rolled,
+   which is worth something: it refreshes the parent's rollout buffer so the
+   next reflection sees different side-info. After
+   `max_consecutive_no_mutation` misses in a row (default 3) the optimizer
+   stops with `done=True` and logs why, rather than spending its remaining
+   attempts re-sending one payload. Set the knob to 0 to restore unbounded
+   re-rolling.
+
+Two consequences to state plainly. **The bound changes measured ASR relative to
+runs of the same cells made before it**, because a task that would have spent 20
+runs re-sending one payload now stops at three; the two are not directly
+comparable, and a mixed tree should not be pooled. And **a failure on the last
+permitted run is not visible**: classes 1 and 2 are stored and raised at the next
+`RunStartEvent`, so if `max_runs_per_task` is already reached there is no next
+run and the task records `stop_reason="max_runs"` rather than the failure. Fixing
+that would mean raising from `RunEndEvent`, which makes the controller discard
+that run's real evaluation for a synthetic zero, so the deferral is the lesser
+harm.
+
+Classes 1 and 2 are raised at the *next* `RunStartEvent` rather than from the
+`RunEndEvent` that detected them. The controller sends `RunStartEvent` before it
+calls the target, so the task ends without paying for another victim episode
+while the just-completed run keeps its real evaluation instead of being
+overwritten by a synthetic zero-score error result.
+
 ## Deliberate Limits
 
 GEPA-Agentic is not a full replacement for specialized attacks like MINJA,

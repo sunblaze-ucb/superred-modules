@@ -146,7 +146,7 @@ def _extract_fenced_block(text: str) -> str:
         if stripped.startswith("```"):
             match = re.match(r"^```\S*\n?", text.lstrip())
             if match:
-                return text.lstrip()[match.end():].strip()
+                return text.lstrip()[match.end() :].strip()
         if stripped.endswith("```"):
             return stripped[:-3].strip()
         return ""
@@ -154,7 +154,7 @@ def _extract_fenced_block(text: str) -> str:
     content = text[start:end]
     match = re.match(r"^\S*\n", content)
     if match:
-        content = content[match.end():]
+        content = content[match.end() :]
     return content.strip()
 
 

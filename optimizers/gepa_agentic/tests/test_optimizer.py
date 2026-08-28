@@ -15,6 +15,7 @@ import pytest
 from superred.core.channel import EventEnvelope
 from superred.core.types.controllable import Controllable
 from superred.core.types.evaluation import EvaluationResult, Score
+from superred.core.types.event import EventResponse
 from superred.core.types.events import (
     ControllableInjection,
     ControllableNoInjection,
@@ -29,7 +30,12 @@ from superred.core.types.goal import Goal
 from superred.core.types.observable import Observable, ObservableValue
 from superred.core.types.security_domain import SecurityDomainTag
 
-from gepa_agentic_optimizer.optimizer import GEPAAgenticOptimizer
+from superred.core.types.llm import BudgetExhaustedError, LLMUsage
+
+from gepa_agentic_optimizer.optimizer import (
+    GEPAAgenticOptimizer,
+    ReflectionUnavailable,
+)
 from gepa_agentic_optimizer.reflector import ReflectionResult, RolloutRecord
 
 
@@ -151,7 +157,7 @@ async def _deliver_run(
     *,
     ctrl: Controllable | None = None,
     propose: AsyncMock | None = None,
-) -> None:
+) -> EventResponse:
     """Drive one run in which the content surface actually fires.
 
     A run that injects nothing is deliberately left unscored, so any test about
@@ -170,7 +176,7 @@ async def _deliver_run(
         "propose",
         new=propose if propose is not None else AsyncMock(return_value=None),
     ):
-        await _dispatch_event(
+        return await _dispatch_event(
             opt,
             RunEndEvent(evaluation=_failure_eval(score), security_domain=USER_TAG),
         )
@@ -185,8 +191,14 @@ async def _init_optimizer(
     observables: list[ObservableValue] | None = None,
     max_content_injections_per_run: int = 3,
     max_pool_size: int = 8,
+    # Disabled by default here, as in the sibling gepa package: many tests stub
+    # reflection out with `propose -> None`, which IS a no-mutation, and would
+    # otherwise stop the task on the third such run and quietly stop exercising
+    # whatever the test was written for.
+    max_consecutive_no_mutation: int = 0,
     response_observable_names: list[str] | None = None,
     llm: MagicMock | None = None,
+    **kwargs: Any,
 ) -> GEPAAgenticOptimizer:
     opt = GEPAAgenticOptimizer(
         max_attempts=max_attempts,
@@ -194,7 +206,9 @@ async def _init_optimizer(
         content_controllable_names=content_controllable_names,
         max_content_injections_per_run=max_content_injections_per_run,
         max_pool_size=max_pool_size,
+        max_consecutive_no_mutation=max_consecutive_no_mutation,
         response_observable_names=response_observable_names,
+        **kwargs,
     )
     await opt.initialize(
         goal=Goal(description="achieve target X"),
@@ -1300,3 +1314,110 @@ class TestDoneSemantics:
         assert end.done is False
         assert opt._succeeded is False
         assert opt._attempt == 1
+
+
+# ---------------------------------------------------------------------------
+# Reflection guards: a run that mutates nothing must not buy a victim episode
+# ---------------------------------------------------------------------------
+
+
+class TestReflectionGuards:
+    """Reflection is the only thing that makes one GEPA run differ from the last.
+
+    When it produces nothing the next run re-sends the identical payload at full
+    victim cost, and the result is recorded as a legitimate multi-run search that
+    failed. Measured on the DTAP sweep that was 2,974 of 18,013 reflections
+    (16.5%), every one buying an episode that tested nothing new.
+    """
+
+    @pytest.mark.asyncio
+    async def test_repeated_no_mutation_stops_instead_of_re_sending(self) -> None:
+        opt = await _init_optimizer(max_attempts=20, max_consecutive_no_mutation=3)
+        # The LM answers every time but never proposes a parseable instruction.
+        propose = AsyncMock(return_value=None)
+
+        dones = []
+        for _ in range(3):
+            resp = await _deliver_run(opt, 0.0, propose=propose)
+            assert isinstance(resp, RunEndResponse)
+            dones.append(resp.done)
+
+        # The third consecutive miss ends the task instead of spending the
+        # other 17 runs re-sending one payload. Asserting the SEQUENCE matters:
+        # asserting only the final value would still pass if the stop fired too
+        # early, and asserting nothing at all lets the stop be deleted outright.
+        assert dones == [False, False, True]
+        assert opt._consecutive_no_mutation == 3
+
+    @pytest.mark.asyncio
+    async def test_a_successful_mutation_resets_the_streak(self) -> None:
+        opt = await _init_optimizer(max_attempts=20, max_consecutive_no_mutation=3)
+        await _deliver_run(opt, 0.0, propose=AsyncMock(return_value=None))
+        assert opt._consecutive_no_mutation == 1
+        await _deliver_run(
+            opt,
+            0.0,
+            propose=AsyncMock(
+                return_value=ReflectionResult(
+                    new_instruction="a better payload", raw_output="", prompt=""
+                )
+            ),
+        )
+        assert opt._consecutive_no_mutation == 0
+
+    @pytest.mark.asyncio
+    async def test_a_transient_reflection_failure_is_retried(self) -> None:
+        """One provider blip must not cost a mutation."""
+        opt = await _init_optimizer(max_attempts=5, reflection_retries=2)
+        propose = AsyncMock(
+            side_effect=[
+                RuntimeError("transient provider error"),
+                ReflectionResult(
+                    new_instruction="recovered payload", raw_output="", prompt=""
+                ),
+            ]
+        )
+        await _deliver_run(opt, 0.0, propose=propose)
+
+        assert propose.await_count == 2
+        assert opt._pending is not None
+        assert opt._pending.prompt == "recovered payload"
+
+    @pytest.mark.asyncio
+    async def test_a_dead_reflection_lm_is_an_error_not_a_defended_target(self) -> None:
+        """If every attempt fails GEPA never searched, so it must not look defended."""
+        opt = await _init_optimizer(max_attempts=5, reflection_retries=1)
+        propose = AsyncMock(side_effect=RuntimeError("provider down"))
+        await _deliver_run(opt, 0.0, propose=propose)
+
+        assert propose.await_count == 2  # 1 + reflection_retries
+        assert isinstance(opt._pending_failure, ReflectionUnavailable)
+        # Raised at the NEXT run start, so the task ends without paying for
+        # another victim episode and the completed run keeps its evaluation.
+        with pytest.raises(ReflectionUnavailable):
+            await _dispatch_event(
+                opt, RunStartEvent(trajectory=_FakeReadableTrajectory())
+            )
+
+    @pytest.mark.asyncio
+    async def test_a_spent_budget_is_never_swallowed(self) -> None:
+        """The old bare ``except Exception`` swallowed this and kept spending.
+
+        A spent cost cap must reach the controller so the task is recorded as
+        budget_exhausted, not as an attacker that ran and failed.
+        """
+        opt = await _init_optimizer(max_attempts=5, reflection_retries=2)
+        propose = AsyncMock(
+            side_effect=BudgetExhaustedError(
+                "cap spent", usage=LLMUsage(calls=9, cost=5.0)
+            )
+        )
+        await _deliver_run(opt, 0.0, propose=propose)
+
+        # Never retried: retrying a spent cap would be a cap escape.
+        assert propose.await_count == 1
+        assert isinstance(opt._pending_failure, BudgetExhaustedError)
+        with pytest.raises(BudgetExhaustedError):
+            await _dispatch_event(
+                opt, RunStartEvent(trajectory=_FakeReadableTrajectory())
+            )

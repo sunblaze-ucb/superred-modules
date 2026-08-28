@@ -34,9 +34,7 @@ class TestRolloutRecord:
                 }
             ],
             tool_return="legitimate webpage",
-            agent_observations=[
-                "controllable_post:read__slack__get_webpage: value"
-            ],
+            agent_observations=["controllable_post:read__slack__get_webpage: value"],
             selection_reason="planned content surface",
         )
 
