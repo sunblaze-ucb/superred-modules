@@ -81,22 +81,6 @@ _CORPUS_HINTS = (
     # drop, so it needs this static name backstop rather than relying on the
     # LLM pass.
     "env_inject",
-    # DTAP tool-return vector, named "env_tool:<server>": replaces the value a
-    # tool returns TO the agent, which is read-time retrieved content and so is
-    # exactly what PoisonedRAG poisons -- the read-later sibling of env_inject
-    # above. It needs the same static backstop for the same reason, and the
-    # evidence that it does is already in this package's ASSUMPTIONS: the LLM
-    # classifier has a documented history of misreading these surfaces (it once
-    # put EVERY env_tool surface into "user-prompt"). Leaving them to the LLM
-    # left the verdict varying per task for identical surfaces, so on the DTAP
-    # sweep the same env_tool:gmail.public was poisoned in one task and declined
-    # in the next, so what the attacker could reach varied for identical inputs.
-    # The hint makes reachability deterministic and spends one fewer
-    # classification call per task. It is NOT a delivery improvement: on the
-    # measured sweep it changes no outcome, because non-delivery there is either
-    # the scope filter declining an out-of-scope event before this optimizer is
-    # consulted, or a poison-generation refusal upstream of surface selection.
-    "env_tool",
 )
 _CONTEXT_HINTS = ("retrieved_context", "rag_context", "context")
 # Role categories the attacker asks its LLM to sort raw surfaces into, read from
@@ -912,6 +896,12 @@ class PoisonedRAGOptimizer(Optimizer):
         923 runs read (70.1%), 538 of them at s6. Set a larger value, or ``None``, to restore the old
         unbounded retry.
         """
+        if not self._can_inject:
+            # Already undeliverable for a different reason (a poison
+            # generation failure sets this at run start). _is_done() is
+            # already True, so there is no loop left to bound and the
+            # surface-never-fired message would be a wrong diagnosis.
+            return
         self._undelivered_runs += 1
         if self._can_try_dynamic_context_postcall:
             # Speculative only: no surface was advertised and the runtime
@@ -921,6 +911,7 @@ class PoisonedRAGOptimizer(Optimizer):
             return
         if (
             self._max_undelivered_runs is not None
+            and self._attempt_index == 0
             and self._undelivered_runs >= self._max_undelivered_runs
         ):
             logger.warning(

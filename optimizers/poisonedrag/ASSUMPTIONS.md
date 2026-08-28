@@ -18,42 +18,17 @@
 - A doc-carrying (corpus or context) surface is poisoned once per run whether it is exercised as a `PreCall` or a `PostCall`, since a controllable may use either event.
 - The on-wire format follows the controllable's value type, not its corpus/context label, on both `PreCall` and `PostCall`. On `PreCall`, a JSON surface receives the merged JSON payload (preserving an existing list/dict shape read from `event.request`, falling back to the metadata wrapper only when the target gives no usable schema); any other surface receives plain poison-context text. On `PostCall`, `event.answer` is the genuine CURRENT read content, not a write template, so a JSON surface cannot be merged deterministically the same way; the value is instead built by the shared `surface_llm.fill_value` formatter, which reads the surface's description and embeds the poison documents verbatim into a schema-matching value. A free-text surface still gets plain poison-context text on either event, with no LLM call. If the JSON formatter cannot produce a value, the optimizer declines that delivery (leaving the once-per-run corpus gate open) rather than emit text into a structured surface.
 - A DTAP `env_inject:<server>` environment-vector surface (writes attacker data into a live backend the agent reads back later) is recognized by a static `env_inject` name hint alongside the other corpus hints, since its description names an `inject_*` tool call, which the shared LLM surface-role classifier can read as "execution" rather than data and drop.
-- A DTAP `env_tool:<server>` tool-return surface (replaces the value a tool returns TO the agent)
-  is recognized by a static `env_tool` name hint for the same reason. It is the read-later sibling
-  of `env_inject`: the value a tool hands back is read-time retrieved content, which is exactly
-  what PoisonedRAG poisons. Leaving it to the LLM pass made the verdict vary per task for
-  identical surfaces, because the classification runs once per task; on the DTAP indirect sweep
-  (cc-opus-4.8 / gpt-5-4) the same `env_tool:gmail.public` was poisoned in one task and declined in
-  the next. The static hint removes that variance and spends one fewer classification call per
-  task at s3/s4/s6.
-
-  It changes NO delivery on the measured sweep, and the earlier claim that it
-  rescued tasks was wrong twice over. First, most non-delivery at s3/s6 is the
-  controller's `security_domain_filter` declining an out-of-scope event before this
-  optimizer is consulted: measured with `scope_includes`, 30 of 55 s6 tasks and 5 of
-  55 s3 tasks never had a single in-scope surface fire, because the agent calls
-  `terminal` tools while the scope grants only the `gmail`/`slack` bundle. Those are
-  structurally unreachable. Second, the remaining six tasks that WERE offered an
-  in-scope surface and still delivered nothing failed at poison GENERATION, upstream
-  of any surface decision: `llm_usage.calls` is 0 at s1 (where the surface is matched
-  statically so no classification call is spent) and 1 at s3/s4/s6 (the classifier
-  alone), with every one terminating in a single run at `stop_reason="done"` via the
-  `_PoisonGenerationError` path. The generator was refused by the provider on those
-  goals. Surface selection never runs for them.
-
-  The hint is kept for what it does do: it makes reachability DETERMINISTIC. The
-  classification runs once per task, so the same `env_tool:gmail.public` was blessed
-  in one task and declined in the next, meaning what the attacker could reach varied
-  run to run for identical inputs. It also spends one fewer classification call per
-  task at s3/s4/s6. Neither is a delivery improvement, and it should not be reported
-  as one.
-
 - If only `user_message` is writable, the optimizer uses the official RAG wrapper in the user prompt. This is a capability fallback, not true database poisoning.
 - If only `system_prompt` is writable, the optimizer can place the official RAG wrapper and poison contexts there. This is also a SuperRed capability extension.
 - Framework `RunEndEvent.evaluation` is authoritative when visible; otherwise the optimizer reads response observables from trajectory first, then scoped PostCall answers.
 - If an advertised writable surface does not fire, the candidate is not scored and the optimizer
-  can try again, but only `max_undelivered_runs` times (default `1`); after that the attack is
-  declared undeliverable and the task stops. `_attempt_index` still advances only on a delivered
+  can try again, but only `max_undelivered_runs` times (default `1`), and only while the task has
+  never delivered at all; after that the attack is declared undeliverable and the task stops. Once
+  poison HAS been delivered the surface is demonstrably reachable, so a later run that does not
+  fire is not evidence of an undeliverable attack (a DTAP PostCall surface fires only when the
+  stochastic victim calls a tool at that node). Bounding those too would end an attacker
+  mid-campaign and silently lower measured ASR; `max_attempts` and the controller's run budget
+  bound a task that has delivered. `_attempt_index` still advances only on a delivered
   run, so `max_attempts` keeps counting planted poison batches and an empty run is never credited
   as an attempt. Without this bound the retry was unbounded, because `_is_done()` reads only
   `_attempt_index`: a task whose classified surface the target never called answered `done=False`
