@@ -2093,3 +2093,74 @@ async def test_schedule_advances_to_next_victim_after_regeneration_is_exhausted(
     assert len(runs) == 2
     assert sorted(runs) == ["doc_fetch", "web_lookup"]
     assert all(victims.count(name) == 2 for name in runs)
+
+
+@pytest.mark.asyncio
+async def test_an_unproductive_run_consumes_its_candidate_and_is_not_scored() -> None:
+    """The counter-livelock guard: same bug class as poisonedrag's.
+
+    A run that served a candidate but landed no injection and drew no tool call
+    is deliberately NOT scored, because the candidate never got a chance. It did
+    however spend a victim episode on that candidate, so the walk must still
+    advance. Budgeting on the scored counter left ``_is_done()`` unreachable for
+    such a task while ``_candidate_index`` advanced anyway and wrapped modulo the
+    schedule.
+    """
+    opt = ChordXTHPOptimizer(
+        victim_tool_name="brave_search",
+        direction="predecessor",
+        enabled_attacks=("hijack",),
+        max_attempts=1,
+    )
+    await opt.initialize(
+        Goal(description="test Chord control-flow hijack"),
+        [ctrl("tool_catalog_register")],
+        [],
+        LLMClient._make_noop(),
+    )
+
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+    end = await dispatch(
+        opt, RunEndEvent(evaluation=evaluation(False, 0.0), security_domain=USER_TAG)
+    )
+
+    assert isinstance(end, RunEndResponse)
+    assert end.done is True          # the one grid point was consumed
+    assert opt.attempt_index == 0    # and nothing was scored
+
+
+@pytest.mark.asyncio
+async def test_unproductive_runs_never_re_walk_the_schedule() -> None:
+    """A schedule is walked once, not cycled to the harness ceiling.
+
+    Measured on the DTAP sweep, 165 of 440 tasks (37.5%) ended at max_runs and
+    22 burned all 20 runs on 9 or fewer attacker LLM calls, far too few to have
+    built a schedule long enough to justify 20 attempts.
+    """
+    opt = ChordXTHPOptimizer(
+        victim_tool_name="brave_search",
+        direction="both",
+        enabled_attacks=("hijack",),
+        max_attempts=2,
+    )
+    await opt.initialize(
+        Goal(description="test Chord control-flow hijack"),
+        [ctrl("tool_catalog_register")],
+        [],
+        LLMClient._make_noop(),
+    )
+
+    dones = []
+    for _ in range(2):
+        await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+        end = await dispatch(
+            opt,
+            RunEndEvent(evaluation=evaluation(False, 0.0), security_domain=USER_TAG),
+        )
+        assert isinstance(end, RunEndResponse)
+        dones.append(end.done)
+
+    # The sequence, not just the last value: stopping on the FIRST run would
+    # contradict test_untried_candidate_does_not_finish_when_no_injection_or_feedback.
+    assert dones == [False, True]
+    assert opt.attempt_index == 0
