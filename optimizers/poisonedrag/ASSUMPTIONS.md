@@ -21,7 +21,24 @@
 - If only `user_message` is writable, the optimizer uses the official RAG wrapper in the user prompt. This is a capability fallback, not true database poisoning.
 - If only `system_prompt` is writable, the optimizer can place the official RAG wrapper and poison contexts there. This is also a SuperRed capability extension.
 - Framework `RunEndEvent.evaluation` is authoritative when visible; otherwise the optimizer reads response observables from trajectory first, then scoped PostCall answers.
-- If an advertised writable surface does not fire, the candidate is not scored and the optimizer can try again. If only speculative runtime context poisoning was possible and no context event appears, the optimizer gives up to avoid empty retries.
+- If an advertised writable surface does not fire, the candidate is not scored and the optimizer
+  can try again, but only `max_undelivered_runs` times (default `1`), and only while the task has
+  never delivered at all; after that the attack is declared undeliverable and the task stops. Once
+  poison HAS been delivered the surface is demonstrably reachable, so a later run that does not
+  fire is not evidence of an undeliverable attack (a DTAP PostCall surface fires only when the
+  stochastic victim calls a tool at that node). Bounding those too would end an attacker
+  mid-campaign and silently lower measured ASR; `max_attempts` and the controller's run budget
+  bound a task that has delivered. `_attempt_index` still advances only on a delivered
+  run, so `max_attempts` keeps counting planted poison batches and an empty run is never credited
+  as an attempt. Without this bound the retry was unbounded, because `_is_done()` reads only
+  `_attempt_index`: a task whose classified surface the target never called answered `done=False`
+  until the controller's run or time cap. Measured over the DTAP indirect sweep (cc-opus-4.8 /
+  gpt-5-4, six scopes with trajectories on disk), that consumed 647 of the 923 runs read (70.1%),
+  538 of them at s6, and rescued no delivery at
+  all: every task that ever delivered poison delivered it on its FIRST run (46/46 at s3, 23/23 at
+  s6). Set a larger value, or `None`, to restore the old unbounded retry. If only speculative
+  runtime context poisoning was possible and no context event appears, the optimizer gives up
+  after one empty run, as before.
 
 ## Limits
 

@@ -520,10 +520,13 @@ async def test_generation_transport_error_does_not_abort_task() -> None:
 
 @pytest.mark.asyncio
 async def test_non_delivery_does_not_permanently_disable_future_attempts() -> None:
+    # An empty run is tolerated while the undelivered-run budget lasts: the
+    # surface may simply not have been exercised on that particular run.
     opt = PoisonedRAGOptimizer(
         target_answer="Lyon",
         poison_texts=["Lyon poison"] * 5,
         max_attempts=2,
+        max_undelivered_runs=2,
     )
     corpus = ctrl("knowledge_base_insert")
     await opt.initialize(
@@ -972,6 +975,7 @@ async def test_advertised_surface_that_never_fires_is_not_scored() -> None:
         target_answer="Lyon",
         poison_texts=["Lyon poison"] * 5,
         max_attempts=3,
+        max_undelivered_runs=2,
     )
     await opt.initialize(
         Goal(description="What is the capital of France?"),
@@ -1482,3 +1486,97 @@ async def test_malformed_official_results_do_not_abort_task(tmp_path: Path) -> N
     assert isinstance(end, RunEndResponse)
     assert end.done is True
     assert opt.attempt_index == 0
+
+
+@pytest.mark.asyncio
+async def test_advertised_surface_that_never_fires_stops_the_task() -> None:
+    """A run that delivers no poison must end the task, not repeat forever.
+
+    Regression for the DTAP livelock. The optimizer's LLM surface classifier
+    labelled a controllable as a corpus surface, so ``_can_inject`` stayed True
+    and a fresh poison batch was generated at every ``RunStartEvent`` -- but the
+    labelled surface was never actually exercised by the victim agent, so
+    nothing was ever injected. ``_attempt_index`` advances only on a delivered
+    run, so ``max_attempts=1`` never bound the loop and the task consumed the
+    controller's entire run budget without attacking once.
+    """
+    opt = PoisonedRAGOptimizer(
+        target_answer="Lyon",
+        poison_texts=["Lyon poison"] * 5,
+        max_attempts=1,
+    )
+    await opt.initialize(
+        Goal(description="What is the capital of France?"),
+        [ctrl("knowledge_base_insert")],
+        [],
+        LLMClient._make_noop(),
+    )
+
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+    end = await dispatch(
+        opt, RunEndEvent(evaluation=evaluation(True, 1.0), security_domain=USER_TAG)
+    )
+
+    assert isinstance(end, RunEndResponse)
+    assert end.done is True
+    assert opt.undeliverable is True
+    # A run that delivered nothing is still never scored as an attempt: the
+    # (deliberately successful) evaluation above must not be credited.
+    assert opt.attempt_index == 0
+
+
+@pytest.mark.asyncio
+async def test_the_undelivered_bound_only_applies_before_the_first_delivery() -> None:
+    """``max_undelivered_runs`` bounds a never-delivering task, nothing else."""
+    opt = PoisonedRAGOptimizer(
+        target_answer="Lyon",
+        poison_texts=["Lyon poison"] * 5,
+        max_attempts=3,
+        max_undelivered_runs=2,
+    )
+    await opt.initialize(
+        Goal(description="What is the capital of France?"),
+        [ctrl("knowledge_base_insert")],
+        [],
+        LLMClient._make_noop(),
+    )
+
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+    first = await dispatch(
+        opt, RunEndEvent(evaluation=evaluation(False), security_domain=USER_TAG)
+    )
+    assert isinstance(first, RunEndResponse)
+    assert first.done is False
+    assert opt.undelivered_runs == 1
+
+    await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+    injected = await dispatch(
+        opt,
+        ControllablePreCallEvent(
+            controllable=ctrl("knowledge_base_insert"), request="[]"
+        ),
+    )
+    second = await dispatch(
+        opt, RunEndEvent(evaluation=evaluation(False), security_domain=USER_TAG)
+    )
+    assert isinstance(injected, ControllableInjection)
+    assert isinstance(second, RunEndResponse)
+    assert second.done is False
+    assert opt.attempt_index == 1
+    assert opt.undelivered_runs == 0
+
+    # Once the attack HAS been delivered the surface is demonstrably reachable,
+    # so a later run that happens not to fire is not evidence of an
+    # undeliverable attack: the DTAP PostCall surfaces fire only when the
+    # stochastic victim calls a tool at that node. Giving up here would end an
+    # attacker mid-campaign and silently lower measured ASR. Only max_attempts
+    # or the controller's run budget bounds a task that has delivered.
+    for _ in range(2):
+        await dispatch(opt, RunStartEvent(trajectory=Trajectory()))
+        last = await dispatch(
+            opt, RunEndEvent(evaluation=evaluation(False), security_domain=USER_TAG)
+        )
+    assert isinstance(last, RunEndResponse)
+    assert last.done is False
+    assert opt.undeliverable is False
+    assert opt.attempt_index == 1

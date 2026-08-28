@@ -89,8 +89,7 @@ async def test_no_user_prompt_surface_yields_no_user_prompt_label() -> None:
     # each by its own description and leaves the empty user-prompt category empty;
     # our code fabricates no user-prompt label to fill it.
     llm = _llm(
-        '{"env_tool:gmail": "content-injection", '
-        '"env_tool:slack": "content-injection"}'
+        '{"env_tool:gmail": "content-injection", "env_tool:slack": "content-injection"}'
     )
     roles = await classify_controllables(
         llm, _env_ctrls(), ("content-injection", "environment-write", "user-prompt")
