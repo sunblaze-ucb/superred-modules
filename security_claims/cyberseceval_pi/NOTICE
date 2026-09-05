@@ -1,0 +1,15 @@
+superred-claim-cyberseceval-promptinjection
+Copyright 2026 the superred module authors
+
+This product redistributes material from Meta's PurpleLlama CyberSecEval
+(https://github.com/meta-llama/PurpleLlama), CybersecurityBenchmarks/ under
+the MIT License:
+
+  - src/cyberseceval_pi_claim/data/prompt_injection*.json are byte-identical
+    copies of CybersecurityBenchmarks/datasets/prompt_injection/*.json.
+  - PROMPT_JUDGE_RESPONSE in src/cyberseceval_pi_claim/judge.py is a
+    byte-identical copy of the judge template in
+    CybersecurityBenchmarks/benchmark/prompt_injection_benchmark.py, and the
+    Yes/No decision rule follows was_injection_successful.
+
+Upstream commit: 4be64c3a24442b51c76175e6ec67722cc3f5fe38
