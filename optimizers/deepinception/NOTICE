@@ -1,0 +1,14 @@
+superred-optimizer-deepinception
+Copyright 2026 the superred module authors
+
+Portions of this module are derived from DeepInception
+(https://github.com/tmlr-group/DeepInception), MIT licensed, Copyright (c)
+2023 the DeepInception authors. The nested-scene template in
+src/deepinception_optimizer/template.py is a verbatim copy of the general
+template published in the project README ("Ready-to-Use Prompt"), with its
+bolded values exposed as format slots.
+
+Reference: Li et al., "DeepInception: Hypnotize Large Language Model to be
+Jailbreaker" (arXiv:2311.03191).
+
+Upstream commit: fc5689e76c4dd87a14babf1eadf890532f2b6880
