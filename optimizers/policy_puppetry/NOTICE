@@ -1,0 +1,14 @@
+superred-optimizer-policy-puppetry
+Copyright 2026 the superred module authors
+
+This product includes software developed at NVIDIA Corporation.
+
+Portions of this module are derived from NVIDIA garak
+(https://github.com/NVIDIA/garak), licensed under the Apache License,
+Version 2.0. The Dr. House scene template under
+src/policy_puppetry_optimizer/data/upstream/bypass_template.txt is a
+byte-identical copy of the template in garak/probes/doctor.py, and the
+leetspeak transform in src/policy_puppetry_optimizer/templates.py is
+derived from garak/resources/encodings.py.
+
+Upstream commit: 2233d51bedf6bfb634872ef9efbcd94eae38cc1a
