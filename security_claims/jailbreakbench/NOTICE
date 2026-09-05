@@ -1,0 +1,15 @@
+superred-claim-jailbreakbench
+Copyright 2026 the superred module authors
+
+This product redistributes material from the JailbreakBench project
+(https://github.com/JailbreakBench/jailbreakbench and
+https://huggingface.co/datasets/JailbreakBench/JBB-Behaviors), MIT licensed,
+Copyright (c) 2023 JailbreakBench Team:
+
+  - src/jailbreakbench_claim/data/harmful-behaviors.csv is a byte-identical
+    copy of the JBB-Behaviors harmful split.
+  - The judge prompt in src/jailbreakbench_claim/judge.py (USER_PROMPT) is a
+    byte-identical copy of Llama3JailbreakJudge.USER_PROMPT from
+    src/jailbreakbench/classifier.py.
+
+Upstream commit (code): 23dbdf6b19650521604456229bc1d9c4156c85c1
