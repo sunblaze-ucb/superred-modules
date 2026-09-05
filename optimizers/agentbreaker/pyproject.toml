@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "superred-optimizer-agentbreaker"
+version = "0.1.0"
+description = "Agent Breaker agentic tool-exploitation optimizer for superred, ported from NVIDIA garak"
+requires-python = ">=3.11,<3.14"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "LICENSES/*"]
+authors = [
+    { name = "Rishabh Sinha", email = "rsinha17@terpmail.umd.edu" },
+]
+dependencies = ["superred>=0.1.0", "pyyaml>=6.0"]
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-asyncio"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+pythonpath = ["src"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentbreaker_optimizer"]
