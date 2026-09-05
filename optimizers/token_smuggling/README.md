@@ -32,7 +32,7 @@ Two techniques, both deterministic and neither of which calls an LLM:
 pip install superred-optimizer-token-smuggling
 ```
 
-## Use
+## Usage
 
 ```python
 from token_smuggling_optimizer import TokenSmugglingOptimizer
@@ -59,7 +59,7 @@ garak's one-prompt-per-attempt model. It reports `done` once its variants are
 exhausted, and makes no LLM calls, so it costs nothing against the attacker
 inference budget.
 
-## Attribution
+## Credits / upstream
 
 Derived from NVIDIA garak, Apache-2.0, pinned at commit
 [`2233d51b`](https://github.com/NVIDIA/garak/blob/2233d51bedf6bfb634872ef9efbcd94eae38cc1a/garak/probes/smuggling.py).
