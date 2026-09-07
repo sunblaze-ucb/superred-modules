@@ -79,6 +79,18 @@ classifier resolve this by not carrying the guard at all; this module keeps the
 guard and skips only that one pinned shared file, so the guard still covers all
 first-party code here.
 
+## Upstream coverage
+
+`prompt_templates/` ships eight templates; **all eight are ported** — the three
+Python scaffolds, their `*_plus` counterparts, and the two non-Python ones. The
+`CodeAttack.wrap` tokenisation is reproduced for every variant, and
+`python_list` / `python_string` render byte-identical to upstream's own shipped
+`data_python_*_full.json` prompts (520/520 each).
+
+Not ported: the repo's `judge.py` (scoring belongs to the `SecurityClaim` in
+superred) and its `post_processing.py` / CLI plumbing, which are experiment
+harness rather than attack.
+
 ## Known limitations
 
 - A goal containing a double-quote would break the generated Python string
