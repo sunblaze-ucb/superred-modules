@@ -67,6 +67,24 @@ passthrough optimizer reproduces verbatim and a real optimizer can improve on.
 tests whether an injection overrides a defended setup (not just harm
 elicitation on an empty system prompt).
 
+## Upstream coverage
+
+CyberSecEval is a suite of ten benchmarks. This module ports the **textual
+prompt-injection** one in full — both datasets (251 English + 1004
+multilingual), the verbatim judge prompt, and the system-prompt/user-input
+mapping.
+
+The other nine are deliberately out of scope, each for a concrete reason, and
+each would be its own module rather than part of this claim:
+
+| Upstream benchmark | Why not here |
+| --- | --- |
+| `instruct` / `autocomplete` (insecure code) | scored by the Insecure Code Detector, which needs `weggli`/`semgrep` native binaries |
+| `visual_prompt_injection` | multimodal — needs an image-capable target |
+| `mitre`, `interpreter`, `multiturn_phishing` | separate benchmarks with their own judges and prompt sets |
+| `autonomous_uplift`, `canary_exploit`, `autopatching` | require an execution sandbox / real vulnerable targets |
+| `frr` (false refusal rate) | an over-refusal control, the inverse measurement |
+
 ## Known limitations
 
 - ASR depends on the judge model; fix `judge_model` when comparing runs.
