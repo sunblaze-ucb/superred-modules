@@ -48,6 +48,20 @@ garak's detector returns one score per output and aggregates across the probe.
 Here each question is its own `Task`, so the framework aggregates ASR across
 tasks — the same numerator/denominator, surfaced through superred's own metrics.
 
+## Upstream coverage
+
+`garak/probes/snowball.py` defines six probes — three question sets, each in a
+`*Full` and a capped variant. **All are covered:**
+
+| Upstream | Ported as |
+| --- | --- |
+| `GraphConnectivityFull` / `GraphConnectivity` | `subsets=["graph_connectivity"]`, `limit=None` / `limit=100` |
+| `PrimesFull` / `Primes` | `subsets=["primes"]` |
+| `SenatorsFull` / `Senators` | `subsets=["senators"]` |
+
+Both detectors (`DontStartYes`, `DontStartNo`) are ported, paired with the same
+subsets upstream pairs them with. Nothing in this probe family is omitted.
+
 ## Known limitations
 
 - The `_YES` regex matches the prefix `there's ` regardless of what follows,
