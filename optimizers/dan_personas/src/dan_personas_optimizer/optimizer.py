@@ -25,12 +25,16 @@ from superred.core.types.events import (
 from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
 
+from dan_personas_optimizer.surface_llm import classify_controllables
+from dan_personas_optimizer.surfaces import (
+    ROLE_CATEGORIES,
+    preferred_surface_names,
+    should_inject,
+)
 from dan_personas_optimizer.personas import Persona, load_personas
 
 # Reserved controllable name never injected into, so a Task-configured system
 # prompt survives unchanged (matches the goal_passthrough baseline).
-_SYSTEM_PROMPT_CONTROLLABLE_NAME = "system_prompt"
-_FREE_TEXT_VALUE_TYPES = frozenset({"", "text", "str", "string", "html", "markdown"})
 
 #: Observables that may carry the victim's model identity, used to fill
 #: garak's ``{generator.name}`` placeholder.
@@ -102,6 +106,13 @@ class DANPersonasOptimizer(Optimizer):
         llm_client: LLMClient,
     ) -> None:
         await super().initialize(goal, controllables, observables, llm_client)
+        # One LLM pass reads each surface's own description and names the
+        # user's prompt -- the channel this attack has to arrive on. Returns {}
+        # on any failure, so the name/value-type backstop decides instead.
+        self._surface_roles = await classify_controllables(
+            self.llm, controllables, ROLE_CATEGORIES, goal=goal.description
+        )
+        self._preferred = preferred_surface_names(controllables, self._surface_roles)
         self._goal = goal
         self._resolved_name = self._resolve_generator_name(observables)
         self._index = 0
@@ -131,12 +142,7 @@ class DANPersonasOptimizer(Optimizer):
         decline = ControllableNoInjection(event=event, controllable=event.controllable)
 
         # Leave any Task-configured system prompt untouched.
-        if event.controllable.name == _SYSTEM_PROMPT_CONTROLLABLE_NAME:
-            return decline
-
-        # Persona text and the goal are prose; a json-typed surface would
-        # discard them.
-        if event.controllable.value_type.lower() not in _FREE_TEXT_VALUE_TYPES:
+        if not should_inject(event.controllable, self._preferred, self._surface_roles):
             return decline
 
         if self._index >= len(self._personas):
