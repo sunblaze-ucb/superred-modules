@@ -1,0 +1,13 @@
+superred-optimizer-dan-personas
+Copyright 2026 the superred module authors
+
+This product includes software developed at NVIDIA Corporation.
+
+Portions of this module are derived from NVIDIA garak
+(https://github.com/NVIDIA/garak), licensed under the Apache License,
+Version 2.0. The 13 persona preambles under
+src/dan_personas_optimizer/data/upstream/ are byte-identical copies of
+garak/data/dan/*.json, and the {generator.name} substitution in
+src/dan_personas_optimizer/personas.py follows garak/probes/dan.py.
+
+Upstream commit: 2233d51bedf6bfb634872ef9efbcd94eae38cc1a
