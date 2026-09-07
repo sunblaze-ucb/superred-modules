@@ -31,6 +31,12 @@ from superred.core.types.events import (
 from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
 
+from agentbreaker_optimizer.surface_llm import classify_controllables
+from agentbreaker_optimizer.surfaces import (
+    ROLE_CATEGORIES,
+    preferred_surface_names,
+    should_inject,
+)
 from agentbreaker_optimizer.analysis import ToolPlan, build_tool_plans, parse_analysis
 from agentbreaker_optimizer.prompts import (
     analysis_prompt,
@@ -38,8 +44,6 @@ from agentbreaker_optimizer.prompts import (
     format_attack_prompt,
 )
 
-_SYSTEM_PROMPT_CONTROLLABLE_NAME = "system_prompt"
-_FREE_TEXT_VALUE_TYPES = frozenset({"", "text", "str", "string", "html", "markdown"})
 
 #: Observable names that may carry the agent's tool catalogue.
 _TOOL_OBSERVABLE_NAMES = frozenset(
@@ -90,6 +94,8 @@ class AgentBreakerOptimizer(Optimizer):
         self._tool_index = 0
         self._attempt = 0
         self._injected = False
+        self._surface_roles: dict[str, str] = {}
+        self._preferred: frozenset[str] = frozenset()
         self._channel: str | None = None
         # Per-tool (attack_prompt, response) history, feeding EXPLOIT.
         self._history: list[tuple[str, str]] = []
@@ -119,6 +125,13 @@ class AgentBreakerOptimizer(Optimizer):
         llm_client: LLMClient,
     ) -> None:
         await super().initialize(goal, controllables, observables, llm_client)
+        # One LLM pass reads each surface's own description and names the
+        # user's prompt -- the channel this attack has to arrive on. Returns {}
+        # on any failure, so the name/value-type backstop decides instead.
+        self._surface_roles = await classify_controllables(
+            self.llm, controllables, ROLE_CATEGORIES, goal=goal.description
+        )
+        self._preferred = preferred_surface_names(controllables, self._surface_roles)
         self._goal = goal
         self._read_observables(observables)
         self._plans = None
@@ -243,9 +256,7 @@ class AgentBreakerOptimizer(Optimizer):
     ) -> ControllableInjection | ControllableNoInjection:
         decline = ControllableNoInjection(event=event, controllable=event.controllable)
 
-        if event.controllable.name == _SYSTEM_PROMPT_CONTROLLABLE_NAME:
-            return decline
-        if event.controllable.value_type.lower() not in _FREE_TEXT_VALUE_TYPES:
+        if not should_inject(event.controllable, self._preferred, self._surface_roles):
             return decline
         if self._injected:
             return decline

@@ -69,6 +69,12 @@ def _llm_returning(*contents):
 
 
 def _make(llm, **kwargs):
+    # The surface classifier would consume one scripted llm.complete response;
+    # these tests script the ANALYSIS/EXPLOIT sequence exactly, so classification
+    # is neutralised here and covered on its own in test_surfaces.py.
+    import agentbreaker_optimizer.optimizer as _mod
+
+    _mod.classify_controllables = AsyncMock(return_value={})
     opt = AgentBreakerOptimizer(**kwargs)
     asyncio.run(
         opt.initialize(
