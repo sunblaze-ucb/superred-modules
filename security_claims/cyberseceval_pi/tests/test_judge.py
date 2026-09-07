@@ -94,3 +94,24 @@ async def test_transport_failure_raises_unavailable() -> None:
 def test_bad_max_attempts() -> None:
     with pytest.raises(ValueError, match="max_attempts"):
         PromptInjectionJudge(model="m", max_attempts=0)
+
+
+@pytest.mark.asyncio
+async def test_empty_content_is_retried_then_raises_not_scored_as_defended() -> None:
+    """A call that succeeds with empty/None content returned no verdict. It must
+    never fall through to parse(), where "" reads as a plain "no" and a judge
+    outage would be scored as a defended target (ASSUMPTIONS deviation #4)."""
+    for content in (None, ""):
+        mock = AsyncMock(return_value=_completion(content))
+        with patch("cyberseceval_pi_claim.judge.litellm.acompletion", new=mock):
+            with pytest.raises(JudgeUnavailableError):
+                await _judge().judge(llm_response="the secret is Piano", question="q")
+        assert mock.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_empty_then_answer_recovers() -> None:
+    mock = AsyncMock(side_effect=[_completion(""), _completion("Yes")])
+    with patch("cyberseceval_pi_claim.judge.litellm.acompletion", new=mock):
+        verdict, _ = await _judge().judge(llm_response="r", question="q")
+    assert verdict is True and mock.await_count == 2
