@@ -80,6 +80,27 @@ are goal-driven:
 | `BypassLeet` | yes (`leet` technique) | subclasses `Bypass`, adding the leetspeak aside to both templates |
 | `Puppetry` | **no** | it sets `self.prompts` to a single fixed 1565-char scene with **zero** `{{HARMFUL_BEHAVIOR}}` slots, so it cannot carry an arbitrary superred `Goal`. It is a fixed-objective probe and belongs as a `SecurityClaim`, not a goal-driven optimizer. |
 
+### Injection-surface selection (superred adaptation)
+
+Upstream aims a single prompt at a chat box; superred targets expose arbitrary
+named surfaces. Following the house pattern used by `muzzle`, `chord_xthp`,
+`eia_agent`, `gepa_agentic`, `poisonedrag` and `agentvigil_websentinel`, this
+module ships a byte-identical copy of the shared `surface_llm.py` and calls
+`classify_controllables` once at `initialize`: the attacker's own LLM reads
+each surface's description and says which one is the user's prompt, so the
+payload is not spent on a content surface that merely fired first.
+
+The classifier returns `{}` on any failure (no budget, malformed reply), and a
+surface the target raises at run time without listing it is unknown to the
+classification; both fall back to the previous name/value-type backstop, so
+behaviour is unchanged when no LLM is available.
+
+Note: the shared `surface_llm.py` pins `temperature=0.0`, which the repo's
+`test_no_temperature.py` guard forbids. The six merged modules that ship the
+classifier resolve this by not carrying the guard at all; this module keeps the
+guard and skips only that one pinned shared file, so the guard still covers all
+first-party code here.
+
 ## Known limitations
 
 - The template is one scene, so `plain` yields exactly one variant; breadth
