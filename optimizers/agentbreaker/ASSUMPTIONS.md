@@ -91,6 +91,18 @@ classifier resolve this by not carrying the guard at all; this module keeps the
 guard and skips only that one pinned shared file, so the guard still covers all
 first-party code here.
 
+## Upstream coverage
+
+`garak/probes/agent_breaker.py` defines one probe (`AgentBreaker`) plus its
+`AttackState` helper. The probe is ported whole: the ANALYSIS -> EXPLOIT
+feedback loop, the vendored `prompts.yaml`, the tool-plan construction
+(`_build_tool_configs`, including the priority-target ordering and the
+deduplicated remainder) and the per-tool attempt cap.
+
+Upstream marks it `active = False` ("Requires red team model configuration");
+here the attacker LLM is always configured by the framework, so it is simply
+available.
+
 ## Known limitations
 
 - Needs an agentic target that exposes a tool catalogue observable. Against a
