@@ -108,7 +108,7 @@ def test_done_only_after_the_last_persona() -> None:
     assert _end(opt).done is True
 
 
-def test_defaults_to_all_thirteen_personas() -> None:
+def test_defaults_to_all_fourteen_personas() -> None:
     opt = _make()
     done_after = 0
     while True:
@@ -117,7 +117,7 @@ def test_defaults_to_all_thirteen_personas() -> None:
         done_after += 1
         if _end(opt).done:
             break
-    assert done_after == 13
+    assert done_after == 14
 
 
 def test_generator_name_is_read_from_a_model_observable() -> None:

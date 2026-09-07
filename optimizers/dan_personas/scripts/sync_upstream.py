@@ -22,11 +22,11 @@ from pathlib import Path
 PINNED_COMMIT = "2233d51bedf6bfb634872ef9efbcd94eae38cc1a"
 RAW = "https://raw.githubusercontent.com/NVIDIA/garak/{commit}/garak/data/dan/{name}.json"
 
-# ChatGPT_Image_Markdown is deliberately excluded (multimodal); see ASSUMPTIONS.md.
 NAMES = (
     "AntiDAN",
     "ChatGPT_Developer_Mode_RANTI",
     "ChatGPT_Developer_Mode_v2",
+    "ChatGPT_Image_Markdown",
     "DAN_Jailbreak",
     "DUDE",
     "Dan_10_0",
@@ -58,6 +58,21 @@ def main() -> int:
     args = parser.parse_args()
 
     drift = 0
+    # DanInTheWild's corpus lives outside garak/data/dan/.
+    extra = {"inthewild_jailbreak_llms.json": "garak/data/inthewild_jailbreak_llms.json"}
+    for local, remote in extra.items():
+        url = f"https://raw.githubusercontent.com/NVIDIA/garak/{args.commit}/{remote}"
+        with urllib.request.urlopen(url) as response:
+            up = response.read()
+        dest = DEST / local
+        same = dest.exists() and dest.read_bytes() == up
+        if args.check:
+            print(f"{'ok  ' if same else 'DIFF'} {local}")
+            drift += 0 if same else 1
+        elif not same:
+            dest.write_bytes(up)
+            print(f"updated   {local}")
+
     for name in NAMES:
         upstream = fetch(name, args.commit)
         target = DEST / f"{name}.json"

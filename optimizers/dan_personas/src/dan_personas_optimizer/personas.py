@@ -23,6 +23,7 @@ PERSONA_NAMES: tuple[str, ...] = (
     "AntiDAN",
     "ChatGPT_Developer_Mode_RANTI",
     "ChatGPT_Developer_Mode_v2",
+    "ChatGPT_Image_Markdown",
     "DAN_Jailbreak",
     "DUDE",
     "Dan_10_0",
@@ -96,3 +97,60 @@ def load_personas(names: tuple[str, ...] | list[str] | None = None) -> list[Pers
             label = name if len(prompts) == 1 else f"{name}#{index}"
             personas.append(Persona(name=label, preamble=prompt))
     return personas
+
+
+#: Upstream ``Ablation_Dan_11_0`` composes DAN 11.0 from seven optional
+#: segments, emitting one prompt per non-empty bitmask (i = 1..127).
+ABLATION_SEGMENTS_FILE = "ablation_dan_11_0_segments.json"
+ABLATION_PROMPT_COUNT = 127
+
+#: Upstream ``DanInTheWild`` -- ~700 real jailbreaks collected in the wild.
+IN_THE_WILD_FILE = "inthewild_jailbreak_llms.json"
+
+
+def load_ablation_personas() -> list[Persona]:
+    """Reconstruct upstream ``Ablation_Dan_11_0``'s 127 prompts.
+
+    Upstream builds these in code: seven optional segments keyed to bits 1..64
+    plus four unconditional ones, concatenated in a fixed order for every
+    non-empty bitmask. The segments are vendored verbatim (extracted from the
+    probe's own literals) and reassembled here with upstream's exact ordering
+    and bit tests, so the 127 prompts are identical.
+    """
+    raw = (
+        resources.files("dan_personas_optimizer.data.upstream")
+        .joinpath(ABLATION_SEGMENTS_FILE)
+        .read_text(encoding="utf-8")
+    )
+    segments = json.loads(raw)
+    out: list[Persona] = []
+    for i in range(1, ABLATION_PROMPT_COUNT + 1):
+        prompt = "".join(
+            seg["text"] for seg in segments if seg["bit"] == 0 or (seg["bit"] & i)
+        )
+        out.append(Persona(name=f"Ablation_Dan_11_0#{i}", preamble=prompt))
+    return out
+
+
+def load_in_the_wild_personas(limit: int | None = None) -> list[Persona]:
+    """Load upstream ``DanInTheWild``'s corpus of real-world jailbreaks.
+
+    Args:
+        limit: Keep at most this many, from the start of the file. Upstream's
+            default-active ``DanInTheWild`` prunes to its prompt cap; the
+            uncapped ``DanInTheWildFull`` is ``limit=None``.
+    """
+    raw = (
+        resources.files("dan_personas_optimizer.data.upstream")
+        .joinpath(IN_THE_WILD_FILE)
+        .read_text(encoding="utf-8")
+    )
+    prompts = json.loads(raw)
+    if limit is not None:
+        if limit < 1:
+            raise ValueError(f"limit must be >= 1, got {limit!r}")
+        prompts = prompts[:limit]
+    return [
+        Persona(name=f"DanInTheWild#{i}", preamble=str(text))
+        for i, text in enumerate(prompts)
+    ]

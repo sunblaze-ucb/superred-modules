@@ -31,7 +31,12 @@ from dan_personas_optimizer.surfaces import (
     preferred_surface_names,
     should_inject,
 )
-from dan_personas_optimizer.personas import Persona, load_personas
+from dan_personas_optimizer.personas import (
+    Persona,
+    load_ablation_personas,
+    load_in_the_wild_personas,
+    load_personas,
+)
 
 # Reserved controllable name never injected into, so a Task-configured system
 # prompt survives unchanged (matches the goal_passthrough baseline).
@@ -43,6 +48,11 @@ _MODEL_OBSERVABLE_NAMES = frozenset(
 )
 
 Mode = Literal["two_turn", "single_message"]
+#: Which upstream prompt family to draw from. ``personas`` is garak's
+#: per-file DAN probes, ``ablation`` is Ablation_Dan_11_0's 127 bitmask
+#: variants, ``in_the_wild`` is DanInTheWild's ~700 collected jailbreaks.
+Corpus = Literal["personas", "ablation", "in_the_wild"]
+CORPORA: tuple[Corpus, ...] = ("personas", "ablation", "in_the_wild")
 #: Separator between persona and goal in single_message mode.
 _JOIN = "\n\n"
 
@@ -71,14 +81,30 @@ class DANPersonasOptimizer(Optimizer):
         personas: tuple[str, ...] | list[str] | None = None,
         generator_name: str | None = None,
         mode: Mode = "two_turn",
+        corpus: Corpus = "personas",
+        limit: int | None = None,
     ) -> None:
         super().__init__()
         if mode not in ("two_turn", "single_message"):
             raise ValueError(
                 f'unknown mode: {mode!r}; expected "two_turn" or "single_message"'
             )
+        if corpus not in CORPORA:
+            raise ValueError(
+                f"unknown corpus: {corpus!r}; expected any of {list(CORPORA)}"
+            )
         self._mode: Mode = mode
-        self._personas: list[Persona] = load_personas(personas)
+        self._corpus: Corpus = corpus
+        if corpus == "personas":
+            self._personas: list[Persona] = load_personas(personas)
+            if limit is not None:
+                self._personas = self._personas[:limit]
+        elif corpus == "ablation":
+            self._personas = load_ablation_personas()
+            if limit is not None:
+                self._personas = self._personas[:limit]
+        else:
+            self._personas = load_in_the_wild_personas(limit=limit)
         if not self._personas:
             raise ValueError("at least one persona is required")
         self._generator_name = generator_name

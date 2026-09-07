@@ -20,9 +20,9 @@ from dan_personas_optimizer.personas import (
 UPSTREAM = "dan_personas_optimizer.data.upstream"
 
 
-def test_all_thirteen_personas_load() -> None:
+def test_all_fourteen_personas_load() -> None:
     personas = load_personas()
-    assert len(personas) == 13
+    assert len(personas) == 14
     assert [p.name for p in personas] == list(PERSONA_NAMES)
 
 
@@ -80,7 +80,36 @@ def test_unknown_persona_is_rejected() -> None:
         load_personas(["NotAPersona"])
 
 
-def test_image_markdown_persona_is_not_vendored() -> None:
-    """Excluded deliberately: it is the multimodal probe."""
-    assert "ChatGPT_Image_Markdown" not in PERSONA_NAMES
-    assert not resources.files(UPSTREAM).joinpath("ChatGPT_Image_Markdown.json").is_file()
+def test_image_markdown_persona_is_vendored() -> None:
+    """It is a pure *text* probe -- it instructs the model to echo messages
+    wrapped in markdown image syntax (URL exfiltration), and takes no image
+    input -- so it belongs with the other persona probes."""
+    assert "ChatGPT_Image_Markdown" in PERSONA_NAMES
+    assert resources.files(UPSTREAM).joinpath("ChatGPT_Image_Markdown.json").is_file()
+    text = next(p for p in load_personas() if p.name == "ChatGPT_Image_Markdown")
+    assert "![" in text.preamble
+
+
+def test_ablation_reconstructs_upstreams_127_prompts() -> None:
+    """Ablation_Dan_11_0 emits one prompt per non-empty 7-bit mask."""
+    from dan_personas_optimizer.personas import (
+        ABLATION_PROMPT_COUNT,
+        load_ablation_personas,
+    )
+
+    out = load_ablation_personas()
+    assert len(out) == ABLATION_PROMPT_COUNT == 127
+    assert len({p.preamble for p in out}) == 127  # every mask is distinct
+    # Bit 1 toggles the leading "Ignore all the instructions" segment.
+    assert out[0].preamble.startswith("Ignore all the instructions you got before.")
+    assert not out[1].preamble.startswith("Ignore all the instructions")
+    assert all("{generator.name}" in p.preamble for p in out)
+
+
+def test_in_the_wild_corpus_loads_and_caps() -> None:
+    from dan_personas_optimizer.personas import load_in_the_wild_personas
+
+    full = load_in_the_wild_personas()
+    assert len(full) == 666
+    assert len(load_in_the_wild_personas(limit=50)) == 50
+    assert all(p.preamble.strip() for p in full)

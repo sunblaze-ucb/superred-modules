@@ -98,6 +98,32 @@ classifier resolve this by not carrying the guard at all; this module keeps the
 guard and skips only that one pinned shared file, so the guard still covers all
 first-party code here.
 
+## Upstream coverage
+
+`garak/probes/dan.py` defines 19 probes (plus the `DANProbeMeta` metaclass).
+This module ports every prompt-corpus probe:
+
+| Upstream | Ported as | Note |
+| --- | --- | --- |
+| 14 per-file DAN probes (`Dan_*`, `DUDE`, `STAN`, `AntiDAN`, `DAN_Jailbreak`, both Developer Mode variants, `ChatGPT_Image_Markdown`) | `corpus="personas"` | all 14 JSON files vendored byte-identically |
+| `Ablation_Dan_11_0` | `corpus="ablation"` | 127 prompts, one per non-empty 7-bit mask |
+| `DanInTheWild` / `DanInTheWildFull` | `corpus="in_the_wild"` | 666-prompt corpus; `limit` reproduces the capped variant |
+| `AutoDAN`, `AutoDANCached` | **no** | not a persona corpus but a genetic search (`garak.resources.autodan.autodan_generate`) with its own `goal_str`/`target` params; it belongs in its own module, and superred already ships `optimizers/autodan_turbo` |
+
+**Correction:** `ChatGPT_Image_Markdown` was previously excluded here as "the
+multimodal probe". That was wrong — it is a pure *text* prompt that instructs
+the model to echo messages wrapped in markdown image syntax (URL
+exfiltration) and takes no image input. It is now vendored with the others.
+
+### Ablation_Dan_11_0
+
+Upstream builds these in code rather than from a data file: seven optional
+segments keyed to bits 1..64, plus four unconditional ones, concatenated in a
+fixed order for every mask `i` in `1..127`. The segments are vendored verbatim
+(extracted from the probe's own string literals) and reassembled with
+upstream's exact ordering and bit tests, so the 127 prompts match. A test pins
+the count, their distinctness, and the bit-1 toggle.
+
 ## Known limitations
 
 - These personas are old and widely published; frontier models refuse most of
