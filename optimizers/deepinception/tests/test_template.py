@@ -62,3 +62,26 @@ def test_rejects_bad_params() -> None:
         render("x", layer_number=0)
     with pytest.raises(ValueError, match="scene"):
         render("x", scene="")
+
+
+def test_multi_scene_scenes_are_vendored() -> None:
+    """Upstream's multi_scene experiment sweeps these four scene types."""
+    from deepinception_optimizer.template import scenes
+
+    assert scenes() == ("science fiction", "documentary", "spy movie", "stage scene")
+    for s in scenes():
+        assert s in render("x", scene=s)
+
+
+def test_follow_up_questions_are_goal_agnostic() -> None:
+    """Only questions phrased against 'the above goal' are vendored; the rest of
+    upstream's further_q set is bound to a specific topic."""
+    from deepinception_optimizer.template import follow_up_questions
+
+    qs = follow_up_questions()
+    assert len(qs) == 5
+    for q in qs:
+        assert "above goal" in q or "their goal" in q or "hide their tracks" in q
+    # topic-bound questions must not have leaked in
+    joined = " ".join(qs).lower()
+    assert "bank" not in joined and "firewall" not in joined and "news" not in joined

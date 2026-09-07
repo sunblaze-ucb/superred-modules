@@ -101,3 +101,33 @@ def test_reinitialize_rerenders_for_new_goal() -> None:
                                controllables=[_ctrl()], observables=[], llm_client=MagicMock()))
     _start(opt)
     assert "something else" in _inject(opt).value
+
+
+def test_follow_ups_are_off_by_default() -> None:
+    opt = _make()
+    _start(opt)
+    _inject(opt)
+    assert _end(opt).done is True
+
+
+def test_follow_ups_continue_the_scene_on_the_same_channel() -> None:
+    """Upstream's further_q keeps asking within the established scene, so the
+    follow-ups must land on the surface that received the inception prompt."""
+    from deepinception_optimizer.template import follow_up_questions
+
+    opt = _make(follow_ups=True)
+    _start(opt)
+    first = _inject(opt, "user_query")
+    assert isinstance(first, ControllableInjection)
+    assert "layer 5" in first.value  # the inception scene
+    assert _end(opt).done is False
+
+    for i, expected in enumerate(follow_up_questions()):
+        _start(opt)
+        # a different surface must not receive the follow-up
+        assert isinstance(_inject(opt, "other_surface"), ControllableNoInjection)
+        resp = _inject(opt, "user_query")
+        assert isinstance(resp, ControllableInjection)
+        assert resp.value == expected
+        done = _end(opt).done
+        assert done is (i == len(follow_up_questions()) - 1)

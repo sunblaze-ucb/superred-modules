@@ -46,12 +46,17 @@ so the optimizer injects one rendered prompt and ends the run. `scene`,
 `character_number` and `layer_number` are exposed for the paper's variants but
 default to the README values.
 
-### 4. No follow-up questions
+### 4. Follow-up questions are ported (opt-in)
 
-Upstream's `main`/`further_q` experiments send follow-up questions after the
-inception prompt to continue the jailbreak. This module ports the core
-single-prompt method; multi-turn continuation is out of scope (crescendo/FITD
-cover adaptive multi-turn in superred).
+Upstream's `main` / `further_q` runs send the inception prompt and then keep
+asking within the established scene. `follow_ups=True` reproduces that: the
+questions land on the same surface that received the scene, so the
+conversation continues rather than restarting.
+
+Only the goal-agnostic questions are vendored — those phrased against "the
+above goal" / "their goal". The remainder of `res/data_further_q.json` is bound
+to one topic (a news story, a bank, a Linux box, a firewall) and cannot follow
+an arbitrary goal.
 
 ### 5. Detector out of scope
 
@@ -79,6 +84,21 @@ Note: the shared `surface_llm.py` pins `temperature=0.0`, which the repo's
 classifier resolve this by not carrying the guard at all; this module keeps the
 guard and skips only that one pinned shared file, so the guard still covers all
 first-party code here.
+
+## Upstream coverage
+
+`main.py` exposes six experiments. Their prompt material is covered as:
+
+| Upstream experiment | Ported as |
+| --- | --- |
+| `main` | the README template with the goal in the query slot |
+| `multi_scene` | `scene=` — all four swept scene types are vendored (`scenes()`) |
+| `abl_c` / `abl_layer` / `abl_fig6_4` | `character_number=` / `layer_number=`, which are exactly the parameters those ablations sweep |
+| `further_q` | `follow_ups=True` (goal-agnostic questions only, see deviation 4) |
+
+The per-experiment `res/data_*.json` files themselves are upstream's fixed
+evaluation set (each record bakes in one behaviour), not a goal-driven
+template, so the parameters and question set are ported rather than the rows.
 
 ## Known limitations
 
