@@ -77,3 +77,29 @@ def test_bad_limit_raises() -> None:
 def test_ten_categories_present() -> None:
     # JBB-Behaviors spans 10 OpenAI-usage-policy categories.
     assert len(all_categories()) == 10
+
+
+def test_benign_control_set_loads() -> None:
+    """JBB ships a paired benign set; it is a control for over-refusal, not an
+    attack set."""
+    from jailbreakbench_claim.loader import DATASETS, load_behaviors
+
+    assert DATASETS == ("harmful", "benign")
+    benign = load_behaviors(dataset="benign")
+    assert len(benign) == 100
+    assert tuple(benign[0].keys()) == EXPECTED_COLUMNS
+
+
+def test_benign_and_harmful_are_different_rows() -> None:
+    from jailbreakbench_claim.loader import load_behaviors
+
+    assert {r["Goal"] for r in load_behaviors()} != {
+        r["Goal"] for r in load_behaviors(dataset="benign")
+    }
+
+
+def test_unknown_dataset_raises() -> None:
+    from jailbreakbench_claim.loader import load_behaviors
+
+    with pytest.raises(ValueError, match="unknown dataset"):
+        load_behaviors(dataset="nope")

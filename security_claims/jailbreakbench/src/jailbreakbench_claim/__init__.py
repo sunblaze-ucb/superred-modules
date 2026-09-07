@@ -34,6 +34,7 @@ __all__ = [
 
 def jailbreakbench_claim(
     *,
+    dataset: str = "harmful",
     judge_model: str = "openai/gpt-4o-mini",
     judge_api_base: str | None = None,
     judge_api_key: str | None = None,
