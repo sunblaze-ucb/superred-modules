@@ -58,6 +58,28 @@ cover adaptive multi-turn in superred).
 DeepInception's repo scores with its own harmfulness check; in superred judging
 belongs to the `SecurityClaim`, so no detector is ported.
 
+### Injection-surface selection (superred adaptation)
+
+Upstream is a single prompt aimed at a chat box; superred targets expose
+arbitrary named surfaces. Following the house pattern used by `muzzle`,
+`chord_xthp`, `eia_agent`, `gepa_agentic`, `poisonedrag` and
+`agentvigil_websentinel`, this module ships a byte-identical copy of the shared
+`surface_llm.py` and calls `classify_controllables` once at `initialize`: the
+attacker's own LLM reads each surface's description and says which one is the
+user's prompt -- the channel a nested-scene jailbreak must arrive on.
+
+The classifier returns `{}` on any failure (no budget, malformed reply), in
+which case the previous name/value-type backstop decides instead, so behaviour
+is unchanged when no LLM is available. A surface the target raises at run time
+without ever listing it also falls back to the backstop rather than being
+dropped.
+
+Note: the shared `surface_llm.py` pins `temperature=0.0`, which the repo's
+`test_no_temperature.py` guard forbids. The six merged modules that ship the
+classifier resolve this by not carrying the guard at all; this module keeps the
+guard and skips only that one pinned shared file, so the guard still covers all
+first-party code here.
+
 ## Known limitations
 
 - A single fixed template: breadth comes from the `scene` / layer parameters,
