@@ -52,7 +52,7 @@ byte-verified against their shipped data.
 line (`replacement_line` 10 and 17); that line-replacement is reproduced
 byte-faithfully, including upstream's append-if-past-EOF branch.
 
-### 5. One prompt per run, no detector
+### 4. One prompt per run, no detector
 
 CodeAttack is single-shot (no optimisation loop, no attacker LLM), so the
 optimizer injects one rendered prompt and ends the run. Judging belongs to the
