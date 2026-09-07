@@ -25,6 +25,12 @@ from superred.core.types.events import (
 from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
 
+from token_smuggling_optimizer.surface_llm import classify_controllables
+from token_smuggling_optimizer.surfaces import (
+    ROLE_CATEGORIES,
+    preferred_surface_names,
+    should_inject,
+)
 from token_smuggling_optimizer.smuggling import (
     DEFAULT_HOMOGLYPH_MAP,
     homoglyph_replace,
@@ -37,8 +43,6 @@ DEFAULT_HOMOGLYPH_VARIANTS = 5
 
 # Reserved controllable name never injected into, so a Task-configured system
 # prompt survives unchanged (matches the goal_passthrough baseline).
-_SYSTEM_PROMPT_CONTROLLABLE_NAME = "system_prompt"
-_FREE_TEXT_VALUE_TYPES = frozenset({"", "text", "str", "string", "html", "markdown"})
 
 
 class TokenSmugglingOptimizer(Optimizer):
@@ -82,6 +86,8 @@ class TokenSmugglingOptimizer(Optimizer):
         self._index = 0
         # Armed at RunStart, disarmed after the single injection of a run.
         self._injected = False
+        self._surface_roles: dict[str, str] = {}
+        self._preferred: frozenset[str] = frozenset()
 
     def _build_variants(self, goal: Goal) -> list[str]:
         variants: list[str] = []
@@ -103,6 +109,13 @@ class TokenSmugglingOptimizer(Optimizer):
         llm_client: LLMClient,
     ) -> None:
         await super().initialize(goal, controllables, observables, llm_client)
+        # One LLM pass reads each surface's own description and names the
+        # user's prompt -- the channel this attack has to arrive on. Returns {}
+        # on any failure, so the name/value-type backstop decides instead.
+        self._surface_roles = await classify_controllables(
+            self.llm, controllables, ROLE_CATEGORIES, goal=goal.description
+        )
+        self._preferred = preferred_surface_names(controllables, self._surface_roles)
         self._goal = goal
         self._variants = self._build_variants(goal)
         self._index = 0
@@ -130,12 +143,7 @@ class TokenSmugglingOptimizer(Optimizer):
         decline = ControllableNoInjection(event=event, controllable=event.controllable)
 
         # Leave any Task-configured system prompt untouched.
-        if event.controllable.name == _SYSTEM_PROMPT_CONTROLLABLE_NAME:
-            return decline
-
-        # Only inject a surface that consumes free text; an obfuscated string
-        # would be discarded by a json-typed surface.
-        if event.controllable.value_type.lower() not in _FREE_TEXT_VALUE_TYPES:
+        if not should_inject(event.controllable, self._preferred, self._surface_roles):
             return decline
 
         # One obfuscated variant per run, mirroring garak's one-prompt-per-attempt.
