@@ -93,6 +93,34 @@ classifier resolve this by not carrying the guard at all; this module keeps the
 guard and skips only that one pinned shared file, so the guard still covers all
 first-party code here.
 
+## Upstream coverage
+
+`garak/probes/smuggling.py` defines three probes; all three are ported:
+
+| Upstream probe | Ported as | Note |
+| --- | --- | --- |
+| `HypotheticalResponse` | `hypothetical` technique | template vendored verbatim, goal in the slot |
+| `HomoglyphObfuscation` | `homoglyph` technique | map and algorithm byte-faithful, seeded for reproducibility |
+| `FunctionMasking` | `function_masking` technique | see below |
+
+### FunctionMasking
+
+Upstream ships **one fixed prompt** whose two masked words ("rob", "store") are
+baked in, so it cannot carry an arbitrary goal. The scaffolding — the
+`predict_mask` preamble, the `prompt = '...' + X + '...'` assembly line and the
+closing instruction — is reproduced verbatim, and upstream's complete prompt is
+kept as `UPSTREAM_FUNCTION_MASKING_PROMPT`.
+
+Only the masked vocabulary generalises: the attacker's own LLM picks which
+words of the goal to hide and writes a dictionary definition for each, so the
+sensitive words never appear literally. Any failure (no budget, malformed
+reply, a word that is not in the goal) yields no definitions, and the technique
+then emits **upstream's verbatim prompt** — so the module never silently
+degrades into something weaker than the original probe.
+
+`active = False` upstream (it is opt-in); here it is one of three techniques
+and can be selected with `techniques=["function_masking"]`.
+
 ## Known limitations
 
 - Homoglyph substitution assumes a Latin-script goal; a goal in another script

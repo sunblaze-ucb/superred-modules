@@ -83,7 +83,7 @@ def test_homoglyph_variants_follow_and_are_seeded_in_order() -> None:
         _end(opt)
 
 
-def test_total_variant_count_is_one_plus_homoglyph_variants() -> None:
+def test_total_variant_count_covers_every_technique() -> None:
     opt = _make(homoglyph_variants=4)
     seen = 0
     while True:
@@ -94,7 +94,8 @@ def test_total_variant_count_is_one_plus_homoglyph_variants() -> None:
         seen += 1
         if _end(opt).done:
             break
-    assert seen == 5
+    # hypothetical(1) + homoglyph(4) + function_masking(1)
+    assert seen == 6
 
 
 def test_done_is_reported_only_on_the_final_run() -> None:
