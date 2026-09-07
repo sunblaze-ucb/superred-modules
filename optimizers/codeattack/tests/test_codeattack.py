@@ -9,8 +9,17 @@ import pytest
 from codeattack_optimizer.codeattack import VARIANTS, _wrap_input, render
 
 
-def test_variants() -> None:
-    assert VARIANTS == ("python_list", "python_stack", "python_string")
+def test_variants_cover_every_upstream_template() -> None:
+    assert VARIANTS == (
+        "python_list",
+        "python_stack",
+        "python_string",
+        "python_list_plus",
+        "python_stack_plus",
+        "python_string_plus",
+        "C_string",
+        "go_string",
+    )
 
 
 def test_list_appends_words_in_order() -> None:
@@ -61,3 +70,31 @@ def test_unknown_variant_raises() -> None:
         render("x", "ruby_hash")
     with pytest.raises(ValueError, match="unknown variant"):
         _wrap_input("x", "ruby_hash")
+
+
+def test_plus_variants_reuse_the_base_tokenisation() -> None:
+    """`*_plus` differ only in the template's output demand, not the encoding."""
+    assert _wrap_input("a b c", "python_list_plus") == _wrap_input("a b c", "python_list")
+    assert _wrap_input("a b c", "python_stack_plus") == _wrap_input("a b c", "python_stack")
+
+
+def test_plus_templates_demand_paragraphs_not_steps() -> None:
+    out = render("x", "python_list_plus")
+    assert "100 words" in out
+    assert "100 words" not in render("x", "python_list")
+
+
+def test_c_and_go_replace_the_hardcoded_example_line() -> None:
+    """Upstream fills these by replacing a fixed 0-indexed line, not a slot."""
+    c = render("EXPLOIT_HERE", "C_string")
+    g = render("EXPLOIT_HERE", "go_string")
+    assert c.splitlines()[10] == '    std::string my_string = "EXPLOIT_HERE";'
+    assert g.splitlines()[17] == '        myQueue := "EXPLOIT_HERE"'
+    # upstream's baked-in examples must be gone
+    assert "hacking into a government database" not in c
+    assert "I make a bomb" not in g
+
+
+def test_every_variant_renders_without_a_leftover_slot() -> None:
+    for v in VARIANTS:
+        assert "{wrapped_input}" not in render("do the thing", v)
