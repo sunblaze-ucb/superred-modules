@@ -43,17 +43,14 @@ state — so `python_stack` output intentionally differs from the stale shipped
 stack data. `python_list` / `python_string` have no such drift and are
 byte-verified against their shipped data.
 
-### 3. Only the three Python variants
+### 3. All eight upstream templates are ported
 
-Upstream also has `C_string` and `go_string` templates, but their injection path
-uses a line-index `replace` marked `TODO` in `data_preparation.py` and is not
-wired up cleanly. Only the three complete Python variants are ported.
-
-### 4. `_plus` templates not ported
-
-Upstream ships `code_python_*_plus.txt` variants alongside the base ones; this
-module ports the base three that back the shipped `_full` datasets. The `_plus`
-variants can be added later if wanted.
+`python_list`, `python_stack`, `python_string`, their `*_plus` counterparts
+(which demand 100-word paragraphs instead of terse steps), plus `C_string` and
+`go_string`. The non-Python scaffolds carry a hardcoded example rather than a
+`{wrapped_input}` slot, so upstream fills them by replacing a fixed 0-indexed
+line (`replacement_line` 10 and 17); that line-replacement is reproduced
+byte-faithfully, including upstream's append-if-past-EOF branch.
 
 ### 5. One prompt per run, no detector
 

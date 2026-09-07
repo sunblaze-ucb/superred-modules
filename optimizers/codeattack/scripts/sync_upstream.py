@@ -20,7 +20,16 @@ PINNED_COMMIT = "6777ed03b11567a91908f23bb8ccedca6103772c"
 BASE = "https://raw.githubusercontent.com/renqibing/CodeAttack/{commit}"
 TPL = "/src/codeattack/prompt_templates/{name}.txt"
 DATA = "/prompts/data_python_{v}_full.json"
-TEMPLATES = ("code_python_list", "code_python_stack", "code_python_string")
+TEMPLATES = (
+    "code_python_list",
+    "code_python_stack",
+    "code_python_string",
+    "code_python_list_plus",
+    "code_python_stack_plus",
+    "code_python_string_plus",
+    "code_C_string",
+    "code_go_string",
+)
 ROOT = Path(__file__).resolve().parent.parent
 TPL_DIR = ROOT / "src/codeattack_optimizer/data/upstream"
 
