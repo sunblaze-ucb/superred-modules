@@ -31,14 +31,20 @@ from token_smuggling_optimizer.surfaces import (
     preferred_surface_names,
     should_inject,
 )
+from token_smuggling_optimizer.masking import propose_definitions
 from token_smuggling_optimizer.smuggling import (
     DEFAULT_HOMOGLYPH_MAP,
+    function_masking_wrap,
     homoglyph_replace,
     hypothetical_wrap,
 )
 
-Technique = Literal["hypothetical", "homoglyph"]
-DEFAULT_TECHNIQUES: tuple[Technique, ...] = ("hypothetical", "homoglyph")
+Technique = Literal["hypothetical", "homoglyph", "function_masking"]
+DEFAULT_TECHNIQUES: tuple[Technique, ...] = (
+    "hypothetical",
+    "homoglyph",
+    "function_masking",
+)
 DEFAULT_HOMOGLYPH_VARIANTS = 5
 
 # Reserved controllable name never injected into, so a Task-configured system
@@ -86,6 +92,7 @@ class TokenSmugglingOptimizer(Optimizer):
         self._index = 0
         # Armed at RunStart, disarmed after the single injection of a run.
         self._injected = False
+        self._mask_definitions: list[tuple[str, str]] = []
         self._surface_roles: dict[str, str] = {}
         self._preferred: frozenset[str] = frozenset()
 
@@ -98,6 +105,11 @@ class TokenSmugglingOptimizer(Optimizer):
                 variants.extend(
                     homoglyph_replace(goal.description, self._glyph_map, seed=seed)
                     for seed in range(self._homoglyph_variants)
+                )
+            elif technique == "function_masking":
+                # Empty definitions -> upstream's verbatim fixed prompt.
+                variants.append(
+                    function_masking_wrap(goal.description, self._mask_definitions)
                 )
         return variants
 
@@ -117,6 +129,15 @@ class TokenSmugglingOptimizer(Optimizer):
         )
         self._preferred = preferred_surface_names(controllables, self._surface_roles)
         self._goal = goal
+        # FunctionMasking hides the goal's own sensitive words behind
+        # dictionary definitions. Upstream bakes in "rob"/"store"; the attacker
+        # LLM picks them for an arbitrary goal, and [] falls back to upstream's
+        # verbatim prompt.
+        self._mask_definitions = (
+            await propose_definitions(self.llm, goal.description)
+            if "function_masking" in self._techniques
+            else []
+        )
         self._variants = self._build_variants(goal)
         self._index = 0
         self._injected = False
