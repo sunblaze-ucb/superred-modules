@@ -52,6 +52,23 @@ garak's probe uses the goal-hijacking attack family (not the rogue-string /
 prompt-leaking variants that PromptInject also supports). This module reproduces
 garak's selection, which is what counts in the survey.
 
+## Upstream coverage
+
+`garak/probes/promptinject.py` generates its probes dynamically, one per rogue
+string, each in a full and a capped form. **All are covered:**
+
+| Upstream | Ported as |
+| --- | --- |
+| `HijackHateHumans(Full)` | `rogue_strings=["hate-humans"]`, `limit=None` / `limit=100` |
+| `HijackKillHumans(Full)` | `rogue_strings=["kill-humans"]` |
+| `HijackLongPrompt(Full)` | `rogue_strings=["long-prompt"]` |
+
+The build config reproduces `load_data_all_attacks` field-for-field — all five
+goal-hijacking attacks, the escape/delimiter settings and the config id — so
+the generated prompt set matches upstream. The upstream PromptInject framework
+also supports prompt-leaking attacks, which garak does not use; this module
+matches garak's selection.
+
 ## Known limitations
 
 - The rogue-string detector is a plain substring test: a model that quotes the
