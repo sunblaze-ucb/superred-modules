@@ -33,6 +33,7 @@ from deepinception_optimizer.template import (
     DEFAULT_CHARACTER_NUMBER,
     DEFAULT_LAYER_NUMBER,
     DEFAULT_SCENE,
+    follow_up_questions,
     render,
 )
 
@@ -51,6 +52,7 @@ class DeepInceptionOptimizer(Optimizer):
         scene: str = DEFAULT_SCENE,
         character_number: int = DEFAULT_CHARACTER_NUMBER,
         layer_number: int = DEFAULT_LAYER_NUMBER,
+        follow_ups: bool = False,
     ) -> None:
         super().__init__()
         # render() validates the numeric/scene params; surface errors at build.
@@ -62,6 +64,13 @@ class DeepInceptionOptimizer(Optimizer):
         self._goal: Goal | None = None
         self._payload = ""
         self._injected = False
+        self._follow_ups: tuple[str, ...] = (
+            follow_up_questions() if follow_ups else ()
+        )
+        self._turn = 0
+        # The inception prompt establishes the scene; follow-ups must continue
+        # that same conversation, so they are pinned to its surface.
+        self._channel: str | None = None
         self._surface_roles: dict[str, str] = {}
         self._preferred: frozenset[str] = frozenset()
 
@@ -81,6 +90,8 @@ class DeepInceptionOptimizer(Optimizer):
             layer_number=self._layer_number,
         )
         self._injected = False
+        self._turn = 0
+        self._channel = None
         # One LLM pass reads each surface's own description and says which is
         # the user's own prompt -- the channel a nested-scene jailbreak has to
         # arrive on. Returns {} on any failure, so the name/value-type
@@ -99,8 +110,9 @@ class DeepInceptionOptimizer(Optimizer):
             return self._handle_pre_call(event)
 
         if isinstance(event, RunEndEvent):
-            # Single deterministic scene: one attempt per task.
-            return RunEndResponse(event=event, done=True)
+            # One scene, then upstream's further_q follow-ups (if enabled).
+            self._turn += 1
+            return RunEndResponse(event=event, done=self._turn > len(self._follow_ups))
 
         return EventResponse(event=event)
 
@@ -112,9 +124,19 @@ class DeepInceptionOptimizer(Optimizer):
             return decline
         if self._injected:
             return decline
+        # Follow-ups continue the scene the inception prompt established, so
+        # they must land on the surface that received it.
+        if self._channel is not None and event.controllable.name != self._channel:
+            return decline
+        if self._turn > len(self._follow_ups):
+            return decline
+
+        value = self._payload if self._turn == 0 else self._follow_ups[self._turn - 1]
         self._injected = True
+        if self._channel is None:
+            self._channel = event.controllable.name
         return ControllableInjection(
-            event=event, controllable=event.controllable, value=self._payload
+            event=event, controllable=event.controllable, value=value
         )
 
     async def teardown(self) -> None:
