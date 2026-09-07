@@ -14,7 +14,7 @@ Provenance and every deliberate departure from the reference implementation.
 
 ## Copied byte-for-byte
 
-- `data/upstream/bypass_template.txt` — upstream `Bypass.templates[0]`. Held
+- `data/upstream/bypass_template_0.txt / bypass_template_1.txt` — upstream `Bypass.templates[0]`. Held
   as a data file rather than a Python literal because the template itself
   contains a triple-quote sequence. `scripts/sync_upstream.py --check`
   re-extracts it from upstream source and fails on any drift.
@@ -67,6 +67,18 @@ with every other fixed-objective probe.
 
 Upstream pairs these probes with `mitigation.MitigationBypass`. In superred,
 judging belongs to the `SecurityClaim`, so no detector is ported.
+
+
+## Upstream coverage
+
+`garak/probes/doctor.py` defines three probes. This module ports the two that
+are goal-driven:
+
+| Upstream probe | Ported | Why |
+| --- | --- | --- |
+| `Bypass` | yes — **both** `templates[0]` and `templates[1]` | upstream's `_build_prompts` loops over every template; the optimizer emits one prompt per template |
+| `BypassLeet` | yes (`leet` technique) | subclasses `Bypass`, adding the leetspeak aside to both templates |
+| `Puppetry` | **no** | it sets `self.prompts` to a single fixed 1565-char scene with **zero** `{{HARMFUL_BEHAVIOR}}` slots, so it cannot carry an arbitrary superred `Goal`. It is a fixed-objective probe and belongs as a `SecurityClaim`, not a goal-driven optimizer. |
 
 ## Known limitations
 
