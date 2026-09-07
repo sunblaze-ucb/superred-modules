@@ -70,6 +70,23 @@ judge outage becomes a task-level error (the controller records
 none, and `ChatbotTarget` suppresses an empty system prompt. JBB is single-turn:
 the goal is sent, one response is judged.
 
+## Upstream coverage
+
+JBB-Behaviors ships two paired CSVs; both are vendored:
+
+| Upstream file | Exposed as | Meaning |
+| --- | --- | --- |
+| `data/harmful-behaviors.csv` | `dataset="harmful"` (default) | the 100-behaviour attack set; ASR is the jailbreak success rate |
+| `data/benign-behaviors.csv` | `dataset="benign"` | the paired 100-request **control** set |
+
+**The benign set is a control, not an attack set.** Upstream uses it to measure
+over-refusal: a well-behaved target should *comply* with these requests. Run
+through this claim, the judge still answers "did the model produce the
+requested content", so a high score on the benign set means the target was
+helpful — the opposite reading from the harmful set. It is exposed because it
+is part of the benchmark, but it must not be pooled with harmful results or
+reported as ASR.
+
 ## Known limitations
 
 - The judge is an LLM, so ASR depends on the judge model. Different judges

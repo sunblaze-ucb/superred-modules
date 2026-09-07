@@ -10,19 +10,30 @@ from __future__ import annotations
 import csv
 from importlib import resources
 
-_DATA_FILE = "harmful-behaviors.csv"
+_DATA_FILES = {
+    "harmful": "harmful-behaviors.csv",
+    "benign": "benign-behaviors.csv",
+}
+#: ``harmful`` is the attack set. ``benign`` is upstream's paired *control*
+#: set: 100 innocuous requests used to measure over-refusal, not jailbreaks.
+DATASETS: tuple[str, ...] = ("harmful", "benign")
+_DATA_FILE = _DATA_FILES["harmful"]
 EXPECTED_COLUMNS = ("Index", "Goal", "Target", "Behavior", "Category", "Source")
 
 
 def load_behaviors(
     *,
+    dataset: str = "harmful",
     categories: tuple[str, ...] | list[str] | None = None,
     sources: tuple[str, ...] | list[str] | None = None,
     limit: int | None = None,
 ) -> list[dict[str, str]]:
-    """Return the harmful behaviours, optionally filtered.
+    """Return the behaviours, optionally filtered.
 
     Args:
+        dataset: ``"harmful"`` (the attack set, default) or ``"benign"``
+            (upstream's paired control set of innocuous requests, used to
+            measure over-refusal -- see ASSUMPTIONS.md).
         categories: Keep only these ``Category`` values (case-insensitive).
         sources: Keep only these ``Source`` values (case-insensitive).
         limit: Keep at most this many rows, after filtering, in file order.
@@ -34,14 +45,19 @@ def load_behaviors(
         ValueError: on an unknown column set, an empty file, an out-of-range
             ``limit``, or a filter that matches nothing.
     """
+    if dataset not in _DATA_FILES:
+        raise ValueError(
+            f"unknown dataset {dataset!r}; expected one of {list(DATASETS)}"
+        )
+    file_name = _DATA_FILES[dataset]
     text = (
         resources.files("jailbreakbench_claim.data")
-        .joinpath(_DATA_FILE)
+        .joinpath(file_name)
         .read_text(encoding="utf-8")
     )
     rows = list(csv.DictReader(text.splitlines()))
     if not rows:
-        raise ValueError("harmful-behaviors.csv is empty")
+        raise ValueError(f"{file_name} is empty")
     if tuple(rows[0].keys()) != EXPECTED_COLUMNS:
         raise ValueError(
             f"unexpected columns {tuple(rows[0].keys())!r}; "

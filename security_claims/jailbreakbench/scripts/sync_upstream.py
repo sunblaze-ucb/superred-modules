@@ -15,6 +15,10 @@ import urllib.request
 from pathlib import Path
 
 PINNED_COMMIT = "23dbdf6b19650521604456229bc1d9c4156c85c1"
+BENIGN_URL = (
+    "https://huggingface.co/datasets/JailbreakBench/JBB-Behaviors/"
+    "resolve/main/data/benign-behaviors.csv"
+)
 CSV_URL = "https://huggingface.co/datasets/JailbreakBench/JBB-Behaviors/resolve/main/data/harmful-behaviors.csv"
 CLASSIFIER_URL = "https://raw.githubusercontent.com/JailbreakBench/jailbreakbench/{commit}/src/jailbreakbench/classifier.py"
 
