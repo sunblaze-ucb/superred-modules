@@ -22,6 +22,7 @@ from superred.core.types.events import (
 from superred.core.types.goal import Goal
 from superred.core.types.security_domain import SecurityDomainTag
 
+from policy_puppetry_optimizer.templates import TEMPLATE_COUNT
 from policy_puppetry_optimizer.optimizer import PolicyPuppetryOptimizer
 from policy_puppetry_optimizer.templates import (
     HARMFUL_BEHAVIOR_SLOT,
@@ -84,7 +85,9 @@ def test_leet_variants_follow_and_are_seeded_in_order() -> None:
         _end(opt)
 
 
-def test_total_variant_count_is_one_plus_leet_variants() -> None:
+def test_total_variant_count_covers_both_templates() -> None:
+    """Upstream builds a prompt per template, so counts are per-template:
+    2 plain + 2 x leet_variants."""
     opt = _make(leet_variants=4)
     seen = 0
     while True:
@@ -95,17 +98,17 @@ def test_total_variant_count_is_one_plus_leet_variants() -> None:
         seen += 1
         if _end(opt).done:
             break
-    assert seen == 5
+    assert seen == TEMPLATE_COUNT + TEMPLATE_COUNT * 4
 
 
 def test_done_reported_only_on_the_final_run() -> None:
+    # leet x 2 variants x 2 templates = 4 runs; done only on the last.
     opt = _make(techniques=["leet"], leet_variants=2)
-    _start(opt)
-    _inject(opt)
-    assert _end(opt).done is False
-    _start(opt)
-    _inject(opt)
-    assert _end(opt).done is True
+    total = TEMPLATE_COUNT * 2
+    for i in range(total):
+        _start(opt)
+        _inject(opt)
+        assert _end(opt).done is (i == total - 1)
 
 
 def test_no_slot_marker_survives_into_any_variant() -> None:
@@ -152,9 +155,10 @@ def test_declines_non_free_text_surfaces() -> None:
 
 def test_declines_once_exhausted() -> None:
     opt = _make(techniques=["plain"])
-    _start(opt)
-    _inject(opt)
-    _end(opt)
+    for _ in range(TEMPLATE_COUNT):  # one plain prompt per upstream template
+        _start(opt)
+        _inject(opt)
+        _end(opt)
     _start(opt)
     assert isinstance(_inject(opt), ControllableNoInjection)
 

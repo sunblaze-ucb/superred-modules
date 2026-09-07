@@ -3,6 +3,8 @@
 from policy_puppetry_optimizer.optimizer import PolicyPuppetryOptimizer
 from policy_puppetry_optimizer.templates import (
     HARMFUL_BEHAVIOR_SLOT,
+    TEMPLATE_COUNT,
+    bypass_template,
     dr_house_template,
     leetspeak,
     render,
@@ -10,7 +12,9 @@ from policy_puppetry_optimizer.templates import (
 
 __all__ = [
     "HARMFUL_BEHAVIOR_SLOT",
+    "TEMPLATE_COUNT",
     "PolicyPuppetryOptimizer",
+    "bypass_template",
     "dr_house_template",
     "leetspeak",
     "render",

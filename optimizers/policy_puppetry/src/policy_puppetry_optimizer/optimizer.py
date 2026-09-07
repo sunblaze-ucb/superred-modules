@@ -26,7 +26,7 @@ from superred.core.types.events import (
 from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
 
-from policy_puppetry_optimizer.templates import leetspeak, render
+from policy_puppetry_optimizer.templates import TEMPLATE_COUNT, leetspeak, render
 
 Technique = Literal["plain", "leet"]
 DEFAULT_TECHNIQUES: tuple[Technique, ...] = ("plain", "leet")
@@ -78,16 +78,22 @@ class PolicyPuppetryOptimizer(Optimizer):
         self._injected = False
 
     def _build_variants(self, goal: Goal) -> list[str]:
+        # Upstream ``Bypass._build_prompts`` loops over every template in
+        # ``self.templates`` (there are two) and substitutes the behaviour into
+        # each, so both scenes are exercised.
         variants: list[str] = []
         for technique in self._techniques:
-            if technique == "plain":
-                variants.append(render(goal.description))
-            elif technique == "leet":
-                rendered = render(goal.description, leet_suffix=True)
-                variants.extend(
-                    leetspeak(rendered, seed=seed)
-                    for seed in range(self._leet_variants)
-                )
+            for index in range(TEMPLATE_COUNT):
+                if technique == "plain":
+                    variants.append(render(goal.description, template_index=index))
+                elif technique == "leet":
+                    rendered = render(
+                        goal.description, leet_suffix=True, template_index=index
+                    )
+                    variants.extend(
+                        leetspeak(rendered, seed=seed)
+                        for seed in range(self._leet_variants)
+                    )
         return variants
 
     async def initialize(

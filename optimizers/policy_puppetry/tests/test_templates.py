@@ -7,15 +7,20 @@ import random
 from policy_puppetry_optimizer.templates import (
     HARMFUL_BEHAVIOR_SLOT,
     LEET_SLOT_SUFFIX,
+    TEMPLATE_COUNT,
+    bypass_template,
     dr_house_template,
     leetspeak,
     render,
 )
 
 
-def test_template_carries_exactly_two_slots() -> None:
+def test_each_template_carries_exactly_one_slot() -> None:
     """Upstream's template names the behaviour twice; both must be filled."""
-    assert dr_house_template().count(HARMFUL_BEHAVIOR_SLOT) == 2
+    # Upstream Bypass.templates holds two scenes, each with a single slot.
+    # Two slots in one file means the extraction swallowed both templates.
+    for index in range(TEMPLATE_COUNT):
+        assert bypass_template(index).count(HARMFUL_BEHAVIOR_SLOT) == 1
 
 
 def test_template_is_the_dr_house_scene_config() -> None:
@@ -23,12 +28,16 @@ def test_template_is_the_dr_house_scene_config() -> None:
     assert "<interaction-config>" in template
     assert "DR HOUSE" in template
     assert template.rstrip().endswith("script ONLY!</rules>")
+    # No Python list syntax may leak into the vendored data.
+    for index in range(TEMPLATE_COUNT):
+        assert '"""' not in bypass_template(index)
 
 
 def test_render_fills_every_slot() -> None:
     out = render("do the forbidden thing")
     assert HARMFUL_BEHAVIOR_SLOT not in out
-    assert out.count("do the forbidden thing") == 2
+    assert out.count("do the forbidden thing") == 1
+    assert HARMFUL_BEHAVIOR_SLOT not in out
 
 
 def test_render_matches_upstream_build_prompts() -> None:
@@ -90,3 +99,25 @@ def test_leetspeak_maps_to_upstream_digits() -> None:
     out = leetspeak(text, seed=1)
     assert set(out) <= set("ieaost134057")
     assert any(ch in "134057" for ch in out)
+
+
+def test_both_upstream_templates_are_vendored_and_distinct() -> None:
+    """Upstream ships two scenes (1816 and 1231 chars); both must be present."""
+    zero, one = bypass_template(0), bypass_template(1)
+    assert zero != one
+    assert len(zero) == 1816
+    assert len(one) == 1231
+
+
+def test_render_uses_the_requested_template() -> None:
+    a = render("x", template_index=0)
+    b = render("x", template_index=1)
+    assert a != b
+    assert "x" in a and "x" in b
+
+
+def test_bad_template_index_raises() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="template index"):
+        bypass_template(TEMPLATE_COUNT)
