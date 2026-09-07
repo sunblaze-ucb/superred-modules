@@ -39,7 +39,11 @@ jobs:
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
           prompt: '/code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
-          claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment"'
+          # No claude_args/--allowedTools here. Passing --allowedTools REPLACES the
+          # action's default tool allowlist rather than adding to it, which left the
+          # reviewer with only the inline-comment tool and no Read/Grep/Glob/Bash, so
+          # it could not open the diff and every run posted nothing.
+          show_full_output: true
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
 
