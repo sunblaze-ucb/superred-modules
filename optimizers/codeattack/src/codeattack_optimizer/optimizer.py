@@ -23,10 +23,14 @@ from superred.core.types.events import (
 from superred.core.types.goal import Goal
 from superred.core.types.observable import ObservableValue
 
+from codeattack_optimizer.surface_llm import classify_controllables
+from codeattack_optimizer.surfaces import (
+    ROLE_CATEGORIES,
+    preferred_surface_names,
+    should_inject,
+)
 from codeattack_optimizer.codeattack import VARIANTS, render
 
-_SYSTEM_PROMPT_CONTROLLABLE_NAME = "system_prompt"
-_FREE_TEXT_VALUE_TYPES = frozenset({"", "text", "str", "string", "html", "markdown"})
 
 
 class CodeAttackOptimizer(Optimizer):
@@ -47,6 +51,8 @@ class CodeAttackOptimizer(Optimizer):
         self._goal: Goal | None = None
         self._payload = ""
         self._injected = False
+        self._surface_roles: dict[str, str] = {}
+        self._preferred: frozenset[str] = frozenset()
 
     async def initialize(
         self,
@@ -56,6 +62,13 @@ class CodeAttackOptimizer(Optimizer):
         llm_client: LLMClient,
     ) -> None:
         await super().initialize(goal, controllables, observables, llm_client)
+        # One LLM pass reads each surface's own description and names the
+        # user's prompt -- the channel this attack has to arrive on. Returns {}
+        # on any failure, so the name/value-type backstop decides instead.
+        self._surface_roles = await classify_controllables(
+            self.llm, controllables, ROLE_CATEGORIES, goal=goal.description
+        )
+        self._preferred = preferred_surface_names(controllables, self._surface_roles)
         self._goal = goal
         self._payload = render(goal.description, self._variant)
         self._injected = False
@@ -74,9 +87,7 @@ class CodeAttackOptimizer(Optimizer):
         self, event: ControllablePreCallEvent
     ) -> ControllableInjection | ControllableNoInjection:
         decline = ControllableNoInjection(event=event, controllable=event.controllable)
-        if event.controllable.name == _SYSTEM_PROMPT_CONTROLLABLE_NAME:
-            return decline
-        if event.controllable.value_type.lower() not in _FREE_TEXT_VALUE_TYPES:
+        if not should_inject(event.controllable, self._preferred, self._surface_roles):
             return decline
         if self._injected:
             return decline
