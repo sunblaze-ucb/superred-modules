@@ -34,7 +34,9 @@ Best-of-N has three modalities. This module ports the **text** arm:
 | Upstream | Ported |
 | --- | --- |
 | `run_text_bon.py` augmentations + sampling | yes |
+| `process_text_augmentation` (the augmentation pipeline and its order) | yes — reproduced as `augment()`; `test_pipeline_is_byte_identical_to_upstream` asserts equality against a verbatim transcription of upstream's global-seeded chain across 5 texts × 5 seeds, and `test_augmentations_apply_in_upstream_order` pins the order |
 | `get_attack_string` prefix/suffix | yes, behind the `tokens` extra |
+| `process_decorated_text_with_augmentations` | partly — at upstream's defaults (`optim_harmful_text=True`, `optim_prefix`/`optim_suffix` `False`, `msj_num_shots=0`) it reduces to `process_text_augmentation`, which is what `augment()` reproduces. Its other two jobs are not ported: the `msj_*` path (row below) and a researcher-supplied `prefix_path`/`suffix_path` string joined around the payload — experiment scaffolding rather than attack construction, off by default upstream, and a caller who wants it can wrap the goal before handing it to the optimizer. |
 | `run_audio_bon.py` (SoxAugmentation: pitch, reverb, noise, speed, …) | no — audio, needs an audio-capable target |
 | `run_image_bon.py` | no — multimodal |
 | `run_prepair.py`, `run_baseline.py` | no — experiment harnesses, not attacks |
