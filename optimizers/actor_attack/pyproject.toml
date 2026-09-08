@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "superred-optimizer-actor-attack"
+version = "0.1.0"
+description = "ActorAttack multi-turn optimizer for superred, based on Tencent Zhuque Lab AI-Infra-Guard"
+requires-python = ">=3.11,<3.14"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "LICENSES/*"]
+authors = [
+    { name = "Rishabh Sinha", email = "rsinha17@terpmail.umd.edu" },
+]
+keywords = [
+    "red-teaming",
+    "ai-safety",
+    "jailbreak",
+    "actor-attack",
+    "multi-turn",
+    "ai-infra-guard",
+    "llm-security",
+    "superred",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security",
+]
+dependencies = ["superred>=0.1.0"]
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-asyncio"]
+
+[project.urls]
+Homepage = "https://superred.simonsure.com"
+Documentation = "https://superred.simonsure.com"
+Repository = "https://github.com/RoldSI/superred-modules"
+Issues = "https://github.com/RoldSI/superred-modules/issues"
+
+[tool.ruff]
+# _vendor/ holds AI-Infra-Guard code pinned byte-identically; never lint it.
+extend-exclude = ["src/actor_attack_optimizer/_vendor"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+pythonpath = ["src"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/actor_attack_optimizer"]
