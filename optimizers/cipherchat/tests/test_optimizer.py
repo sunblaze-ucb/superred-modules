@@ -12,6 +12,7 @@ from superred.core.types.controllable import Controllable
 from superred.core.types.events import (
     ControllableInjection,
     ControllableNoInjection,
+    ControllablePostCallEvent,
     ControllablePreCallEvent,
     RunEndEvent,
     RunStartEvent,
@@ -132,3 +133,21 @@ def test_rejects_bad_config_at_construction() -> None:
         CipherChatOptimizer(cipher="rot13")
     with pytest.raises(ValueError, match="no 'harmless"):
         CipherChatOptimizer(category="Insult", toxicity="harmless")
+
+
+def test_post_call_returns_an_injection_decision_not_a_bare_event_response() -> None:
+    """The channel type-checks PostCall responses.
+
+    A bare ``EventResponse`` raises ``TypeError`` and aborts the task on any
+    target that emits post-call events. This attack never rewrites the
+    target's answer, so it must decline.
+    """
+    opt = _make([_ctrl("user_query")])
+    response = asyncio.run(
+        opt.on_event(
+            ControllablePostCallEvent(
+                controllable=_ctrl(), request="q", answer="a"
+            )
+        )
+    )
+    assert isinstance(response, ControllableNoInjection)
