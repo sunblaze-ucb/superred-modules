@@ -1,0 +1,21 @@
+superred-optimizer-multilingual
+Copyright 2026 the superred module authors
+
+Portions of this module are derived from DeepTeam
+(https://github.com/confident-ai/deepteam), licensed under the Apache License,
+Version 2.0.
+
+The file src/multilingual_optimizer/_vendor/dt_multilingual/template.py is a
+byte-identical copy of
+deepteam/attacks/single_turn/multilingual/template.py. The compliance-check
+prompt in src/multilingual_optimizer/compliance.py reproduces
+build_compliance_check_prompt from deepteam/attacks/single_turn/compliance.py
+verbatim (that file could not be vendored whole as it imports DeepTeam's
+generate helper). The enhancement loop in
+src/multilingual_optimizer/optimizer.py follows
+deepteam/attacks/single_turn/multilingual/multilingual.py.
+
+Technique: Yong et al., "Low-Resource Languages Jailbreak GPT-4" (2023);
+Deng et al., "Multilingual Jailbreak Challenges in Large Language Models" (2024).
+
+Upstream commit: dc148aad62f71330cfec7121d6afb4c620dfa683
