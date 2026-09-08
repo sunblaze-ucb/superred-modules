@@ -70,7 +70,18 @@ drives turns through the event loop, so each run sends one turn and
 so turn *n+1* escalates from the turn actually sent — matching upstream, where
 the chain advances from `current_attack` rather than the target's reply.
 
-### 3. Parsing degrades instead of raising
+### 3. A genuine budget exhaustion propagates
+
+Every simulator failure becomes a backtrack, **except** a `BudgetExhaustedError`
+with `usage.cost > 0`. Folding that into the backtrack path would spend every
+`max_backtracks` on an attacker that simply ran out of money and then report
+`done` — indistinguishable from an attack the target defended, i.e. a false
+zero. The budget-less noop client the controller hands non-LLM optimizers
+raises the same error with nothing spent, so only a spent budget propagates,
+matching `surface_llm._is_genuine_exhaustion` and the convention in
+`crescendo`, `attack_anything`, `autodan_turbo` and others.
+
+### 4. Parsing degrades instead of raising
 
 Upstream validates each reply with pydantic and treats a failure as a
 backtrack. This module parses the same fields without a pydantic dependency and
@@ -78,7 +89,7 @@ returns `None`, which the caller turns into the same backtrack. An unparseable
 *refusal check* is treated as "not a refusal", so a garbled reply never
 silently costs a turn — upstream only backtracks on an explicit `refusal: true`.
 
-### 4. Injection-surface selection (superred adaptation)
+### 5. Injection-surface selection (superred adaptation)
 
 Upstream targets a chat callback; superred targets expose arbitrary named
 surfaces. Following the house pattern (`muzzle`, `chord_xthp`, `eia_agent`,

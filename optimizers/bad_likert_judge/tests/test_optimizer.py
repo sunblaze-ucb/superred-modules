@@ -197,3 +197,33 @@ def test_rejects_bad_config() -> None:
         BadLikertJudgeOptimizer(num_turns=0)
     with pytest.raises(ValueError, match="max_backtracks"):
         BadLikertJudgeOptimizer(max_backtracks=0)
+
+
+def test_genuine_budget_exhaustion_propagates_not_backtracks() -> None:
+    """A spent budget must not be folded into the backtrack path: doing so
+    burns every max_backtracks and reports done, which is indistinguishable
+    from an attack the target defended -- a false zero."""
+    from superred.core.types.llm import BudgetExhaustedError, LLMUsage
+
+    llm = MagicMock()
+    llm.complete = AsyncMock(
+        side_effect=BudgetExhaustedError("spent", LLMUsage(calls=7, cost=1.25))
+    )
+    opt = _make(llm)
+    with pytest.raises(BudgetExhaustedError):
+        _start(opt)
+
+
+def test_budgetless_noop_client_still_degrades_to_a_backtrack() -> None:
+    """The controller's budget-less noop client raises the same error with
+    nothing spent; that one must stay a backtrack, not kill the run."""
+    from superred.core.types.llm import BudgetExhaustedError, LLMUsage
+
+    llm = MagicMock()
+    llm.complete = AsyncMock(
+        side_effect=BudgetExhaustedError("no budget", LLMUsage(calls=0, cost=0.0))
+    )
+    opt = _make(llm, max_backtracks=1)
+    _start(opt)
+    assert isinstance(_pre(opt), ControllableNoInjection)
+    assert _end(opt).done is True

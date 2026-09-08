@@ -26,6 +26,7 @@ from superred.core.types.events import (
     RunStartEvent,
 )
 from superred.core.types.goal import Goal
+from superred.core.types.llm import BudgetExhaustedError
 from superred.core.types.observable import ObservableValue
 
 from bad_likert_judge_optimizer._vendor.loader import bad_likert_judge_template
@@ -152,10 +153,23 @@ class BadLikertJudgeOptimizer(Optimizer):
         self._preferred = preferred_surface_names(controllables, self._surface_roles)
 
     async def _ask(self, prompt: str) -> str | None:
-        """One simulator call. ``None`` on any failure, as upstream backtracks."""
+        """One simulator call. ``None`` on failure, which the caller backtracks.
+
+        A genuine budget exhaustion is re-raised instead. Folding it into the
+        backtrack path would spend every ``max_backtracks`` on an attacker that
+        simply ran out of money and then report ``done``, which is
+        indistinguishable from an attack the target defended -- a false zero.
+        The budget-less noop client the controller hands non-LLM optimizers
+        raises the same error with nothing spent, so only ``usage.cost > 0``
+        propagates, matching ``surface_llm._is_genuine_exhaustion``.
+        """
         try:
             result = await self.llm.complete([{"role": "user", "content": prompt}])
             return result.choices[0].message.content or ""
+        except BudgetExhaustedError as error:
+            if error.usage.cost > 0:
+                raise
+            return None
         except Exception:  # noqa: BLE001 - upstream treats this as a backtrack
             return None
 
