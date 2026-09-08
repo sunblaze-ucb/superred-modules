@@ -206,7 +206,7 @@ def test_post_call_returns_an_injection_decision_not_a_bare_event_response() -> 
     target that emits post-call events. This attack never rewrites the
     target's answer, so it must decline.
     """
-    opt = _make(llm)
+    opt = _make(_llm("How was a lock picked?"))
     response = asyncio.run(
         opt.on_event(
             ControllablePostCallEvent(
