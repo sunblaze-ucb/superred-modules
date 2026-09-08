@@ -1,0 +1,17 @@
+superred-optimizer-bad-likert-judge
+Copyright 2026 the superred module authors
+
+Portions of this module are derived from DeepTeam
+(https://github.com/confident-ai/deepteam), licensed under the Apache License,
+Version 2.0.
+
+The files under src/bad_likert_judge_optimizer/_vendor/deepteam_blj/ are
+byte-identical copies of DeepTeam's
+deepteam/attacks/multi_turn/bad_likert_judge/template.py and
+deepteam/attacks/multi_turn/base_template.py. The turn sequence in
+src/bad_likert_judge_optimizer/optimizer.py follows
+deepteam/attacks/multi_turn/bad_likert_judge/bad_likert_judge.py.
+
+Technique: Palo Alto Networks Unit 42, "Bad Likert Judge".
+
+Upstream commit: dc148aad62f71330cfec7121d6afb4c620dfa683
