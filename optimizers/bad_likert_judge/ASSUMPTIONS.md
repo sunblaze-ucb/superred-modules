@@ -22,10 +22,13 @@ The vendored template keeps upstream's absolute
 `from deepteam.attacks.multi_turn.base_template import ...`. Rather than edit
 that line (which would fork the file and reduce `sync_upstream.py` to a fuzzy
 check), `_vendor/loader.py` registers the vendored base under exactly that
-module name before executing the template — and only if nothing already
-occupies it, so a real `deepteam` install in the same environment is never
-shadowed. `scripts/sync_upstream.py --check` is therefore a plain byte
-comparison.
+module name before executing the template. Whether to register at all is
+decided by `importlib.util.find_spec`, i.e. by whether a real `deepteam` is
+**installed** — not by whether it happens to be in `sys.modules`, which only
+reflects what has been imported so far and would let an installed-but-unimported
+package be stubbed over. When a real `deepteam` is present nothing is
+registered and it is used as-is. `scripts/sync_upstream.py --check` is
+therefore a plain byte comparison.
 
 ## Upstream coverage
 
