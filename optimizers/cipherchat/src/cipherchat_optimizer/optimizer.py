@@ -138,6 +138,14 @@ class CipherChatOptimizer(Optimizer):
         self._preferred = preferred_surface_names(controllables, self._surface_roles)
 
     async def on_event(self, event: Event) -> EventResponse:
+        if isinstance(event, RunStartEvent):
+            # initialize() runs once per task, but a task can start many runs.
+            # Without re-arming here, run 2 inherits run 1's flags: the
+            # teaching branch is skipped as already delivered and the query
+            # branch as already sent, so the run injects nothing at all.
+            self._teaching_done = False
+            self._query_done = False
+            return EventResponse(event=event)
         if isinstance(event, ControllablePreCallEvent):
             return self._handle_pre_call(event)
         if isinstance(event, ControllablePostCallEvent):
@@ -149,9 +157,12 @@ class CipherChatOptimizer(Optimizer):
                 event=event, controllable=event.controllable
             )
         if isinstance(event, RunEndEvent):
-            # The attack is one shot: it is complete once the enciphered query
-            # has been delivered.
-            return RunEndResponse(event=event, done=self._query_done)
+            # The attack is one shot: teach, then ask, and it is spent. That
+            # holds whether or not the query landed -- if this run found no
+            # eligible user surface for the ciphertext, neither will the next
+            # one, and reporting "not done" only spins out the run budget
+            # re-declining the same surfaces.
+            return RunEndResponse(event=event, done=True)
         return EventResponse(event=event)
 
     def _handle_pre_call(
