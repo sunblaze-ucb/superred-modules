@@ -1,0 +1,20 @@
+superred-optimizer-mathprompt
+Copyright 2026 the superred module authors
+
+Portions of this module are derived from DeepTeam
+(https://github.com/confident-ai/deepteam), licensed under the Apache License,
+Version 2.0.
+
+The file src/mathprompt_optimizer/_vendor/dt_mathprompt/template.py is a
+byte-identical copy of deepteam/attacks/single_turn/math_problem/template.py
+(including upstream's invalid f-string escape sequences, which emit a
+SyntaxWarning on import; preserved for byte-fidelity, see ASSUMPTIONS.md). The
+compliance-check prompt in src/mathprompt_optimizer/compliance.py reproduces
+build_compliance_check_prompt from deepteam/attacks/single_turn/compliance.py
+verbatim. The enhancement loop in src/mathprompt_optimizer/optimizer.py follows
+deepteam/attacks/single_turn/math_problem/math_problem.py.
+
+Technique: Bethany et al., "Jailbreaking Large Language Models with Symbolic
+Mathematics" (MathPrompt, 2024).
+
+Upstream commit: dc148aad62f71330cfec7121d6afb4c620dfa683
