@@ -45,9 +45,10 @@ from bad_likert_judge_optimizer.surfaces import (
 )
 
 #: Upstream's defaults (``BadLikertJudge.__init__``).
-DEFAULT_CATEGORY = "illegal_activity"
-DEFAULT_NUM_TURNS = 3
-DEFAULT_MAX_BACKTRACKS = 5
+DEFAULT_CATEGORY = "bias"
+DEFAULT_NUM_TURNS = 5
+DEFAULT_ENABLE_REFINEMENT = True
+DEFAULT_MAX_BACKTRACKS = 3
 
 
 # Upstream's BadLikertJudge.get_supported_categories(), verbatim.
@@ -74,19 +75,19 @@ class BadLikertJudgeOptimizer(Optimizer):
 
     Args:
         category: Which Likert guideline set to use. One of
-            :data:`SUPPORTED_CATEGORIES`; upstream defaults to
-            ``illegal_activity``.
-        num_turns: How many turns to send (upstream ``num_turns``).
-        enable_refinement: Run upstream's ``likert_refine_score_3`` step.
+            :data:`SUPPORTED_CATEGORIES`; upstream defaults to ``bias``.
+        num_turns: How many turns to send (upstream ``num_turns``, 5).
+        enable_refinement: Run upstream's ``likert_refine_score_3`` step
+            (upstream ``enable_refinement``, on).
         max_backtracks: How many simulator refusals or unusable replies to
-            absorb before giving up (upstream ``max_backtracks``).
+            absorb before giving up (upstream ``max_backtracks``, 3).
     """
 
     def __init__(
         self,
         category: str = DEFAULT_CATEGORY,
         num_turns: int = DEFAULT_NUM_TURNS,
-        enable_refinement: bool = False,
+        enable_refinement: bool = DEFAULT_ENABLE_REFINEMENT,
         max_backtracks: int = DEFAULT_MAX_BACKTRACKS,
     ) -> None:
         super().__init__()

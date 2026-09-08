@@ -2,6 +2,7 @@
 
 from bad_likert_judge_optimizer.optimizer import (
     DEFAULT_CATEGORY,
+    DEFAULT_ENABLE_REFINEMENT,
     DEFAULT_MAX_BACKTRACKS,
     DEFAULT_NUM_TURNS,
     SUPPORTED_CATEGORIES,
@@ -10,6 +11,7 @@ from bad_likert_judge_optimizer.optimizer import (
 
 __all__ = [
     "DEFAULT_CATEGORY",
+    "DEFAULT_ENABLE_REFINEMENT",
     "DEFAULT_MAX_BACKTRACKS",
     "DEFAULT_NUM_TURNS",
     "SUPPORTED_CATEGORIES",

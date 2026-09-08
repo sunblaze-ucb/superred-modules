@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from bad_likert_judge_optimizer.optimizer import (
     DEFAULT_CATEGORY,
+    DEFAULT_ENABLE_REFINEMENT,
     DEFAULT_MAX_BACKTRACKS,
     DEFAULT_NUM_TURNS,
     SUPPORTED_CATEGORIES,
@@ -79,21 +80,41 @@ def _end(opt): return asyncio.run(opt.on_event(RunEndEvent(evaluation=None)))
 
 
 def test_upstream_defaults() -> None:
-    assert DEFAULT_CATEGORY == "illegal_activity"
-    assert DEFAULT_NUM_TURNS == 3
-    assert DEFAULT_MAX_BACKTRACKS == 5
+    """Pinned to DeepTeam's ``BadLikertJudge.__init__`` signature verbatim."""
+    assert DEFAULT_CATEGORY == "bias"
+    assert DEFAULT_NUM_TURNS == 5
+    assert DEFAULT_ENABLE_REFINEMENT is True
+    assert DEFAULT_MAX_BACKTRACKS == 3
     assert len(SUPPORTED_CATEGORIES) == 58
+
+
+def test_constructor_defaults_match_the_upstream_constants() -> None:
+    """A constructed optimizer uses upstream's values, not tuned-down ones."""
+    opt = BadLikertJudgeOptimizer()
+    assert opt._category == DEFAULT_CATEGORY
+    assert opt._num_turns == DEFAULT_NUM_TURNS
+    assert opt._enable_refinement is DEFAULT_ENABLE_REFINEMENT
+    assert opt._max_backtracks == DEFAULT_MAX_BACKTRACKS
 
 
 def test_a_turn_runs_the_three_simulator_steps_then_injects() -> None:
     """examples -> attack -> non_refusal, then the attack goes to the target."""
     llm = _llm(EXAMPLES, ATTACK, NO_REFUSAL)
-    opt = _make(llm)
+    opt = _make(llm, enable_refinement=False)
     _start(opt)
     resp = _pre(opt)
     assert isinstance(resp, ControllableInjection)
     assert resp.value == "ATTACK_PROMPT"
-    assert llm.complete.await_count == 3  # no refinement by default
+    assert llm.complete.await_count == 3  # refinement explicitly off here
+
+
+def test_the_default_turn_runs_the_refine_step_too() -> None:
+    """Upstream defaults enable_refinement on, so a default turn is four calls."""
+    llm = _llm(EXAMPLES, REFINED, ATTACK, NO_REFUSAL)
+    opt = _make(llm)
+    _start(opt)
+    assert isinstance(_pre(opt), ControllableInjection)
+    assert llm.complete.await_count == 4
 
 
 def test_refinement_adds_the_refine_step_and_uses_its_output() -> None:
@@ -118,7 +139,7 @@ def test_refinement_failure_keeps_the_original_example() -> None:
 
 def test_simulator_refusal_spends_a_backtrack_and_sends_nothing() -> None:
     llm = _llm(EXAMPLES, ATTACK, REFUSAL)
-    opt = _make(llm)
+    opt = _make(llm, enable_refinement=False)
     _start(opt)
     assert isinstance(_pre(opt), ControllableNoInjection)
 
@@ -126,7 +147,7 @@ def test_simulator_refusal_spends_a_backtrack_and_sends_nothing() -> None:
 def test_backtracks_exhaust_and_end_the_run() -> None:
     """max_backtracks consecutive refusals stop the attack."""
     llm = _llm(*([EXAMPLES, ATTACK, REFUSAL] * 2))
-    opt = _make(llm, max_backtracks=2)
+    opt = _make(llm, max_backtracks=2, enable_refinement=False)
     for _ in range(2):
         _start(opt)
         assert isinstance(_pre(opt), ControllableNoInjection)
@@ -143,7 +164,7 @@ def test_unparseable_examples_step_is_a_backtrack() -> None:
 
 def test_runs_for_num_turns_then_reports_done() -> None:
     llm = _llm(*([EXAMPLES, ATTACK, NO_REFUSAL] * 2))
-    opt = _make(llm, num_turns=2)
+    opt = _make(llm, num_turns=2, enable_refinement=False)
     for i in range(2):
         _start(opt)
         assert isinstance(_pre(opt), ControllableInjection)
@@ -154,7 +175,7 @@ def test_each_turn_feeds_the_previous_attack_back_in() -> None:
     """Upstream passes current_attack into likert_generate_examples, so the
     second turn escalates from the first rather than restarting from the goal."""
     llm = _llm(*([EXAMPLES, ATTACK, NO_REFUSAL] * 2))
-    opt = _make(llm, num_turns=2)
+    opt = _make(llm, num_turns=2, enable_refinement=False)
     _start(opt); _pre(opt); _end(opt)
     _start(opt)
     first = llm.complete.await_args_list[0].args[0][0]["content"]
@@ -167,7 +188,7 @@ def test_each_turn_feeds_the_previous_attack_back_in() -> None:
 
 def test_first_turn_seeds_from_the_goal() -> None:
     llm = _llm(EXAMPLES, ATTACK, NO_REFUSAL)
-    opt = _make(llm)
+    opt = _make(llm, enable_refinement=False)
     _start(opt)
     first = llm.complete.await_args_list[0].args[0][0]["content"]
     assert GOAL in first
@@ -175,7 +196,7 @@ def test_first_turn_seeds_from_the_goal() -> None:
 
 def test_conversation_is_pinned_to_one_surface() -> None:
     llm = _llm(*([EXAMPLES, ATTACK, NO_REFUSAL] * 2))
-    opt = _make(llm, num_turns=2)
+    opt = _make(llm, num_turns=2, enable_refinement=False)
     _start(opt)
     assert isinstance(_pre(opt, "user_query"), ControllableInjection)
     _end(opt)
@@ -186,7 +207,7 @@ def test_conversation_is_pinned_to_one_surface() -> None:
 
 def test_never_injects_system_prompt_or_non_free_text() -> None:
     llm = _llm(EXAMPLES, ATTACK, NO_REFUSAL)
-    opt = _make(llm)
+    opt = _make(llm, enable_refinement=False)
     _start(opt)
     assert isinstance(_pre(opt, "system_prompt"), ControllableNoInjection)
 

@@ -107,10 +107,19 @@ Note: the shared `surface_llm.py` pins `temperature=0.0`, which the repo's
 classifier resolve this by omitting the guard; this module keeps the guard and
 skips only that one pinned shared file, so it still covers all first-party code.
 
+## Defaults
+
+`category`, `num_turns`, `enable_refinement` and `max_backtracks` are
+upstream's, copied from `BadLikertJudge.__init__` (`bias`, `5`, `True`, `3`)
+and pinned by `test_upstream_defaults`. Refinement in particular is on by
+default upstream, so the out-of-the-box attack is the full four-call turn
+rather than a cheaper three-call one; the caller can turn it down.
+
 ## Known limitations
 
-- Each turn costs three attacker-LLM calls (four with refinement), so a
-  `num_turns=5` run is 15–20 calls before the target is touched.
+- Each turn costs four attacker-LLM calls at the defaults (three with
+  `enable_refinement=False`), so a `num_turns=5` run is 15–20 calls before the
+  target is touched.
 - The category is chosen by the caller. Upstream picks it from the vulnerability
   under test; here nothing infers it from the goal, so a mismatched category
   gives the model guidelines unrelated to the objective.

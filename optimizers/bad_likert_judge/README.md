@@ -41,18 +41,25 @@ from bad_likert_judge_optimizer import BadLikertJudgeOptimizer
 
 optimizer_factory = lambda: BadLikertJudgeOptimizer()
 
-# a specific guideline set, more turns, with the refinement step on
+# a specific guideline set, fewer turns, skipping the refinement step
 optimizer_factory = lambda: BadLikertJudgeOptimizer(
-    category="cybercrime", num_turns=5, enable_refinement=True
+    category="cybercrime", num_turns=3, enable_refinement=False
 )
 ```
 
+Defaults are upstream's, taken from `BadLikertJudge.__init__`:
+
 | Argument | Default | Meaning |
 | --- | --- | --- |
-| `category` | `illegal_activity` | one of the 58 categories upstream ships guidelines for |
-| `num_turns` | `3` | turns to send |
-| `enable_refinement` | `False` | run the `likert_refine_score_3` step |
-| `max_backtracks` | `5` | attacker-LLM refusals/unusable replies to absorb before stopping |
+| `category` | `bias` | one of the 58 categories upstream ships guidelines for |
+| `num_turns` | `5` | turns to send |
+| `enable_refinement` | `True` | run the `likert_refine_score_3` step |
+| `max_backtracks` | `3` | attacker-LLM refusals/unusable replies to absorb before stopping |
+
+At these defaults a turn costs four attacker-LLM calls (examples, refine,
+attack, non-refusal check), so a full five-turn run is ~20 calls before the
+target is touched. Pass `enable_refinement=False` and a lower `num_turns` to
+trade attack strength for budget.
 
 `BadLikertJudgeOptimizer.SUPPORTED_CATEGORIES` lists every category.
 

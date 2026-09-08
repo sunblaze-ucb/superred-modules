@@ -76,7 +76,13 @@ def _llm(*contents):
     return llm
 
 
-CHAIN = ['{"score_1_example": "b", "score_3_example": "S3"}', '{"new_attack_prompt": "ATTACK"}', '{"refusal": false, "reasoning": "ok"}']
+# One full turn at upstream's defaults: examples -> refine -> attack -> non-refusal.
+CHAIN = [
+    '{"score_1_example": "b", "score_3_example": "S3"}',
+    '{"refined_example": "S3_REFINED"}',
+    '{"new_attack_prompt": "ATTACK"}',
+    '{"refusal": false, "reasoning": "ok"}',
+]
 
 
 def _opt_with_roles(roles, ctrls):
