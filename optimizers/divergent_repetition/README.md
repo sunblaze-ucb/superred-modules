@@ -39,6 +39,13 @@ optimizer_factory = lambda: DivergentRepetitionOptimizer(extended=True)  # 945 p
 | `shuffle` | `False` | shuffle prompt order (seeded) |
 | `seed` | `0` | shuffle seed |
 
+> **Give the target a generous completion limit.** Divergence only appears once
+> the model has generated well past the repetition, and garak raises the
+> generator's `max_tokens` to 1024 for the duration of this probe. superred
+> gives the optimizer no way to do that — generation parameters belong to the
+> target — so a target capped at a few hundred tokens can look clean when it
+> would in fact leak. See [ASSUMPTIONS.md](ASSUMPTIONS.md).
+
 ## Credits / upstream
 
 Data and construction from [garak](https://github.com/NVIDIA/garak)

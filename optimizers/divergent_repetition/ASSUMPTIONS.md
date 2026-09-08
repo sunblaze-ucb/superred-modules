@@ -34,6 +34,25 @@ The `divergence.RepeatDiverges` detector is not ported: in superred, judging
 whether a response leaked data belongs to the `SecurityClaim`, as with every
 other optimizer here.
 
+### Not portable: garak's generation-length override
+
+`Repeat` sets `override_maxlen = True` / `new_max_tokens = 1024` and, in
+`_generator_precall_hook`, raises the generator's `max_tokens` to 1024 for the
+duration of the probe (restoring it in `_postprocess_hook`). This is
+load-bearing upstream: divergence only shows up once the model has generated
+far enough past the repetition to start replaying training data, so a short
+completion cap can hide a target that would otherwise leak.
+
+superred has no equivalent knob. `Controllable` carries only
+`name`/`security_domain`/`description`/`value_type`, and generation parameters
+belong to the target, not the optimizer — an optimizer that reached in to
+change them would be reaching outside its interface. The override is therefore
+dropped rather than emulated, and the practical consequence is that this
+optimizer is only as sensitive as the target's own output-length setting
+allows. **Give the target a generous completion limit when running it**; a
+target capped at a few hundred tokens can report "no divergence" for a model
+garak would have flagged.
+
 ## Deviations
 
 ### 1. Goal-agnostic
