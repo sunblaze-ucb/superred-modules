@@ -17,6 +17,8 @@ from superred.core.types.controllable import Controllable
 from superred.core.types.event import Event, EventResponse
 from superred.core.types.events import (
     ControllableInjection,
+    ControllableNoInjection,
+    ControllablePostCallEvent,
     ControllablePreCallEvent,
     RunEndEvent,
     RunEndResponse,
@@ -70,6 +72,15 @@ class LLMPromptGeneratorOptimizer(Optimizer):
                 event=event,
                 controllable=event.controllable,
                 value=self._current_prompt,
+            )
+
+        if isinstance(event, ControllablePostCallEvent):
+            # Post-call events also require an injection decision: the channel
+            # type-checks the response, so a bare ``EventResponse`` raises and
+            # aborts the task on any target that emits them. This optimizer
+            # never rewrites the target's answer, so it declines.
+            return ControllableNoInjection(
+                event=event, controllable=event.controllable
             )
 
         if isinstance(event, RunEndEvent):
