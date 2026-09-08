@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+
+import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from token_smuggling_optimizer.masking import parse_definitions, propose_definitions
@@ -114,3 +116,27 @@ def test_propose_definitions_caps_at_count() -> None:
     )
     out = asyncio.run(propose_definitions(_llm(raw), "pick a lock", count=2))
     assert len(out) == 2
+
+
+def test_genuine_budget_exhaustion_propagates() -> None:
+    """A spent budget must not be hidden behind the fixed-prompt fallback."""
+    from superred.core.types.llm import BudgetExhaustedError, LLMUsage
+
+    llm = MagicMock()
+    llm.complete = AsyncMock(
+        side_effect=BudgetExhaustedError("spent", LLMUsage(calls=4, cost=0.9))
+    )
+    with pytest.raises(BudgetExhaustedError):
+        asyncio.run(propose_definitions(llm, "pick a lock"))
+
+
+def test_budgetless_noop_client_still_degrades() -> None:
+    """The controller's budget-less client raises the same error with nothing
+    spent; that is a legitimate 'no LLM' degrade to upstream's fixed prompt."""
+    from superred.core.types.llm import BudgetExhaustedError, LLMUsage
+
+    llm = MagicMock()
+    llm.complete = AsyncMock(
+        side_effect=BudgetExhaustedError("none", LLMUsage(calls=0, cost=0.0))
+    )
+    assert asyncio.run(propose_definitions(llm, "pick a lock")) == []
