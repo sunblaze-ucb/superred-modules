@@ -151,3 +151,38 @@ def test_post_call_returns_an_injection_decision_not_a_bare_event_response() -> 
         )
     )
     assert isinstance(response, ControllableNoInjection)
+
+
+# --- per-run state ----------------------------------------------------------
+def test_run_start_re_arms_both_halves_of_the_attack() -> None:
+    """initialize() runs once per task, RunStart once per run.
+
+    Without the re-arm, run 2 sees run 1's flags: the teaching reads as already
+    delivered and the query as already sent, so the run injects nothing.
+    """
+    ctrls = [_ctrl("system_prompt", domain=SYSTEM), _ctrl("user_query")]
+    opt = _make(ctrls)
+    _start(opt)
+    assert isinstance(_pre(opt, "system_prompt", domain=SYSTEM), ControllableInjection)
+    assert isinstance(_pre(opt, "user_query"), ControllableInjection)
+    _end(opt)
+
+    _start(opt)
+    teaching = _pre(opt, "system_prompt", domain=SYSTEM)
+    query = _pre(opt, "user_query")
+    assert isinstance(teaching, ControllableInjection)
+    assert isinstance(query, ControllableInjection)
+
+
+def test_run_ends_done_even_when_the_query_never_landed() -> None:
+    """A target with no eligible user surface can never take the ciphertext.
+
+    Reporting "not done" there spins out the whole run budget re-declining the
+    same surfaces, so the one-shot attack reports done regardless.
+    """
+    opt = _make([_ctrl("system_prompt", domain=SYSTEM)])
+    _start(opt)
+    assert isinstance(
+        _pre(opt, "system_prompt", domain=SYSTEM), ControllableInjection
+    )
+    assert _end(opt).done is True
