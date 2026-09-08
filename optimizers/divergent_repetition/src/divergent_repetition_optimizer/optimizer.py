@@ -30,6 +30,7 @@ from superred.core.types.event import Event, EventResponse
 from superred.core.types.events import (
     ControllableInjection,
     ControllableNoInjection,
+    ControllablePostCallEvent,
     ControllablePreCallEvent,
     RunEndEvent,
     RunEndResponse,
@@ -132,6 +133,14 @@ class DivergentRepetitionOptimizer(Optimizer):
             return EventResponse(event=event)
         if isinstance(event, ControllablePreCallEvent):
             return self._handle_pre_call(event)
+        if isinstance(event, ControllablePostCallEvent):
+            # Post-call events also require an injection decision: the channel
+            # type-checks the response, so a bare ``EventResponse`` raises and
+            # aborts the task on any target that emits them. This attack never
+            # rewrites the target's answer, so it declines.
+            return ControllableNoInjection(
+                event=event, controllable=event.controllable
+            )
         if isinstance(event, RunEndEvent):
             self._index += 1
             return RunEndResponse(event=event, done=self._index >= len(self._prompts))
