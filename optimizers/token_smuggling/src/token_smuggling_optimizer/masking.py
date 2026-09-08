@@ -16,6 +16,7 @@ import json
 import re
 
 from superred.core.llm import LLMClient
+from superred.core.types.llm import BudgetExhaustedError
 
 #: How many words to mask. Upstream's own prompt masks two.
 DEFAULT_MASK_COUNT = 2
@@ -66,8 +67,10 @@ async def propose_definitions(
 ) -> list[tuple[str, str]]:
     """Ask the attacker's LLM which words of *goal* to mask, and how to define them.
 
-    Returns ``[]`` on any failure (no budget, malformed reply, transport), so
-    the caller falls back to upstream's verbatim FunctionMasking prompt.
+    Returns ``[]`` on a malformed reply, a transport failure, or the
+    budget-less noop client, so the caller falls back to upstream's verbatim
+    FunctionMasking prompt. A *genuine* budget exhaustion (``usage.cost > 0``)
+    is re-raised instead of being hidden behind that fallback.
     """
     if count < 1 or not goal.strip():
         return []
@@ -84,6 +87,15 @@ async def propose_definitions(
     try:
         result = await llm.complete(messages)
         raw = result.choices[0].message.content or ""
+    except BudgetExhaustedError as error:
+        # A spent budget is a real failure, not a reason to quietly fall back:
+        # absorbing it would hide a truncated task behind a run that looks
+        # like it simply used upstream's fixed prompt. The budget-less noop
+        # client raises the same error with nothing spent, and that one is a
+        # legitimate "no LLM available" degrade.
+        if error.usage.cost > 0:
+            raise
+        return []
     except Exception:  # noqa: BLE001 - degrade to upstream's fixed prompt
         return []
     return parse_definitions(raw, goal)[:count]
