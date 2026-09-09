@@ -82,7 +82,12 @@ class ActorAttackOptimizer(Optimizer):
         # Upstream clamps rather than rejects; same here so a caller's config
         # behaves identically.
         self._num_actors = max(num_actors, 1)
-        self._max_turns = max(max_turns_per_actor, 2)
+        #: The configured ceiling. ``_max_turns`` is the per-task working copy:
+        #: ``is_final_probe`` lowers it to end the conversation early, so it
+        #: must be restored in ``initialize`` or a later task inherits the
+        #: shortened budget.
+        self._configured_max_turns = max(max_turns_per_actor, 2)
+        self._max_turns = self._configured_max_turns
 
         self._goal: Goal | None = None
         self._actor: Actor | None = None
@@ -139,6 +144,7 @@ class ActorAttackOptimizer(Optimizer):
         self._actor = None
         self._pending = None
         self._turn = 0
+        self._max_turns = self._configured_max_turns
         self._best_score = 0
         self._best_message = None
         self._done = False

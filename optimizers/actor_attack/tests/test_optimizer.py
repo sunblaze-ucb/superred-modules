@@ -246,3 +246,32 @@ def test_post_call_returns_an_injection_decision_not_a_bare_event_response() -> 
     _start(opt); _pre(opt)
     resp = _post(opt, "OPENING_Q", "answer")
     assert isinstance(resp, ControllableNoInjection)
+
+
+def test_a_final_probe_does_not_shorten_the_next_task() -> None:
+    """``is_final_probe`` lowers ``_max_turns`` to end the conversation early.
+
+    ``initialize`` runs once per task and resets every other piece of per-task
+    state, so without restoring ``_max_turns`` a reused optimizer carries the
+    shortened budget into the next task -- permanently, since it only ever
+    shrinks.
+    """
+    llm = _llm(NETWORK, NON_REFUSAL, RATING, FINAL_PROBE)
+    opt = _make(llm, max_turns_per_actor=4)
+    assert opt._max_turns == 4
+
+    _start(opt)
+    _pre(opt)
+    _post(opt, "OPENING_Q", "answer")
+    assert opt._max_turns < 4  # the final probe shortened this conversation
+
+    # A second task on the same instance must start from the configured budget.
+    asyncio.run(
+        opt.initialize(
+            goal=Goal(description="a different goal"),
+            controllables=[_ctrl()],
+            observables=[],
+            llm_client=_llm(NETWORK),
+        )
+    )
+    assert opt._max_turns == 4
