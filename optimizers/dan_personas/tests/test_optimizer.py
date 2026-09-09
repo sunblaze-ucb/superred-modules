@@ -13,6 +13,7 @@ from superred.core.types.controllable import Controllable
 from superred.core.types.events import (
     ControllableInjection,
     ControllableNoInjection,
+    ControllablePostCallEvent,
     ControllablePreCallEvent,
     RunEndEvent,
     RunEndResponse,
@@ -256,3 +257,21 @@ def test_single_message_mode_still_advances_personas() -> None:
 def test_rejects_unknown_mode() -> None:
     with pytest.raises(ValueError, match="unknown mode"):
         DANPersonasOptimizer(mode="whatever")
+
+
+def test_post_call_returns_an_injection_decision_not_a_bare_event_response() -> None:
+    """The channel type-checks PostCall responses.
+
+    A bare ``EventResponse`` raises ``TypeError`` and aborts the task on any
+    target that emits post-call events. This optimizer never rewrites the
+    target's answer, so it must decline.
+    """
+    opt = _make()
+    response = asyncio.run(
+        opt.on_event(
+            ControllablePostCallEvent(
+                controllable=_ctrl(), request="q", answer="a"
+            )
+        )
+    )
+    assert isinstance(response, ControllableNoInjection)
