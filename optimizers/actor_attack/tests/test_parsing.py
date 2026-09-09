@@ -83,3 +83,23 @@ def test_json_wrapped_in_prose_is_still_read() -> None:
 
 def test_prose_without_any_json_object_is_still_rejected() -> None:
     assert parse_actor_network("I cannot help with that request.") == []
+
+
+def test_a_reply_containing_a_code_fence_is_not_mangled() -> None:
+    """``_strip_fence``'s pattern is unanchored.
+
+    A valid, unfenced reply whose string value contains a markdown fence must
+    not be cut down to the inner fence's contents -- here that would empty the
+    actor network and end the task before the first probe.
+    """
+    opening = "Show me:\n```python\nimport os\n```\nand explain."
+    raw = json.dumps(
+        {"actors": [{"actor_name": "A", "relation_to_goal": "r", "opening_question": opening}]}
+    )
+    actors = parse_actor_network(raw)
+    assert [a.opening_question for a in actors] == [opening]
+
+
+def test_a_fenced_reply_is_still_unwrapped() -> None:
+    raw = '```json\n{"next_question": "Q", "is_final_probe": false}\n```'
+    assert parse_follow_up(raw) == ("Q", False)
