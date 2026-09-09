@@ -180,8 +180,14 @@ class ActorAttackOptimizer(Optimizer):
             return self._handle_pre_call(event)
 
         if isinstance(event, ControllablePostCallEvent):
-            self._saw_post_call = True
-            await self._handle_post_call(event)
+            # Only a post-call for the surface this attack actually injected
+            # into counts. Setting the flag for any post-call defeats the
+            # RunEnd guard below: a target that emits post-call events for a
+            # different controllable would look like it was advancing the
+            # conversation while no probe was ever generated.
+            self._saw_post_call = await self._handle_post_call(event) or (
+                self._saw_post_call
+            )
             # The channel requires an injection decision here too. This attack
             # reads the answer to write the next probe but never rewrites it,
             # so it always declines the post-call surface.
@@ -223,7 +229,7 @@ class ActorAttackOptimizer(Optimizer):
             event=event, controllable=event.controllable, value=value
         )
 
-    async def _handle_post_call(self, event: ControllablePostCallEvent) -> None:
+    async def _handle_post_call(self, event: ControllablePostCallEvent) -> bool:
         """Score the answer and build the next probe from it.
 
         Upstream's loop body after ``model_callback``: classify refusal, score
@@ -232,9 +238,14 @@ class ActorAttackOptimizer(Optimizer):
         threshold or the turn budget is spent.
         """
         if self._done or self._actor is None or self._goal is None:
-            return
-        if self._channel is not None and event.controllable.name != self._channel:
-            return
+            return False
+        if self._channel is None or event.controllable.name != self._channel:
+            # Before the opening question lands there is no turn to score, and
+            # afterwards only the pinned channel's answers belong to this
+            # conversation. Scoring an unrelated surface would spend attacker
+            # LLM calls on someone else's answer and overwrite the pending
+            # probe -- including the opener, before it has ever been sent.
+            return False
 
         goal = self._goal.description
         answer = event.answer
@@ -257,7 +268,7 @@ class ActorAttackOptimizer(Optimizer):
 
         if score >= SCORE_STOP_THRESHOLD or self._turn >= self._max_turns:
             self._done = True
-            return
+            return True
 
         probe_raw = await self._ask(
             ActorAttackTemplate.next_probe_prompt(
@@ -272,12 +283,13 @@ class ActorAttackOptimizer(Optimizer):
         follow_up = parse_follow_up(probe_raw) if probe_raw is not None else None
         if follow_up is None:
             self._done = True
-            return
+            return True
         question, is_final = follow_up
         self._pending = question
         if is_final:
             # Upstream's is_final_probe: send it, then stop.
             self._max_turns = min(self._max_turns, self._turn + 1)
+        return True
 
     async def teardown(self) -> None:
         pass

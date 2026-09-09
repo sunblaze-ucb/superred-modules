@@ -275,3 +275,42 @@ def test_a_final_probe_does_not_shorten_the_next_task() -> None:
         )
     )
     assert opt._max_turns == 4
+
+
+def test_a_post_call_on_an_unrelated_surface_does_not_count_as_progress() -> None:
+    """``_saw_post_call`` gates the RunEnd stop, so it must mean *our* surface.
+
+    A target that emits post-call events for some other controllable would
+    otherwise look like it was advancing the conversation while no probe was
+    ever generated, and the run budget would spin.
+    """
+    llm = _llm(NETWORK, NON_REFUSAL, RATING, FOLLOW_UP)
+    opt = _make(llm)
+    _start(opt)
+    assert isinstance(_pre(opt), ControllableInjection)  # pins user_query
+
+    before = llm.complete.await_count
+    _post(opt, "OPENING_Q", "answer", n="some_other_surface")
+    assert llm.complete.await_count == before  # no judge calls on a foreign answer
+    assert opt._saw_post_call is False
+    assert _end(opt).done is True  # nothing can advance this attack; stop
+
+
+def test_a_post_call_before_the_opener_lands_cannot_clobber_it() -> None:
+    """Until the opening question is sent there is no turn to score.
+
+    ``_channel`` is still ``None`` then, so an unrelated post-call must be
+    ignored rather than overwriting ``_pending`` with a follow-up.
+    """
+    llm = _llm(NETWORK, NON_REFUSAL, RATING, FOLLOW_UP)
+    opt = _make(llm)
+    _start(opt)
+    opener = opt._pending
+    assert opener == "OPENING_Q"
+
+    _post(opt, "unrelated", "some answer", n="some_other_surface")
+    assert opt._pending == opener  # the opener survives
+
+    resp = _pre(opt)
+    assert isinstance(resp, ControllableInjection)
+    assert resp.value == opener
