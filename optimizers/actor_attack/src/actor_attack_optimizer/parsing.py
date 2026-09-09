@@ -98,14 +98,35 @@ def parse_actor_network(raw: str) -> list[Actor]:
 
 
 def parse_follow_up(raw: str) -> tuple[str, bool] | None:
-    """``FollowUpQuestion`` -> ``(next_question, is_final_probe)``."""
+    """``FollowUpQuestion`` -> ``(next_question, is_final_probe)``.
+
+    ``is_final_probe`` is read the way every other boolean in this package is:
+    a real bool as-is, a ``"true"``/``"false"`` string mapped, anything else
+    treated as not-final. Upstream constrains this field with pydantic; these
+    replies come from ``llm.complete`` with no such enforcement, so a
+    stringified boolean is a realistic shape -- and ``bool("false")`` is
+    ``True``, which would end the conversation a turn early.
+    """
     data = _load(raw)
     if not data:
         return None
     question = str(data.get("next_question") or "").strip()
     if not question:
         return None
-    return question, bool(data.get("is_final_probe", False))
+    return question, _as_bool(data.get("is_final_probe")) is True
+
+
+def _as_bool(value: object) -> bool | None:
+    """A real bool, or a ``"true"``/``"false"`` string; ``None`` otherwise."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered == "true":
+            return True
+        if lowered == "false":
+            return False
+    return None
 
 
 def parse_refusal(raw: str) -> bool | None:

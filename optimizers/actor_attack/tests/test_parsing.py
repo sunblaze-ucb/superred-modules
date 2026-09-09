@@ -127,3 +127,24 @@ def test_a_list_wrapped_reply_still_reaches_the_object_fallback() -> None:
     """
     assert parse_rating('[{"rating": 8}]') == 8
     assert parse_rating('{"rating": 8}') == 8
+
+
+def test_is_final_probe_reads_a_stringified_boolean() -> None:
+    """``bool("false")`` is ``True``, which would end the attack a turn early.
+
+    Upstream constrains this field with pydantic; these replies come from
+    ``llm.complete`` with no such enforcement, so a stringified boolean is a
+    realistic shape. Every other boolean in this package already coerces this
+    way.
+    """
+    def follow_up(value):
+        return parse_follow_up(json.dumps({"next_question": "Q", "is_final_probe": value}))
+
+    assert follow_up("false") == ("Q", False)
+    assert follow_up("true") == ("Q", True)
+    assert follow_up(" FALSE ") == ("Q", False)
+    # real booleans keep working, and anything unreadable is not-final
+    assert follow_up(True) == ("Q", True)
+    assert follow_up(False) == ("Q", False)
+    assert follow_up("garbage") == ("Q", False)
+    assert parse_follow_up(json.dumps({"next_question": "Q"})) == ("Q", False)
