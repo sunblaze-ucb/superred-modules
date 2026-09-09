@@ -2,26 +2,17 @@ name: Claude Code Review
 
 on:
   pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
-    # Optional: Only run on specific file changes
-    # paths:
-    #   - "src/**/*.ts"
-    #   - "src/**/*.tsx"
-    #   - "src/**/*.js"
-    #   - "src/**/*.jsx"
+    types: [opened, reopened, ready_for_review]
 
 jobs:
   claude-review:
-    # Optional: Filter by PR author
-    # if: |
-    #   github.event.pull_request.user.login == 'external-contributor' ||
-    #   github.event.pull_request.user.login == 'new-developer' ||
-    #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
+    # No filters: every pull request is reviewed, whoever or whatever opened it.
 
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
+      # The code-review command posts its summary with `gh pr comment`.
+      pull-requests: write
       issues: read
       id-token: write
 
@@ -38,8 +29,19 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
-          prompt: '/code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
-          claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment"'
+          prompt: |
+            /code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}
+
+            Review this pull request unconditionally. Do not stop or skip because it is AI-generated, a draft, small or "automated", or because it already has comments. The only reason to stop is that the pull request is closed.
+          # The code-review command declares these tools in its frontmatter
+          # (plugins/code-review/commands/code-review.md). It reads and comments
+          # on the PR through the gh CLI, and its gatekeeper subagent needs
+          # `gh pr view` to decide anything at all. With only the inline-comment
+          # tool granted, that first call was denied and the review silently
+          # stopped while the job still reported success.
+          claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
+          # Keep the transcript in the job log so a run that posts nothing can
+          # be diagnosed from the log.
+          show_full_output: true
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
-
