@@ -55,6 +55,19 @@ def main() -> int:
     local = json.loads(DEST.read_text("utf-8")) if DEST.exists() else {}
 
     keys = ("repeat_words", "prompt_templates", "num_repetitions", "repeat_words_extended")
+
+    # A rename or a moved assignment upstream makes _extract return fewer keys.
+    # Without this, every missing key reads as ordinary drift and the default
+    # (non---check) mode writes the truncated dict straight over data.json.
+    missing = [k for k in keys if k not in upstream]
+    if missing:
+        print(
+            f"extraction failed: {missing} not found in garak@{args.commit[:8]}; "
+            "upstream has probably moved. data.json is left untouched.",
+            file=sys.stderr,
+        )
+        return 1
+
     drift = 0
     for k in keys:
         same = upstream.get(k) == local.get(k)
