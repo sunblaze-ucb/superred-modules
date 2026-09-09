@@ -36,7 +36,10 @@ from superred.core.types.observable import ObservableValue
 from multilingual_optimizer._vendor.dt_multilingual.template import (
     MultilingualTemplate,
 )
-from multilingual_optimizer.compliance import build_compliance_check_prompt
+from multilingual_optimizer.compliance import (
+    build_compliance_check_prompt,
+    normalize_compliance_input,
+)
 from multilingual_optimizer.parsing import (
     parse_enhanced_attack,
     parse_is_translation,
@@ -130,7 +133,7 @@ class MultilingualOptimizer(Optimizer):
             enhanced = translated + _ADDITIONAL_INSTRUCTIONS
             dump = rebuild_dump(translation_logic, translated)
 
-            compliance_raw = await self._generate(build_compliance_check_prompt(str(dump)))
+            compliance_raw = await self._generate(build_compliance_check_prompt(normalize_compliance_input(dump)))
             non_compliant = (
                 parse_non_compliant(compliance_raw)
                 if compliance_raw is not None

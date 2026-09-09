@@ -44,3 +44,17 @@ def test_compliance_prompt_embeds_the_text_and_asks_for_non_compliant() -> None:
     assert "ANALYZE_ME" in p
     assert "non_compliant" in p
     assert "Hard Refusal" in p
+
+
+def test_json_wrapped_in_prose_is_still_read() -> None:
+    """Upstream constrains replies with pydantic; this module does not.
+
+    A chatty reply is therefore a realistic shape here, and rejecting it costs
+    a retry and eventually degrades the attack to the untranslated goal.
+    """
+    raw = 'Sure! Here is the JSON you asked for: {"translation_logic": "bn", "input": "TRANSLATED"} Hope that helps.'
+    assert parse_enhanced_attack(raw) == ("bn", "TRANSLATED")
+
+
+def test_prose_without_any_json_object_is_still_rejected() -> None:
+    assert parse_enhanced_attack("I cannot help with that request.") is None

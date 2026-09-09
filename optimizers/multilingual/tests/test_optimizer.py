@@ -7,6 +7,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from multilingual_optimizer.parsing import rebuild_dump
 from multilingual_optimizer.optimizer import (
     DEFAULT_MAX_RETRIES,
     MultilingualOptimizer,
@@ -208,3 +209,26 @@ def test_post_call_returns_an_injection_decision_not_a_bare_event_response() -> 
         )
     )
     assert isinstance(response, ControllableNoInjection)
+
+
+def test_compliance_judge_is_fed_json_not_a_python_repr() -> None:
+    """Upstream normalises the reply with ``json.dumps`` before judging it.
+
+    Passing ``str(dump)`` instead sends a Python repr -- single-quoted keys,
+    unescaped inner double quotes -- to a prompt that explicitly asks whether
+    the text is JSON-shaped.
+    """
+    translated = 'He said "hello" - it\'s fine'
+    llm = _llm(
+        json.dumps({"translation_logic": "bn", "input": translated}),
+        json.dumps({"non_compliant": False}),
+        json.dumps({"is_translation": True}),
+    )
+    opt = _make(llm)
+    asyncio.run(opt.initialize(
+        goal=Goal(description=GOAL), controllables=[_ctrl()], observables=[],
+        llm_client=llm,
+    ))
+    compliance_prompt = llm.complete.await_args_list[1].args[0][0]["content"]
+    assert json.dumps(rebuild_dump("bn", translated), ensure_ascii=False) in compliance_prompt
+    assert str(rebuild_dump("bn", translated)) not in compliance_prompt
