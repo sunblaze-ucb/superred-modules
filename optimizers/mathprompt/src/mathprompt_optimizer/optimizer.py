@@ -129,7 +129,9 @@ class MathPromptOptimizer(Optimizer):
             enhanced = encoded + _ADDITIONAL_INSTRUCTIONS
             dump = rebuild_dump(math_strategy, encoded)
 
-            compliance_raw = await self._generate(build_compliance_check_prompt(normalize_compliance_input(dump)))
+            compliance_raw = await self._generate(
+                build_compliance_check_prompt(normalize_compliance_input(dump))
+            )
             non_compliant = (
                 parse_non_compliant(compliance_raw)
                 if compliance_raw is not None
