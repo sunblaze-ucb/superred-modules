@@ -98,6 +98,7 @@ class ActorAttackOptimizer(Optimizer):
         self._done = False
         self._injected = False
         self._saw_post_call = False
+        self._scored_this_run = False
         self._channel: str | None = None
         self._surface_roles: dict[str, str] = {}
         self._preferred: frozenset[str] = frozenset()
@@ -150,6 +151,7 @@ class ActorAttackOptimizer(Optimizer):
         self._done = False
         self._injected = False
         self._saw_post_call = False
+        self._scored_this_run = False
         self._channel = None
         self._surface_roles = await classify_controllables(
             self.llm, controllables, ROLE_CATEGORIES, goal=goal.description
@@ -174,6 +176,7 @@ class ActorAttackOptimizer(Optimizer):
         if isinstance(event, RunStartEvent):
             self._injected = False
             self._saw_post_call = False
+            self._scored_this_run = False
             return EventResponse(event=event)
 
         if isinstance(event, ControllablePreCallEvent):
@@ -203,13 +206,22 @@ class ActorAttackOptimizer(Optimizer):
                 # the opening question instead of spinning out the run budget
                 # declining every surface.
                 self._done = True
-            elif not self._injected and self._pending is not None:
-                # A probe was ready and found nowhere to go. Either no surface
-                # is eligible at all, or the conversation's pinned channel did
-                # not fire this run -- and since the channel is pinned, no
-                # later run can deliver it either. Without this the guard above
-                # never fires (it needs _injected), _pending stays set, and the
-                # task spins out its whole run budget reporting success.
+            elif (
+                self._channel is not None
+                and not self._injected
+                and self._pending is not None
+            ):
+                # A probe was ready and the conversation's pinned channel did
+                # not fire this run. The channel is fixed once the first probe
+                # lands, so no later run can deliver this one either. Without
+                # this the guard above never fires (it needs _injected),
+                # _pending stays set, and the task spins out its whole run
+                # budget reporting success.
+                #
+                # The _channel test matters: before the first injection nothing
+                # is pinned yet, and a target may simply not have offered an
+                # eligible surface *this* run -- ending there would abandon the
+                # attack having sent nothing.
                 self._done = True
             return RunEndResponse(event=event, done=self._done)
 
@@ -247,6 +259,14 @@ class ActorAttackOptimizer(Optimizer):
         """
         if self._done or self._actor is None or self._goal is None:
             return False
+        if self._scored_this_run:
+            # One turn is sent per run, so only one answer belongs to it. A
+            # target that calls the pinned controllable repeatedly within a run
+            # would otherwise re-score every extra answer: two more attacker
+            # LLM calls each, best_message overwritten from an answer to a
+            # prompt this attack never sent, and _pending replaced by a probe
+            # built on it.
+            return False
         if self._channel is None or event.controllable.name != self._channel:
             # Before the opening question lands there is no turn to score, and
             # afterwards only the pinned channel's answers belong to this
@@ -255,6 +275,7 @@ class ActorAttackOptimizer(Optimizer):
             # probe -- including the opener, before it has ever been sent.
             return False
 
+        self._scored_this_run = True
         goal = self._goal.description
         answer = event.answer
         message = event.request

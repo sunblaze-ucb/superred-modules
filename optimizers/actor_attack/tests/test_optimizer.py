@@ -337,3 +337,58 @@ def test_a_probe_that_cannot_be_delivered_ends_the_attack() -> None:
     _start(opt)
     assert isinstance(_pre(opt, "some_other_surface"), ControllableNoInjection)
     assert _end(opt).done is True
+
+
+def test_a_first_run_with_no_eligible_surface_does_not_abandon_the_attack() -> None:
+    """Nothing is pinned until the first probe lands.
+
+    A run that offers only a non-preferred surface says nothing about later
+    runs, so ending there would abandon the attack having sent no probe at all.
+    """
+    llm = _llm(NETWORK, NON_REFUSAL, RATING, FOLLOW_UP)
+    opt = _make(llm)
+    import actor_attack_optimizer.optimizer as mod
+
+    mod.classify_controllables = AsyncMock(
+        return_value={"user_query": "user-prompt", "doc": "content-injection"}
+    )
+    asyncio.run(
+        opt.initialize(
+            goal=Goal(description=GOAL),
+            controllables=[_ctrl("user_query"), _ctrl("doc")],
+            observables=[],
+            llm_client=_llm(NETWORK),
+        )
+    )
+
+    # Run 1 offers only the content surface: declined, but nothing is pinned.
+    _start(opt)
+    assert isinstance(_pre(opt, "doc"), ControllableNoInjection)
+    assert _end(opt).done is False
+
+    # Run 2 offers the user prompt; the opener must still be available.
+    _start(opt)
+    resp = _pre(opt, "user_query")
+    assert isinstance(resp, ControllableInjection)
+    assert resp.value == "OPENING_Q"
+
+
+def test_only_one_post_call_per_run_is_scored() -> None:
+    """One probe is sent per run, so exactly one answer belongs to it.
+
+    A target that calls the pinned controllable repeatedly within a run would
+    otherwise re-score every extra answer, spending attacker LLM calls and
+    overwriting the best message from a prompt this attack never sent.
+    """
+    llm = _llm(NETWORK, NON_REFUSAL, RATING, FOLLOW_UP)
+    opt = _make(llm)
+    _start(opt)
+    assert isinstance(_pre(opt), ControllableInjection)
+
+    _post(opt, "OPENING_Q", "first answer")
+    after_first = llm.complete.await_count
+    pending_after_first = opt._pending
+
+    _post(opt, "SOMETHING_ELSE", "second answer")
+    assert llm.complete.await_count == after_first  # no extra scoring calls
+    assert opt._pending == pending_after_first  # probe not rebuilt
