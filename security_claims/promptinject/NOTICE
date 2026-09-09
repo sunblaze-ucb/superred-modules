@@ -1,0 +1,14 @@
+superred-claim-promptinject
+Copyright 2026 the superred module authors
+
+This product redistributes third-party material:
+
+1. NVIDIA garak (https://github.com/NVIDIA/garak), Apache-2.0. The prompt
+   construction and the rogue-string detector in src/promptinject_claim/
+   follow garak/probes/promptinject.py and garak/detectors/promptinject.py.
+   Pinned garak commit: 2233d51bedf6bfb634872ef9efbcd94eae38cc1a
+
+2. PromptInject (https://github.com/agencyenterprise/PromptInject), MIT,
+   Copyright (c) 2020 Agency Enterprise, LLC. The files under
+   src/promptinject_claim/_vendor/promptinject/ are byte-identical to garak's
+   vendored copy in garak/resources/promptinject/.

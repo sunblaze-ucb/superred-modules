@@ -1,0 +1,15 @@
+superred-optimizer-best-of-n
+Copyright 2026 the superred module authors
+
+Portions of this module are derived from Best-of-N Jailbreaking
+(https://github.com/jplhughes/bon-jailbreaking), MIT licensed.
+
+The augmentation algorithms in src/best_of_n_optimizer/augmentations.py are
+ported from bon/attacks/run_text_bon.py (apply_word_scrambling,
+apply_random_capitalization, apply_ascii_noising and the
+process_text_augmentation ordering); the random token prefix/suffix follows
+bon/utils/text_utils.py.
+
+Paper: Hughes et al., "Best-of-N Jailbreaking" (arXiv:2412.03556).
+
+Upstream commit: c11821039caa3afab3e17123c0400c7a236b0cd6

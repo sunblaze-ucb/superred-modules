@@ -1,0 +1,17 @@
+superred-claim-snowball
+Copyright 2026 the superred module authors
+
+This product includes software developed at NVIDIA Corporation.
+
+Portions of this module are derived from NVIDIA garak
+(https://github.com/NVIDIA/garak), licensed under the Apache License,
+Version 2.0. The three question sets under src/snowball_claim/data/ are
+byte-identical copies of garak/data/{graph_connectivity,primality_testing,
+senator_search}.json, and the detector regexes in
+src/snowball_claim/judge.py are copied from garak/detectors/snowball.py.
+
+Those question sets originate from Zhang et al., "How Language Model
+Hallucinations Can Snowball" (2023), upstream
+https://github.com/Nanami18/Snowballed_Hallucination (MIT).
+
+Upstream commit (garak): 2233d51bedf6bfb634872ef9efbcd94eae38cc1a
