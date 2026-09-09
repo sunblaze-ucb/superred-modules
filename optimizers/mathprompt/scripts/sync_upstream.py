@@ -29,12 +29,26 @@ def _get(path: str, commit: str) -> str:
         return r.read().decode("utf-8")
 
 
-def _extract_fn(src: str, name: str):
+def _fn_source(src: str, name: str) -> str:
+    """Normalised source of the *name* function in *src*.
+
+    Deliberately does not execute anything. This script fetches *src* over the
+    network from a ``--commit``-controlled URL, so running any of it would mean
+    executing whatever that ref happens to contain. ``ast.unparse`` gives a
+    normalised form that ignores comments and formatting but keeps every
+    literal and expression, which is what the reproduction has to match.
+    """
     for node in ast.parse(src).body:
         if isinstance(node, ast.FunctionDef) and node.name == name:
-            g: dict = {}
-            exec(compile(ast.Module(body=[node], type_ignores=[]), "<up>", "exec"), g)
-            return g[name]
+            body = [
+                st
+                for st in node.body
+                if not (
+                    isinstance(st, ast.Expr) and isinstance(st.value, ast.Constant)
+                    and isinstance(st.value.value, str)
+                )
+            ]
+            return "\n".join(ast.unparse(st) for st in body)
     raise SystemExit(f"could not find {name} upstream")
 
 
@@ -59,11 +73,13 @@ def main() -> int:
         print("unchanged template.py")
 
     # 2. compliance prompt reproduced faithfully
-    sys.path.insert(0, str(ROOT / "src"))
-    from mathprompt_optimizer.compliance import build_compliance_check_prompt as mine
-
-    up_fn = _extract_fn(_get(COMPLIANCE_PATH, args.commit), "build_compliance_check_prompt")
-    prompt_same = mine("PROBE") == up_fn("PROBE")
+    up_fn = _fn_source(
+        _get(COMPLIANCE_PATH, args.commit), "build_compliance_check_prompt"
+    )
+    local_src = (ROOT / "src" / "mathprompt_optimizer" / "compliance.py").read_text(
+        encoding="utf-8"
+    )
+    prompt_same = _fn_source(local_src, "build_compliance_check_prompt") == up_fn
     print(f"{'ok  ' if prompt_same else 'DIFF'} compliance prompt")
     drift += 0 if prompt_same else 1
 
