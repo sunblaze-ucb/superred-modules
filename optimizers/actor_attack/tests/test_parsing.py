@@ -103,3 +103,27 @@ def test_a_reply_containing_a_code_fence_is_not_mangled() -> None:
 def test_a_fenced_reply_is_still_unwrapped() -> None:
     raw = '```json\n{"next_question": "Q", "is_final_probe": false}\n```'
     assert parse_follow_up(raw) == ("Q", False)
+
+
+def test_json_null_fields_are_not_stringified() -> None:
+    """``str(x.get(k, ""))`` turns a JSON ``null`` into the literal ``"None"``.
+
+    That is truthy, so it passes the emptiness guard and becomes the persona --
+    and the opening question actually sent to the target.
+    """
+    raw = json.dumps(
+        {"actors": [{"actor_name": None, "relation_to_goal": "r", "opening_question": None}]}
+    )
+    assert parse_actor_network(raw) == []
+    assert parse_follow_up(json.dumps({"next_question": None, "is_final_probe": False})) is None
+
+
+def test_a_list_wrapped_reply_still_reaches_the_object_fallback() -> None:
+    """A candidate that parses to a non-object must not end the search.
+
+    Returning there skips the remaining candidates, including the embedded
+    object fallback that recovers this exact shape. For a rating, the loss is
+    silent: ``None`` is scored as a refusal instead of the real value.
+    """
+    assert parse_rating('[{"rating": 8}]') == 8
+    assert parse_rating('{"rating": 8}') == 8
