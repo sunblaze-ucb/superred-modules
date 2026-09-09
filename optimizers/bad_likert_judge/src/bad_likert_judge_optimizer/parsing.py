@@ -32,14 +32,19 @@ def _load(raw: str) -> dict | None:
     so a *valid* unfenced reply whose string values contain a markdown fence --
     realistic for an attack that elicits code -- would otherwise be cut down to
     the inner fence's contents. Every candidate is derived from *raw*, so
-    stripping can never destroy the only parseable form.
+    stripping can never destroy the only parseable form, and a candidate that
+    parses to something other than an object does not end the search.
     """
     for candidate in (raw.strip(), _strip_fence(raw)):
         try:
             parsed = json.loads(candidate)
         except (json.JSONDecodeError, ValueError):
             continue
-        return parsed if isinstance(parsed, dict) else None
+        if isinstance(parsed, dict):
+            return parsed
+        # Parsed, but not an object -- a list-wrapped reply, say. Keep going:
+        # returning here would skip the remaining candidates, including the
+        # embedded-object fallback that can still recover it.
     # Last resort: the first object embedded in the untouched reply.
     match = re.search(r"\{.*\}", raw, flags=re.S)
     if match is None:

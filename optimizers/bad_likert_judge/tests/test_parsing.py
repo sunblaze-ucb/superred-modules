@@ -66,3 +66,13 @@ def test_a_reply_containing_a_code_fence_is_not_mangled() -> None:
 def test_a_fenced_reply_is_still_unwrapped() -> None:
     raw = '```json\n{"new_attack_prompt": "ATTACK"}\n```'
     assert parse_new_attack_prompt(raw) == "ATTACK"
+
+
+def test_a_list_wrapped_reply_still_reaches_the_object_fallback() -> None:
+    """A candidate that parses to a non-object must not end the search.
+
+    Returning there skips the remaining candidates, including the embedded
+    object fallback that recovers this exact shape.
+    """
+    assert parse_new_attack_prompt('[{"new_attack_prompt": "ATTACK"}]') is not None
+    assert parse_new_attack_prompt('{"new_attack_prompt": "ATTACK"}') is not None
