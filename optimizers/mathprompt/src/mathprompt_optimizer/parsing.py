@@ -13,12 +13,28 @@ import re
 
 
 def _load(raw: str) -> dict | None:
+    """The first JSON object in *raw*, tolerant of a fence or surrounding prose.
+
+    Upstream constrains these replies with pydantic (``generate(prompt, Model,
+    ...)``), so a chatty answer never reaches its parser. This module calls
+    ``llm.complete`` with no structured-output enforcement, which makes
+    "Here is the JSON: {...}" a realistic shape -- and a reply rejected here
+    costs a retry and, once retries run out, silently degrades the attack to
+    the un-encoded goal. The bare-object fallback matches the one the shared
+    ``surface_llm.parse_json_object`` already uses.
+    """
     fence = re.search(r"```(?:json)?\s*(.*?)```", raw, re.S)
     text = fence.group(1).strip() if fence else raw.strip()
     try:
         parsed = json.loads(text)
     except (json.JSONDecodeError, ValueError):
-        return None
+        match = re.search(r"\{.*\}", text, flags=re.S)
+        if match is None:
+            return None
+        try:
+            parsed = json.loads(match.group(0))
+        except (json.JSONDecodeError, ValueError):
+            return None
     return parsed if isinstance(parsed, dict) else None
 
 

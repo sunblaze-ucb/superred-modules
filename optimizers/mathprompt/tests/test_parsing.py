@@ -39,3 +39,17 @@ def test_rebuild_dump_matches_upstream_shape() -> None:
 def test_compliance_prompt_is_shared_and_intact() -> None:
     p = build_compliance_check_prompt("X")
     assert "non_compliant" in p and "Hard Refusal" in p
+
+
+def test_json_wrapped_in_prose_is_still_read() -> None:
+    """Upstream constrains replies with pydantic; this module does not.
+
+    A chatty reply is therefore a realistic shape here, and rejecting it costs
+    a retry and eventually degrades the attack to the un-encoded goal.
+    """
+    raw = 'Sure! Here it is: {"math_strategy": "set theory", "input": "ENCODED"} Hope that helps.'
+    assert parse_enhanced_attack(raw) == ("set theory", "ENCODED")
+
+
+def test_prose_without_any_json_object_is_still_rejected() -> None:
+    assert parse_enhanced_attack("I cannot help with that request.") is None

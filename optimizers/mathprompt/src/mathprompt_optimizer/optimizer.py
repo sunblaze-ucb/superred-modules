@@ -37,7 +37,10 @@ from superred.core.types.observable import ObservableValue
 from mathprompt_optimizer._vendor.dt_mathprompt.template import (
     MathProblemTemplate,
 )
-from mathprompt_optimizer.compliance import build_compliance_check_prompt
+from mathprompt_optimizer.compliance import (
+    build_compliance_check_prompt,
+    normalize_compliance_input,
+)
 from mathprompt_optimizer.parsing import (
     parse_enhanced_attack,
     parse_is_math_problem,
@@ -126,7 +129,7 @@ class MathPromptOptimizer(Optimizer):
             enhanced = encoded + _ADDITIONAL_INSTRUCTIONS
             dump = rebuild_dump(math_strategy, encoded)
 
-            compliance_raw = await self._generate(build_compliance_check_prompt(str(dump)))
+            compliance_raw = await self._generate(build_compliance_check_prompt(normalize_compliance_input(dump)))
             non_compliant = (
                 parse_non_compliant(compliance_raw)
                 if compliance_raw is not None
