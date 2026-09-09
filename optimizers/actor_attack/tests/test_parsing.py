@@ -65,3 +65,21 @@ def test_garbage_never_raises() -> None:
         assert parse_follow_up(bad) is None
         assert parse_refusal(bad) is None
         assert parse_rating(bad) is None
+
+
+def test_json_wrapped_in_prose_is_still_read() -> None:
+    """A chatty actor-network reply must not end the attack before it starts.
+
+    ``parse_actor_network`` returning ``[]`` sets ``_done``, so a rejected
+    reply here costs the whole task, not just a retry.
+    """
+    raw = (
+        'Sure, here is the network: {"actors": [{"actor_name": "A", '
+        '"relation_to_goal": "r", "opening_question": "OPEN"}]} Let me know!'
+    )
+    actors = parse_actor_network(raw)
+    assert [a.opening_question for a in actors] == ["OPEN"]
+
+
+def test_prose_without_any_json_object_is_still_rejected() -> None:
+    assert parse_actor_network("I cannot help with that request.") == []
