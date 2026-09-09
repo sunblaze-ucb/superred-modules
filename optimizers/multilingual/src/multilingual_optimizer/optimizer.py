@@ -133,7 +133,9 @@ class MultilingualOptimizer(Optimizer):
             enhanced = translated + _ADDITIONAL_INSTRUCTIONS
             dump = rebuild_dump(translation_logic, translated)
 
-            compliance_raw = await self._generate(build_compliance_check_prompt(normalize_compliance_input(dump)))
+            compliance_raw = await self._generate(
+                build_compliance_check_prompt(normalize_compliance_input(dump))
+            )
             non_compliant = (
                 parse_non_compliant(compliance_raw)
                 if compliance_raw is not None
