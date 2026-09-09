@@ -12,29 +12,39 @@ import json
 import re
 
 
+def _strip_fence(text: str) -> str:
+    fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.S)
+    return fence.group(1).strip() if fence else text.strip()
+
+
 def _load(raw: str) -> dict | None:
-    """The first JSON object in *raw*, tolerant of a fence or surrounding prose.
+    """The first JSON object in *raw*, whether bare, fenced or wrapped in prose.
 
     Upstream constrains these replies with pydantic (``generate(prompt, Model,
     ...)``), so a chatty answer never reaches its parser. This module calls
-    ``llm.complete`` with no structured-output enforcement, which makes
-    "Here is the JSON: {...}" a realistic shape -- and a reply rejected here
-    costs a retry and, once retries run out, silently degrades the attack to
-    the un-encoded goal. The bare-object fallback matches the one the shared
-    ``surface_llm.parse_json_object`` already uses.
+    ``llm.complete`` with no structured-output enforcement, so a reply rejected
+    here degrades the attack to the un-encoded goal.
+
+    The whole reply is tried first: ``_strip_fence``'s pattern is unanchored,
+    so a *valid* unfenced reply whose string values contain a markdown fence --
+    realistic for an attack that elicits code -- would otherwise be cut down to
+    the inner fence's contents. Every candidate is derived from *raw*, so
+    stripping can never destroy the only parseable form.
     """
-    fence = re.search(r"```(?:json)?\s*(.*?)```", raw, re.S)
-    text = fence.group(1).strip() if fence else raw.strip()
-    try:
-        parsed = json.loads(text)
-    except (json.JSONDecodeError, ValueError):
-        match = re.search(r"\{.*\}", text, flags=re.S)
-        if match is None:
-            return None
+    for candidate in (raw.strip(), _strip_fence(raw)):
         try:
-            parsed = json.loads(match.group(0))
+            parsed = json.loads(candidate)
         except (json.JSONDecodeError, ValueError):
-            return None
+            continue
+        return parsed if isinstance(parsed, dict) else None
+    # Last resort: the first object embedded in the untouched reply.
+    match = re.search(r"\{.*\}", raw, flags=re.S)
+    if match is None:
+        return None
+    try:
+        parsed = json.loads(match.group(0))
+    except (json.JSONDecodeError, ValueError):
+        return None
     return parsed if isinstance(parsed, dict) else None
 
 
