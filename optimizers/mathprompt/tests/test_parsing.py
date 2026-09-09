@@ -53,3 +53,15 @@ def test_json_wrapped_in_prose_is_still_read() -> None:
 
 def test_prose_without_any_json_object_is_still_rejected() -> None:
     assert parse_enhanced_attack("I cannot help with that request.") is None
+
+
+def test_a_list_wrapped_reply_still_reaches_the_object_fallback() -> None:
+    """A candidate that parses to a non-object must not end the search.
+
+    Returning there skips the remaining candidates, including the embedded
+    object fallback that recovers this exact shape. Here the loss costs a
+    retry and, once retries run out, degrades the attack to the un-encoded
+    goal.
+    """
+    assert parse_is_math_problem('[{"is_math_problem": true}]') is True
+    assert parse_enhanced_attack('[{"math_strategy": "sets", "input": "E"}]') == ("sets", "E")
