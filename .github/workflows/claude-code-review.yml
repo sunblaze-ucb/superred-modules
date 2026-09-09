@@ -3,10 +3,17 @@ name: Claude Code Review
 on:
   pull_request:
     types: [opened, reopened, ready_for_review]
+  # Comment "@claude review" on a pull request to run this exact review again.
+  # (The @claude workflow in claude.yml ignores that phrase so only this runs.)
+  issue_comment:
+    types: [created]
 
 jobs:
   claude-review:
     # No filters: every pull request is reviewed, whoever or whatever opened it.
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event.issue.pull_request && contains(github.event.comment.body, '@claude review'))
 
     runs-on: ubuntu-latest
     permissions:
@@ -21,6 +28,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+          # A comment event checks out the default branch by default; check
+          # out the pull request head instead so the review sees the PR's code.
+          ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || '' }}
 
       - name: Run Claude Code Review
         id: claude-review
@@ -30,7 +40,7 @@ jobs:
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
           prompt: |
-            /code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}
+            /code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number || github.event.issue.number }}
 
             Review this pull request unconditionally. Do not stop or skip because it is AI-generated, a draft, small or "automated", or because it already has comments. The only reason to stop is that the pull request is closed.
 
