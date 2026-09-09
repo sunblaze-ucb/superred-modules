@@ -37,3 +37,13 @@ def test_unparseable_returns_none_rather_than_raising() -> None:
 def test_blank_values_are_rejected() -> None:
     assert parse_score_3_example('{"score_3_example":"   "}') is None
     assert parse_new_attack_prompt('{"new_attack_prompt":""}') is None
+
+
+def test_json_wrapped_in_prose_is_still_read() -> None:
+    """A chatty reply must not cost a turn and a backtrack."""
+    raw = 'Certainly! {"new_attack_prompt": "ATTACK"} — let me know if you need more.'
+    assert parse_new_attack_prompt(raw) == "ATTACK"
+
+
+def test_prose_without_any_json_object_is_still_rejected() -> None:
+    assert parse_new_attack_prompt("I cannot help with that request.") is None
