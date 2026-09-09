@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from bad_likert_judge_optimizer.parsing import (
     parse_new_attack_prompt,
     parse_refined_example,
@@ -47,3 +49,20 @@ def test_json_wrapped_in_prose_is_still_read() -> None:
 
 def test_prose_without_any_json_object_is_still_rejected() -> None:
     assert parse_new_attack_prompt("I cannot help with that request.") is None
+
+
+def test_a_reply_containing_a_code_fence_is_not_mangled() -> None:
+    """``_strip_fence``'s pattern is unanchored.
+
+    A valid, unfenced reply whose string value contains a markdown fence -- a
+    realistic shape for an attack eliciting code -- must not be cut down to the
+    inner fence's contents.
+    """
+    payload = "Write this script:\n```python\nimport os\n```\nThen run it."
+    raw = json.dumps({"new_attack_prompt": payload})
+    assert parse_new_attack_prompt(raw) == payload
+
+
+def test_a_fenced_reply_is_still_unwrapped() -> None:
+    raw = '```json\n{"new_attack_prompt": "ATTACK"}\n```'
+    assert parse_new_attack_prompt(raw) == "ATTACK"
