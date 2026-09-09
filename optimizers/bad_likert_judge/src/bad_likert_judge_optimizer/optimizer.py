@@ -251,6 +251,17 @@ class BadLikertJudgeOptimizer(Optimizer):
             )
 
         if isinstance(event, RunEndEvent):
+            if self._pending is not None:
+                # A turn was prepared but never delivered: the pinned channel
+                # did not fire this run. ``_pending`` is only cleared by an
+                # injection, so without spending a backtrack here the next
+                # RunStart skips preparation, nothing advances ``_turns_sent``
+                # or ``_backtracks``, and the task spins out its whole run
+                # budget reporting success. An undeliverable turn is a failed
+                # attempt, so it costs a backtrack like any other.
+                self._backtracks += 1
+                if self._backtracks >= self._max_backtracks:
+                    self._exhausted = True
             done = (
                 self._exhausted
                 or self._turns_sent >= self._num_turns

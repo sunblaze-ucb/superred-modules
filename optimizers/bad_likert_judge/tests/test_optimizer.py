@@ -267,3 +267,30 @@ def test_post_call_returns_an_injection_decision_not_a_bare_event_response() -> 
         )
     )
     assert isinstance(response, ControllableNoInjection)
+
+
+def test_an_undeliverable_prepared_turn_spends_a_backtrack() -> None:
+    """A prepared turn that never lands must not stall the task.
+
+    ``_pending`` is cleared only by an injection, and ``RunStart`` skips
+    preparation while it is set, so without charging a backtrack at RunEnd
+    neither ``_turns_sent`` nor ``_backtracks`` advances and ``done`` never
+    becomes true -- the task spins out its whole run budget reporting success.
+    """
+    llm = _llm(*([EXAMPLES, REFINED, ATTACK, NO_REFUSAL] * 6))
+    opt = _make(llm, max_backtracks=2)
+
+    # Turn 1 lands on user_query and pins the channel.
+    _start(opt)
+    assert isinstance(_pre(opt, "user_query"), ControllableInjection)
+    assert _end(opt).done is False
+
+    # From here the pinned channel never fires again; only another surface does.
+    # Each undeliverable run costs one backtrack, so the second exhausts them.
+    _start(opt)
+    assert isinstance(_pre(opt, "other_surface"), ControllableNoInjection)
+    assert _end(opt).done is False
+
+    _start(opt)
+    assert isinstance(_pre(opt, "other_surface"), ControllableNoInjection)
+    assert _end(opt).done is True
