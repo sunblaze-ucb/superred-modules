@@ -12,16 +12,15 @@ on:
 
 jobs:
   claude-review:
-    # Optional: Filter by PR author
-    # if: |
-    #   github.event.pull_request.user.login == 'external-contributor' ||
-    #   github.event.pull_request.user.login == 'new-developer' ||
-    #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
+    # No author filter: every PR is reviewed regardless of who or what wrote it.
 
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
+      # write, not read: step 7 of the code-review command posts its summary with
+      # `gh pr comment`, which needs write on pull requests. This matches
+      # anthropics/claude-code-action's own examples/pr-review-comprehensive.yml.
+      pull-requests: write
       issues: read
       id-token: write
 
@@ -38,12 +37,47 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
-          prompt: '/code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
-          claude_args: '--allowedTools "mcp__github_inline_comment__create_inline_comment"'
-          # Temporary: the review job has never posted a comment. Runs end in ~30s
-          # with permission_denials_count: 2 and "No buffered inline comments", and
-          # the cause is not visible because the SDK output is hidden by default.
+          prompt: |
+            /code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}
+
+            Pull requests in this repository are authored with AI assistance and say
+            so in their commit trailers. That is not grounds to skip the review: an
+            AI-authored pull request must be reviewed exactly like any other, and the
+            code-review command's own instructions say to still review Claude
+            generated PRs. Skip only if the pull request is closed, is a draft, or you
+            have already left a review comment on it.
+          # Grants the tool set the code-review command declares in its own frontmatter
+          # (plugins/code-review/commands/code-review.md in anthropics/claude-code):
+          #
+          #   allowed-tools: Bash(gh issue view:*), Bash(gh search:*),
+          #     Bash(gh issue list:*), Bash(gh pr comment:*), Bash(gh pr diff:*),
+          #     Bash(gh pr view:*), Bash(gh pr list:*),
+          #     mcp__github_inline_comment__create_inline_comment
+          #
+          # Only the MCP tool used to be granted here, so every `gh` call the command
+          # makes was denied. The command reads the PR through the gh CLI ("Use gh CLI
+          # to interact with GitHub ... Do not use web fetch"), so this hit both ends:
+          # step 1's gatekeeper could not check PR state and frequently stopped the
+          # review outright, and step 7 could not post the summary comment.
+          #
+          # Evidence, from two runs of this workflow on 2026-09-08:
+          #   PR #152, run 34257385839 -- 4 turns, 17s, permission_denials_count: 1,
+          #                               no review produced.
+          #   PR #155, run 34257390230 -- 29 turns, 651s, permission_denials_count: 27,
+          #                               review produced, but inline comments only
+          #                               (MCP tool granted) with no summary comment
+          #                               (`gh pr comment` denied).
+          # Across 2026-09-07/08, 7 of 11 open PRs got no review from runs that all
+          # reported success.
+          #
+          # The MCP tool must stay listed: in agent mode the action starts the
+          # github_inline_comment MCP server only when it appears here
+          # (src/mcp/install-mcp-server.ts, hasInlineCommentTools).
+          claude_args: >-
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"
+          # Keeps the SDK transcript in the job log. Without it a review that silently
+          # does nothing is indistinguishable from one that found no issues, which is
+          # what made this take several rounds to diagnose.
           show_full_output: true
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
-
