@@ -61,7 +61,7 @@ attack, non-refusal check), so a full five-turn run is ~20 calls before the
 target is touched. Pass `enable_refinement=False` and a lower `num_turns` to
 trade attack strength for budget.
 
-`BadLikertJudgeOptimizer.SUPPORTED_CATEGORIES` lists every category.
+`from bad_likert_judge_optimizer import SUPPORTED_CATEGORIES` lists every category.
 
 ## Credits / upstream
 
