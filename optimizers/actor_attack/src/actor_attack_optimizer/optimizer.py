@@ -203,6 +203,14 @@ class ActorAttackOptimizer(Optimizer):
                 # the opening question instead of spinning out the run budget
                 # declining every surface.
                 self._done = True
+            elif not self._injected and self._pending is not None:
+                # A probe was ready and found nowhere to go. Either no surface
+                # is eligible at all, or the conversation's pinned channel did
+                # not fire this run -- and since the channel is pinned, no
+                # later run can deliver it either. Without this the guard above
+                # never fires (it needs _injected), _pending stays set, and the
+                # task spins out its whole run budget reporting success.
+                self._done = True
             return RunEndResponse(event=event, done=self._done)
 
         return EventResponse(event=event)

@@ -314,3 +314,26 @@ def test_a_post_call_before_the_opener_lands_cannot_clobber_it() -> None:
     resp = _pre(opt)
     assert isinstance(resp, ControllableInjection)
     assert resp.value == opener
+
+
+def test_a_probe_that_cannot_be_delivered_ends_the_attack() -> None:
+    """The conversation pins one channel; if it stops firing, nothing advances.
+
+    The ``_saw_post_call`` guard needs ``_injected``, so a run that declines
+    every surface leaves it untouched -- ``_pending`` stays set, nothing
+    advances, and the task spins out its run budget reporting success.
+    """
+    llm = _llm(NETWORK, NON_REFUSAL, RATING, FOLLOW_UP)
+    opt = _make(llm)
+
+    # Turn 1 lands and pins user_query; the answer produces the next probe.
+    _start(opt)
+    assert isinstance(_pre(opt), ControllableInjection)
+    _post(opt, "OPENING_Q", "answer")
+    assert _end(opt).done is False
+    assert opt._pending == "FOLLOW_Q"
+
+    # The pinned channel never fires again; only another surface does.
+    _start(opt)
+    assert isinstance(_pre(opt, "some_other_surface"), ControllableNoInjection)
+    assert _end(opt).done is True
