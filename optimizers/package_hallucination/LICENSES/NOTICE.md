@@ -6,7 +6,7 @@ Upstream: https://github.com/NVIDIA/garak (pinned `2233d51bedf6bfb634872ef9efbcd
 
 | Into (this module) | garak source |
 | --- | --- |
-| `data.json` (word lists, templates, repetition counts) | `garak/probes/divergence.py` — `Repeat`, `RepeatExtended` |
-| prompt construction in `optimizer.py` | `divergence.Repeat.__init__` |
+| `data.json` (`stub_prompts`, code tasks, language names) | `garak/probes/packagehallucination.py` — `Python` … `Dart` |
+| prompt construction in `optimizer.py` | `PackageHallucinationProbe.__init__` |
 
 Verify with `python scripts/sync_upstream.py --check`.
