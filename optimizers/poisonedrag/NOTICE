@@ -23,6 +23,22 @@ following files are transcribed verbatim into
 License: MIT, Copyright (c) 2024 Runpeng Geng. Full text in
 `LICENSES/PoisonedRAG-MIT.txt`.
 
+### Underlying benchmark data (one layer up from PoisonedRAG)
+
+Each record in these files pairs a PoisonedRAG-authored adversarial passage with
+a benchmark question and gold answer carried over verbatim from the source QA
+datasets (native ids are preserved, e.g. HotpotQA `5adbf0a2...`, MS MARCO
+`1163399`). Those questions/answers are not PoisonedRAG's work; they originate
+in, and should be cited to:
+
+- Natural Questions -- Kwiatkowski et al., TACL 2019 (`nq.json`).
+- HotpotQA -- Yang et al., EMNLP 2018, CC BY-SA 4.0 (`hotpotqa.json`).
+- MS MARCO -- Nguyen et al., 2016 (`msmarco.json`); note MS MARCO's own
+  non-commercial terms govern that data.
+
+PoisonedRAG assembled these subsets via the BEIR benchmark (Thakur et al.,
+NeurIPS 2021). Only the adversarial passages are PoisonedRAG's own contribution.
+
 ## Method / citation
 
 The PoisonedRAG attack is reimplemented from: "PoisonedRAG: Knowledge

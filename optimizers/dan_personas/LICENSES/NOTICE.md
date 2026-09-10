@@ -28,7 +28,25 @@ Refresh the vendored files with `python scripts/sync_upstream.py`.
 | `src/dan_personas_optimizer/data/upstream/Dan_8_0.json` | `garak/data/dan/Dan_8_0.json` |
 | `src/dan_personas_optimizer/data/upstream/Dan_9_0.json` | `garak/data/dan/Dan_9_0.json` |
 | `src/dan_personas_optimizer/data/upstream/STAN.json` | `garak/data/dan/STAN.json` |
+| `src/dan_personas_optimizer/data/upstream/inthewild_jailbreak_llms.json` | `garak/data/inthewild_jailbreak_llms.json` (see dataset origin below) |
 | `render()` in `src/dan_personas_optimizer/personas.py` | `garak/probes/dan.py` — `DANProbeMeta.probe()` |
 
 Not vendored: `ChatGPT_Image_Markdown` (multimodal), `Ablation_Dan_11_0`
-(AutoDAN data), `DanInTheWild` (separate corpus). See `ASSUMPTIONS.md`.
+(AutoDAN data). See `ASSUMPTIONS.md`. (`DanInTheWild` **is** vendored, as
+`inthewild_jailbreak_llms.json` above — see the dataset origin below.)
+
+## Dataset origin (one layer up from garak): the in-the-wild jailbreak corpus
+
+`inthewild_jailbreak_llms.json` is not garak's own data. It is the in-the-wild
+jailbreak dataset from Shen et al., "'Do Anything Now': Characterizing and
+Evaluating In-The-Wild Jailbreak Prompts on Large Language Models"
+(arXiv:2308.03825), distributed as **verazuo/jailbreak_llms**
+(https://github.com/verazuo/jailbreak_llms) and
+**TrustAIRLab/in-the-wild-jailbreak-prompts**, Copyright (c) 2023 Vera, under the
+**MIT License** (`jailbreak_llms-MIT.txt`). garak vendors it and credits the paper
+via its `dan.py` `doc_uri`; this module vendors garak's byte-identical copy and
+loads it as `corpus="in_the_wild"`. Provenance chain: verazuo/jailbreak_llms
+(MIT) -> garak -> here.
+
+The 13 DAN persona preambles, by contrast, are community-authored folklore that
+garak curates; no distinct licensed upstream exists for them.

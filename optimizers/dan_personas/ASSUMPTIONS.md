@@ -75,7 +75,6 @@ stricter bar than upstream's.
 | --- | --- |
 | `ChatGPT_Image_Markdown` | Multimodal — it exfiltrates via markdown image rendering, which needs image-carrying Events. |
 | `Ablation_Dan_11_0` | Reads `autodan/autodan_prompts.json`, not the DAN corpus; it is an AutoDAN ablation. |
-| `DanInTheWild` / `DanInTheWildFull` | Reads `inthewild_jailbreak_llms.json`, a separate in-the-wild corpus, and is its own port. |
 
 ### Injection-surface selection (superred adaptation)
 
@@ -107,7 +106,7 @@ This module ports every prompt-corpus probe:
 | --- | --- | --- |
 | 14 per-file DAN probes (`Dan_*`, `DUDE`, `STAN`, `AntiDAN`, `DAN_Jailbreak`, both Developer Mode variants, `ChatGPT_Image_Markdown`) | `corpus="personas"` | all 14 JSON files vendored byte-identically |
 | `Ablation_Dan_11_0` | `corpus="ablation"` | 127 prompts, one per non-empty 7-bit mask |
-| `DanInTheWild` / `DanInTheWildFull` | `corpus="in_the_wild"` | 666-prompt corpus; `limit` reproduces the capped variant |
+| `DanInTheWild` / `DanInTheWildFull` | `corpus="in_the_wild"` | 666-prompt corpus; `limit` reproduces the capped variant. Corpus = Shen et al. (arXiv:2308.03825), verazuo/jailbreak_llms (MIT); see `NOTICE`. |
 | `AutoDAN`, `AutoDANCached` | **no** | not a persona corpus but a genetic search (`garak.resources.autodan.autodan_generate`) with its own `goal_str`/`target` params; it belongs in its own module, and superred already ships `optimizers/autodan_turbo` |
 
 **Correction:** `ChatGPT_Image_Markdown` was previously excluded here as "the
