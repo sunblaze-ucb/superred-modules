@@ -6,7 +6,7 @@ Upstream: https://github.com/NVIDIA/garak (pinned `2233d51bedf6bfb634872ef9efbcd
 
 | Into (this module) | garak source |
 | --- | --- |
-| `data.json` (word lists, templates, repetition counts) | `garak/probes/divergence.py` — `Repeat`, `RepeatExtended` |
-| prompt construction in `optimizer.py` | `divergence.Repeat.__init__` |
+| `data.json` (EICAR/GTUBE/GTPHISH signatures, `REPEAT_PROMPTS`) | `garak/probes/av_spam_scanning.py` — `EICAR`, `GTUBE`, `GTphish` |
+| prompt construction in `optimizer.py` | the `__init__` of those probes |
 
 Verify with `python scripts/sync_upstream.py --check`.
