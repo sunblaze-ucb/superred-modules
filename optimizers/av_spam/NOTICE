@@ -1,0 +1,12 @@
+superred-optimizer-av-spam
+Copyright 2026 the superred module authors
+
+This product includes software developed at NVIDIA Corporation.
+
+Portions of this module are derived from NVIDIA garak
+(https://github.com/NVIDIA/garak), licensed under the Apache License,
+Version 2.0. The scanner-test signatures and repetition templates in src/av_spam_optimizer/data.json are taken
+from garak/probes/av_spam_scanning.py (EICAR / GTUBE / GTphish), and the prompt construction
+in optimizer.py reproduces those probes' __init__.
+
+Upstream commit: 2233d51bedf6bfb634872ef9efbcd94eae38cc1a
