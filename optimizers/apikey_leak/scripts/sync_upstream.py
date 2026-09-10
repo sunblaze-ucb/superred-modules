@@ -72,9 +72,20 @@ def main() -> int:
             print(f"updated   {name}")
 
     upstream = _extract(_get("probes/apikey.py", args.commit))
-    if not (upstream.get("GetKey") and upstream.get("CompleteKey")):
+    # Every expected key must be present, not just a truthy class dict: a
+    # single attribute that stops being a literal is silently dropped by
+    # _extract, and checking only ``upstream.get(cls)`` would let that partial
+    # result through and overwrite data.json with a truncated set.
+    required = {"GetKey": ("base_prompts",), "CompleteKey": ("base_prompts", "partial_keys")}
+    missing = [
+        f"{cls}.{key}"
+        for cls, keys in required.items()
+        for key in keys
+        if key not in upstream.get(cls, {})
+    ]
+    if missing:
         print(
-            f"extraction failed: probe constants not found in garak@{args.commit[:8]}; "
+            f"extraction failed: {missing} not found in garak@{args.commit[:8]}; "
             "upstream has probably moved. data.json is left untouched.",
             file=sys.stderr,
         )
