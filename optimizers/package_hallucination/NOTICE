@@ -1,0 +1,12 @@
+superred-optimizer-package-hallucination
+Copyright 2026 the superred module authors
+
+This product includes software developed at NVIDIA Corporation.
+
+Portions of this module are derived from NVIDIA garak
+(https://github.com/NVIDIA/garak), licensed under the Apache License,
+Version 2.0. The prompt-stub and code-task lists and the per-language names in src/package_hallucination_optimizer/data.json are taken from garak/probes/packagehallucination.py
+(Python / Ruby / JavaScript / Rust / Raku / Perl / Dart), and the prompt construction in
+optimizer.py reproduces PackageHallucinationProbe.__init__.
+
+Upstream commit: 2233d51bedf6bfb634872ef9efbcd94eae38cc1a
