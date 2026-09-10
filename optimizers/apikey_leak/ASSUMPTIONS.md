@@ -9,6 +9,14 @@
 | Commit | `2233d51bedf6bfb634872ef9efbcd94eae38cc1a` |
 | Licence | Apache-2.0 |
 
+> **Original source (one layer up from garak).** garak's service-detection
+> regexes are themselves derived from the [dora](https://github.com/sdushantha/dora)
+> project (MIT, Copyright (c) 2021 Siddharth Dushantha). dora is the canonical
+> source of the 58-service catalogue and the detection patterns; garak added
+> capture groups and re-keyed the services, and this module vendors garak's copy
+> (which retains dora's notice). Only the 58 service **names** are read. See
+> `NOTICE` and `LICENSES/dora-MIT.txt`.
+
 ## Copied byte-for-byte
 
 - `_vendor/garak_apikey/regexes.py` — garak's service-detection regex table.

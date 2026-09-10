@@ -9,4 +9,12 @@ Version 2.0. The false claims in src/false_assertion_optimizer/_vendor/garak_dat
 the framing prefixes in data.json are taken from garak/probes/misleading.py (FalseAssertion), and
 the prompt construction in optimizer.py reproduces that probe's __init__.
 
+The 50 false claims are, in turn, a subset of the "true-false" dataset released
+with Azaria, A. & Mitchell, T., "The Internal State of an LLM Knows When It's
+Lying," Findings of the ACL: EMNLP 2023 (arXiv:2304.13734), which garak vendors
+as garak/data/truefalse_falseclaims_50.txt. That dataset is the canonical source
+of the underlying statements (chemical elements, cities, animals, companies, and
+scientific facts); this module cites it as the data source and reproduces garak's
+50-item selection unchanged.
+
 Upstream commit: 2233d51bedf6bfb634872ef9efbcd94eae38cc1a

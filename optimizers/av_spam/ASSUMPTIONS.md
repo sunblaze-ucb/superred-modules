@@ -16,7 +16,12 @@ machinery. Its four module-level constants — the three signatures and
 `REPEAT_PROMPTS` — are extracted into `data.json` by AST, and
 `scripts/sync_upstream.py` re-extracts and compares all four, refusing to
 write a partial extraction. The signatures are byte-identical to upstream's,
-which are in turn the published test strings.
+which are in turn the published test strings: the **EICAR** Standard
+Anti-Virus Test File (EICAR — European Institute for Computer Antivirus
+Research), and the **GTUBE** / **GTphish** generic test strings from the
+[Apache SpamAssassin](https://spamassassin.apache.org/gtube/) project. They
+are public scanner-test standards, not garak's authorship; only the
+repetition templates that wrap them are garak's. See `NOTICE`.
 
 ## Upstream coverage
 
