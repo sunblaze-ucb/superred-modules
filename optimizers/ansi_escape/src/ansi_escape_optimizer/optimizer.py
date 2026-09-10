@@ -149,8 +149,18 @@ class AnsiEscapeOptimizer(Optimizer):
                 event=event, controllable=event.controllable
             )
         if isinstance(event, RunEndEvent):
-            self._index += 1
-            return RunEndResponse(event=event, done=self._index >= len(self._prompts))
+            # Advance only when a prompt was actually delivered this run.
+            # A run that found no eligible surface injected nothing, so
+            # advancing would silently skip that prompt; and since surface
+            # eligibility is fixed per task (the classifier runs once at
+            # initialize), a run that could not inject means no later run
+            # can either -- so stop rather than spin the run budget.
+            if self._injected:
+                self._index += 1
+                done = self._index >= len(self._prompts)
+            else:
+                done = True
+            return RunEndResponse(event=event, done=done)
         return EventResponse(event=event)
 
     def _handle_pre_call(

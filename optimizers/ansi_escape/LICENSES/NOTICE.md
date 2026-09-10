@@ -6,7 +6,8 @@ Upstream: https://github.com/NVIDIA/garak (pinned `2233d51bedf6bfb634872ef9efbcd
 
 | Into (this module) | garak source |
 | --- | --- |
-| `data.json` (word lists, templates, repetition counts) | `garak/probes/divergence.py` — `Repeat`, `RepeatExtended` |
-| prompt construction in `optimizer.py` | `divergence.Repeat.__init__` |
+| `_vendor/garak_ansi/ansi.py` (payload constants) | `garak/resources/ansi.py` |
+| `data.json` (prompt-stub lists) | `garak/probes/ansiescape.py` — `AnsiEscaped`, `AnsiRaw` |
+| prompt construction in `optimizer.py` | `ansiescape.AnsiEscaped.__init__` / `AnsiRaw.__init__` |
 
 Verify with `python scripts/sync_upstream.py --check`.
