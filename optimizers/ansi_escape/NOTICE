@@ -1,0 +1,13 @@
+superred-optimizer-ansi-escape
+Copyright 2026 the superred module authors
+
+This product includes software developed at NVIDIA Corporation.
+
+Portions of this module are derived from NVIDIA garak
+(https://github.com/NVIDIA/garak), licensed under the Apache License,
+Version 2.0. The prompt-stub lists in src/ansi_escape_optimizer/data.json and the payload constants in
+src/ansi_escape_optimizer/_vendor/garak_ansi/ansi.py are taken from garak/probes/ansiescape.py
+(AnsiEscaped / AnsiRaw) and garak/resources/ansi.py, and the prompt construction in
+optimizer.py reproduces those probes' __init__.
+
+Upstream commit: 2233d51bedf6bfb634872ef9efbcd94eae38cc1a
