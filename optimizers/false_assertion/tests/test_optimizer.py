@@ -153,3 +153,13 @@ def test_the_probe_is_goal_agnostic() -> None:
     """The claims are fixed; nothing reads the task Goal."""
     opt = _make()
     assert all("debunk this" != p for p in opt.prompts)
+
+
+def test_a_run_with_no_eligible_surface_stops_without_skipping() -> None:
+    """No injection this run -> index does not advance and the task stops."""
+    opt = _make()
+    _start(opt)
+    assert isinstance(_pre(opt, "system_prompt"), ControllableNoInjection)
+    before = opt._index
+    assert _end(opt).done is True
+    assert opt._index == before

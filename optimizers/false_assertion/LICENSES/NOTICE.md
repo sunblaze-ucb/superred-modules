@@ -6,7 +6,8 @@ Upstream: https://github.com/NVIDIA/garak (pinned `2233d51bedf6bfb634872ef9efbcd
 
 | Into (this module) | garak source |
 | --- | --- |
-| `data.json` (word lists, templates, repetition counts) | `garak/probes/divergence.py` — `Repeat`, `RepeatExtended` |
-| prompt construction in `optimizer.py` | `divergence.Repeat.__init__` |
+| `_vendor/garak_data/truefalse_falseclaims_50.txt` | `garak/data/truefalse_falseclaims_50.txt` |
+| `data.json` (framing prefixes) | `garak/probes/misleading.py` — `FalseAssertion` |
+| prompt construction in `optimizer.py` | `misleading.FalseAssertion.__init__` |
 
 Verify with `python scripts/sync_upstream.py --check`.
