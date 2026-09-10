@@ -1,0 +1,12 @@
+superred-optimizer-sysprompt-extraction
+Copyright 2026 the superred module authors
+
+This product includes software developed at NVIDIA Corporation.
+
+Portions of this module are derived from NVIDIA garak
+(https://github.com/NVIDIA/garak), licensed under the Apache License,
+Version 2.0. The attack templates in src/sysprompt_extraction_optimizer/_vendor/garak_sysprompt/attacks.json are taken
+verbatim from garak/data/sysprompt_extraction/attacks.json, and the flattening in optimizer.py
+reproduces the probe's _load_garak_attacks.
+
+Upstream commit: 2233d51bedf6bfb634872ef9efbcd94eae38cc1a
