@@ -6,7 +6,7 @@ Upstream: https://github.com/NVIDIA/garak (pinned `2233d51bedf6bfb634872ef9efbcd
 
 | Into (this module) | garak source |
 | --- | --- |
-| `data.json` (word lists, templates, repetition counts) | `garak/probes/divergence.py` — `Repeat`, `RepeatExtended` |
-| prompt construction in `optimizer.py` | `divergence.Repeat.__init__` |
+| `_vendor/garak_sysprompt/attacks.json` | `garak/data/sysprompt_extraction/attacks.json` |
+| `load_attack_templates()` in `optimizer.py` | `sysprompt_extraction.SystemPromptExtraction._load_garak_attacks` |
 
 Verify with `python scripts/sync_upstream.py --check`.
