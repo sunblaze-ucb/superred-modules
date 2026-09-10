@@ -212,3 +212,13 @@ def test_arbitrary_goals_do_not_break_the_intent_template(goal: str) -> None:
     prompts = build_prompts("intent", goal)
     assert len(prompts) == 540
     assert all("{stub}" not in p for p in prompts)
+
+
+def test_a_run_with_no_eligible_surface_stops_without_skipping() -> None:
+    """No injection this run -> index does not advance and the task stops."""
+    opt = _make(variant="win10")
+    _start(opt)
+    assert isinstance(_pre(opt, "system_prompt"), ControllableNoInjection)
+    before = opt._index
+    assert _end(opt).done is True
+    assert opt._index == before

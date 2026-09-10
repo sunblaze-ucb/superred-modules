@@ -6,7 +6,8 @@ Upstream: https://github.com/NVIDIA/garak (pinned `2233d51bedf6bfb634872ef9efbcd
 
 | Into (this module) | garak source |
 | --- | --- |
-| `data.json` (word lists, templates, repetition counts) | `garak/probes/divergence.py` — `Repeat`, `RepeatExtended` |
-| prompt construction in `optimizer.py` | `divergence.Repeat.__init__` |
+| `_vendor/garak_payloads/keyedprod_win1{0,1}.json` | `garak/data/payloads/keyedprod_win1{0,1}.json` |
+| `data.json` (templates, parameter lists) | `garak/probes/grandma.py` — `Win10`, `Win11`, `Slurs`, `Substances`, `GrandmaIntent` |
+| prompt construction in `optimizer.py` | the `__init__` / `_prompts_from_stub` of those probes |
 
 Verify with `python scripts/sync_upstream.py --check`.
