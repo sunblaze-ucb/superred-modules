@@ -1,0 +1,25 @@
+superred-optimizer-prefill
+Copyright 2026 the superred module authors
+
+Based on Tencent Zhuque Lab AI-Infra-Guard
+(https://github.com/Tencent/AI-Infra-Guard).
+
+This product includes software developed at Tencent Zhuque Lab, licensed under
+the Apache License, Version 2.0. AI-Infra-Guard's NOTICE imposes a mandatory
+attribution requirement under Apache-2.0 Section 4(d) on any derivative work;
+that requirement is satisfied by the statement above, which also appears in
+README.md. The upstream NOTICE is reproduced verbatim in
+LICENSES/AI-Infra-Guard-NOTICE.txt.
+
+The file src/prefill_optimizer/_vendor/aig_prefill/template.py is a
+byte-identical copy of
+AIG-PromptSecurity/deepteam/attacks/single_turn/prefill/template.py.
+The reformulation logic in src/prefill_optimizer/optimizer.py follows that
+directory's prefill.py.
+
+Technique: Andriushchenko & Flammarion, "Does Refusal Training in LLMs
+Generalize to the Prefill?" (2024). The authors' repository
+(https://github.com/tml-epfl/llm-prefill) ships no licence, so no code was
+taken from it.
+
+Upstream commit: dd6bd54655c9ff5fb7351f4299b56916f09ec6da
