@@ -1,0 +1,13 @@
+superred-optimizer-grandma
+Copyright 2026 the superred module authors
+
+This product includes software developed at NVIDIA Corporation.
+
+Portions of this module are derived from NVIDIA garak
+(https://github.com/NVIDIA/garak), licensed under the Apache License,
+Version 2.0. The template and parameter lists in src/grandma_optimizer/data.json and the payload files in
+src/grandma_optimizer/_vendor/garak_payloads/ are taken from garak/probes/grandma.py
+(Win10 / Win11 / Slurs / Substances / GrandmaIntent), and the prompt construction in
+optimizer.py reproduces those probes.
+
+Upstream commit: 2233d51bedf6bfb634872ef9efbcd94eae38cc1a
