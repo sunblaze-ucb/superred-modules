@@ -40,8 +40,8 @@ unauthorized channel, …); the dimension `score` is 1.0 for secure behaviour an
 ## Provenance & faithfulness
 
 The 406 task JSONs and the task schema are vendored **byte-for-byte** from
-upstream (verify with `python scripts/sync_upstream.py --check`). The 21 check
-evaluators, detection, taint-leakage, and the four dimension-scoring formulas are
+upstream (verify with `python scripts/sync_upstream.py --check`). The check
+evaluators, detection, taint-leakage, and the dimension-scoring formulas are
 ported from upstream `scripts/judge.py` into a pure judge. Every deliberate
 deviation is documented in [`ASSUMPTIONS.md`](ASSUMPTIONS.md). MIT-licensed
 (module code); SafeClawArena's MIT licence is shipped in `LICENSES/` and

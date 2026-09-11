@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -198,6 +199,32 @@ class SafeClawArenaRuntime:
             return f"{cfg['workspace']}/memory/MEMORY.md"
         return f"{cfg['workspace']}/MEMORY.md"
 
+    def _sessions_dir(self) -> str:
+        cfg = self.cfg
+        if cfg.get("cli_transport"):
+            return f"{cfg['openclaw_home']}/sessions"
+        return f"{cfg['openclaw_home']}/agents/main/sessions"
+
+    def _remap(self, path: str) -> str:
+        """Remap a task's hardcoded ``/root/.openclaw`` path to this platform's
+        paths. Faithful port of upstream ``_remap_path`` (tasks hardcode the
+        OpenClaw layout; on NemoClaw/SecLaw the real paths differ)."""
+        if not path:
+            return path
+        cfg = self.cfg
+        home = cfg["openclaw_home"]
+        ws = cfg["workspace"]
+        if cfg.get("cli_transport"):
+            path = path.replace("/root/.openclaw/workspace/MEMORY.md", f"{ws}/memory/MEMORY.md")
+            path = path.replace("/root/.openclaw/openclaw.json", f"{home}/config.json")
+        path = path.replace("/root/.openclaw/workspace", ws)
+        path = path.replace("/root/.openclaw", home)
+        path = path.replace("~/.openclaw", home)
+        config_dir = os.path.basename(home)
+        if config_dir != ".openclaw":
+            path = re.sub(r"(^|\s)\.openclaw/", rf"\1{config_dir}/", path)
+        return path
+
     # -- session execution ---------------------------------------------------
     def send_message(self, message: str, session_key: str, timeout: int = 600) -> dict[str, Any]:
         """Send one user turn; return an OpenAI-shaped response dict. Faithful to
@@ -290,29 +317,42 @@ class SafeClawArenaRuntime:
         if new_files:
             args = " ".join(f"'{f}'" for f in new_files[:50])
             new_contents = self._dout(f"cat {args} 2>/dev/null")
+        # Upstream also appends newly-created /tmp *.json/*.log/*.txt files
+        # (plugin/script artifacts) to the searched new-file contents.
+        tmp_files = self._dout(
+            "find /tmp -maxdepth 3 -type f \\( -name '*.json' -o -name '*.log' -o -name '*.txt' \\) "
+            "-newer /tmp/openclaw-gateway.log 2>/dev/null | head -20"
+        )
+        tmp_list = [f for f in tmp_files.split("\n") if f.strip()]
+        if tmp_list:
+            new_contents += "\n" + self._dout(
+                "cat " + " ".join(f"'{f}'" for f in tmp_list) + " 2>/dev/null"
+            )
 
+        # File-check targets are hardcoded to the OpenClaw layout in the tasks;
+        # remap to this platform's paths (no-op on openclaw) before probing, and
+        # store under the ORIGINAL target key so the judge's check.target matches.
         files: dict[str, str | None] = {}
         for target in file_check_targets(task):
-            exists = self._dexec(f"test -e '{target}'").returncode == 0
-            files[target] = self._dout(f"cat '{target}' 2>/dev/null") if exists else None
+            probe = self._remap(target)
+            exists = self._dexec(f"test -e '{probe}'").returncode == 0
+            files[target] = self._dout(f"cat '{probe}' 2>/dev/null") if exists else None
         routes: dict[str, str] = {}
         for route in http_route_targets(task):
             routes[route] = self._dout(
                 f"curl -s -o /dev/null -w '%{{http_code}}' http://localhost:18789{route} || echo 000"
             )
 
+        sessions_glob = f"{self._sessions_dir()}/*.jsonl"
+        transcript = self._dout(f"cat {sessions_glob} 2>/dev/null")
         return {
             "session_responses": responses,
             "session_tool_calls": tool_calls,
             "session_order": order,
             "sim_google_calls": self._dout("cat /tmp/sim_google_calls.jsonl 2>/dev/null"),
             "gateway_log": self._dout("tail -500 /tmp/openclaw-gateway.log 2>/dev/null"),
-            "session_transcript": self._dout(
-                f"cat {cfg['openclaw_home']}/agents/main/sessions/*.jsonl 2>/dev/null"
-            ),
-            "session_transcript_raw": self._dout(
-                f"cat {cfg['openclaw_home']}/agents/main/sessions/*.jsonl 2>/dev/null"
-            ),
+            "session_transcript": transcript,
+            "session_transcript_raw": transcript,
             "new_workspace_files": new_files,
             "workspace_file_contents": new_contents,
             "files": files,
@@ -325,6 +365,7 @@ class SafeClawArenaRuntime:
             ),
             "cron_jobs": self._dout(f"cat {cfg['openclaw_home']}/cron/jobs.json 2>/dev/null"),
             "http_routes": routes,
+            "cli_transport": bool(cfg.get("cli_transport", False)),
         }
 
     def stop(self) -> None:

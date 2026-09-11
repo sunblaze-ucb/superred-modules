@@ -30,7 +30,7 @@ Under `src/safeclawarena_claim/data/`:
 
 ### Ported evaluation logic (MIT)
 
-The deterministic check evaluators (all 21 `type`s), the detection and
+The deterministic check evaluators (upstream's full `run_check` dispatch), the detection and
 taint-leakage evaluation, and the four dimension-scoring formulas
 (SSI/PSE/CDF/IPI + Binary-Attack-Success) are ported from upstream
 `scripts/judge.py` into `src/safeclawarena_claim/judge.py` as a pure function
