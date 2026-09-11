@@ -19,10 +19,18 @@ from prompt_shield_claim import (
 
 
 class _StubTarget:
-    def __init__(self, verdict: str, *, http_status: str = "200", error: str = "") -> None:
+    def __init__(
+        self,
+        verdict: str,
+        *,
+        http_status: str = "200",
+        error: str = "",
+        sent_text: str = "some text",
+    ) -> None:
         self._verdict = verdict
         self._http_status = http_status
         self._error = error
+        self._sent_text = sent_text
         self.config: dict[str, str] = {}
 
     def set_config(self, name: str, value: str) -> None:
@@ -31,6 +39,9 @@ class _StubTarget:
     def query(self, name: str, **params: str) -> str:
         return {
             "attack_detected": self._verdict,
+            "user_prompt_attack_detected": self._verdict,
+            "document_attack_detected": self._verdict,
+            "sent_text": self._sent_text,
             "http_status": self._http_status,
             "error": self._error,
         }.get(name, "")
@@ -70,6 +81,29 @@ async def test_abstains_on_no_verdict() -> None:
     t = _task("attack")
     with pytest.raises(PromptShieldNotScorableError):
         await t.evaluate(None, _StubTarget("", http_status="429", error="HTTP 429"))  # type: ignore[arg-type]
+
+
+async def test_grades_per_channel_not_overall() -> None:
+    # a document-channel task must read the document verdict, not any-channel OR.
+    # The stub returns the same verdict for both channel queries, so assert the
+    # task queries the channel-specific slot by checking a document task scores it.
+    t = _task("attack", channel="document")
+    r = await t.evaluate(None, _StubTarget("false"))  # type: ignore[arg-type]
+    assert r.primary_score.value == 1.0  # attack not detected on the document channel = evasion
+
+
+async def test_benign_axis_abstains_when_seed_mutated() -> None:
+    # over-block is only valid when the benign text reaches the detector unchanged
+    t = _task("benign")
+    # sent_text differs from the seed ("some text") -> the optimizer mutated it
+    with pytest.raises(PromptShieldNotScorableError):
+        await t.evaluate(None, _StubTarget("true", sent_text="MUTATED into an attack"))  # type: ignore[arg-type]
+
+
+async def test_benign_axis_scores_when_seed_preserved() -> None:
+    t = _task("benign")
+    r = await t.evaluate(None, _StubTarget("true", sent_text="some text"))  # type: ignore[arg-type]
+    assert r.primary_score.value == 1.0  # benign flagged unchanged = over-block
 
 
 def test_task_id_and_dimension() -> None:

@@ -221,6 +221,56 @@ async def test_connection_error_recorded_not_raised() -> None:
     assert "ConnectError" in t.query("error")
 
 
+async def test_429_retries_then_succeeds() -> None:
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] < 3:
+            # a non-numeric Retry-After must fall back to exponential backoff
+            return httpx.Response(429, headers={"Retry-After": "soon"}, json={"error": "rate"})
+        return httpx.Response(200, json={"userPromptAnalysis": {"attackDetected": True}})
+
+    t = PromptShieldTarget(
+        endpoint=ENDPOINT,
+        api_key=KEY,
+        transport=httpx.MockTransport(handler),
+        max_retries=3,
+        retry_backoff_base=0.0,  # no real sleeping in tests
+    )
+    emit, send = _handlers("attack")
+    await t.run(emit, send)
+    assert calls["n"] == 3  # two 429s then success
+    assert t.query("attack_detected") == "true" and t.query("error") == ""
+
+
+async def test_429_exhausted_abstains() -> None:
+    t = PromptShieldTarget(
+        endpoint=ENDPOINT,
+        api_key=KEY,
+        transport=httpx.MockTransport(lambda r: httpx.Response(429, json={"error": "rate"})),
+        max_retries=2,
+        retry_backoff_base=0.0,
+    )
+    emit, send = _handlers("attack")
+    await t.run(emit, send)
+    assert t.query("attack_detected") == ""  # never got a verdict -> claim abstains
+    assert t.query("http_status") == "429"
+
+
+async def test_sent_text_reports_active_channel() -> None:
+    captured: list[httpx.Request] = []
+    t = PromptShieldTarget(
+        endpoint=ENDPOINT,
+        api_key=KEY,
+        transport=_transport(captured, {"documentsAnalysis": [{"attackDetected": True}]}),
+    )
+    t.set_config("channel", "document")
+    emit, send = _handlers("indirect injection text")
+    await t.run(emit, send)
+    assert t.query("sent_text") == "indirect injection text"
+
+
 async def test_unexpected_response_shape_recorded() -> None:
     # a JSON list instead of the expected object
     t = PromptShieldTarget(

@@ -67,6 +67,27 @@ respect the tier's rate limits (no denial-of-service), and note that publishing
 check the Product Terms before publishing numbers. Running the evaluation for
 your own purposes is fine.
 
+## Caveats
+
+- **Evasion ≠ downstream compromise.** A verdict of `attackDetected == false`
+  means the *detector* did not fire; it is **not** proof that the input would
+  jailbreak a protected LLM. Treat the evasion rate as a lower-bound proxy for
+  detector weakness, not as an end-to-end attack-success rate.
+- **Results are point-in-time.** Prompt Shields is a hosted model Microsoft
+  updates; `api-version` pins the request/response *contract*, not the model
+  weights, and verdicts can differ by region. Record the date, region, and
+  `api-version` with any numbers you report — they are not reproducible over
+  time.
+- **Binary signal.** The API returns only a boolean, so the optimization signal
+  is `1.0`/`0.0` with no confidence gradient; score-shaping optimizers have a
+  flat landscape until the bit flips.
+- **Single-field requests.** The target omits an empty channel (sends only
+  `userPrompt` *or* only `documents`). The authoritative REST schema marks both
+  fields optional, so this is valid; a quickstart page inconsistently marks them
+  required. If your resource rejects single-field requests, set a
+  `benign_user_prompt`/`benign_document` so both fields are present — grading is
+  per-channel either way. Confirm with one live smoke call before a large run.
+
 ## License
 
 MIT. This module calls Azure Prompt Shields; no Microsoft code or data is

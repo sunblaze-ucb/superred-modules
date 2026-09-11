@@ -29,6 +29,7 @@ systems"); see the README for the ToS notes and the publish-benchmark caveat.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Final
 
@@ -81,12 +82,16 @@ class PromptShieldTarget(Target):
         api_version: str = _DEFAULT_API_VERSION,
         timeout: float = 30.0,
         transport: httpx.AsyncBaseTransport | None = None,
+        max_retries: int = 3,
+        retry_backoff_base: float = 0.5,
     ) -> None:
         self._endpoint = endpoint.rstrip("/")
         self._api_key = api_key  # PRIVATE: never emitted/queried/logged
         self._api_version = api_version
         self._timeout = timeout
         self._transport = transport
+        self._max_retries = max(1, max_retries)
+        self._retry_backoff_base = retry_backoff_base
 
         # Config
         self._channel: str = _CHANNEL_USER_PROMPT
@@ -166,6 +171,11 @@ class PromptShieldTarget(Target):
             ),
             QuerySpec(name="error", description="Error detail if the call failed, else ''."),
             QuerySpec(name="channel", description="The channel this run targeted."),
+            QuerySpec(
+                name="sent_text",
+                description="The effective text submitted on the targeted channel (after any "
+                "injection). Lets a claim confirm a benign input was not mutated.",
+            ),
         ]
 
     def query(self, name: str, **params: str) -> str:
@@ -184,6 +194,10 @@ class PromptShieldTarget(Target):
             return self._error
         if name == "channel":
             return self._channel
+        if name == "sent_text":
+            if self._channel == _CHANNEL_DOCUMENT:
+                return self._sent_document
+            return self._sent_user_prompt
         return ""
 
     def _overall_detected(self) -> bool | None:
@@ -261,7 +275,10 @@ class PromptShieldTarget(Target):
             ObservableEvent(
                 observable=Observable(
                     name="shield_request",
-                    security_domain=USER_PROMPT_TAG,
+                    # SYSTEM_TAG (not a channel tag): this record bundles BOTH the
+                    # user_prompt and document text, so it is not scoped to either
+                    # attacker channel — matching the detector/shield_verdict records.
+                    security_domain=SYSTEM_TAG,
                     description="The text submitted to the detector.",
                 ),
                 content=json.dumps(
@@ -303,21 +320,45 @@ class PromptShieldTarget(Target):
             "Ocp-Apim-Subscription-Key": self._api_key,
             "Content-Type": "application/json",
         }
-        try:
-            async with httpx.AsyncClient(
-                transport=self._transport, timeout=self._timeout
-            ) as client:
-                resp = await client.post(url, json=body, headers=headers)
-            self._http_status = resp.status_code
-            self._raw_response = resp.text
-            if resp.status_code != 200:
-                self._error = f"HTTP {resp.status_code}"
+        # Bounded retry on 429 (rate limit — the F0 tier is 5 RPS) and on
+        # transient transport errors, with exponential backoff. A persistent
+        # error leaves the verdict unknown so the claim abstains.
+        for attempt in range(1, self._max_retries + 1):
+            try:
+                async with httpx.AsyncClient(
+                    transport=self._transport, timeout=self._timeout
+                ) as client:
+                    resp = await client.post(url, json=body, headers=headers)
+                self._http_status = resp.status_code
+                self._raw_response = resp.text
+                if resp.status_code == 429 and attempt < self._max_retries:
+                    await self._backoff(attempt, resp.headers.get("Retry-After"))
+                    continue
+                if resp.status_code != 200:
+                    self._error = f"HTTP {resp.status_code}"
+                    return
+                self._error = ""  # a prior transient attempt, if any, recovered
+                self._parse(
+                    resp.json(), sent_user_prompt=bool(user_prompt), sent_document=bool(document)
+                )
                 return
-            self._parse(
-                resp.json(), sent_user_prompt=bool(user_prompt), sent_document=bool(document)
-            )
-        except httpx.HTTPError as exc:
-            self._error = f"{type(exc).__name__}: {exc}"
+            except httpx.HTTPError as exc:
+                self._error = f"{type(exc).__name__}: {exc}"
+                if attempt < self._max_retries:
+                    await self._backoff(attempt, None)
+                    continue
+                return
+
+    async def _backoff(self, attempt: int, retry_after: str | None) -> None:
+        """Sleep before a retry: honour ``Retry-After`` if present, else exponential."""
+        delay = self._retry_backoff_base * (2.0 ** (attempt - 1))
+        if retry_after:
+            try:
+                delay = max(delay, float(retry_after))
+            except ValueError:
+                pass
+        if delay > 0:
+            await asyncio.sleep(delay)
 
     def _parse(self, data: object, *, sent_user_prompt: bool, sent_document: bool) -> None:
         if not isinstance(data, dict):
