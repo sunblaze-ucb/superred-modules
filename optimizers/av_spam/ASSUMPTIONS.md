@@ -18,9 +18,10 @@ machinery. Its four module-level constants — the three signatures and
 write a partial extraction. The signatures are byte-identical to upstream's,
 which are in turn the published test strings: the **EICAR** Standard
 Anti-Virus Test File (EICAR — European Institute for Computer Antivirus
-Research), and the **GTUBE** / **GTphish** generic test strings from the
-[Apache SpamAssassin](https://spamassassin.apache.org/gtube/) project. They
-are public scanner-test standards, not garak's authorship; only the
+Research), the **GTUBE** generic test string from the
+[Apache SpamAssassin](https://spamassassin.apache.org/gtube/) project, and
+the analogous **GTphish** anti-phishing test string (SpamAssassin-style).
+They are public scanner-test standards, not garak's authorship; only the
 repetition templates that wrap them are garak's. See `NOTICE`.
 
 ## Upstream coverage
