@@ -1,0 +1,81 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "superred-claim-xstest"
+version = "0.1.0"
+description = "XSTest (Röttger et al., NAACL 2024) exaggerated-safety test suite as a superred SecurityClaim against ChatbotTarget: 450 safe/unsafe prompts with upstream's deterministic string-match refusal classifier ported into a pure judge."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE", "LICENSES/*"]
+requires-python = ">=3.11,<3.14"
+authors = [{ name = "Simon Sure", email = "info@simonsure.com" }]
+keywords = [
+    "superred",
+    "red-teaming",
+    "ai-safety",
+    "security",
+    "llm",
+    "security-claim",
+    "xstest",
+    "exaggerated-safety",
+    "over-refusal",
+    "benchmark",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security",
+]
+dependencies = [
+    "superred>=0.1.0",
+    "superred-target-chatbot>=0.1.0",
+    "litellm>=1.0",
+]
+
+[project.urls]
+Homepage = "https://superred.simonsure.com"
+Documentation = "https://superred.simonsure.com"
+Repository = "https://github.com/RoldSI/superred-modules"
+Issues = "https://github.com/RoldSI/superred-modules/issues"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pytest-cov>=6.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/xstest_claim"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "--strict-markers"
+testpaths = ["tests"]
+markers = [
+    "integration: end-to-end test against a real LiteLLM proxy (requires LITELLM_API_KEY and LITELLM_API_BASE)",
+]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+files = ["src"]
+
+[[tool.mypy.overrides]]
+module = "chatbot_target.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "litellm.*"
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["UP046", "UP047"]
