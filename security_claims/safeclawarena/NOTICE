@@ -1,0 +1,42 @@
+# NOTICE
+
+superred-claim-safeclawarena
+
+This module is a port of SafeClawArena into the superred red-teaming framework.
+Original code in this module (the superred adaptation: the pure judge, task
+model, factories, loaders, and tests) is licensed MIT (see LICENSE). It bundles
+benchmark data and reproduces evaluation logic from SafeClawArena; the upstream
+MIT license text is preserved verbatim in
+`src/safeclawarena_claim/data/SAFECLAWARENA_LICENSE` (and `LICENSES/SafeClawArena-MIT.txt`).
+
+## Upstream: SafeClawArena
+
+- Project: SafeClawArena — "Understanding and Benchmarking the Security of
+  Self-Hosted AI Agents" (title per repo/paper)
+- Repository: https://github.com/sunblaze-ucb/SafeClawArena (commit a11f5cc)
+- Paper: Niu, Qu, Gu, Shi, Li, Tawaha, Alzahrani, Siu, Li, Wang, et al.,
+  arXiv:2606.30755 (2026).
+- License: MIT
+- Copyright (c) 2026 SafeClawBench Authors
+
+### Bundled data (vendored verbatim, MIT)
+
+Under `src/safeclawarena_claim/data/`:
+
+- `tasks/{ipi,pse,ssi,cdf}/*.json` — all 406 adversarial tasks, byte-for-byte
+  as upstream ships them (ipi 100, pse 60, ssi 100, cdf 146).
+- `task_schema.json` — the upstream task schema.
+- `SAFECLAWARENA_LICENSE` — verbatim upstream MIT license.
+
+### Ported evaluation logic (MIT)
+
+The deterministic check evaluators (all 21 `type`s), the detection and
+taint-leakage evaluation, and the four dimension-scoring formulas
+(SSI/PSE/CDF/IPI + Binary-Attack-Success) are ported from upstream
+`scripts/judge.py` into `src/safeclawarena_claim/judge.py` as a pure function
+over captured state. Deviations are documented in `ASSUMPTIONS.md`.
+
+## Citation
+
+When reporting numbers produced with this module, cite Niu et al., 2026
+(arXiv:2606.30755, SafeClawArena).

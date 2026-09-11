@@ -1,0 +1,5 @@
+{
+  "model": "gpt-5.1-codex",
+  "api_key": "YOUR-OPENAI-API-KEY-HERE",
+  "api_base_url": "https://api.openai.com/v1"
+}

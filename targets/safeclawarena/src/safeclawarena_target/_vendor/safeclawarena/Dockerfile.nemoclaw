@@ -1,0 +1,60 @@
+# NemoClaw benchmark environment
+#
+# Builds on NVIDIA's sandbox-base image which includes:
+#   - OpenClaw 2026.3.11 (globally installed)
+#   - Node.js 22, Python 3.11, Debian Bookworm
+#   - Sandboxed user model (gateway:999, sandbox:998)
+#   - Landlock-based filesystem restrictions (relaxed here for benchmark)
+#
+# Config (openclaw.json, auth-profiles.json) is NOT baked in here.
+# reset_env.sh restores configs/platforms/nemoclaw.json and
+# configs/platforms/nemoclaw_auth-profiles.json before every task run.
+#
+# Build:
+#   docker build -t nemoclaw-env:2026.3.11 -f Dockerfile.nemoclaw .
+#
+# The base image must be available locally. Pull from NVIDIA's registry:
+#   docker pull ghcr.io/nvidia/nemoclaw/sandbox-base:latest
+
+FROM ghcr.io/nvidia/nemoclaw/sandbox-base:latest
+
+USER root
+
+# 1. Additional system dependencies for benchmark
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends python3-pip curl postgresql-client && \
+    rm -rf /var/lib/apt/lists/*
+
+# 2. Build and install Sim-Google CLI (Sim-Google (simulated Google Workspace))
+COPY tools/sim-google/sim-google /tmp/sim_google_src.py
+RUN pip3 install --quiet --break-system-packages pyinstaller && \
+    pyinstaller --onefile --strip --name sim-google /tmp/sim_google_src.py && \
+    mv dist/sim-google /usr/local/bin/sim-google && \
+    chmod +x /usr/local/bin/sim-google && \
+    rm -rf /tmp/sim_google_src.py build dist sim-google.spec /root/.local /root/.cache
+ENV SIM_GOOGLE_ACCOUNT="alice@gmail.com"
+
+# 3. Create workspace and config directories
+#    NemoClaw uses /sandbox/.nemoclaw as OPENCLAW_HOME
+#    and /sandbox/.nemoclaw/workspace as WORKSPACE
+RUN mkdir -p /sandbox/.nemoclaw/workspace/skills \
+             /sandbox/.nemoclaw/workspace/memory \
+             /sandbox/.nemoclaw/agents/main/agent \
+             /sandbox/.nemoclaw/agents/main/sessions \
+             /sandbox/.nemoclaw/cron \
+             /sandbox/.nemoclaw/extensions && \
+    chown -R sandbox:sandbox /sandbox/.nemoclaw/workspace \
+                             /sandbox/.nemoclaw/agents \
+                             /sandbox/.nemoclaw/cron \
+                             /sandbox/.nemoclaw/extensions
+
+# 4. Initialize config (will be overwritten by reset_env.sh per task)
+COPY configs/platforms/nemoclaw.json /sandbox/.nemoclaw/openclaw.json
+COPY configs/platforms/nemoclaw_auth-profiles.json /sandbox/.nemoclaw/agents/main/agent/auth-profiles.json
+RUN chmod 644 /sandbox/.nemoclaw/openclaw.json && \
+    chown sandbox:sandbox /sandbox/.nemoclaw/openclaw.json
+
+# 5. Override entrypoint for benchmark (no security lockdown needed)
+#    reset_env.sh manages gateway lifecycle
+ENTRYPOINT []
+CMD ["sleep", "infinity"]

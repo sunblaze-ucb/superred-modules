@@ -1,0 +1,41 @@
+# NOTICE
+
+superred-target-safeclawarena
+
+This module is a port of SafeClawArena's container harness into a superred
+Target. Original code in this module (the superred adaptation: the target
+contract, the runtime driver, factories, and tests) is licensed MIT (see
+LICENSE). It vendors SafeClawArena's container-side harness and reproduces its
+execution/capture logic; the upstream MIT license text is preserved verbatim in
+`src/safeclawarena_target/_vendor/safeclawarena/LICENSE` (and `LICENSES/SafeClawArena-MIT.txt`).
+
+## Upstream: SafeClawArena
+
+- Repository: https://github.com/sunblaze-ucb/SafeClawArena (commit a11f5cc)
+- Paper: Niu et al., arXiv:2606.30755 (2026).
+- License: MIT — Copyright (c) 2026 SafeClawBench Authors
+
+### Vendored harness (verbatim, MIT), under `src/safeclawarena_target/_vendor/safeclawarena/`
+
+- `Dockerfile`, `Dockerfile.nemoclaw`, `Dockerfile.seclaw` — platform images.
+- `tools/sim-google/sim-google` — the simulated Google Workspace CLI.
+- `tools/seclaw-agent-wrapper.js` — the SecLaw CLI transport wrapper.
+- `scripts/reset_env.sh` — the per-task environment provisioner.
+- `configs/` — platform + model + workspace baseline configs.
+
+NOT vendored: `tools/ripgrep/rg` (a 6.3 MB prebuilt binary the Docker build does
+not reference); install ripgrep via the image if a task needs it. The upstream
+`scripts/judge.py` is not vendored — its judging half is ported into the
+`safeclawarena-claim` package and its execution/capture half is ported into
+`runtime.py`.
+
+### Ported execution logic (MIT)
+
+`src/safeclawarena_target/runtime.py` reproduces upstream `judge.py`'s platform
+config, container lifecycle, session execution (HTTP gateway / SecLaw CLI), and
+post-run state capture. End-to-end execution requires Docker and the platform
+image. Deviations are documented in `ASSUMPTIONS.md`.
+
+## Citation
+
+Cite Niu et al., 2026 (arXiv:2606.30755, SafeClawArena).

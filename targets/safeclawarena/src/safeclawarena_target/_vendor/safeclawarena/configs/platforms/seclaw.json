@@ -1,0 +1,37 @@
+{
+  "agents": {
+    "defaults": {
+      "workspace": "~/.seclaw/workspace",
+      "model": "gpt-5.1-codex",
+      "maxTokens": 8192,
+      "temperature": 0.7,
+      "maxToolIterations": 100
+    }
+  },
+  "providers": {
+    "openai": {
+      "apiKey": "YOUR-API-KEY-HERE",
+      "apiBase": "YOUR-API-BASE-URL-HERE",
+      "extraHeaders": null
+    }
+  },
+  "gateway": {
+    "host": "0.0.0.0",
+    "port": 18790
+  },
+  "channels": {},
+  "tools": {
+    "exec": {
+      "timeout": 120
+    },
+    "restrictToWorkspace": false
+  },
+  "security": {
+    "prohibitedCommands": [],
+    "inputValidationEnabled": false,
+    "outputValidationEnabled": false,
+    "executionLogEnabled": true,
+    "postExecutionAuditEnabled": false,
+    "skillAuditEnabled": false
+  }
+}
