@@ -18,7 +18,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -112,9 +114,23 @@ class SafeClawArenaRuntime:
 
     # -- docker helpers ------------------------------------------------------
     def _dexec(self, cmd: str, timeout: int = 30) -> subprocess.CompletedProcess[str]:
+        """Run a shell command inside the container. ``cmd`` must be built from
+        trusted/quoted parts only — never interpolate untrusted input into it
+        (use :meth:`_dexec_argv` for that)."""
         home = os.path.dirname(self.cfg["openclaw_home"])
         return subprocess.run(
             ["docker", "exec", "-e", f"HOME={home}", self.cfg["container"], "bash", "-c", cmd],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+
+    def _dexec_argv(self, argv: list[str], timeout: int = 30) -> subprocess.CompletedProcess[str]:
+        """Run a command inside the container as an argv (NO shell), so untrusted
+        arguments (e.g. an optimizer-injected message) cannot be shell-interpreted."""
+        home = os.path.dirname(self.cfg["openclaw_home"])
+        return subprocess.run(
+            ["docker", "exec", "-e", f"HOME={home}", self.cfg["container"], *argv],
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -124,8 +140,16 @@ class SafeClawArenaRuntime:
         r = self._dexec(cmd)
         return r.stdout.strip() if r.returncode == 0 else ""
 
-    def _docker(self, args: list[str], timeout: int = 600) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(["docker", *args], capture_output=True, text=True, timeout=timeout)
+    def _docker(
+        self, args: list[str], timeout: int = 600, check: bool = False
+    ) -> subprocess.CompletedProcess[str]:
+        r = subprocess.run(["docker", *args], capture_output=True, text=True, timeout=timeout)
+        if check and r.returncode != 0:
+            raise RuntimeError(
+                f"docker {args[0]} failed (exit {r.returncode}): "
+                f"{(r.stderr or r.stdout).strip()[:400]}"
+            )
+        return r
 
     # -- lifecycle -----------------------------------------------------------
     def ensure_image(self) -> None:
@@ -137,13 +161,14 @@ class SafeClawArenaRuntime:
         self._docker(
             ["build", "-t", image, "-f", os.path.join(_VENDOR, self.cfg["dockerfile"]), _VENDOR],
             timeout=1800,
+            check=True,
         )
 
     def start(self) -> None:
         self.ensure_image()
         cfg = self.cfg
         # Fresh container per task (durable state is provisioned per task).
-        self._docker(["rm", "-f", cfg["container"]], timeout=30)
+        self._docker(["rm", "-f", cfg["container"]], timeout=30)  # ok if absent
         self._docker(
             [
                 "run", "-d", "--name", cfg["container"],
@@ -151,29 +176,40 @@ class SafeClawArenaRuntime:
                 cfg["image"], "sleep", "infinity",
             ],
             timeout=120,
+            check=True,
         )
 
     def provision(self, task: dict[str, Any]) -> None:
         """Provision the task environment via the vendored ``reset_env.sh``."""
         cfg = self.cfg
-        task_path = f"/tmp/{task['metadata']['task_id']}.json"
-        # Write the task JSON to a host temp file and hand it to reset_env.sh.
-        host_task = os.path.join("/tmp", f"safeclaw_{task['metadata']['task_id']}.json")
-        with open(host_task, "w", encoding="utf-8") as f:
-            json.dump(task, f)
-        env = os.environ.copy()
-        env["SAFECLAW_CONTAINER"] = cfg["container"]
-        env["SAFECLAW_OPENCLAW_HOME"] = cfg["openclaw_home"]
-        env["SAFECLAW_WORKSPACE"] = cfg["workspace"]
-        subprocess.run(
-            ["bash", os.path.join(_VENDOR, "scripts", "reset_env.sh"), "--setup-task", host_task],
-            capture_output=True,
-            text=True,
-            timeout=180,
-            env=env,
-        )
+        # Private, unpredictable host temp file (0600), removed after use — it
+        # holds the (possibly optimizer-injected) task, not just corpus data.
+        fd, host_task = tempfile.mkstemp(prefix="safeclaw_", suffix=".json")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(task, f)
+            env = os.environ.copy()
+            env["SAFECLAW_CONTAINER"] = cfg["container"]
+            env["SAFECLAW_OPENCLAW_HOME"] = cfg["openclaw_home"]
+            env["SAFECLAW_WORKSPACE"] = cfg["workspace"]
+            r = subprocess.run(
+                ["bash", os.path.join(_VENDOR, "scripts", "reset_env.sh"), "--setup-task", host_task],
+                capture_output=True,
+                text=True,
+                timeout=180,
+                env=env,
+            )
+            if r.returncode != 0:
+                raise RuntimeError(
+                    f"reset_env.sh failed (exit {r.returncode}): "
+                    f"{(r.stderr or r.stdout).strip()[:400]}"
+                )
+        finally:
+            try:
+                os.unlink(host_task)
+            except OSError:
+                pass
         self._pre_state = self._capture_baseline()
-        del task_path  # provisioning is driven from the host temp copy
 
     def _capture_baseline(self) -> dict[str, Any]:
         ws = self.cfg["workspace"]
@@ -241,15 +277,21 @@ class SafeClawArenaRuntime:
             content = r.stdout.strip() or "No response from agent."
             return {"choices": [{"message": {"role": "assistant", "content": content}}]}
         # HTTP transport via docker exec curl (robust across host/exec networking).
+        # Passed as an argv (no shell), so the optimizer-controlled `message` in
+        # the payload cannot be shell-interpreted.
         payload = json.dumps(
             {"model": "openclaw", "messages": [{"role": "user", "content": message}], "stream": False}
         )
-        cmd = (
-            "curl -s -X POST http://localhost:18789/v1/chat/completions "
-            f"-H 'Content-Type: application/json' -H 'X-Session-Key: {session_key}' "
-            f"-d {json.dumps(payload)}"
+        r = self._dexec_argv(
+            [
+                "curl", "-s", "-X", "POST", "http://localhost:18789/v1/chat/completions",
+                "-H", "Content-Type: application/json",
+                "-H", f"X-Session-Key: {session_key}",
+                "-d", payload,
+            ],
+            timeout=timeout,
         )
-        out = self._dout(cmd)
+        out = r.stdout.strip() if r.returncode == 0 else ""
         try:
             return json.loads(out) if out else {"choices": [{"message": {"content": ""}}]}
         except json.JSONDecodeError:
@@ -314,8 +356,11 @@ class SafeClawArenaRuntime:
         )
         new_files = sorted(set(current_raw.split("\n")) - baseline - {""})
         new_contents = ""
+        # Filenames are created by the agent under test; POSIX-quote each with
+        # shlex.quote so a crafted name (e.g. containing a quote) can't break out
+        # of the cat command run via bash -c.
         if new_files:
-            args = " ".join(f"'{f}'" for f in new_files[:50])
+            args = " ".join(shlex.quote(f) for f in new_files[:50])
             new_contents = self._dout(f"cat {args} 2>/dev/null")
         # Upstream also appends newly-created /tmp *.json/*.log/*.txt files
         # (plugin/script artifacts) to the searched new-file contents.
@@ -326,7 +371,7 @@ class SafeClawArenaRuntime:
         tmp_list = [f for f in tmp_files.split("\n") if f.strip()]
         if tmp_list:
             new_contents += "\n" + self._dout(
-                "cat " + " ".join(f"'{f}'" for f in tmp_list) + " 2>/dev/null"
+                "cat " + " ".join(shlex.quote(f) for f in tmp_list) + " 2>/dev/null"
             )
 
         # File-check targets are hardcoded to the OpenClaw layout in the tasks;
@@ -334,9 +379,9 @@ class SafeClawArenaRuntime:
         # store under the ORIGINAL target key so the judge's check.target matches.
         files: dict[str, str | None] = {}
         for target in file_check_targets(task):
-            probe = self._remap(target)
-            exists = self._dexec(f"test -e '{probe}'").returncode == 0
-            files[target] = self._dout(f"cat '{probe}' 2>/dev/null") if exists else None
+            probe = shlex.quote(self._remap(target))
+            exists = self._dexec(f"test -e {probe}").returncode == 0
+            files[target] = self._dout(f"cat {probe} 2>/dev/null") if exists else None
         routes: dict[str, str] = {}
         for route in http_route_targets(task):
             routes[route] = self._dout(

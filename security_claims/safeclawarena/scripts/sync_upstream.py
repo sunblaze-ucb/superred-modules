@@ -48,15 +48,18 @@ def main() -> int:
     check = "--check" in sys.argv
     tf = _download()
     root = tf.getnames()[0].split("/")[0]
+    names = set(tf.getnames())
     drift = 0
     written = 0
     for rel, upstream_path in _pairs(root):
-        member = tf.extractfile(upstream_path)
-        if member is None:
+        if upstream_path not in names:
+            # extractfile() raises KeyError (not None) for an absent name, so
+            # membership must be checked first.
             print(f"MISSING upstream {upstream_path}")
             drift += 1
             continue
-        up_bytes = member.read()
+        member = tf.extractfile(upstream_path)
+        up_bytes = member.read() if member else b""
         dest = os.path.join(_DATA, rel)
         cur = open(dest, "rb").read() if os.path.exists(dest) else None
         if cur == up_bytes:
