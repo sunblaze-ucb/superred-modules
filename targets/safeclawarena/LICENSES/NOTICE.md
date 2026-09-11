@@ -8,9 +8,8 @@ Copyright (c) 2026 SafeClawBench Authors. Verbatim licence also at
 
 | Into (this module) | SafeClawArena source |
 | --- | --- |
-| `_vendor/safeclawarena/Dockerfile{,.nemoclaw,.seclaw}` | `Dockerfile{,.nemoclaw,.seclaw}` |
+| `_vendor/safeclawarena/Dockerfile{,.nemoclaw}` | `Dockerfile{,.nemoclaw}` |
 | `_vendor/safeclawarena/tools/sim-google/sim-google` | `tools/sim-google/sim-google` |
-| `_vendor/safeclawarena/tools/seclaw-agent-wrapper.js` | `tools/seclaw-agent-wrapper.js` |
 | `_vendor/safeclawarena/scripts/reset_env.sh` | `scripts/reset_env.sh` |
 | `_vendor/safeclawarena/configs/**` | `configs/**` |
 | `runtime.py` (platforms, lifecycle, sessions, capture) | `scripts/judge.py` — execution/capture half |

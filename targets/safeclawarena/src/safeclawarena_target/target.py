@@ -100,7 +100,7 @@ class SafeClawArenaTarget(Target):
             ConfigSpec(
                 name="platform",
                 security_domain=SYSTEM_TAG,
-                description="Container replica to run against: openclaw / nemoclaw / seclaw.",
+                description="Container replica to run against: openclaw / nemoclaw.",
             ),
         ]
 

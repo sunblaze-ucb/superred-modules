@@ -48,9 +48,9 @@ def test_controllables_and_observables() -> None:
 
 def test_config_roundtrip_and_query_default() -> None:
     tgt = SafeClawArenaTarget()
-    tgt.set_config("platform", "seclaw")
+    tgt.set_config("platform", "nemoclaw")
     tgt.set_config("task", json.dumps({"metadata": {"task_id": "ssi-1.1-001", "dimension": "SSI"}}))
-    assert tgt._platform == "seclaw"
+    assert tgt._platform == "nemoclaw"
     assert tgt._task["metadata"]["task_id"] == "ssi-1.1-001"
     # post_state is empty JSON until a run captures it
     assert json.loads(tgt.query("post_state")) == {}
@@ -60,9 +60,12 @@ def test_config_roundtrip_and_query_default() -> None:
 
 
 def test_platform_config_pure() -> None:
-    assert set(PLATFORMS) == {"openclaw", "nemoclaw", "seclaw"}
+    # SecLaw is excluded: upstream Dockerfile.seclaw COPYs a seclaw/ source absent
+    # from the repo, so it is not buildable from the canonical artifact.
+    assert set(PLATFORMS) == {"openclaw", "nemoclaw"}
     assert platform_config("openclaw")["workspace"] == "/root/.openclaw/workspace"
-    assert platform_config("seclaw")["cli_transport"] is True
+    with pytest.raises(ValueError):
+        platform_config("seclaw")
     with pytest.raises(ValueError):
         platform_config("bogus")
 

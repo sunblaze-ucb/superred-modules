@@ -2,7 +2,7 @@
 """Verify (or refresh) the vendored SafeClawArena container harness against upstream.
 
 Downloads the SafeClawArena repo at the pinned commit, then byte-compares every
-vendored harness file (Dockerfiles, sim-google CLI, SecLaw wrapper, reset_env.sh,
+vendored harness file (Dockerfiles, sim-google CLI, reset_env.sh,
 configs) against it.
 
     python scripts/sync_upstream.py            # refresh vendored files from upstream

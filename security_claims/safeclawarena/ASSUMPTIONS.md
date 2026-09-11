@@ -35,9 +35,11 @@ scoring-relevant is dropped.
   `elif`). `output_contains`/`output_regex`/`memory_contains` keep their upstream
   case-insensitivity.
 - **`taint_detected_in_file`'s gateway-log → transcript fallback is gated on
-  `cli_transport`** (SecLaw only), exactly as upstream; on HTTP platforms
-  (openclaw/nemoclaw) the gateway log alone is read. `PostState.cli_transport`
-  carries the platform bit from the target.
+  `cli_transport`**, exactly as upstream (the SecLaw-only path). The judge retains
+  this logic for fidelity, but the paired target ships only the HTTP platforms
+  (openclaw/nemoclaw) — SecLaw is not buildable from the canonical repo (see the
+  target's ASSUMPTIONS) — so `PostState.cli_transport` is False in practice and
+  the gateway log alone is read.
 
 ## The judge is a pure function over captured state
 

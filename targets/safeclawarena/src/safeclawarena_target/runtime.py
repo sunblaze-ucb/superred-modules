@@ -4,7 +4,7 @@ A faithful, focused port of upstream ``scripts/judge.py``'s *execution and
 capture* half (its judging half is ported into ``safeclawarena_claim.judge``):
 platform config, image build, container lifecycle, environment provisioning via
 the vendored ``reset_env.sh``, session execution over the OpenClaw gateway
-(HTTP) or the SecLaw CLI, and post-run state capture into the dict the claim's
+(HTTP), and post-run state capture into the dict the claim's
 pure judge consumes.
 
 End-to-end execution needs Docker and the platform image (built from the
@@ -27,33 +27,23 @@ from typing import Any
 
 _VENDOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_vendor", "safeclawarena")
 
-#: Verbatim from upstream ``judge.py`` PLATFORMS (container / paths / transport).
+#: Platform configs ported from upstream ``judge.py`` PLATFORMS. SecLaw is
+#: excluded — upstream ``Dockerfile.seclaw`` COPYs a ``seclaw/`` source dir that
+#: is absent from the repo, so SecLaw is not buildable from the canonical
+#: artifact (see ASSUMPTIONS). Only the HTTP-gateway platforms are shipped.
 PLATFORMS: dict[str, dict[str, Any]] = {
     "openclaw": {
         "container": "openclaw-env",
         "image": os.environ.get("OPENCLAW_IMAGE", "openclaw-env:2026.3.12"),
         "dockerfile": "Dockerfile",
         "openclaw_home": "/root/.openclaw",
-        "workspace": "/root/.openclaw/workspace",
-        "cli_transport": False,
-    },
+        "workspace": "/root/.openclaw/workspace",    },
     "nemoclaw": {
         "container": "nemoclaw-env",
         "image": os.environ.get("NEMOCLAW_IMAGE", "nemoclaw-env:2026.3.11"),
         "dockerfile": "Dockerfile.nemoclaw",
         "openclaw_home": "/sandbox/.openclaw",
-        "workspace": "/sandbox/.openclaw-data/workspace",
-        "cli_transport": False,
-    },
-    "seclaw": {
-        "container": "seclaw-env",
-        "image": os.environ.get("SECLAW_IMAGE", "seclaw-env:0.1.0"),
-        "dockerfile": "Dockerfile.seclaw",
-        "openclaw_home": "/root/.seclaw",
-        "workspace": "/root/.seclaw/workspace",
-        "cli_transport": True,
-        "cli_cmd": ["node", "/opt/seclaw/tools/seclaw-agent-wrapper.js"],
-    },
+        "workspace": "/sandbox/.openclaw-data/workspace",    },
 }
 
 GATEWAY_PORT = 19090  # host-side, mapped to container 18789
@@ -224,35 +214,23 @@ class SafeClawArenaRuntime:
         }
 
     def _config_path(self) -> str:
-        cfg = self.cfg
-        if cfg.get("cli_transport"):
-            return f"{cfg['openclaw_home']}/config.json"
-        return f"{cfg['openclaw_home']}/openclaw.json"
+        return f"{self.cfg['openclaw_home']}/openclaw.json"
 
     def _memory_path(self) -> str:
-        cfg = self.cfg
-        if cfg.get("cli_transport"):
-            return f"{cfg['workspace']}/memory/MEMORY.md"
-        return f"{cfg['workspace']}/MEMORY.md"
+        return f"{self.cfg['workspace']}/MEMORY.md"
 
     def _sessions_dir(self) -> str:
-        cfg = self.cfg
-        if cfg.get("cli_transport"):
-            return f"{cfg['openclaw_home']}/sessions"
-        return f"{cfg['openclaw_home']}/agents/main/sessions"
+        return f"{self.cfg['openclaw_home']}/agents/main/sessions"
 
     def _remap(self, path: str) -> str:
         """Remap a task's hardcoded ``/root/.openclaw`` path to this platform's
         paths. Faithful port of upstream ``_remap_path`` (tasks hardcode the
-        OpenClaw layout; on NemoClaw/SecLaw the real paths differ)."""
+        OpenClaw layout; on NemoClaw the real paths differ)."""
         if not path:
             return path
         cfg = self.cfg
         home = cfg["openclaw_home"]
         ws = cfg["workspace"]
-        if cfg.get("cli_transport"):
-            path = path.replace("/root/.openclaw/workspace/MEMORY.md", f"{ws}/memory/MEMORY.md")
-            path = path.replace("/root/.openclaw/openclaw.json", f"{home}/config.json")
         path = path.replace("/root/.openclaw/workspace", ws)
         path = path.replace("/root/.openclaw", home)
         path = path.replace("~/.openclaw", home)
@@ -264,18 +242,7 @@ class SafeClawArenaRuntime:
     # -- session execution ---------------------------------------------------
     def send_message(self, message: str, session_key: str, timeout: int = 600) -> dict[str, Any]:
         """Send one user turn; return an OpenAI-shaped response dict. Faithful to
-        upstream ``GatewayClient.send_message`` (HTTP for gateway platforms, the
-        SecLaw CLI wrapper for cli_transport)."""
-        cfg = self.cfg
-        if cfg.get("cli_transport"):
-            home = os.path.dirname(cfg["openclaw_home"])
-            argv = [
-                "docker", "exec", "-w", cfg["workspace"], "-e", f"HOME={home}",
-                cfg["container"], *cfg["cli_cmd"], message, "-s", session_key,
-            ]
-            r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout + 30)
-            content = r.stdout.strip() or "No response from agent."
-            return {"choices": [{"message": {"role": "assistant", "content": content}}]}
+        upstream ``GatewayClient.send_message`` (HTTP gateway transport)."""
         # HTTP transport via docker exec curl (robust across host/exec networking).
         # Passed as an argv (no shell), so the optimizer-controlled `message` in
         # the payload cannot be shell-interpreted.
@@ -384,8 +351,11 @@ class SafeClawArenaRuntime:
             files[target] = self._dout(f"cat {probe} 2>/dev/null") if exists else None
         routes: dict[str, str] = {}
         for route in http_route_targets(task):
+            # task-derived route: shlex.quote before interpolating into the shell
+            # (matches the file-path branch above; _dout runs via bash -c).
+            probe_route = shlex.quote(f"http://localhost:18789{route}")
             routes[route] = self._dout(
-                f"curl -s -o /dev/null -w '%{{http_code}}' http://localhost:18789{route} || echo 000"
+                f"curl -s -o /dev/null -w '%{{http_code}}' {probe_route} || echo 000"
             )
 
         sessions_glob = f"{self._sessions_dir()}/*.jsonl"
@@ -410,7 +380,6 @@ class SafeClawArenaRuntime:
             ),
             "cron_jobs": self._dout(f"cat {cfg['openclaw_home']}/cron/jobs.json 2>/dev/null"),
             "http_routes": routes,
-            "cli_transport": bool(cfg.get("cli_transport", False)),
         }
 
     def stop(self) -> None:

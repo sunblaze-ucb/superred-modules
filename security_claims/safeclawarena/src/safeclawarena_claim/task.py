@@ -35,7 +35,7 @@ class SafeClawArenaTask(Task[SafeClawArenaTarget]):
     Args:
         task: one SafeClawArena task dict (verbatim from the vendored corpus).
         platform: which container replica to run against — ``"openclaw"``
-            (default), ``"nemoclaw"``, or ``"seclaw"``.
+            (default) or ``"nemoclaw"``.
     """
 
     def __init__(self, *, task: dict[str, Any], platform: str = "openclaw") -> None:

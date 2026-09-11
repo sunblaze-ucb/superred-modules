@@ -15,7 +15,7 @@ principle-aligned dimensions and judges them with SafeClawArena's own
 
 Pairs with the [`superred-target-safeclawarena`](../../targets/safeclawarena)
 package, which runs each task against a containerized platform replica
-(OpenClaw / NemoClaw / SecLaw) and captures the post-run state this claim judges.
+(OpenClaw / NemoClaw) and captures the post-run state this claim judges.
 
 ## Usage
 

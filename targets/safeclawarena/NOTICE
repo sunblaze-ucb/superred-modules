@@ -17,14 +17,17 @@ execution/capture logic; the upstream MIT license text is preserved verbatim in
 
 ### Vendored harness (verbatim, MIT), under `src/safeclawarena_target/_vendor/safeclawarena/`
 
-- `Dockerfile`, `Dockerfile.nemoclaw`, `Dockerfile.seclaw` — platform images.
+- `Dockerfile`, `Dockerfile.nemoclaw` — platform images.
 - `tools/sim-google/sim-google` — the simulated Google Workspace CLI.
-- `tools/seclaw-agent-wrapper.js` — the SecLaw CLI transport wrapper.
 - `scripts/reset_env.sh` — the per-task environment provisioner.
 - `configs/` — platform + model + workspace baseline configs.
 
 NOT vendored: `tools/ripgrep/rg` (a 6.3 MB prebuilt binary the Docker build does
-not reference); install ripgrep via the image if a task needs it. The upstream
+not reference); install ripgrep via the image if a task needs it. The **SecLaw**
+platform is also not shipped (`Dockerfile.seclaw` + `tools/seclaw-agent-wrapper.js`):
+upstream's `Dockerfile.seclaw` COPYs a `seclaw/` source dir that is absent from the
+SafeClawArena repo, so SecLaw is not buildable from the canonical artifact — only
+the OpenClaw and NemoClaw platforms are shipped. The upstream
 `scripts/judge.py` is not vendored — its judging half is ported into the
 `safeclawarena-claim` package and its execution/capture half is ported into
 `runtime.py`.
@@ -32,7 +35,7 @@ not reference); install ripgrep via the image if a task needs it. The upstream
 ### Ported execution logic (MIT)
 
 `src/safeclawarena_target/runtime.py` reproduces upstream `judge.py`'s platform
-config, container lifecycle, session execution (HTTP gateway / SecLaw CLI), and
+config, container lifecycle, session execution (HTTP gateway), and
 post-run state capture. End-to-end execution requires Docker and the platform
 image. Deviations are documented in `ASSUMPTIONS.md`.
 

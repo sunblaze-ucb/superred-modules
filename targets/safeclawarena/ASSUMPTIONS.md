@@ -12,9 +12,9 @@
 
 ## Vendored byte-for-byte
 
-Under `src/safeclawarena_target/_vendor/safeclawarena/`: the three platform
-`Dockerfile`s, `tools/sim-google/sim-google` (the 16-service simulated Google
-Workspace CLI), `tools/seclaw-agent-wrapper.js`, `scripts/reset_env.sh` (the
+Under `src/safeclawarena_target/_vendor/safeclawarena/`: the two platform
+`Dockerfile`s (openclaw, nemoclaw), `tools/sim-google/sim-google` (the 16-service
+simulated Google Workspace CLI), `scripts/reset_env.sh` (the
 per-task provisioner), and `configs/**` (platform + model + workspace baselines).
 `scripts/sync_upstream.py --check` re-downloads the pinned commit and diffs every
 vendored file.
@@ -48,7 +48,7 @@ round-trip, and the pure runtime helpers (`platform_config`,
 `file_check_targets`, `http_route_targets`).
 
 Transport note: sessions are sent via `docker exec … curl` to the in-container
-gateway (or the SecLaw CLI wrapper). Upstream uses host HTTP with an exec
+gateway. Upstream uses host HTTP with an exec
 fallback; driving over exec is the robust equivalent that avoids host↔container
 network assumptions.
 
@@ -66,5 +66,10 @@ network assumptions.
 - **Config/query.** A task is configured via `set_config("task", <json>)` +
   `set_config("platform", …)`; the captured post-run state is read back via a
   single `query("post_state")` JSON blob the claim reconstructs.
-- **Platforms.** `openclaw` (default), `nemoclaw`, `seclaw` — the three replicas
-  upstream ships images for.
+- **Platforms.** `openclaw` (default) and `nemoclaw` — the two replicas buildable
+  from the canonical repo. **SecLaw is excluded**: upstream's `Dockerfile.seclaw`
+  COPYs a `seclaw/` source dir that is absent from the SafeClawArena repo, so it
+  cannot be built from the canonical artifact (openclaw installs from npm,
+  nemoclaw from a base image; SecLaw has no in-repo or published source). The
+  claim's judge retains upstream's `cli_transport` logic for fidelity, but no
+  shipped platform sets it.

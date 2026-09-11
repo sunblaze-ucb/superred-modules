@@ -1,7 +1,7 @@
 """safeclawarena_target: a superred Target over SafeClawArena's container harness.
 
 Runs one SafeClawArena adversarial task against a containerized platform replica
-(OpenClaw / NemoClaw / SecLaw), provisioning the task environment through the
+(OpenClaw / NemoClaw), provisioning the task environment through the
 vendored ``reset_env.sh``, executing the sessions, and capturing the post-run
 state the paired ``safeclawarena_claim`` judge consumes. Pairs with the
 ``safeclawarena-claim`` package.
@@ -25,8 +25,8 @@ from safeclawarena_target.security_tags import (
 )
 from safeclawarena_target.target import (
     EXTERNAL_DATA_CTRL,
-    SafeClawArenaTarget,
     USER_MESSAGE_CTRL,
+    SafeClawArenaTarget,
 )
 
 __all__ = [

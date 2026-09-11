@@ -3,7 +3,7 @@
 A superred **Target** over [SafeClawArena](https://github.com/sunblaze-ucb/SafeClawArena)'s
 container harness (Niu et al., arXiv:2606.30755). It runs one SafeClawArena
 adversarial task against a containerized self-hosted-agent platform replica —
-**OpenClaw**, **NemoClaw**, or **SecLaw** — with a simulated Google Workspace,
+**OpenClaw** or **NemoClaw** — with a simulated Google Workspace,
 provisions the task's environment, executes its sessions, and captures the
 post-run state that the paired [`superred-claim-safeclawarena`](../../security_claims/safeclawarena)
 package judges (deterministic canary/taint).
@@ -38,8 +38,8 @@ The target exposes:
 
 ## Provenance & faithfulness
 
-SafeClawArena's container harness (Dockerfiles, Sim-Google CLI, SecLaw wrapper,
-`reset_env.sh`, configs) is vendored **byte-for-byte** (verify with
+SafeClawArena's container harness (Dockerfiles, Sim-Google CLI, `reset_env.sh`,
+configs) is vendored **byte-for-byte** (verify with
 `python scripts/sync_upstream.py --check`); the 6.3 MB `ripgrep` binary is
 intentionally not vendored. The execution/capture logic is ported from upstream
 `scripts/judge.py`. Deviations are in [`ASSUMPTIONS.md`](ASSUMPTIONS.md).
