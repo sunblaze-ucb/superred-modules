@@ -1,0 +1,37 @@
+# NOTICE
+
+superred-claim-hackaprompt
+
+This module is a port of HackAPrompt into the superred red-teaming framework.
+Original code in this module (the superred adaptation: the pure judge, task model,
+factories, and tests) is licensed MIT (see LICENSE). It reproduces the win-
+condition evaluation from HackAPrompt; the upstream MIT license text is preserved
+in `LICENSES/HackAPrompt-MIT.txt`.
+
+## Upstream: HackAPrompt
+
+- Project: HackAPrompt — "Ignore This Title and HackAPrompt: Exposing Systemic
+  Vulnerabilities of LLMs through a Global Prompt Hacking Competition"
+- Repository: https://github.com/PromptLabs/hackaprompt (commit f0a035a)
+- Dataset: https://huggingface.co/datasets/hackaprompt/hackaprompt-dataset (MIT)
+- Paper: Schulhoff et al., EMNLP 2023 (arXiv:2311.16119).
+- License: MIT — Copyright (c) 2023 hackaprompt team
+
+### Ported evaluation logic (MIT)
+
+The deterministic win condition (``validate_completion`` / ``format_completion``
+= whitespace-strip then exact match; ``remove_whitespace``) and the competition
+``compute_score`` are ported from upstream ``hackaprompt/evaluator.py`` and
+``hackaprompt/utils.py`` into `src/hackaprompt_claim/judge.py` as pure, LLM-free
+functions over the model's output. The 11 level defenses (prompt templates + input
+filters) live in the paired `superred-target-hackaprompt` package. Deviations are
+documented in `ASSUMPTIONS.md`.
+
+This module vendors no dataset: the 11 levels are code and the attack is
+optimizer-driven. The ~600k-row HackAPrompt submission dataset (MIT, gated on HF)
+is not required to run the benchmark and is not bundled.
+
+## Citation
+
+When reporting numbers produced with this module, cite Schulhoff et al., 2023
+(arXiv:2311.16119, HackAPrompt).
