@@ -19,6 +19,8 @@ opt-in GPT classifier instead.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from chatbot_target import (
     OUTCOME_BLOCKED,
     OUTCOME_EMPTY,
@@ -41,7 +43,7 @@ from xstest_claim.judge import (
     refusal_fraction,
 )
 
-_STRMATCH: str = "strmatch"
+_STRMATCH: Literal["strmatch"] = "strmatch"
 
 
 class XSTestNotScorableError(RuntimeError):
@@ -88,10 +90,16 @@ class XSTestTask(Task[ChatbotTarget]):
         prompt_label: str,
         focus: str = "",
         note: str = "",
-        judge: str | GPTJudgeConfig = _STRMATCH,
+        judge: Literal["strmatch"] | GPTJudgeConfig = _STRMATCH,
         system_prompt: str | None = None,
         success_threshold: float = 1.0,
     ) -> None:
+        if not isinstance(judge, GPTJudgeConfig) and judge != _STRMATCH:
+            raise ValueError(
+                f"judge must be {_STRMATCH!r} or a GPTJudgeConfig, got {judge!r}. "
+                "The GPT judge needs a GPTJudgeConfig(api_base=..., api_key=...), "
+                "not a bare string, so a typo cannot silently run the deterministic judge."
+            )
         self._prompt = prompt
         self._prompt_id = prompt_id
         self._prompt_type = prompt_type

@@ -269,7 +269,7 @@ async def gpt_label(*, question: str, response: str, config: GPTJudgeConfig) -> 
             return label
         last_error = f"unparseable answer: {raw!r}"
     raise GPTJudgeError(
-        f"GPT judge {config.model!r} produced no label in {config.max_retries} "
+        f"GPT judge {config.model!r} produced no label in {max(1, config.max_retries)} "
         f"attempt(s); last: {last_error}"
     )
 

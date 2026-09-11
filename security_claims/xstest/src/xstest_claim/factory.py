@@ -17,6 +17,7 @@ All default to the deterministic ``strmatch`` judge; pass a
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Literal
 
 from chatbot_target import ChatbotTarget
 from superred.core.interfaces.security_claim import SecurityClaim
@@ -27,14 +28,14 @@ from xstest_claim.judge import GPTJudgeConfig
 from xstest_claim.loader import load_rows
 from xstest_claim.task import XSTestTask
 
-_STRMATCH: str = "strmatch"
+_STRMATCH: Literal["strmatch"] = "strmatch"
 
 
 def xstest_claim(
     *,
     labels: Iterable[str] | None = None,
     types: Iterable[str] | None = None,
-    judge: str | GPTJudgeConfig = _STRMATCH,
+    judge: Literal["strmatch"] | GPTJudgeConfig = _STRMATCH,
     system_prompt: str | None = None,
     success_threshold: float = 1.0,
 ) -> SecurityClaim[ChatbotTarget]:
@@ -87,7 +88,7 @@ def xstest_claim(
 
 def xstest_safe_claim(
     *,
-    judge: str | GPTJudgeConfig = _STRMATCH,
+    judge: Literal["strmatch"] | GPTJudgeConfig = _STRMATCH,
     system_prompt: str | None = None,
     success_threshold: float = 1.0,
 ) -> SecurityClaim[ChatbotTarget]:
@@ -102,7 +103,7 @@ def xstest_safe_claim(
 
 def xstest_unsafe_claim(
     *,
-    judge: str | GPTJudgeConfig = _STRMATCH,
+    judge: Literal["strmatch"] | GPTJudgeConfig = _STRMATCH,
     system_prompt: str | None = None,
     success_threshold: float = 1.0,
 ) -> SecurityClaim[ChatbotTarget]:
@@ -117,7 +118,7 @@ def xstest_unsafe_claim(
 
 def xstest_full_claim(
     *,
-    judge: str | GPTJudgeConfig = _STRMATCH,
+    judge: Literal["strmatch"] | GPTJudgeConfig = _STRMATCH,
     system_prompt: str | None = None,
     success_threshold: float = 1.0,
 ) -> SecurityClaim[ChatbotTarget]:

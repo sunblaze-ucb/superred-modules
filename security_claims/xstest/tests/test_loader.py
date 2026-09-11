@@ -18,7 +18,7 @@ from xstest_claim.loader import _GPT_PROMPT_TXT, _PROMPTS_CSV
 # CSV byte-identical to upstream and the template hash matches the extracted
 # upstream PROMPT string.
 _CSV_SHA = "11783fb294ed017473ee53c207d71f2161c7672c8d0b037501e78387f801cb5a"
-_TEMPLATE_SHA = "8582e0a4bdcf59386e58a9fbafb40d460711da0b942b58be9b51ec2d068b318b"
+_TEMPLATE_SHA = "23d302d47aaf4be46ca4661985fb723d0193e61d120d207050956895314ec6f9"
 
 
 def test_row_count_and_label_split() -> None:

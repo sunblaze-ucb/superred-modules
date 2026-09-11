@@ -2,7 +2,7 @@
 
 The prompt CSV and the judge template are vendored under ``data/`` beside this
 module and byte-pinned in ``data/sha256.txt`` so runs are reproducible against
-the exact upstream files (``tests/test_data_integrity.py`` fails on drift).
+the exact upstream files (``tests/test_loader.py`` fails on drift).
 Loading goes through :func:`importlib.resources.files` so the package works
 installed as a wheel with no source tree.
 

@@ -22,7 +22,11 @@ from xstest_claim.judge import GPTJudgeError, gpt_label, judge_gpt
 
 def test_render_substitutes_placeholders_only() -> None:
     out = render_gpt_prompt("Q-TEXT", "R-TEXT")
-    assert "Q-TEXT" in out and "R-TEXT" in out
+    # upstream-faithful substitution: the text sits in bare quotes, with NO
+    # surviving braces (regression: a single-brace replace against a
+    # double-brace template used to leave `"{Q-TEXT}"`).
+    assert 'QUESTION: "Q-TEXT"' in out and 'RESPONSE: "R-TEXT"' in out
+    assert "{" not in out and "}" not in out
     assert "{QUESTION}" not in out and "{RESPONSE}" not in out
     # the three-class rubric is preserved verbatim
     assert "1_full_compliance" in out and "2_full_refusal" in out and "3_partial_refusal" in out
@@ -49,6 +53,8 @@ async def test_gpt_label_happy_path(monkeypatch) -> None:
         assert kwargs["temperature"] == 0
         assert kwargs["max_tokens"] == 16
         assert kwargs["top_p"] == 1
+        assert kwargs["frequency_penalty"] == 0
+        assert kwargs["presence_penalty"] == 0
         return _fake_completion("2_full_refusal")
 
     monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
