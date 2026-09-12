@@ -36,9 +36,11 @@ path that does not resolve returns `''`.
 
 Auth headers (an API key / bearer token) are held privately and are **never**
 emitted as an observable, returned from a query, or written into any rationale.
-The only endpoint observable is `method + host(:port) + path` — the `user:pass@`
-userinfo and the query string are both dropped, since either can carry a
-credential/token.
+The only endpoint observable is `method + host(:port)` — the `user:pass@` userinfo,
+the URL path, and the query string are all dropped, since any of them can carry a
+credential/token (a malformed URL can smear a password across the path or query).
+The host is emitted only after being validated as a bare hostname / IP literal;
+anything unexpected is redacted to `(unparsable url)`.
 
 ## Queries
 

@@ -100,6 +100,15 @@ class HttpEndpointTarget(Target):
         timeout: per-request timeout (seconds).
         transport: optional ``httpx`` transport for offline tests
             (``httpx.MockTransport``); ``None`` uses the real network.
+        max_attempts: total number of HTTP attempts per call *including the first*
+            (not retries beyond it) — ``max_attempts=3`` calls the endpoint up to
+            three times, retrying only transient ``429`` / ``5xx`` / transport
+            failures. Floored at 1 (always at least one attempt). Default 3.
+        retry_backoff_base: base seconds for exponential backoff between attempts
+            (delay = ``base * 2 ** (attempt - 1)``). Default 0.5.
+        max_retry_delay: hard cap (seconds) on any backoff sleep, including a
+            server-supplied ``Retry-After`` — so an untrusted endpoint cannot stall
+            the run with a huge ``Retry-After``. Default 60.
     """
 
     def __init__(
@@ -112,7 +121,7 @@ class HttpEndpointTarget(Target):
         response_path: str = "",
         timeout: float = 30.0,
         transport: httpx.AsyncBaseTransport | None = None,
-        max_retries: int = 3,
+        max_attempts: int = 3,
         retry_backoff_base: float = 0.5,
         max_retry_delay: float = 60.0,
     ) -> None:
@@ -125,7 +134,7 @@ class HttpEndpointTarget(Target):
         self._response_path = response_path
         self._timeout = timeout
         self._transport = transport
-        self._max_retries = max(1, max_retries)
+        self._max_attempts = max(1, max_attempts)  # always at least one attempt
         self._retry_backoff_base = retry_backoff_base
         self._max_retry_delay = max_retry_delay
         # One client per target instance, reused across attempts and run() calls
@@ -307,17 +316,17 @@ class HttpEndpointTarget(Target):
 
     async def _call(self, prompt: str) -> None:
         body = _render(self._body_template, prompt)
-        for attempt in range(1, self._max_retries + 1):
+        for attempt in range(1, self._max_attempts + 1):
             try:
                 resp = await self._client.request(
                     self._method, self._url, json=body, headers=self._headers
                 )
                 self._http_status = resp.status_code
                 self._raw_response = resp.text
-                if resp.status_code == 429 and attempt < self._max_retries:
+                if resp.status_code == 429 and attempt < self._max_attempts:
                     await self._backoff(attempt, resp.headers.get("Retry-After"))
                     continue
-                if resp.status_code >= 500 and attempt < self._max_retries:
+                if resp.status_code >= 500 and attempt < self._max_attempts:
                     await self._backoff(attempt, resp.headers.get("Retry-After"))
                     continue
                 # >= 300 (not just >= 400): redirects are NOT followed
@@ -345,7 +354,7 @@ class HttpEndpointTarget(Target):
                 self._http_status = None
                 self._raw_response = ""
                 self._error = type(exc).__name__
-                if attempt < self._max_retries:
+                if attempt < self._max_attempts:
                     await self._backoff(attempt, None)
                     continue
                 return

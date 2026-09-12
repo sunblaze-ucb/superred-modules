@@ -126,7 +126,7 @@ async def test_unresolvable_path_returns_empty() -> None:
 
 # -- errors ------------------------------------------------------------------
 async def test_http_error_recorded() -> None:
-    t = _target(_transport([], {"e": 1}, status=400), max_retries=1)
+    t = _target(_transport([], {"e": 1}, status=400), max_attempts=1)
     emit, send = _handlers("q")
     await t.run(emit, send)
     assert t.query("error") == "HTTP 400" and t.query("last_response") == ""
@@ -135,7 +135,7 @@ async def test_http_error_recorded() -> None:
 async def test_3xx_redirect_recorded_as_error() -> None:
     # redirects are NOT followed; a 3xx is not the app's reply -> error, not a
     # silently-successful empty response.
-    t = _target(_transport([], "", status=302), max_retries=1)
+    t = _target(_transport([], "", status=302), max_attempts=1)
     emit, send = _handlers("q")
     await t.run(emit, send)
     assert t.query("error") == "HTTP 302" and t.query("last_response") == ""
@@ -152,7 +152,7 @@ async def test_transport_error_recorded() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("boom")
 
-    t = _target(httpx.MockTransport(handler), max_retries=1)
+    t = _target(httpx.MockTransport(handler), max_attempts=1)
     emit, send = _handlers("q")
     await t.run(emit, send)
     assert "ConnectError" in t.query("error")
@@ -167,7 +167,7 @@ async def test_5xx_retries_then_recovers() -> None:
             return httpx.Response(500, json={})
         return httpx.Response(200, json={"choices": [{"message": {"content": "recovered"}}]})
 
-    t = _target(httpx.MockTransport(handler), max_retries=3, retry_backoff_base=0.0)
+    t = _target(httpx.MockTransport(handler), max_attempts=3, retry_backoff_base=0.0)
     emit, send = _handlers("q")
     await t.run(emit, send)
     assert calls["n"] == 2  # retried once
@@ -183,11 +183,41 @@ async def test_transport_error_then_recovers() -> None:
             raise httpx.ConnectError("transient")
         return httpx.Response(200, json={"choices": [{"message": {"content": "ok now"}}]})
 
-    t = _target(httpx.MockTransport(handler), max_retries=3, retry_backoff_base=0.0)
+    t = _target(httpx.MockTransport(handler), max_attempts=3, retry_backoff_base=0.0)
     emit, send = _handlers("q")
     await t.run(emit, send)
     assert calls["n"] == 2  # retried after the transient error
     assert t.query("last_response") == "ok now" and t.query("error") == ""
+
+
+async def test_max_attempts_caps_total_calls() -> None:
+    # max_attempts bounds TOTAL calls (initial + retries), not retries-beyond-first:
+    # 3 attempts against persistent 500s => exactly 3 calls, then the error records.
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(500, json={})
+
+    t = _target(httpx.MockTransport(handler), max_attempts=3, retry_backoff_base=0.0)
+    emit, send = _handlers("q")
+    await t.run(emit, send)
+    assert calls["n"] == 3  # initial + 2 retries, capped at max_attempts
+    assert t.query("error") == "HTTP 500"
+
+
+async def test_single_attempt_does_not_retry() -> None:
+    # max_attempts=1 => exactly one call and no retry, even on a retryable 5xx.
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(503, json={})
+
+    t = _target(httpx.MockTransport(handler), max_attempts=1, retry_backoff_base=0.0)
+    emit, send = _handlers("q")
+    await t.run(emit, send)
+    assert calls["n"] == 1 and t.query("error") == "HTTP 503"
 
 
 def test_userinfo_stripped_from_endpoint_observable() -> None:
@@ -239,7 +269,7 @@ async def test_http_status_cleared_on_transport_error() -> None:
             return httpx.Response(500, json={})
         raise httpx.ConnectError("dropped")
 
-    t = _target(httpx.MockTransport(handler), max_retries=3, retry_backoff_base=0.0)
+    t = _target(httpx.MockTransport(handler), max_attempts=3, retry_backoff_base=0.0)
     emit, send = _handlers("q")
     await t.run(emit, send)
     assert "ConnectError" in t.query("error")
@@ -250,7 +280,7 @@ async def test_invalid_url_recorded_not_raised() -> None:
     # httpx.InvalidURL (raised synchronously by client.request; NOT an httpx.HTTPError)
     # must be recorded, not propagated out of run() and crash the sweep.
     t = HttpEndpointTarget(
-        url="http://host:notaport/x", transport=_transport([], {}), max_retries=1
+        url="http://host:notaport/x", transport=_transport([], {}), max_attempts=1
     )
     emit, send = _handlers("q")
     await t.run(emit, send)
@@ -273,7 +303,7 @@ async def test_retry_after_is_clamped(monkeypatch) -> None:  # noqa: ANN001
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(429, headers={"Retry-After": "86400"}, json={})
 
-    t = _target(httpx.MockTransport(handler), max_retries=2, max_retry_delay=0.5)
+    t = _target(httpx.MockTransport(handler), max_attempts=2, max_retry_delay=0.5)
     emit, send = _handlers("q")
     await t.run(emit, send)
     assert slept  # it did back off
@@ -306,7 +336,7 @@ async def test_malformed_url_error_does_not_leak_creds() -> None:
     t = HttpEndpointTarget(
         url="https://svc:aB/cD@api.example.com/v1/chat",
         transport=_transport([], {}),
-        max_retries=1,
+        max_attempts=1,
     )
     emit, send = _handlers("q")
     await t.run(emit, send)
