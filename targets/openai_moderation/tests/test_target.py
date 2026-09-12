@@ -126,6 +126,15 @@ async def test_unexpected_shape_recorded() -> None:
     assert t.query("flagged") == "" and t.query("error") != ""
 
 
+async def test_result_without_bool_flagged_is_error_not_empty_verdict() -> None:
+    # a parseable 200 whose result lacks a bool `flagged` must set an error, not a
+    # contradictory "succeeded, no verdict" state (empty flagged <=> error set).
+    t = _target(_transport([], {"results": [{"categories": {"violence": True}}]}))
+    emit, send = _handlers("x")
+    await t.run(emit, send)
+    assert t.query("flagged") == "" and t.query("error") != ""
+
+
 async def test_5xx_retries_then_recovers() -> None:
     calls = {"n": 0}
 

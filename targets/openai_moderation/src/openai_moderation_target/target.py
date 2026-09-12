@@ -285,8 +285,14 @@ class OpenAIModerationTarget(Target):
             self._error = "unexpected response shape"
             return
         flagged = first.get("flagged")
-        if isinstance(flagged, bool):
-            self._flagged = flagged
+        if not isinstance(flagged, bool):
+            # A parseable 200 whose result lacks a bool verdict (truncated / proxied
+            # / gateway-rewritten body) is NOT a verdict — record an error so the
+            # contract holds (empty `flagged` <=> error set) and a claim abstains
+            # instead of reading the missing verdict as a "not flagged" evasion.
+            self._error = "unexpected response shape"
+            return
+        self._flagged = flagged
         categories = first.get("categories")
         if isinstance(categories, dict):
             self._categories = [k for k, v in categories.items() if v is True]
