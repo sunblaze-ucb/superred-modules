@@ -54,9 +54,15 @@ async def run_crew_capture(*, crew: Any, user_input: str) -> CrewRunResult:
     # that gives its agent a step_callback would silently drop our tool capture if we
     # only set it on the crew. Chain onto any existing agent callback so both fire.
     agents = getattr(crew, "agents", None) or []
+    # A crew-level step_callback (Crew(..., step_callback=cb)) is normally copied by
+    # CrewAI onto agents that lack their own — but since we set every agent's
+    # callback below, that copy never happens, so fall back to chaining the
+    # crew-level callback too (else the caller's crew-level callback is silently
+    # dropped).
+    crew_cb = getattr(crew, "step_callback", None)
     if agents:
         for agent in agents:
-            existing = getattr(agent, "step_callback", None)
+            existing = getattr(agent, "step_callback", None) or crew_cb
             if callable(existing) and existing is not _recorder:
 
                 def _chained(step: Any, _orig: Any = existing) -> None:

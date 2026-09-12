@@ -131,6 +131,26 @@ async def test_captures_tools_even_if_agent_callback_raises() -> None:
     assert SENSITIVE_TOOL in t.query("called_tool_names")
 
 
+async def test_captures_and_preserves_crew_level_callback() -> None:
+    # a crew-level step_callback (Crew(step_callback=...)) must still fire even though
+    # we set agent-level recorders (which stops CrewAI copying the crew callback).
+    seen = []
+
+    def factory_with_crew_cb(llm):
+        crew = build_demo_crew(llm)
+        crew.step_callback = lambda step: seen.append(1)
+        return crew
+
+    t = CrewAIAgentTarget(
+        crew_factory=factory_with_crew_cb,
+        llm=scripted_llm(tool_action(SENSITIVE_TOOL, "{}"), final_answer("ok")),
+    )
+    emit, send = _handlers("attack")
+    await t.run(emit, send)
+    assert SENSITIVE_TOOL in t.query("called_tool_names")  # captured
+    assert seen  # the caller's crew-level callback still fired
+
+
 async def test_scripted_llm_rewinds_each_run() -> None:
     # a stateful scripted llm shared across runs must replay from the top each run
     # (the target rewinds it), so run 2 still sees the tool-call script.
