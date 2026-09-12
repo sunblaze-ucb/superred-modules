@@ -36,8 +36,9 @@ class ScriptedReActLLM(CustomLLM):
 
     Each turn is text (a ``tool_action`` or a ``final_answer``); the ReActAgent
     parses the ``Action``/``Answer`` protocol and executes tools for real. The last
-    turn repeats if the agent loops. ``is_function_calling_model=False`` makes the
-    agent use the ReAct text protocol rather than native tool-calls.
+    turn repeats if the agent loops. (``ReActAgent`` always uses the ReAct text
+    protocol regardless of ``is_function_calling_model``; the flag is set to False
+    only for honest metadata.)
     """
 
     _turns: list[str] = PrivateAttr(default_factory=list)

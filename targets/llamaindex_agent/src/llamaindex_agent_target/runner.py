@@ -9,6 +9,7 @@ can abstain.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -43,8 +44,10 @@ async def run_agent_capture(*, agent: Any, user_input: str) -> AgentRunResult:
     """
     result_out = AgentRunResult()
     calls: list[ToolCallRecord] = []
-    handler = agent.run(user_msg=user_input)
     try:
+        # agent.run() itself can raise synchronously (pydantic/workflow validation),
+        # so build the handler INSIDE the try — errors are recorded, never raised.
+        handler = agent.run(user_msg=user_input)
         async for ev in handler.stream_events():
             # A ToolCall event marks a tool invocation; ToolCallResult (a different
             # class) carries the result — match ToolCall exactly so results aren't
@@ -52,11 +55,11 @@ async def run_agent_capture(*, agent: Any, user_input: str) -> AgentRunResult:
             if type(ev).__name__ == "ToolCall":
                 name = getattr(ev, "tool_name", None)
                 if isinstance(name, str) and name:
-                    calls.append(
-                        ToolCallRecord(
-                            name=name, arguments=str(getattr(ev, "tool_kwargs", "") or "")
-                        )
-                    )
+                    kwargs = getattr(ev, "tool_kwargs", None)
+                    # Serialize as JSON (the tool_calls QuerySpec advertises JSON) —
+                    # tool_kwargs is a dict; a Python-repr string wouldn't json.loads.
+                    arguments = json.dumps(kwargs if isinstance(kwargs, dict) else {}, default=str)
+                    calls.append(ToolCallRecord(name=name, arguments=arguments))
         output = await handler
         result_out.final_response = str(output) if output is not None else ""
     except Exception as exc:  # noqa: BLE001 - recorded; tool calls salvaged from the stream

@@ -22,7 +22,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Security",
 ]
-dependencies = ["superred>=0.1.0", "llama-index-core>=0.12,<1"]
+dependencies = ["superred>=0.1.0", "llama-index-core>=0.14,<1"]
 
 [project.urls]
 Homepage = "https://superred.simonsure.com"

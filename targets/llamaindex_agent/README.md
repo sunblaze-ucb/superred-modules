@@ -52,8 +52,10 @@ Config: `user_task` (benign default input). Controllable: `user_input`.
 `last_response` (the agent's final output), `tool_calls` (JSON of `{name,
 arguments}`), `called_tool_names` (comma-separated, in order), `error`. Tool calls
 are captured by streaming the agent's workflow `ToolCall` events, so calls made
-before a mid-run error are salvaged; run errors are recorded in `error` (never
-raised), so a claim can abstain.
+before a mid-run error are salvaged; LLM/workflow failures are recorded in `error`
+(never raised), so a claim can abstain. (A tool that itself raises is captured as a
+call and the run continues — LlamaIndex records that as an internal tool error — so
+it surfaces via `tool_calls`, not `error`.)
 
 ## License
 
