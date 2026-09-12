@@ -201,6 +201,49 @@ async def test_invalid_url_recorded_not_raised() -> None:
     assert "InvalidURL" in t.query("error") and t.query("flagged") == ""
 
 
+async def test_injected_transport_reused_not_closed_per_call() -> None:
+    # the injected transport must NOT be closed per attempt/run: two runs on the
+    # same instance must both work (regression for the per-attempt AsyncClient).
+    class _SpyTransport(httpx.MockTransport):
+        def __init__(self, handler) -> None:  # noqa: ANN001
+            super().__init__(handler)
+            self.closed = False
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            if self.closed:
+                raise RuntimeError("transport used after close")
+            return await super().handle_async_request(request)
+
+    tr = _SpyTransport(lambda req: httpx.Response(200, json=_result(False)))
+    t = OpenAIModerationTarget(api_key=KEY, transport=tr)
+    emit, send = _handlers("q")
+    await t.run(emit, send)
+    assert t.query("flagged") == "false"
+    await t.run(emit, send)  # 2nd run, same instance + shared transport
+    assert t.query("flagged") == "false" and t.query("error") == ""
+    assert tr.closed is False  # injected transport is never force-closed
+
+
+async def test_http_status_cleared_on_transport_error() -> None:
+    # a 500 then a transport error must not report the stale 500 alongside the error.
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(500, json={})
+        raise httpx.ConnectError("dropped")
+
+    t = _target(httpx.MockTransport(handler), max_retries=3, retry_backoff_base=0.0)
+    emit, send = _handlers("x")
+    await t.run(emit, send)
+    assert "ConnectError" in t.query("error")
+    assert t.query("http_status") == "" and t.query("raw_response") == ""
+
+
 async def test_reset_clears_state() -> None:
     t = _target(_transport([], _result(True, {"hate": True})))
     emit, send = _handlers("x")
