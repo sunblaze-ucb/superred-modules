@@ -47,7 +47,9 @@ credential/token.
 errors are recorded in `error` (never raised), with bounded retry + backoff on
 `429`/`5xx`, so a claim can abstain. A numeric `Retry-After` is honored but
 **clamped to `max_retry_delay`** (default 60s) — a hostile/untrusted endpoint
-cannot stall the run with a huge `Retry-After`. Config: `benign_prompt` (used when
+cannot stall the run with a huge `Retry-After`. Redirects are **not** followed —
+a `3xx` (HTTP→HTTPS, trailing-slash, SSO/auth redirect) is recorded as an error,
+so configure the final URL directly. Config: `benign_prompt` (used when
 the prompt is not injected). Controllable: `prompt`.
 
 ## Scope

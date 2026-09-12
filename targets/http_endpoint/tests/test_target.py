@@ -123,6 +123,15 @@ async def test_http_error_recorded() -> None:
     assert t.query("error") == "HTTP 400" and t.query("last_response") == ""
 
 
+async def test_3xx_redirect_recorded_as_error() -> None:
+    # redirects are NOT followed; a 3xx is not the app's reply -> error, not a
+    # silently-successful empty response.
+    t = _target(_transport([], "", status=302), max_retries=1)
+    emit, send = _handlers("q")
+    await t.run(emit, send)
+    assert t.query("error") == "HTTP 302" and t.query("last_response") == ""
+
+
 async def test_non_json_200_uses_raw_text() -> None:
     t = _target(_transport([], "plain text reply", status=200))
     emit, send = _handlers("q")

@@ -281,7 +281,12 @@ class HttpEndpointTarget(Target):
                 if resp.status_code >= 500 and attempt < self._max_retries:
                     await self._backoff(attempt, resp.headers.get("Retry-After"))
                     continue
-                if resp.status_code >= 400:
+                # >= 300 (not just >= 400): redirects are NOT followed
+                # (follow_redirects defaults to False), so a 3xx (HTTP->HTTPS,
+                # trailing-slash normalization, an auth/SSO redirect) is not the
+                # app's reply — treat it as an error so the claim abstains rather
+                # than scoring an empty/redirect body as the response.
+                if resp.status_code >= 300:
                     self._error = f"HTTP {resp.status_code}"
                     return
                 self._error = ""  # a prior transient attempt, if any, recovered
