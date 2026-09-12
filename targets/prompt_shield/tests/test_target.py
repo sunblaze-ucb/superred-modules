@@ -271,6 +271,20 @@ async def test_sent_text_reports_active_channel() -> None:
     assert t.query("sent_text") == "indirect injection text"
 
 
+async def test_non_json_200_body_recorded_not_raised() -> None:
+    # a 200 whose body is not JSON (e.g. a gateway HTML error page) must not crash
+    t = PromptShieldTarget(
+        endpoint=ENDPOINT,
+        api_key=KEY,
+        transport=httpx.MockTransport(
+            lambda r: httpx.Response(200, text="<html>gateway error</html>")
+        ),
+    )
+    emit, send = _handlers("attack")
+    await t.run(emit, send)  # must not raise
+    assert t.query("attack_detected") == "" and "invalid JSON" in t.query("error")
+
+
 async def test_unexpected_response_shape_recorded() -> None:
     # a JSON list instead of the expected object
     t = PromptShieldTarget(

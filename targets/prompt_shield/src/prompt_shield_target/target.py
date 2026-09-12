@@ -338,9 +338,14 @@ class PromptShieldTarget(Target):
                     self._error = f"HTTP {resp.status_code}"
                     return
                 self._error = ""  # a prior transient attempt, if any, recovered
-                self._parse(
-                    resp.json(), sent_user_prompt=bool(user_prompt), sent_document=bool(document)
-                )
+                try:
+                    data = resp.json()
+                except ValueError:
+                    # a 200 with a non-JSON body (e.g. a gateway HTML error page):
+                    # record it and abstain, never crash the run.
+                    self._error = "invalid JSON response"
+                    return
+                self._parse(data, sent_user_prompt=bool(user_prompt), sent_document=bool(document))
                 return
             except httpx.HTTPError as exc:
                 self._error = f"{type(exc).__name__}: {exc}"
