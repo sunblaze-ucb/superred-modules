@@ -108,6 +108,15 @@ async def test_empty_response_path_returns_raw_text() -> None:
     assert json.loads(t.query("last_response")) == {"answer": "42"}
 
 
+async def test_null_content_returns_empty_not_literal_null() -> None:
+    # OpenAI-shaped reply where the model emits only a tool call -> content is null;
+    # the response path must yield "" not the literal string "null".
+    t = _target(_transport([], {"choices": [{"message": {"content": None}}]}))
+    emit, send = _handlers("q")
+    await t.run(emit, send)
+    assert t.query("last_response") == ""
+
+
 async def test_unresolvable_path_returns_empty() -> None:
     t = _target(_transport([], {"unexpected": "shape"}))
     emit, send = _handlers("q")

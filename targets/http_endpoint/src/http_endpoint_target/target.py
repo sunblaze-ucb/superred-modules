@@ -62,11 +62,9 @@ def _render(template: Any, prompt: str) -> Any:
 def _extract(data: Any, path: str) -> str:
     """Extract the reply text from a JSON response via a dot path (e.g.
     ``choices.0.message.content``). Empty path returns the whole body as text.
-    A path that does not resolve returns ''."""
-    if not path:
-        return data if isinstance(data, str) else json.dumps(data)
+    A path that does not resolve, or resolves to JSON ``null``, returns ''."""
     cur: Any = data
-    for part in path.split("."):
+    for part in path.split(".") if path else []:
         if isinstance(cur, list):
             try:
                 cur = cur[int(part)]
@@ -78,6 +76,10 @@ def _extract(data: Any, path: str) -> str:
             cur = cur[part]
         else:
             return ""
+    # A resolved JSON null (e.g. OpenAI's `content: null` when the model emits only
+    # a tool call) is "no text", not the literal string "null".
+    if cur is None:
+        return ""
     return cur if isinstance(cur, str) else json.dumps(cur)
 
 
