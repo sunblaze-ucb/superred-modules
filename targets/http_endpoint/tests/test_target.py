@@ -4,6 +4,7 @@ extraction, secret handling, error handling. Offline via httpx.MockTransport."""
 from __future__ import annotations
 
 import asyncio
+import gzip
 import json
 
 import httpx
@@ -274,6 +275,26 @@ async def test_total_response_time_bounded() -> None:
     await t.run(emit, send)
     assert t.query("error") == "TimeoutError"
     assert t.query("last_response") == ""
+
+
+async def test_compression_bomb_refused_not_decompressed() -> None:
+    # httpx would auto-decompress a Content-Encoding: gzip body via aiter_bytes(),
+    # letting a tiny compressed payload inflate past max_response_bytes before the
+    # cap runs. We request Accept-Encoding: identity and refuse any response that is
+    # compressed anyway — so the bomb is never decompressed; it's rejected outright.
+    huge = b'{"choices":[{"message":{"content":"' + b"A" * 3_000_000 + b'"}}]}'
+    compressed = gzip.compress(huge)
+    assert len(compressed) < 100_000 < len(huge)  # bomb shape: small in, huge out
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=compressed, headers={"Content-Encoding": "gzip"})
+
+    t = _target(httpx.MockTransport(handler), max_response_bytes=1_000_000, max_attempts=1)
+    emit, send = _handlers("q")
+    await t.run(emit, send)
+    # refused before any decompression: error recorded, no body materialized.
+    assert t.query("error") == "ResponseTooLargeError"
+    assert t.query("last_response") == "" and t.query("raw_response") == ""
 
 
 def test_userinfo_stripped_from_endpoint_observable() -> None:

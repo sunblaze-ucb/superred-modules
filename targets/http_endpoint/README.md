@@ -59,7 +59,9 @@ errors are recorded in `error` (never raised), with bounded retry + backoff on
 cannot stall the run with a huge `Retry-After`. The response is also read under a
 **total-time cap** (`max_response_time`, default 60s — httpx's per-op `timeout`
 does not bound a slow byte-trickle) and a streamed **body-size cap**
-(`max_response_bytes`, default 1 MB), so a slow or huge-body endpoint can neither
+(`max_response_bytes`, default 1 MB); responses are requested uncompressed
+(`Accept-Encoding: identity`) and a compressed response is refused rather than
+decompressed, so a slow, huge-body, or compression-bomb endpoint can neither
 stall the run nor exhaust memory. Redirects are **not** followed —
 a `3xx` (HTTP→HTTPS, trailing-slash, SSO/auth redirect) is recorded as an error,
 so configure the final URL directly. Config: `benign_prompt` (used when

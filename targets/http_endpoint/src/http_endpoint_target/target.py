@@ -134,10 +134,13 @@ class HttpEndpointTarget(Target):
             request + body read. Unlike ``timeout`` (per-op), this bounds a hostile
             server that trickles bytes slowly to keep the connection open; on
             exceed the attempt aborts (``TimeoutError``, not retried). Default 60.
-        max_response_bytes: cap on the response body read into memory (bytes). The
-            body is streamed and the read aborts past this cap (``ResponseTooLargeError``,
-            not retried) so an untrusted endpoint cannot exhaust memory with a huge
-            response. Default 1_000_000 (1 MB).
+        max_response_bytes: cap on the response bytes read into memory. The body is
+            streamed and the read aborts past this cap (``ResponseTooLargeError``,
+            not retried); responses are requested uncompressed
+            (``Accept-Encoding: identity``) and a compressed response is refused
+            rather than decompressed, so an untrusted endpoint cannot exhaust memory
+            with a huge or compression-bomb response (see :meth:`_request_capped`).
+            Default 1_000_000 (1 MB).
     """
 
     def __init__(
@@ -415,16 +418,32 @@ class HttpEndpointTarget(Target):
                 return
 
     async def _request_capped(self, body: Any) -> tuple[int, str | None, str]:
-        """POST and read the response body under two bounds an untrusted endpoint
-        cannot exceed: a total wall-clock cap (``asyncio.timeout`` — httpx's per-op
-        read timeout does NOT bound a slow byte-trickle) and a byte cap (the body is
-        streamed, not ``resp.text``, which would materialize an unbounded body).
+        """POST and read the response under two bounds an untrusted endpoint cannot
+        exceed: a total wall-clock cap (``asyncio.timeout`` — httpx's per-op read
+        timeout does NOT bound a slow byte-trickle) and a response byte cap.
+
+        Compression-bomb-safe: httpx decompresses a ``Content-Encoding`` response
+        with no output limit, so a tiny gzip chunk that inflates to GBs would blow
+        past a cap measured on the *decoded* stream before the check runs. We
+        request ``Accept-Encoding: identity`` so a compliant endpoint sends
+        plaintext, and if the endpoint compresses anyway we refuse to read the body
+        at all — so httpx never decompresses. A plaintext body is then read via
+        ``aiter_bytes`` (== the wire bytes, nothing to decode) under the byte cap.
         Returns ``(status_code, Retry-After, decoded_body)``."""
+        req_headers = dict(self._headers)
+        if not any(k.lower() == "accept-encoding" for k in req_headers):
+            req_headers["Accept-Encoding"] = "identity"
         async with asyncio.timeout(self._max_response_time):
             async with self._client.stream(
-                self._method, self._url, json=body, headers=self._headers
+                self._method, self._url, json=body, headers=req_headers
             ) as resp:
                 retry_after = resp.headers.get("Retry-After")
+                enc = resp.headers.get("content-encoding", "").strip().lower()
+                if enc and enc != "identity":
+                    # Endpoint compressed despite Accept-Encoding: identity — reading
+                    # the decoded stream would let httpx inflate a possible bomb past
+                    # the cap, so refuse without ever decompressing.
+                    raise ResponseTooLargeError
                 total = 0
                 chunks: list[bytes] = []
                 async for chunk in resp.aiter_bytes():
