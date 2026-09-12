@@ -61,6 +61,13 @@ class ScriptedReactLLM(BaseLLM):
         self._i += 1
         return text
 
+    def reset(self) -> None:
+        """Rewind to the first scripted turn. The target calls this at the start of
+        each run so a scripted llm reused across tasks/runs replays from the top
+        (use ``concurrency=1`` with a scripted llm — the counter is per-instance).
+        Real models are stateless per call, so this is a no-op for them."""
+        self._i = 0
+
     def supports_function_calling(self) -> bool:
         return False
 

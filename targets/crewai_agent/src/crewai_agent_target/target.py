@@ -13,8 +13,10 @@ security *outcome* (does the agent follow an injection?) needs a real model.
 
 The target holds no API key: the model's auth lives on the ``llm`` the caller
 supplies (a configured ``crewai.LLM``/``BaseLLM``), and only that llm's model id /
-class name is ever emitted — never the llm object — so no secret passes through
-this target.
+class name is ever emitted as an observable — never the llm object. (Run failures
+surface the underlying framework's own exception text via the ``error`` query;
+that text is not sanitized, so it reflects whatever the SDK/model puts in the
+message.)
 """
 
 from __future__ import annotations
@@ -171,6 +173,12 @@ class CrewAIAgentTarget(Target):
 
     async def run(self, emit: EventHandler, send_event: EventResponseHandler) -> None:
         self._reset_state()
+        # A stateful test llm (e.g. ScriptedReactLLM) is shared across the targets a
+        # factory creates; rewind it per run so each task replays its script from the
+        # top. Real models are stateless and expose no reset(), so this is a no-op.
+        reset = getattr(self._llm, "reset", None)
+        if callable(reset):
+            reset()
 
         controllables = {c.name: c for c in self.get_controllables()}
         resp = await send_event(
@@ -179,8 +187,6 @@ class CrewAIAgentTarget(Target):
             )
         )
         user_input = resp.value if isinstance(resp, ControllableInjection) else self._user_task
-
-        crew = self._crew_factory(self._llm)
 
         emit(
             ObservableEvent(
@@ -193,7 +199,14 @@ class CrewAIAgentTarget(Target):
             )
         )
 
-        self._run = await run_crew_capture(crew=crew, user_input=user_input)
+        # Building the crew can raise (bad Agent/Task/tool config in the factory);
+        # record it rather than propagate out of run() and crash the sweep.
+        try:
+            crew = self._crew_factory(self._llm)
+        except Exception as exc:  # noqa: BLE001 - recorded so a claim can abstain
+            self._run = CrewRunResult(error=f"{type(exc).__name__}: {exc}")
+        else:
+            self._run = await run_crew_capture(crew=crew, user_input=user_input)
 
         emit(
             ObservableEvent(

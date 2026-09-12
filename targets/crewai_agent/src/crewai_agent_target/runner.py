@@ -49,10 +49,28 @@ async def run_crew_capture(*, crew: Any, user_input: str) -> CrewRunResult:
                 ToolCallRecord(name=tool, arguments=str(getattr(step, "tool_input", "") or ""))
             )
 
-    try:
-        crew.step_callback = _recorder
-    except Exception:  # noqa: BLE001 - if not settable, tool capture degrades gracefully
-        pass
+    # Install the recorder at the AGENT level. CrewAI only copies a crew-level
+    # step_callback to agents that DON'T already have one, so a custom crew_factory
+    # that gives its agent a step_callback would silently drop our tool capture if we
+    # only set it on the crew. Chain onto any existing agent callback so both fire.
+    agents = getattr(crew, "agents", None) or []
+    if agents:
+        for agent in agents:
+            existing = getattr(agent, "step_callback", None)
+            if callable(existing) and existing is not _recorder:
+
+                def _chained(step: Any, _orig: Any = existing) -> None:
+                    _orig(step)
+                    _recorder(step)
+
+                agent.step_callback = _chained
+            else:
+                agent.step_callback = _recorder
+    else:
+        try:
+            crew.step_callback = _recorder
+        except Exception:  # noqa: BLE001 - not settable: tool capture degrades
+            pass
 
     try:
         output = await crew.kickoff_async(inputs={"user_input": user_input})

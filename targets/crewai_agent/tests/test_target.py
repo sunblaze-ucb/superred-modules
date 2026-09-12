@@ -93,6 +93,46 @@ async def test_e2e_uses_injected_input_else_user_task() -> None:
     assert t.query("last_response") == "hi"  # ran without error
 
 
+async def test_captures_tools_even_with_agent_step_callback() -> None:
+    # a crew_factory whose Agent already has its own step_callback must not silently
+    # defeat tool capture (CrewAI keeps the agent's callback over the crew's).
+    def factory_with_agent_cb(llm):
+        crew = build_demo_crew(llm)
+        crew.agents[0].step_callback = lambda step: None  # pre-existing agent callback
+        return crew
+
+    t = CrewAIAgentTarget(
+        crew_factory=factory_with_agent_cb,
+        llm=scripted_llm(tool_action(SENSITIVE_TOOL, "{}"), final_answer("ok")),
+    )
+    emit, send = _handlers("attack")
+    await t.run(emit, send)
+    assert SENSITIVE_TOOL in t.query("called_tool_names")
+
+
+async def test_scripted_llm_rewinds_each_run() -> None:
+    # a stateful scripted llm shared across runs must replay from the top each run
+    # (the target rewinds it), so run 2 still sees the tool-call script.
+    llm = scripted_llm(tool_action(SENSITIVE_TOOL, "{}"), final_answer("done"))
+    t = _target(llm)
+    emit, send = _handlers("attack")
+    await t.run(emit, send)
+    assert SENSITIVE_TOOL in t.query("called_tool_names")
+    await t.run(emit, send)  # same shared llm instance
+    assert SENSITIVE_TOOL in t.query("called_tool_names")  # replayed, not exhausted
+
+
+async def test_crew_factory_error_recorded_not_raised() -> None:
+    def bad_factory(llm):
+        raise ValueError("bad crew config")
+
+    t = CrewAIAgentTarget(crew_factory=bad_factory, llm=scripted_llm(final_answer("x")))
+    emit, send = _handlers("q")
+    await t.run(emit, send)  # must not raise
+    assert "bad crew config" in t.query("error")
+    assert t.query("called_tool_names") == "" and t.query("last_response") == ""
+
+
 async def test_reset_clears_state() -> None:
     t = _target(scripted_llm(final_answer("hi")))
     emit, send = _handlers("x")

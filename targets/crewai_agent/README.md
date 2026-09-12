@@ -23,6 +23,11 @@ delivery, tool-call capture, result mapping), not the security outcome — wheth
 the agent *follows* an injection is decided by a real model, which a live run
 supplies.
 
+A scripted llm is **stateful** (it steps through its script per call), so the
+target rewinds it at the start of each run. That per-instance counter is not
+concurrency-safe: run a scripted llm with `concurrency=1`. Real models are
+stateless per call, so live runs have no such constraint.
+
 ## Usage
 
 ```python
