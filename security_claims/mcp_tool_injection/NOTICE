@@ -1,0 +1,29 @@
+# NOTICE
+
+superred-claim-mcp-tool-injection
+
+This module red-teams the MCP (Model Context Protocol) tool supply chain as a
+superred SecurityClaim. All code and the bundled poison payloads are original to
+this module and licensed MIT (see LICENSE). No third-party dataset or source is
+vendored.
+
+## Poison payloads
+
+The illustrative tool-poisoning payloads in `src/mcp_tool_injection_claim/poisons.py`
+(5) are original content authored for this module — canonical tool-poisoning
+patterns (hidden instructions in a tool's advertised description), not copied from
+any dataset. They exist so the claim is runnable and testable out of the box and to
+seed an optimizer; they are not a benchmark. Supply your own via
+`mcp_tool_injection_claim(poisons=...)`.
+
+## Protocol under test (not vendored)
+
+- Model Context Protocol (MCP) and its Python SDK — https://github.com/modelcontextprotocol/python-sdk
+  (MIT, © Anthropic, PBC). This module and the paired `superred-target-mcp-agent`
+  depend on the SDK; no SDK code is vendored.
+
+## Citation
+
+When reporting results, describe the MCP server, tools, and agent model used —
+tool-injection susceptibility depends on all three and is point-in-time (hosted
+models change).
