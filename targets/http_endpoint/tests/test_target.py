@@ -325,6 +325,17 @@ def test_numeric_password_slash_url_does_not_leak() -> None:
     assert content == "POST (unparsable url)"
 
 
+def test_two_at_signs_do_not_leak() -> None:
+    # "svc:p@ss/word@api.example.com": httpx recognizes the first '@' as userinfo
+    # (host="ss") and smears the second into u.path — a count-based guard catches it.
+    t = HttpEndpointTarget(
+        url="https://svc:p@ss/word@api.example.com/v1/chat", transport=_transport([], {})
+    )
+    content = t.get_observables()[0].content
+    assert "api.example.com" not in content and "word" not in content and "@" not in content
+    assert content == "POST (unparsable url)"
+
+
 def test_query_fragment_userinfo_smear_does_not_leak() -> None:
     # httpx also terminates the authority at '?' and '#', smearing a malformed
     # password's creds into query/fragment; the raw '@' isn't recognized as userinfo,

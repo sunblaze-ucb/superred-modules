@@ -233,8 +233,12 @@ class HttpEndpointTarget(Target):
         try:
             u = httpx.URL(self._url)
             after_scheme = self._url.split("://", 1)[-1] if "://" in self._url else self._url
-            unrecognized_at = "@" in after_scheme and not (u.username or u.password)
-            if not u.host or unrecognized_at:
+            # Count '@' rather than just check presence: a well-formed URL has exactly
+            # one '@' iff httpx recognized userinfo, and zero otherwise. ANY deviation
+            # (an unrecognized '@', or a second '@' smeared past a recognized one into
+            # host/path/query) means credentials leaked into the parse — redact.
+            expected_at = 1 if (u.username or u.password) else 0
+            if not u.host or after_scheme.count("@") != expected_at:
                 return "(unparsable url)"
             hostport = u.host + (f":{u.port}" if u.port is not None else "")
             return f"{hostport}{u.path}"
