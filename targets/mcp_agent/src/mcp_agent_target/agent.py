@@ -28,7 +28,7 @@ class ToolResult(Protocol):
 
 
 class MCPSession(Protocol):
-    """The subset of ``mcp.ClientSession`` this module uses."""
+    """The subset of a connected ``mcp.Client`` (or ClientSession) this module uses."""
 
     async def list_tools(self) -> Any: ...
     async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> ToolResult: ...
@@ -168,19 +168,27 @@ async def run_agent(
         tool_calls = getattr(message, "tool_calls", None) or []
         content = getattr(message, "content", None) or ""
 
-        # record the assistant turn on the wire
-        assistant_entry: dict[str, Any] = {"role": "assistant", "content": content}
+        # record the assistant turn on the wire, in the exact shape the
+        # OpenAI/litellm chat API expects to replay: a tool-call turn carries
+        # ``content: null`` and each call includes ``"type": "function"``.
         if tool_calls:
-            assistant_entry["tool_calls"] = [
-                {
-                    "id": getattr(tc, "id", ""),
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments,
-                    },
-                }
-                for tc in tool_calls
-            ]
+            assistant_entry: dict[str, Any] = {
+                "role": "assistant",
+                "content": content or None,
+                "tool_calls": [
+                    {
+                        "id": getattr(tc, "id", ""),
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in tool_calls
+                ],
+            }
+        else:
+            assistant_entry = {"role": "assistant", "content": content}
         messages.append(assistant_entry)
         run.transcript.append(assistant_entry)
 

@@ -8,11 +8,14 @@ poison as an attacker-controllable surface (``tool_poison``) alongside the direc
 ``user_message``. The security question the paired claim scores is whether the
 poison makes the agent take an unintended action (e.g. call a sensitive tool).
 
-Transport-agnostic: the target takes a ``session_provider`` — an async context
-manager yielding an initialized ``mcp.ClientSession``. For CI this is an
-in-memory server (fully offline, no network — the reason MCP is uniquely
-e2e-verifiable here); for real use it is a stdio or streamable-HTTP connection
-(see the factory helpers). The LLM api_key is held privately and never emitted.
+Transport-agnostic via the SDK's public ``mcp.Client``: the target takes a
+``session_provider`` — a zero-arg callable returning a connected ``mcp.Client``.
+For CI this is an in-memory server (fully offline, no network/subprocess), which
+exercises the whole *plumbing* path — connect, tool discovery, poison, agent
+loop, ``call_tool`` — end to end; the security *outcome* (does the agent follow
+the poison?) still needs a real LLM. For real runs it is a stdio or
+streamable-HTTP connection to an external MCP server (the real supply chain). The
+LLM api_key is held privately and never emitted.
 """
 
 from __future__ import annotations
@@ -50,7 +53,7 @@ class MCPAgentTarget(Target):
     Args:
         model: LiteLLM model id for the agent.
         session_provider: zero-arg callable returning an async context manager
-            that yields an **initialized** ``mcp.ClientSession``.
+            that yields a connected ``mcp.Client``.
         api_base: LiteLLM API base for the agent model.
         api_key: LiteLLM API key. Held privately; never emitted or queried.
         max_turns: max agent loop turns (LLM call + tool execution).
@@ -201,19 +204,23 @@ class MCPAgentTarget(Target):
     async def run(self, emit: EventHandler, send_event: EventResponseHandler) -> None:
         self._reset_state()
 
+        controllables = {c.name: c for c in self.get_controllables()}
+
         # Offer the tool-supply-chain surface FIRST so a passthrough optimizer
-        # (which injects the goal into the first non-system controllable) fills the
-        # poison; the user message then falls back to the configured benign task.
+        # (which injects the goal into the first non-system, free-text controllable)
+        # fills the poison; the user message then falls back to the configured
+        # benign task. Both controllables keep the default ``value_type`` ("text"),
+        # which goal_passthrough treats as injectable — keep them free-text.
         poison_resp = await send_event(
             ControllablePreCallEvent(
-                controllable=self.get_controllables()[0], request="Enter tool poison:"
+                controllable=controllables["tool_poison"], request="Enter tool poison:"
             )
         )
         poison = poison_resp.value if isinstance(poison_resp, ControllableInjection) else ""
 
         user_resp = await send_event(
             ControllablePreCallEvent(
-                controllable=self.get_controllables()[1], request="Enter user message:"
+                controllable=controllables["user_message"], request="Enter user message:"
             )
         )
         user_message = (

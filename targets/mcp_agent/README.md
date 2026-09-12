@@ -11,14 +11,25 @@ and exposes the poison as an attacker-controllable surface. The paired
 [`superred-claim-mcp-tool-injection`](../../security_claims/mcp_tool_injection)
 scores whether the poison makes the agent call a sensitive tool it should not.
 
-## Uniquely e2e-verifiable in CI
+## What it adds, and what the CI test proves
 
-The target takes a **session provider** (an async context manager yielding an
-initialized `mcp.ClientSession`). For CI it is an **in-memory** MCP server — a
-real `MCPServer` wired to a real `ClientSession` over in-process streams, no
-network and no subprocess — so the whole path (connect → list tools → poison →
-agent loop → `call_tool` → record) runs offline against a mock LLM. For live runs
-it is a stdio or streamable-HTTP connection to a real server.
+The target speaks the **real MCP protocol** via the SDK's public `mcp.Client`, so
+it can point at real third-party MCP servers (stdio / streamable-HTTP) with
+server-advertised, dynamically-discovered tools — the actual supply chain an
+MCP-using agent trusts. That real-protocol connection is the distinctive part
+(tool-description rewriting on its own is also expressible on the shared
+`inspect_agent` target; the MCP wire protocol and external servers are what this
+adds).
+
+It takes a **session provider** (a zero-arg callable returning an async context
+manager — a connected `mcp.Client`). For CI that is an **in-memory** MCP server
+(a real `MCPServer` connected in-process, no network/subprocess): the whole
+*plumbing* path — connect → discover tools → apply poison → agent loop →
+`call_tool` → record — runs offline and is asserted end-to-end. Be precise about
+what that verifies: it proves the **plumbing**, not the security outcome — the
+agent's decision to follow the poison is made by a mock LLM in tests and needs a
+real LLM (and, for the real supply chain, a real server) to measure an actual
+attack-success rate.
 
 ## Usage
 

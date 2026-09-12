@@ -25,9 +25,8 @@ from mcp_agent_target.servers import (
     BENIGN_TOOL,
     SENSITIVE_TOOL,
     build_demo_server,
-    in_memory_session,
+    http_session_provider,
     in_memory_session_provider,
-    stdio_session,
     stdio_session_provider,
 )
 from mcp_agent_target.target import (
@@ -78,8 +77,7 @@ __all__ = [
     "BENIGN_TOOL",
     "SENSITIVE_TOOL",
     "build_demo_server",
-    "in_memory_session",
     "in_memory_session_provider",
-    "stdio_session",
     "stdio_session_provider",
+    "http_session_provider",
 ]
