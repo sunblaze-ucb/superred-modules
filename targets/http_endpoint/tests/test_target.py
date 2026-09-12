@@ -288,6 +288,17 @@ def test_auth_header_never_emitted() -> None:
     assert t.get_observables()[0].content == "POST my-app.example.com/v1/chat"
 
 
+def test_malformed_url_with_userinfo_slash_does_not_leak() -> None:
+    # a '/' in the userinfo makes httpx.URL reject the URL (non-numeric port), so
+    # _host() hits the fallback — which must redact, never leak the credentials.
+    t = HttpEndpointTarget(
+        url="https://svc:aB/cD@api.example.com/v1/chat", transport=_transport([], {})
+    )
+    content = t.get_observables()[0].content
+    assert "aB/cD" not in content and "svc:" not in content
+    assert content == "POST (unparsable url)"
+
+
 async def test_secret_absent_from_all_queries_after_run() -> None:
     t = _target(_transport([], {"choices": [{"message": {"content": "ok"}}]}))
     emit, send = _handlers("attack")

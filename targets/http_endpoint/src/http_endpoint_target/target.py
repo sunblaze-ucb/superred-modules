@@ -225,12 +225,12 @@ class HttpEndpointTarget(Target):
             u = httpx.URL(self._url)
             hostport = u.host + (f":{u.port}" if u.port is not None else "")
             return f"{hostport}{u.path}"
-        except Exception:  # noqa: BLE001 - malformed URL: strip userinfo+query manually
-            after_scheme = self._url.split("://", 1)[-1]
-            authority = after_scheme.split("/", 1)[0]
-            rest = after_scheme[len(authority):]
-            host = authority.rsplit("@", 1)[-1]  # drop any userinfo
-            return f"{host}{rest}".split("?", 1)[0]
+        except Exception:  # noqa: BLE001 - malformed URL httpx can't parse
+            # We only reach here because httpx REJECTED the URL as unparseable, so
+            # no hand-rolled parse is trustworthy (userinfo can contain '/', which
+            # defeats naive authority splitting and would leak `user:pass@`). Redact
+            # entirely to honor the no-credential-leak guarantee.
+            return "(unparsable url)"
 
     # -- Execution ------------------------------------------------------------
 
