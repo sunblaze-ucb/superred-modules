@@ -223,6 +223,11 @@ class HttpEndpointTarget(Target):
         # or the query string, any of which can carry credentials / tokens.
         try:
             u = httpx.URL(self._url)
+            if not u.host:
+                # A URL with no scheme://authority (e.g. a dropped "https://" leaves
+                # "user:pass@host/path" whole in u.path) parses WITHOUT raising, so
+                # the userinfo would leak through the happy path — redact it too.
+                return "(unparsable url)"
             hostport = u.host + (f":{u.port}" if u.port is not None else "")
             return f"{hostport}{u.path}"
         except Exception:  # noqa: BLE001 - malformed URL httpx can't parse

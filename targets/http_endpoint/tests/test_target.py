@@ -314,6 +314,17 @@ async def test_malformed_url_error_does_not_leak_creds() -> None:
     assert "aB/cD" not in err and "svc:" not in err and "cD@" not in err
 
 
+def test_schemeless_url_with_userinfo_does_not_leak() -> None:
+    # a dropped "https://" leaves "svc:SECRETPASS@host/path" whole in u.path (httpx
+    # parses it without raising) — _host() must redact, not emit the credentials.
+    t = HttpEndpointTarget(
+        url="svc:SECRETPASS@api.example.com/v1/chat", transport=_transport([], {})
+    )
+    content = t.get_observables()[0].content
+    assert "SECRETPASS" not in content and "svc:" not in content
+    assert content == "POST (unparsable url)"
+
+
 async def test_secret_absent_from_all_queries_after_run() -> None:
     t = _target(_transport([], {"choices": [{"message": {"content": "ok"}}]}))
     emit, send = _handlers("attack")
