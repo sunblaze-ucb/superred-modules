@@ -302,10 +302,12 @@ class HttpEndpointTarget(Target):
                 return
             except httpx.HTTPError as exc:
                 # Clear status/body so they never pair a prior attempt's response
-                # with this attempt's error.
+                # with this attempt's error. Record only the exception TYPE, never
+                # str(exc): an httpx error message can echo the URL (incl. userinfo
+                # credentials), and `error` is a caller-visible query.
                 self._http_status = None
                 self._raw_response = ""
-                self._error = f"{type(exc).__name__}: {exc}"
+                self._error = type(exc).__name__
                 if attempt < self._max_retries:
                     await self._backoff(attempt, None)
                     continue
@@ -314,10 +316,11 @@ class HttpEndpointTarget(Target):
                 # A malformed URL (bad port, control char, unsubstituted template)
                 # raises synchronously from client.request and is not an
                 # httpx.HTTPError — record it and stop (retrying can't fix the URL)
-                # so it never propagates out of run() and crashes the sweep.
+                # so it never propagates out of run() and crashes the sweep. Type
+                # only: an InvalidURL message embeds the URL (userinfo credentials).
                 self._http_status = None
                 self._raw_response = ""
-                self._error = f"{type(exc).__name__}: {exc}"
+                self._error = type(exc).__name__
                 return
 
     async def _backoff(self, attempt: int, retry_after: str | None) -> None:

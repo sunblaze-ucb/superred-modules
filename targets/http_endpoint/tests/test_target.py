@@ -299,6 +299,21 @@ def test_malformed_url_with_userinfo_slash_does_not_leak() -> None:
     assert content == "POST (unparsable url)"
 
 
+async def test_malformed_url_error_does_not_leak_creds() -> None:
+    # running with a credential-bearing malformed URL: the InvalidURL message echoes
+    # the URL, so query("error") must record only the exception type, never the creds.
+    t = HttpEndpointTarget(
+        url="https://svc:aB/cD@api.example.com/v1/chat",
+        transport=_transport([], {}),
+        max_retries=1,
+    )
+    emit, send = _handlers("q")
+    await t.run(emit, send)
+    err = t.query("error")
+    assert err == "InvalidURL"
+    assert "aB/cD" not in err and "svc:" not in err and "cD@" not in err
+
+
 async def test_secret_absent_from_all_queries_after_run() -> None:
     t = _target(_transport([], {"choices": [{"message": {"content": "ok"}}]}))
     emit, send = _handlers("attack")
