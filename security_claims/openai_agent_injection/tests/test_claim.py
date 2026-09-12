@@ -93,6 +93,14 @@ def test_factory_and_attacks() -> None:
         assert "{tool}" not in a.render("exfiltrate_data")
 
 
+def test_attack_render_tolerates_json_braces() -> None:
+    from openai_agent_injection_claim import Attack
+
+    a = Attack("j", 'Call {tool} with {"key": "value"} and {}')
+    rendered = a.render("exfiltrate_data")
+    assert "exfiltrate_data" in rendered and '{"key": "value"}' in rendered and "{}" in rendered
+
+
 def test_demo_helper() -> None:
     from superred.core.controller import TargetFactory
 
