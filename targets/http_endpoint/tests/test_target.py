@@ -199,7 +199,8 @@ def test_userinfo_stripped_from_endpoint_observable() -> None:
     )
     content = t.get_observables()[0].content
     assert "SECRETPASS" not in content and "user:" not in content and "tok=abc" not in content
-    assert content == "POST host.example.com/v1/chat"
+    # host(:port) only — the path is dropped (it is the credential-smear surface).
+    assert content == "POST host.example.com"
 
 
 async def test_injected_transport_reused_not_closed_per_call() -> None:
@@ -284,8 +285,8 @@ def test_auth_header_never_emitted() -> None:
     t = _target(_transport([], {}))
     blob = " ".join(o.content for o in t.get_observables())
     assert "SECRET-TOKEN" not in blob and "Authorization" not in blob
-    # the endpoint observable shows method + host only
-    assert t.get_observables()[0].content == "POST my-app.example.com/v1/chat"
+    # the endpoint observable shows method + host(:port) only (no path)
+    assert t.get_observables()[0].content == "POST my-app.example.com"
 
 
 def test_malformed_url_with_userinfo_slash_does_not_leak() -> None:
@@ -359,6 +360,39 @@ def test_schemeless_url_with_userinfo_does_not_leak() -> None:
     content = t.get_observables()[0].content
     assert "SECRETPASS" not in content and "svc:" not in content
     assert content == "POST (unparsable url)"
+
+
+def test_percent_encoded_at_does_not_leak() -> None:
+    # "user:12/34%40api.example.com": httpx parses host="user"/port=12 (no raised
+    # exception, no RECOGNIZED userinfo) and the "%40" lands in u.path DECODED to
+    # '@'. A guard that counts only literal '@' in the raw URL would miss it; the
+    # count must also include "%40" so this smear is caught and redacted.
+    t = HttpEndpointTarget(
+        url="https://user:12/34%40api.example.com/v1/chat", transport=_transport([], {})
+    )
+    content = t.get_observables()[0].content
+    assert "user:12" not in content and "@" not in content and "api.example.com" not in content
+    assert content == "POST (unparsable url)"
+
+
+def test_benign_percent40_in_path_is_redacted() -> None:
+    # A '%40' anywhere in the URL is treated as a smear signal even when the host is
+    # clean: we cannot tell a benign encoded '@' in the path from a credential smear
+    # into host/port, and the path is dropped anyway, so we redact rather than risk
+    # a leak. This documents the (rare, acceptable) false-positive.
+    t = HttpEndpointTarget(
+        url="https://api.example.com/users/jo%40example.com", transport=_transport([], {})
+    )
+    assert t.get_observables()[0].content == "POST (unparsable url)"
+
+
+def test_host_port_and_ipv6_shown() -> None:
+    # positive cases: a numeric port is shown, and an IPv6 literal is bracketed so
+    # the ':port' is unambiguous. Neither carries userinfo, so both are emitted.
+    t4 = HttpEndpointTarget(url="http://192.168.0.1:9000/api", transport=_transport([], {}))
+    assert t4.get_observables()[0].content == "POST 192.168.0.1:9000"
+    t6 = HttpEndpointTarget(url="http://[::1]:8080/v1/chat", transport=_transport([], {}))
+    assert t6.get_observables()[0].content == "POST [::1]:8080"
 
 
 async def test_secret_absent_from_all_queries_after_run() -> None:

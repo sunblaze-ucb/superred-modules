@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from typing import Any, Final
 
 import httpx
@@ -211,43 +212,60 @@ class HttpEndpointTarget(Target):
                 observable=Observable(
                     name="endpoint",
                     security_domain=SYSTEM_TAG,
-                    description="The target endpoint: method + host(:port) + path "
-                    "(never userinfo, query, or headers/auth).",
+                    description="The target endpoint: method + host(:port) only "
+                    "(never userinfo, path, query, or headers/auth).",
                 ),
                 content=f"{self._method} {self._host()}",
             ),
         ]
 
+    # A DNS name / IPv4 literal: letters, digits, '.', '-'. No credential-bearing
+    # characters ('@', ':', '/', '%') can appear, so a match cannot carry userinfo.
+    _DNS_OR_IPV4: Final = re.compile(r"[A-Za-z0-9.\-]+")
+    # An IPv6 literal as httpx returns u.host (unbracketed): hex digits and ':'.
+    _IPV6: Final = re.compile(r"[0-9A-Fa-f:.]+")
+
     def _host(self) -> str:
-        # Emit host(:port) + path only — never userinfo, query, or fragment.
-        #
-        # httpx's lenient authority parse terminates at the first of '/', '?' or '#',
-        # so a malformed password containing any of those smears the "user:pass@..."
-        # credentials across host / path / query / fragment WITHOUT raising (e.g.
-        # "user:12/34@host", "user:12?34@host", a dropped scheme). Rather than chase
-        # each variant, use one bulletproof rule: if the raw URL contains an '@' that
-        # httpx did NOT recognize as userinfo (u.username / u.password unset), that
-        # '@' is a smeared credential separator — redact entirely. A well-formed
-        # "user:pass@host" IS recognized as userinfo, so its clean host still shows
-        # (userinfo is excluded from the output either way).
+        # Emit ONLY a validated bare host(:port) — never userinfo, path, query, or
+        # fragment. The path/query/fragment are the credential-smear surface: httpx's
+        # lenient authority parse stops at the first of '/', '?' or '#', so a
+        # malformed "user:pass@host" whose password contains one of those — or a
+        # percent-encoded '@' ("%40") — spills credential material into
+        # host/port/path/query WITHOUT raising (e.g. "user:12/34@host" parses to
+        # host="user", port=12). Six prior leak variants all rode the emitted path;
+        # rather than blocklist each one, we DROP the path and positively ALLOWLIST
+        # the output as a hostname/IP literal plus a numeric port. Redact otherwise.
         try:
             u = httpx.URL(self._url)
-            after_scheme = self._url.split("://", 1)[-1] if "://" in self._url else self._url
-            # Count '@' rather than just check presence: a well-formed URL has exactly
-            # one '@' iff httpx recognized userinfo, and zero otherwise. ANY deviation
-            # (an unrecognized '@', or a second '@' smeared past a recognized one into
-            # host/path/query) means credentials leaked into the parse — redact.
-            expected_at = 1 if (u.username or u.password) else 0
-            if not u.host or after_scheme.count("@") != expected_at:
-                return "(unparsable url)"
-            hostport = u.host + (f":{u.port}" if u.port is not None else "")
-            return f"{hostport}{u.path}"
-        except Exception:  # noqa: BLE001 - malformed URL httpx can't parse
-            # We only reach here because httpx REJECTED the URL as unparseable, so
-            # no hand-rolled parse is trustworthy (userinfo can contain '/', which
-            # defeats naive authority splitting and would leak `user:pass@`). Redact
-            # entirely to honor the no-credential-leak guarantee.
+        except Exception:  # noqa: BLE001 - malformed URL httpx rejects outright
+            # httpx itself refused to parse it; no hand-rolled parse is trustworthy
+            # (userinfo can contain '/', defeating naive splitting), so redact.
             return "(unparsable url)"
+        host = u.host  # httpx has already stripped any RECOGNIZED userinfo from host
+        if not host:
+            return "(unparsable url)"
+        # A URL carries credentials only through an '@' userinfo delimiter, so an
+        # unaccounted '@' is the tell that credentials spilled past the authority
+        # into host/port. Count every '@' that can materialize as a literal '@' in a
+        # client-decoded URL: a raw '@' OR a percent-encoded "%40" (httpx decodes
+        # %40 -> '@'). httpx recognizes exactly one '@' as userinfo iff
+        # u.username/u.password is set; any other '@' (raw or encoded) means a
+        # smeared credential separator — redact rather than emit the misparse.
+        at_total = self._url.count("@") + self._url.count("%40")
+        expected_at = 1 if (u.username or u.password) else 0
+        if at_total != expected_at:
+            return "(unparsable url)"
+        # Positively allowlist the host: a DNS name / IPv4, else an IPv6 literal
+        # (bracketed so the ':port' is unambiguous). This rejects any residual smear
+        # a count check could miss (stray delimiters, unicode). Port, if present, is
+        # already an int parsed by httpx.
+        if self._DNS_OR_IPV4.fullmatch(host):
+            hostpart = host
+        elif self._IPV6.fullmatch(host):
+            hostpart = f"[{host}]"
+        else:
+            return "(unparsable url)"
+        return hostpart if u.port is None else f"{hostpart}:{u.port}"
 
     # -- Execution ------------------------------------------------------------
 
