@@ -137,6 +137,26 @@ def test_key_never_observable_or_queryable() -> None:
         assert KEY not in t.query(q.name)
 
 
+async def test_session_connect_failure_recorded_not_raised() -> None:
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _boom():
+        raise RuntimeError("connect refused")
+        yield  # pragma: no cover - unreachable
+
+    async def unused(**kwargs: Any) -> Any:  # pragma: no cover - never called
+        raise AssertionError
+
+    target = MCPAgentTarget(
+        model="m", session_provider=lambda: _boom(), api_key=KEY, complete=unused
+    )
+    emit, send = _handlers(poison=None)
+    await target.run(emit, send)  # must NOT raise
+    assert "session connect failed" in target.query("error")
+    assert target.query("called_tool_names") == ""
+
+
 def test_config_setters_and_queries() -> None:
     t = MCPAgentTarget(model="m", session_provider=_provider(), api_key=KEY)
     t.set_config("system_prompt", "be terse")

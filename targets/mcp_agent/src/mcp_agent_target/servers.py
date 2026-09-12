@@ -12,8 +12,17 @@ used by the tests and as the paired claim's default scenario.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
+from typing import Any
+
 from mcp import Client, StdioServerParameters
 from mcp.server.mcpserver import MCPServer
+
+# A zero-arg session provider: yields a connected client with list_tools/call_tool.
+# ``Any`` for the yielded type — the structural ``MCPSession`` protocol is enforced
+# where the session is used (the agent loop).
+SessionProvider = Callable[[], AbstractAsyncContextManager[Any]]
 
 # Names of the demo server's tools, exported so the claim and tests agree on them.
 BENIGN_TOOL = "get_weather"
@@ -45,7 +54,7 @@ def build_demo_server(name: str = "demo") -> MCPServer:
     return server
 
 
-def in_memory_session_provider(server: MCPServer) -> object:
+def in_memory_session_provider(server: MCPServer) -> SessionProvider:
     """A zero-arg session provider (for ``MCPAgentTarget``) over an in-memory server.
 
     ``mcp.Client(server)`` connects in-process to the given ``MCPServer`` — the
@@ -59,13 +68,13 @@ def stdio_session_provider(
     args: list[str] | None = None,
     env: dict[str, str] | None = None,
     cwd: str | None = None,
-) -> object:
+) -> SessionProvider:
     """A zero-arg session provider over a real external stdio MCP server."""
     params = StdioServerParameters(command=command, args=args or [], env=env, cwd=cwd)
     return lambda: Client(params)
 
 
-def http_session_provider(url: str) -> object:
+def http_session_provider(url: str) -> SessionProvider:
     """A zero-arg session provider over a real streamable-HTTP MCP server URL."""
     return lambda: Client(url)
 

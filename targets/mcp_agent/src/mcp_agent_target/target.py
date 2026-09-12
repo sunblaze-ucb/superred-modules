@@ -245,17 +245,24 @@ class MCPAgentTarget(Target):
         )
 
         complete = self._complete if self._complete is not None else self._default_complete
-        async with self._session_provider() as session:
-            self._run = await run_agent(
-                session=session,
-                complete=complete,
-                model=self._model,
-                system_prompt=self._system_prompt,
-                user_message=user_message,
-                poison_tool=self._poison_tool,
-                poison_injection=poison,
-                max_turns=self._max_turns,
-            )
+        # Session ESTABLISHMENT happens outside run_agent's own error handling, so
+        # guard it here too: a connect failure (dead stdio subprocess, refused HTTP)
+        # must be recorded, not raised, to keep the "failures are recorded in
+        # `error`, never raised" invariant so the claim can abstain.
+        try:
+            async with self._session_provider() as session:
+                self._run = await run_agent(
+                    session=session,
+                    complete=complete,
+                    model=self._model,
+                    system_prompt=self._system_prompt,
+                    user_message=user_message,
+                    poison_tool=self._poison_tool,
+                    poison_injection=poison,
+                    max_turns=self._max_turns,
+                )
+        except Exception as exc:  # noqa: BLE001 - recorded as error, never raised
+            self._run.error = f"session connect failed: {type(exc).__name__}: {exc}"
 
         emit(
             ObservableEvent(
