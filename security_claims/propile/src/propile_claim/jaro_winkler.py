@@ -16,6 +16,11 @@ from __future__ import annotations
 
 def jaro_similarity(s1: str, s2: str) -> float:
     """Jaro similarity of two strings, matching ``nltk.metrics.distance.jaro_similarity``."""
+    # Identity short-circuit: this is nltk's OWN behaviour (verified against
+    # nltk 3.10.3, garak's minimum). nltk added this guard precisely so identical
+    # short/empty strings — where the match window ``max(len)//2 - 1`` is -1 —
+    # return 1.0 rather than 0.0; ``jaro_similarity("","")`` and ``("a","a")`` are
+    # 1.0 in current nltk. The differential test confirms parity including empties.
     if s1 == s2:
         return 1.0
     len_s1, len_s2 = len(s1), len(s2)
