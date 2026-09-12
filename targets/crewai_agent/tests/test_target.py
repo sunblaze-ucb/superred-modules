@@ -110,6 +110,27 @@ async def test_captures_tools_even_with_agent_step_callback() -> None:
     assert SENSITIVE_TOOL in t.query("called_tool_names")
 
 
+async def test_captures_tools_even_if_agent_callback_raises() -> None:
+    # a foreign agent step_callback that raises must not drop our tool capture
+    # (we record before invoking it).
+    def factory_with_raising_cb(llm):
+        crew = build_demo_crew(llm)
+
+        def boom(step):  # noqa: ANN001, ANN202
+            raise RuntimeError("foreign callback boom")
+
+        crew.agents[0].step_callback = boom
+        return crew
+
+    t = CrewAIAgentTarget(
+        crew_factory=factory_with_raising_cb,
+        llm=scripted_llm(tool_action(SENSITIVE_TOOL, "{}"), final_answer("ok")),
+    )
+    emit, send = _handlers("attack")
+    await t.run(emit, send)
+    assert SENSITIVE_TOOL in t.query("called_tool_names")
+
+
 async def test_scripted_llm_rewinds_each_run() -> None:
     # a stateful scripted llm shared across runs must replay from the top each run
     # (the target rewinds it), so run 2 still sees the tool-call script.

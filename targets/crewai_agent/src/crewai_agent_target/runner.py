@@ -60,8 +60,16 @@ async def run_crew_capture(*, crew: Any, user_input: str) -> CrewRunResult:
             if callable(existing) and existing is not _recorder:
 
                 def _chained(step: Any, _orig: Any = existing) -> None:
-                    _orig(step)
+                    # Record FIRST, then invoke the caller's callback in isolation: a
+                    # foreign callback that raises would otherwise both drop this
+                    # tool call AND make CrewAI suppress the following (tool-bearing)
+                    # step callback, losing capture entirely. Its errors are the
+                    # caller's own; they must not break our capture or the run.
                     _recorder(step)
+                    try:
+                        _orig(step)
+                    except Exception:  # noqa: BLE001 - isolate the foreign callback
+                        pass
 
                 agent.step_callback = _chained
             else:
