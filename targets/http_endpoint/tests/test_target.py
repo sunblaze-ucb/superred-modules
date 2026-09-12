@@ -3,9 +3,11 @@ extraction, secret handling, error handling. Offline via httpx.MockTransport."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import httpx
+import pytest
 from superred.core.controller import TargetFactory
 from superred.core.types.events import ControllableInjection, ControllableNoInjection
 
@@ -62,6 +64,29 @@ def test_factory_builds_target() -> None:
     fac = http_endpoint_target_factory(url=URL, transport=_transport([], {}))
     assert isinstance(fac, TargetFactory)
     assert isinstance(fac.create(), HttpEndpointTarget)
+
+
+# -- misconfiguration --------------------------------------------------------
+def test_body_template_without_placeholder_raises() -> None:
+    # a template that never contains the sentinel would send an un-injected body on
+    # every call (a silent false-negative) — reject it at construction, don't run a
+    # hollow attack.
+    with pytest.raises(ValueError, match="body_template must contain"):
+        HttpEndpointTarget(
+            url=URL, transport=_transport([], {}), body_template={"q": "static text"}
+        )
+
+
+def test_body_template_embedded_placeholder_raises() -> None:
+    # the sentinel embedded in a larger string is NOT substituted (that would need
+    # the unsafe string interpolation this design avoids) — so it is rejected, not
+    # silently sent verbatim.
+    with pytest.raises(ValueError):
+        HttpEndpointTarget(
+            url=URL,
+            transport=_transport([], {}),
+            body_template={"messages": [{"role": "user", "content": "ask: {{prompt}}"}]},
+        )
 
 
 # -- request / response ------------------------------------------------------
@@ -218,6 +243,37 @@ async def test_single_attempt_does_not_retry() -> None:
     emit, send = _handlers("q")
     await t.run(emit, send)
     assert calls["n"] == 1 and t.query("error") == "HTTP 503"
+
+
+async def test_response_size_capped() -> None:
+    # an untrusted endpoint returning a huge body must not be materialized
+    # unbounded: the streamed read aborts past max_response_bytes and records
+    # ResponseTooLargeError (not retried), leaving no response.
+    big = "x" * 5000
+    t = _target(
+        _transport([], {"choices": [{"message": {"content": big}}]}),
+        max_response_bytes=1000,
+        max_attempts=1,
+    )
+    emit, send = _handlers("q")
+    await t.run(emit, send)
+    assert t.query("error") == "ResponseTooLargeError"
+    assert t.query("last_response") == "" and t.query("raw_response") == ""
+
+
+async def test_total_response_time_bounded() -> None:
+    # httpx's per-op timeout does not bound a slow byte-trickle; max_response_time
+    # does. A handler slower than the cap aborts the attempt with TimeoutError
+    # rather than stalling the run.
+    async def slow(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(0.3)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "late"}}]})
+
+    t = _target(httpx.MockTransport(slow), max_response_time=0.05, max_attempts=1)
+    emit, send = _handlers("q")
+    await t.run(emit, send)
+    assert t.query("error") == "TimeoutError"
+    assert t.query("last_response") == ""
 
 
 def test_userinfo_stripped_from_endpoint_observable() -> None:

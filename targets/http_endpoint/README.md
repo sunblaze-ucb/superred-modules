@@ -17,6 +17,13 @@ The `body_template` is a JSON structure, and every value equal to the sentinel
 so a prompt containing quotes or braces (e.g. an injection payload) can never
 corrupt or restructure the request body.
 
+The sentinel must appear as a **complete value** at least once, or construction
+raises `ValueError`. A sentinel embedded in a larger string (`"ask: {{prompt}}"`)
+or mistyped is intentionally *not* substituted — supporting that would require the
+unsafe string interpolation this design avoids — so rather than silently send an
+un-injected body on every call (a systematic false-negative), the misconfig fails
+fast.
+
 ```python
 from http_endpoint_target import http_endpoint_target_factory
 
@@ -49,7 +56,11 @@ anything unexpected is redacted to `(unparsable url)`.
 errors are recorded in `error` (never raised), with bounded retry + backoff on
 `429`/`5xx`, so a claim can abstain. A numeric `Retry-After` is honored but
 **clamped to `max_retry_delay`** (default 60s) — a hostile/untrusted endpoint
-cannot stall the run with a huge `Retry-After`. Redirects are **not** followed —
+cannot stall the run with a huge `Retry-After`. The response is also read under a
+**total-time cap** (`max_response_time`, default 60s — httpx's per-op `timeout`
+does not bound a slow byte-trickle) and a streamed **body-size cap**
+(`max_response_bytes`, default 1 MB), so a slow or huge-body endpoint can neither
+stall the run nor exhaust memory. Redirects are **not** followed —
 a `3xx` (HTTP→HTTPS, trailing-slash, SSO/auth redirect) is recorded as an error,
 so configure the final URL directly. Config: `benign_prompt` (used when
 the prompt is not injected). Controllable: `prompt`.

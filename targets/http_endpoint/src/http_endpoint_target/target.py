@@ -48,6 +48,11 @@ _DOMAIN: Final = SecurityDomain([SYSTEM_TAG, USER_INPUT_TAG])
 PROMPT_PLACEHOLDER: Final = "{{prompt}}"
 
 
+class ResponseTooLargeError(Exception):
+    """Raised internally to abort reading a response body that exceeds the byte
+    cap (an untrusted endpoint must not be able to exhaust memory)."""
+
+
 def _render(template: Any, prompt: str) -> Any:
     """Deep-copy ``template``, replacing every ``PROMPT_PLACEHOLDER`` value with
     ``prompt`` as a value (JSON-safe — no string interpolation)."""
@@ -58,6 +63,20 @@ def _render(template: Any, prompt: str) -> Any:
     if template == PROMPT_PLACEHOLDER:
         return prompt
     return template
+
+
+def _contains_placeholder(template: Any) -> bool:
+    """True iff ``PROMPT_PLACEHOLDER`` appears as a *complete value* somewhere in
+    the template — the only form :func:`_render` substitutes. A sentinel embedded
+    in a larger string (``"ask: {{prompt}}"``) or mistyped (``"{{ prompt }}"``) is
+    deliberately NOT a match: string interpolation is unsupported (it would let a
+    prompt with quotes/braces corrupt the JSON body), so such a template would
+    silently send an un-injected body — better to reject it at construction."""
+    if isinstance(template, dict):
+        return any(_contains_placeholder(v) for v in template.values())
+    if isinstance(template, list):
+        return any(_contains_placeholder(v) for v in template)
+    return bool(template == PROMPT_PLACEHOLDER)
 
 
 def _extract(data: Any, path: str) -> str:
@@ -97,7 +116,9 @@ class HttpEndpointTarget(Target):
             ``{"prompt": "{{prompt}}"}``.
         response_path: dot path to the reply text in the JSON response (e.g.
             ``choices.0.message.content``); empty returns the whole body as text.
-        timeout: per-request timeout (seconds).
+        timeout: httpx per-operation timeout (connect/read/write/pool, seconds).
+            This bounds the wait *between* chunks, NOT total response time — see
+            ``max_response_time`` for the total bound.
         transport: optional ``httpx`` transport for offline tests
             (``httpx.MockTransport``); ``None`` uses the real network.
         max_attempts: total number of HTTP attempts per call *including the first*
@@ -109,6 +130,14 @@ class HttpEndpointTarget(Target):
         max_retry_delay: hard cap (seconds) on any backoff sleep, including a
             server-supplied ``Retry-After`` — so an untrusted endpoint cannot stall
             the run with a huge ``Retry-After``. Default 60.
+        max_response_time: total wall-clock cap (seconds) per attempt on the whole
+            request + body read. Unlike ``timeout`` (per-op), this bounds a hostile
+            server that trickles bytes slowly to keep the connection open; on
+            exceed the attempt aborts (``TimeoutError``, not retried). Default 60.
+        max_response_bytes: cap on the response body read into memory (bytes). The
+            body is streamed and the read aborts past this cap (``ResponseTooLargeError``,
+            not retried) so an untrusted endpoint cannot exhaust memory with a huge
+            response. Default 1_000_000 (1 MB).
     """
 
     def __init__(
@@ -124,6 +153,8 @@ class HttpEndpointTarget(Target):
         max_attempts: int = 3,
         retry_backoff_base: float = 0.5,
         max_retry_delay: float = 60.0,
+        max_response_time: float = 60.0,
+        max_response_bytes: int = 1_000_000,
     ) -> None:
         self._url = url
         self._method = method.upper()
@@ -131,12 +162,26 @@ class HttpEndpointTarget(Target):
         self._body_template: Any = body_template if body_template is not None else {
             "prompt": PROMPT_PLACEHOLDER
         }
+        # Fail fast on a body_template that never injects the prompt: _render only
+        # substitutes a value EXACTLY equal to the sentinel, so a template with the
+        # sentinel missing / embedded in a string / mistyped would silently send an
+        # un-injected body on every call — a systematic false-negative with no
+        # observable signal. Reject at construction rather than run a hollow attack.
+        if not _contains_placeholder(self._body_template):
+            raise ValueError(
+                f"body_template must contain the sentinel {PROMPT_PLACEHOLDER!r} as "
+                "a complete value (not embedded in a larger string) so the prompt is "
+                "actually injected; it does not appear, so the same un-injected body "
+                "would be sent on every call and the endpoint never attacked."
+            )
         self._response_path = response_path
         self._timeout = timeout
         self._transport = transport
         self._max_attempts = max(1, max_attempts)  # always at least one attempt
         self._retry_backoff_base = retry_backoff_base
         self._max_retry_delay = max_retry_delay
+        self._max_response_time = max_response_time
+        self._max_response_bytes = max_response_bytes
         # One client per target instance, reused across attempts and run() calls
         # (connection pooling; the injected transport is NOT closed per attempt).
         self._client = httpx.AsyncClient(transport=transport, timeout=timeout)
@@ -318,31 +363,29 @@ class HttpEndpointTarget(Target):
         body = _render(self._body_template, prompt)
         for attempt in range(1, self._max_attempts + 1):
             try:
-                resp = await self._client.request(
-                    self._method, self._url, json=body, headers=self._headers
-                )
-                self._http_status = resp.status_code
-                self._raw_response = resp.text
-                if resp.status_code == 429 and attempt < self._max_attempts:
-                    await self._backoff(attempt, resp.headers.get("Retry-After"))
+                status, retry_after, raw = await self._request_capped(body)
+                self._http_status = status
+                self._raw_response = raw
+                if status == 429 and attempt < self._max_attempts:
+                    await self._backoff(attempt, retry_after)
                     continue
-                if resp.status_code >= 500 and attempt < self._max_attempts:
-                    await self._backoff(attempt, resp.headers.get("Retry-After"))
+                if status >= 500 and attempt < self._max_attempts:
+                    await self._backoff(attempt, retry_after)
                     continue
                 # >= 300 (not just >= 400): redirects are NOT followed
                 # (follow_redirects defaults to False), so a 3xx (HTTP->HTTPS,
                 # trailing-slash normalization, an auth/SSO redirect) is not the
                 # app's reply — treat it as an error so the claim abstains rather
                 # than scoring an empty/redirect body as the response.
-                if resp.status_code >= 300:
-                    self._error = f"HTTP {resp.status_code}"
+                if status >= 300:
+                    self._error = f"HTTP {status}"
                     return
                 self._error = ""  # a prior transient attempt, if any, recovered
                 try:
-                    data = resp.json()
+                    data = json.loads(raw)
                 except ValueError:
                     # a 2xx with a non-JSON body: use the raw text as the reply.
-                    self._last_response = resp.text
+                    self._last_response = raw
                     return
                 self._last_response = _extract(data, self._response_path)
                 return
@@ -358,16 +401,39 @@ class HttpEndpointTarget(Target):
                     await self._backoff(attempt, None)
                     continue
                 return
-            except Exception as exc:  # noqa: BLE001 - e.g. httpx.InvalidURL (NOT an HTTPError)
-                # A malformed URL (bad port, control char, unsubstituted template)
-                # raises synchronously from client.request and is not an
-                # httpx.HTTPError — record it and stop (retrying can't fix the URL)
-                # so it never propagates out of run() and crashes the sweep. Type
-                # only: an InvalidURL message embeds the URL (userinfo credentials).
+            except Exception as exc:  # noqa: BLE001 - InvalidURL / TimeoutError / ResponseTooLargeError
+                # Not an httpx.HTTPError, so retrying won't help / would prolong a
+                # hostile stall — record the type and stop. Covers: a malformed URL
+                # (httpx.InvalidURL, raised synchronously); the total-time budget
+                # exceeded (asyncio.timeout -> TimeoutError, e.g. a slow-trickle
+                # server); and an over-cap body (ResponseTooLargeError). Type only: an
+                # InvalidURL message embeds the URL (userinfo credentials). Never
+                # propagates out of run() and crashes the sweep.
                 self._http_status = None
                 self._raw_response = ""
                 self._error = type(exc).__name__
                 return
+
+    async def _request_capped(self, body: Any) -> tuple[int, str | None, str]:
+        """POST and read the response body under two bounds an untrusted endpoint
+        cannot exceed: a total wall-clock cap (``asyncio.timeout`` — httpx's per-op
+        read timeout does NOT bound a slow byte-trickle) and a byte cap (the body is
+        streamed, not ``resp.text``, which would materialize an unbounded body).
+        Returns ``(status_code, Retry-After, decoded_body)``."""
+        async with asyncio.timeout(self._max_response_time):
+            async with self._client.stream(
+                self._method, self._url, json=body, headers=self._headers
+            ) as resp:
+                retry_after = resp.headers.get("Retry-After")
+                total = 0
+                chunks: list[bytes] = []
+                async for chunk in resp.aiter_bytes():
+                    total += len(chunk)
+                    if total > self._max_response_bytes:
+                        raise ResponseTooLargeError
+                    chunks.append(chunk)
+                raw = b"".join(chunks).decode(resp.encoding or "utf-8", errors="replace")
+                return resp.status_code, retry_after, raw
 
     async def _backoff(self, attempt: int, retry_after: str | None) -> None:
         delay = self._retry_backoff_base * (2.0 ** (attempt - 1))

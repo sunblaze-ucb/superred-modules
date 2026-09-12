@@ -34,6 +34,8 @@ def http_endpoint_target_factory(
     max_attempts: int = 3,
     retry_backoff_base: float = 0.5,
     max_retry_delay: float = 60.0,
+    max_response_time: float = 60.0,
+    max_response_bytes: int = 1_000_000,
     concurrency: int = 1,
 ) -> TargetFactory:
     """Build a :class:`TargetFactory` of fresh :class:`HttpEndpointTarget` instances."""
@@ -49,6 +51,8 @@ def http_endpoint_target_factory(
             max_attempts=max_attempts,
             retry_backoff_base=retry_backoff_base,
             max_retry_delay=max_retry_delay,
+            max_response_time=max_response_time,
+            max_response_bytes=max_response_bytes,
         ),
         concurrency=concurrency,
     )
