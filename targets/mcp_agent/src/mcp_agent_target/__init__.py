@@ -9,9 +9,6 @@ it should not. Uniquely e2e-verifiable in CI via an in-memory MCP server.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
-
 from superred.core.controller import TargetFactory
 
 from mcp_agent_target.agent import (
@@ -41,7 +38,7 @@ from mcp_agent_target.target import (
 def mcp_agent_target_factory(
     *,
     model: str,
-    session_provider: Callable[[], AbstractAsyncContextManager[object]],
+    session_provider: SessionProvider,
     api_base: str = "",
     api_key: str = "",
     max_turns: int = 4,
@@ -51,7 +48,7 @@ def mcp_agent_target_factory(
     return TargetFactory(
         create=lambda: MCPAgentTarget(
             model=model,
-            session_provider=session_provider,  # type: ignore[arg-type]
+            session_provider=session_provider,
             api_base=api_base,
             api_key=api_key,
             max_turns=max_turns,

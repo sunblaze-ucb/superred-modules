@@ -22,7 +22,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Security",
 ]
-dependencies = ["superred>=0.1.0", "mcp>=2.0", "litellm>=1.0", "anyio>=4.0"]
+dependencies = ["superred>=0.1.0", "mcp>=2.2,<3", "litellm>=1.0", "anyio>=4.0"]
 
 [project.urls]
 Homepage = "https://superred.simonsure.com"

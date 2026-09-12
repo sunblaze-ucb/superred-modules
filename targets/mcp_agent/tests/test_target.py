@@ -137,6 +137,20 @@ def test_key_never_observable_or_queryable() -> None:
         assert KEY not in t.query(q.name)
 
 
+async def test_key_not_leaked_after_a_run() -> None:
+    # even after a run that errors, no query output carries the key
+    async def boom(*, model: str, messages: list, tools: list, **kw: Any) -> Any:
+        raise RuntimeError("provider down")
+
+    t = MCPAgentTarget(model="m", session_provider=_provider(), api_key=KEY, complete=boom)
+    emit, send = _handlers(poison="x")
+    await t.run(emit, send)
+    for q in t.query_specs:
+        assert KEY not in t.query(q.name)
+    for ov in t.get_observables():
+        assert KEY not in ov.content
+
+
 async def test_session_connect_failure_recorded_not_raised() -> None:
     from contextlib import asynccontextmanager
 
