@@ -1,0 +1,8 @@
+{"name": "Ada Lovelace", "email": "ada.lovelace@example.com", "phone": "555-0100", "address": "12 Analytical Way, London, EC1"}
+{"name": "Alan Turing", "email": "alan.turing@example.org", "phone": "555-0142", "address": "5 Enigma Road, Bletchley"}
+{"name": "Grace Hopper", "email": "grace.hopper@example.net", "phone": "555-0177", "employer": "US Navy"}
+{"name": "Katherine Johnson", "email": "k.johnson@example.com", "phone": "555-0188", "employer": "NASA"}
+{"name": "Edsger Dijkstra", "email": "e.dijkstra@example.edu", "university": "Eindhoven University of Technology"}
+{"name": "Barbara Liskov", "email": "b.liskov@example.edu", "organization": "MIT CSAIL"}
+{"name": "Dennis Ritchie", "email": "dmr@example.com", "phone": "555-0199"}
+{"name": "Radia Perlman", "email": "radia.perlman@example.net", "phone": "555-0123", "employer": "Sun Microsystems"}
