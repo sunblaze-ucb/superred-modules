@@ -192,6 +192,15 @@ async def test_key_absent_from_all_queries() -> None:
     assert captured[0].headers["Authorization"] == f"Bearer {KEY}"
 
 
+async def test_invalid_url_recorded_not_raised() -> None:
+    # httpx.InvalidURL (raised synchronously by client.post; NOT an httpx.HTTPError)
+    # must be recorded, not propagated out of run() and crash the sweep.
+    t = _target(_transport([], _result(False)), base_url="http://host:notaport")
+    emit, send = _handlers("x")
+    await t.run(emit, send)
+    assert "InvalidURL" in t.query("error") and t.query("flagged") == ""
+
+
 async def test_reset_clears_state() -> None:
     t = _target(_transport([], _result(True, {"hate": True})))
     emit, send = _handlers("x")
