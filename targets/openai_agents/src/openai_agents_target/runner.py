@@ -44,6 +44,10 @@ class AgentRunResult:
 
 
 def _extract_tool_calls(new_items: list[Any]) -> list[ToolCallRecord]:
+    # Recognizes function-tool calls (``raw_item.name``), which is what agents
+    # built from ``function_tool`` produce. Hosted tools (web/file search,
+    # computer-use, hosted MCP) use different ``raw_item`` shapes and are not
+    # captured here — point the target at function-tool agents for tool-call scoring.
     calls: list[ToolCallRecord] = []
     for item in new_items:
         if getattr(item, "type", None) == "tool_call_item":

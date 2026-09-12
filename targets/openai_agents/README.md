@@ -23,6 +23,11 @@ what that verifies: it proves the **plumbing** (input delivery, tool-call and
 guardrail capture, result mapping), not the security outcome — whether the agent
 *follows* an injection is decided by a real model, which a live run supplies.
 
+A scripted model is **stateful** (it steps through its script per turn), so the
+target rewinds it at the start of each run. That per-instance counter is not
+concurrency-safe: run a scripted model with `concurrency=1`. Real models are
+stateless, so live runs have no such constraint.
+
 ## Usage
 
 ```python
@@ -46,6 +51,12 @@ agent's system instructions), `user_task` (benign default input). Controllable:
 `guardrail_tripped` (`'true'`/`'false'`), `guardrail_stage` (`input`/`output`/`''`),
 `error`. Model/SDK failures are recorded in `error` (never raised), so a claim can
 abstain; a guardrail tripwire is recorded as a defended outcome, not an error.
+
+Tool-call capture covers **function-tool** calls (agents built from
+`function_tool`), which is the sensitive-tool-misuse surface the paired claim
+scores. Hosted tools (web/file search, computer-use, hosted MCP) use different
+result shapes and are not captured — point the target at function-tool agents for
+tool-call scoring.
 
 ## License
 
