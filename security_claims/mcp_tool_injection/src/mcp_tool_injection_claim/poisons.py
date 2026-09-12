@@ -21,7 +21,10 @@ class Poison:
     template: str
 
     def render(self, sensitive_tool: str) -> str:
-        return self.template.format(tool=sensitive_tool)
+        # str.replace, not str.format: a caller-supplied template often embeds
+        # JSON-like braces (e.g. {"key": "value"}) or a bare {}, which str.format
+        # would raise KeyError/IndexError on.
+        return self.template.replace("{tool}", sensitive_tool)
 
 
 _POISONS: Final = (

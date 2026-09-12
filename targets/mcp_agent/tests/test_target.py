@@ -171,6 +171,35 @@ async def test_session_connect_failure_recorded_not_raised() -> None:
     assert target.query("called_tool_names") == ""
 
 
+async def test_teardown_failure_does_not_clobber_completed_run() -> None:
+    from contextlib import asynccontextmanager
+
+    class _StubSession:
+        async def list_tools(self) -> Any:
+            return SimpleNamespace(tools=[])
+
+        async def call_tool(self, name: str, arguments: Any = None) -> Any:  # pragma: no cover
+            raise AssertionError
+
+    @asynccontextmanager
+    async def _teardown_boom():
+        yield _StubSession()
+        raise RuntimeError("close failed")  # session __aexit__ raises AFTER a good run
+
+    async def resisted(**kwargs: Any) -> Any:
+        return _resp(content="agent resisted the poison")
+
+    target = MCPAgentTarget(
+        model="m", session_provider=lambda: _teardown_boom(), api_key=KEY, complete=resisted
+    )
+    emit, send = _handlers(poison="x")
+    await target.run(emit, send)  # must not raise
+    # the completed run's real result survives; a teardown failure is NOT recorded
+    # as a connect error (which would wrongly make the claim abstain on a negative run)
+    assert target.query("last_response") == "agent resisted the poison"
+    assert target.query("error") == "" and target.query("called_tool_names") == ""
+
+
 def test_config_setters_and_queries() -> None:
     t = MCPAgentTarget(model="m", session_provider=_provider(), api_key=KEY)
     t.set_config("system_prompt", "be terse")

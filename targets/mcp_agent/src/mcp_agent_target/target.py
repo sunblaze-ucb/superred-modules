@@ -248,7 +248,12 @@ class MCPAgentTarget(Target):
         # Session ESTABLISHMENT happens outside run_agent's own error handling, so
         # guard it here too: a connect failure (dead stdio subprocess, refused HTTP)
         # must be recorded, not raised, to keep the "failures are recorded in
-        # `error`, never raised" invariant so the claim can abstain.
+        # `error`, never raised" invariant so the claim can abstain. The guard also
+        # spans the session __aexit__, so a *teardown/close* failure that happens
+        # AFTER a completed run (a BrokenResourceError / anyio ExceptionGroup on
+        # subprocess exit) must NOT clobber the real result — only record the error
+        # when the run did not complete (``run_completed`` still False).
+        run_completed = False
         try:
             async with self._session_provider() as session:
                 self._run = await run_agent(
@@ -261,8 +266,10 @@ class MCPAgentTarget(Target):
                     poison_injection=poison,
                     max_turns=self._max_turns,
                 )
+                run_completed = True
         except Exception as exc:  # noqa: BLE001 - recorded as error, never raised
-            self._run.error = f"session connect failed: {type(exc).__name__}: {exc}"
+            if not run_completed:
+                self._run.error = f"session connect failed: {type(exc).__name__}: {exc}"
 
         emit(
             ObservableEvent(
