@@ -12,8 +12,8 @@ verifies the plumbing; the security *outcome* (does the agent follow an
 injection?) needs a real model.
 
 The target holds no API key: the model's auth is configured on the ``model`` the
-caller supplies (a model id string, a configured ``BaseChatModel``, or ``None``
-for the framework default), so no secret passes through this target.
+caller supplies (a required model id string or a configured ``BaseChatModel`` —
+``create_agent`` has no default model), so no secret passes through this target.
 """
 
 from __future__ import annotations

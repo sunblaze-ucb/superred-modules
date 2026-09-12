@@ -55,11 +55,20 @@ the `model` you supply, so no secret passes through this target. Config:
 (including the LangGraph recursion limit) are recorded in `error` (never raised),
 so a claim can abstain.
 
-Tool-call capture reads `AIMessage.tool_calls` from the returned messages, which
-is what agents built from `create_agent` produce. LangChain guardrails are
-implemented as agent **middleware** — part of the agent your factory builds — and
-manifest in the captured outcome (altered tools/output, or an `error` if a
-middleware halts the run).
+The run **streams** state, so tool calls the agent already made are salvaged even
+when the run then errors — e.g. a tool-call loop that hits the recursion limit
+still reports the sensitive tool it called (it must not read as an empty,
+"refused" run). Tool-call capture reads `AIMessage.tool_calls` from the returned
+messages, which is what agents built from `create_agent` produce.
+
+`last_response` is the `.text` of the last message (it flattens Claude/multimodal
+content blocks to plain text). For a standard tool-calling agent the run ends on
+the answer message; a factory using structured output (`response_format`) or
+middleware that appends a trailing non-assistant message may leave `last_response`
+empty — score `tool_calls` (the primary security surface) in that case. LangChain
+guardrails are implemented as agent **middleware** — part of the agent your
+factory builds — and manifest in the captured outcome (altered tools/output, or
+an `error` if a middleware halts the run).
 
 ## License
 

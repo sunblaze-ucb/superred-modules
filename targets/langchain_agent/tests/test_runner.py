@@ -36,18 +36,19 @@ async def test_tool_call_then_answer() -> None:
     assert "secret" in result.tool_calls[0].arguments  # arguments captured
 
 
-async def test_tool_loop_hits_recursion_limit_cleanly() -> None:
-    # a script whose (repeating) last element is a tool call must not corrupt the
-    # graph's id-keyed message state: the run stops at the recursion limit and the
-    # error is recorded cleanly (not an opaque KeyError from duplicate message ids).
+async def test_tool_loop_recursion_limit_salvages_tool_calls() -> None:
+    # a script whose (repeating) last element is a tool call hits the recursion
+    # limit. Two things must hold: (1) the error is recorded cleanly (not an opaque
+    # KeyError from duplicate message ids), and (2) the tool calls the agent already
+    # made are salvaged from the streamed partial state — a looping sensitive-tool
+    # misuse must NOT read as an empty ("refused") run.
     model = ScriptedChatModel(responses=[tool_call_output(SENSITIVE_TOOL, {})])
     agent = build_demo_agent(model)
     result = await run_agent_capture(agent=agent, user_input="loop", recursion_limit=4)
     assert result.error != ""  # recorded, never raised
     assert "KeyError" not in result.error  # not the duplicate-id corruption
     assert "recursion" in result.error.lower()  # a clean recursion-limit stop
-    # ainvoke raised before returning, so no messages are available to extract.
-    assert result.called_tool_names == [] and result.final_response == ""
+    assert SENSITIVE_TOOL in result.called_tool_names  # salvaged from partial state
 
 
 async def test_run_error_is_captured() -> None:

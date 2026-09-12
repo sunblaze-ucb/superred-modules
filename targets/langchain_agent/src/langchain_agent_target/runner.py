@@ -72,20 +72,28 @@ async def run_agent_capture(
     recursion_limit: int = 25,
 ) -> AgentRunResult:
     """Run ``agent`` (a compiled ``create_agent`` graph) on ``user_input`` and
-    capture its behaviour. Uses the async ``ainvoke`` path so it does not block the
-    event loop. Any error (model/graph failure, recursion limit) is recorded in
-    ``error`` rather than raised."""
+    capture its behaviour.
+
+    Streams state values (``astream(stream_mode="values")``) rather than a single
+    ``ainvoke`` so that if the run raises mid-way — most importantly a
+    ``GraphRecursionError`` from a tool-call loop — the tool calls the agent
+    already made are salvaged from the last state, not lost. A looping
+    sensitive-tool misuse must not read as an empty ("refused") run. Any error is
+    recorded in ``error`` rather than raised; the partial state is still extracted.
+    """
     result_out = AgentRunResult()
+    last_state: Any = None
     try:
-        result = await agent.ainvoke(
+        async for state in agent.astream(
             {"messages": [{"role": "user", "content": user_input}]},
             config={"recursion_limit": recursion_limit},
-        )
-    except Exception as exc:  # noqa: BLE001 - recorded as error, never raised
+            stream_mode="values",
+        ):
+            last_state = state
+    except Exception as exc:  # noqa: BLE001 - recorded; partial state salvaged below
         result_out.error = f"{type(exc).__name__}: {exc}"
-        return result_out
 
-    messages = result.get("messages", []) if isinstance(result, dict) else []
+    messages = last_state.get("messages", []) if isinstance(last_state, dict) else []
     result_out.tool_calls, result_out.final_response = _extract(list(messages))
     return result_out
 
