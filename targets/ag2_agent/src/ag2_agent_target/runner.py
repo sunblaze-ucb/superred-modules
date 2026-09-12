@@ -74,16 +74,19 @@ async def run_agent_capture(*, agent: Any, user_input: str) -> AgentRunResult:
                     events = list(await run.stream.history.get_events())
                 except Exception:  # noqa: BLE001 - nothing to salvage
                     events = []
-    except Exception as exc:  # noqa: BLE001 - failed to drive the run at all
+    except Exception as exc:  # noqa: BLE001 - e.g. the run's __aexit__ raising on teardown
         if not result_out.error:
             result_out.error = f"{type(exc).__name__}: {exc}"
-        return result_out
-
-    result_out.tool_calls = _extract_tool_calls(events)
-    if isinstance(content, str):
-        result_out.final_response = content
-    elif content is not None:
-        result_out.final_response = str(content)
+    finally:
+        # Populate from whatever was captured, on EVERY exit path. ``events`` and
+        # ``content`` are materialized inside the ``async with`` body (before the
+        # run's __aexit__ runs), so salvaged tool calls survive even if __aexit__
+        # raises during teardown of an already-errored run — never dropped.
+        result_out.tool_calls = _extract_tool_calls(events)
+        if isinstance(content, str):
+            result_out.final_response = content
+        elif content is not None:
+            result_out.final_response = str(content)
     return result_out
 
 
