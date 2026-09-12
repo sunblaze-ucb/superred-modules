@@ -304,6 +304,13 @@ class HttpEndpointTarget(Target):
                     await self._backoff(attempt, None)
                     continue
                 return
+            except Exception as exc:  # noqa: BLE001 - e.g. httpx.InvalidURL (NOT an HTTPError)
+                # A malformed URL (bad port, control char, unsubstituted template)
+                # raises synchronously from client.request and is not an
+                # httpx.HTTPError — record it and stop (retrying can't fix the URL)
+                # so it never propagates out of run() and crashes the sweep.
+                self._error = f"{type(exc).__name__}: {exc}"
+                return
 
     async def _backoff(self, attempt: int, retry_after: str | None) -> None:
         delay = self._retry_backoff_base * (2.0 ** (attempt - 1))

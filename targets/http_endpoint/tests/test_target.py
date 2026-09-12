@@ -193,6 +193,17 @@ def test_userinfo_stripped_from_endpoint_observable() -> None:
     assert content == "POST host.example.com/v1/chat"
 
 
+async def test_invalid_url_recorded_not_raised() -> None:
+    # httpx.InvalidURL (raised synchronously by client.request; NOT an httpx.HTTPError)
+    # must be recorded, not propagated out of run() and crash the sweep.
+    t = HttpEndpointTarget(
+        url="http://host:notaport/x", transport=_transport([], {}), max_retries=1
+    )
+    emit, send = _handlers("q")
+    await t.run(emit, send)
+    assert "InvalidURL" in t.query("error") and t.query("last_response") == ""
+
+
 async def test_retry_after_is_clamped(monkeypatch) -> None:  # noqa: ANN001
     # a hostile/untrusted endpoint returning a huge Retry-After must not stall the
     # run: the backoff delay is clamped to max_retry_delay (the request timeout does
