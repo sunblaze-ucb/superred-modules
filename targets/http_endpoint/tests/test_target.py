@@ -297,6 +297,24 @@ async def test_compression_bomb_refused_not_decompressed() -> None:
     assert t.query("last_response") == "" and t.query("raw_response") == ""
 
 
+async def test_operator_accept_encoding_forced_to_identity() -> None:
+    # the bomb defense depends on never REQUESTING compression, so an operator's own
+    # Accept-Encoding must be overridden to identity (case-insensitively) — otherwise
+    # a legitimately-compressed reply would be refused on every call and misreported
+    # as a size error. The call succeeds and the outgoing request asks for identity.
+    captured: list[httpx.Request] = []
+    t = _target(
+        _transport(captured, {"choices": [{"message": {"content": "ok"}}]}),
+        headers={"Authorization": KEY, "accept-encoding": "gzip, br"},
+    )
+    emit, send = _handlers("q")
+    await t.run(emit, send)
+    assert t.query("last_response") == "ok" and t.query("error") == ""
+    assert captured[0].headers.get("accept-encoding") == "identity"
+    # the auth header still rides along (only Accept-Encoding is overridden)
+    assert captured[0].headers.get("authorization") == KEY
+
+
 def test_userinfo_stripped_from_endpoint_observable() -> None:
     # basic-auth credentials in the URL (user:pass@) must not leak into the
     # endpoint observable, just like the query string.

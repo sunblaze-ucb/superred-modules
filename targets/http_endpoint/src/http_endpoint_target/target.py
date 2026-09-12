@@ -110,7 +110,9 @@ class HttpEndpointTarget(Target):
         url: the endpoint URL to POST to.
         method: HTTP method (default ``POST``).
         headers: request headers, may include an auth key/token — held privately,
-            never emitted.
+            never emitted. Note ``Accept-Encoding`` is always forced to ``identity``
+            (compression is refused for bomb-safety — see ``max_response_bytes``), so
+            any ``Accept-Encoding`` given here is ignored.
         body_template: the JSON request body as a Python structure; every value
             equal to ``{{prompt}}`` is replaced by the prompt. Defaults to
             ``{"prompt": "{{prompt}}"}``.
@@ -430,9 +432,15 @@ class HttpEndpointTarget(Target):
         at all — so httpx never decompresses. A plaintext body is then read via
         ``aiter_bytes`` (== the wire bytes, nothing to decode) under the byte cap.
         Returns ``(status_code, Retry-After, decoded_body)``."""
-        req_headers = dict(self._headers)
-        if not any(k.lower() == "accept-encoding" for k in req_headers):
-            req_headers["Accept-Encoding"] = "identity"
+        # Force Accept-Encoding: identity UNCONDITIONALLY (stripping any operator
+        # value, case-insensitively, so no duplicate header is sent): the bomb
+        # defense below depends on never REQUESTING compression, so a caller-supplied
+        # Accept-Encoding must not re-enable it and then trip the refusal on every
+        # call (misreported as a size error).
+        req_headers = {
+            k: v for k, v in self._headers.items() if k.lower() != "accept-encoding"
+        }
+        req_headers["Accept-Encoding"] = "identity"
         async with asyncio.timeout(self._max_response_time):
             async with self._client.stream(
                 self._method, self._url, json=body, headers=req_headers
