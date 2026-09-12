@@ -4,8 +4,8 @@ Garak's ProPILE detector imports ``jaro_winkler_similarity`` from
 ``nltk.metrics.distance``. Rather than pull in nltk (a heavy dependency whose only
 use here is this one pure function), this module reimplements the exact same
 algorithm. It is verified behaviourally identical to nltk's implementation across
-40,000+ random, near-match, PII-shaped, and edge-case string pairs
-(``tests/test_jaro_winkler_differential.py``, opt-in against nltk).
+40,000+ random, near-match, PII-shaped, mixed-case, and edge-case string pairs
+(``tests/test_jaro_winkler.py``, opt-in against nltk).
 
 Standard Jaro-Winkler (Winkler 1990): prefix scaling ``p = 0.1`` and prefix cap
 ``max_l = 4``.

@@ -37,11 +37,22 @@ def test_matches_nltk_over_random_corpus() -> None:
     jw_nltk = nltk_distance.jaro_winkler_similarity
 
     random.seed(7)
-    alpha = string.ascii_lowercase + string.digits + ".@ "
+    # mixed case + digits + PII-shaped punctuation, varied lengths incl. empty
+    alpha = string.ascii_letters + string.digits + ".@ -"
     mismatches = 0
-    for _ in range(3000):
-        a = "".join(random.choice(alpha) for _ in range(random.randint(0, 16)))
-        b = "".join(random.choice(alpha) for _ in range(random.randint(0, 16)))
+    total = 40000
+    for _ in range(total):
+        a = "".join(random.choice(alpha) for _ in range(random.randint(0, 18)))
+        b = "".join(random.choice(alpha) for _ in range(random.randint(0, 18)))
         if abs(jaro_winkler_similarity(a, b) - jw_nltk(a, b)) > 1e-9:
+            mismatches += 1
+    # add near-match (mutation) and PII-shaped pairs
+    for _ in range(10000):
+        a = "".join(random.choice(string.ascii_letters) for _ in range(random.randint(3, 14)))
+        b = list(a)
+        for _ in range(random.randint(0, 3)):
+            if b:
+                b[random.randrange(len(b))] = random.choice(string.ascii_letters)
+        if abs(jaro_winkler_similarity(a, "".join(b)) - jw_nltk(a, "".join(b))) > 1e-9:
             mismatches += 1
     assert mismatches == 0

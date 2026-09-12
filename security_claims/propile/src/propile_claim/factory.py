@@ -102,24 +102,99 @@ def _build_tasks_into(
             )
 
 
-def propile_twin_claim(**kwargs: object) -> SecurityClaim[ChatbotTarget]:
+def _axis_claim(
+    probe_type: str,
+    *,
+    pii_data_path: str | Path | None,
+    exact_only: bool,
+    config: PIILeakConfig | None,
+    system_prompt: str | None,
+    success_threshold: float,
+) -> SecurityClaim[ChatbotTarget]:
+    return propile_claim(
+        probe_types=[probe_type],
+        pii_data_path=pii_data_path,
+        exact_only=exact_only,
+        config=config,
+        system_prompt=system_prompt,
+        success_threshold=success_threshold,
+    )
+
+
+def propile_twin_claim(
+    *,
+    pii_data_path: str | Path | None = None,
+    exact_only: bool = False,
+    config: PIILeakConfig | None = None,
+    system_prompt: str | None = None,
+    success_threshold: float = 1.0,
+) -> SecurityClaim[ChatbotTarget]:
     """Twin probes only (name -> PII) — the data-backed default axis."""
-    return propile_claim(probe_types=["twin"], **kwargs)  # type: ignore[arg-type]
+    return _axis_claim(
+        "twin",
+        pii_data_path=pii_data_path,
+        exact_only=exact_only,
+        config=config,
+        system_prompt=system_prompt,
+        success_threshold=success_threshold,
+    )
 
 
-def propile_triplet_claim(**kwargs: object) -> SecurityClaim[ChatbotTarget]:
+def propile_triplet_claim(
+    *,
+    pii_data_path: str | Path | None = None,
+    exact_only: bool = False,
+    config: PIILeakConfig | None = None,
+    system_prompt: str | None = None,
+    success_threshold: float = 1.0,
+) -> SecurityClaim[ChatbotTarget]:
     """Triplet probes only (name + one auxiliary PII -> another)."""
-    return propile_claim(probe_types=["triplet"], **kwargs)  # type: ignore[arg-type]
+    return _axis_claim(
+        "triplet",
+        pii_data_path=pii_data_path,
+        exact_only=exact_only,
+        config=config,
+        system_prompt=system_prompt,
+        success_threshold=success_threshold,
+    )
 
 
-def propile_quadruplet_claim(**kwargs: object) -> SecurityClaim[ChatbotTarget]:
+def propile_quadruplet_claim(
+    *,
+    pii_data_path: str | Path | None = None,
+    exact_only: bool = False,
+    config: PIILeakConfig | None = None,
+    system_prompt: str | None = None,
+    success_threshold: float = 1.0,
+) -> SecurityClaim[ChatbotTarget]:
     """Quadruplet probes only (name + two auxiliary PIIs -> the third)."""
-    return propile_claim(probe_types=["quadruplet"], **kwargs)  # type: ignore[arg-type]
+    return _axis_claim(
+        "quadruplet",
+        pii_data_path=pii_data_path,
+        exact_only=exact_only,
+        config=config,
+        system_prompt=system_prompt,
+        success_threshold=success_threshold,
+    )
 
 
-def propile_unstructured_claim(**kwargs: object) -> SecurityClaim[ChatbotTarget]:
+def propile_unstructured_claim(
+    *,
+    pii_data_path: str | Path | None = None,
+    exact_only: bool = False,
+    config: PIILeakConfig | None = None,
+    system_prompt: str | None = None,
+    success_threshold: float = 1.0,
+) -> SecurityClaim[ChatbotTarget]:
     """Unstructured probes only (relationship / affiliation elicitation)."""
-    return propile_claim(probe_types=["unstructured"], **kwargs)  # type: ignore[arg-type]
+    return _axis_claim(
+        "unstructured",
+        pii_data_path=pii_data_path,
+        exact_only=exact_only,
+        config=config,
+        system_prompt=system_prompt,
+        success_threshold=success_threshold,
+    )
 
 
 __all__ = [

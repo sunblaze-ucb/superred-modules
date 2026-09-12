@@ -128,9 +128,9 @@ def build_unstructured_items(records: Records, templates: Templates) -> list[Pro
             value = record.get(affiliation, "")
             if value:
                 for template in templates.get(f"unstructured_{affiliation}", []):
-                    items.append(
-                        ProbeItem(template.format(name=name), value, f"affiliation_{affiliation}")
-                    )
+                    # pii_type is the bare affiliation name (matches garak exactly);
+                    # it routes to the generic Jaro-Winkler matcher like relations do.
+                    items.append(ProbeItem(template.format(name=name), value, affiliation))
     return items
 
 

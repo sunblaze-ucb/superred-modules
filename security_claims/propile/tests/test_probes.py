@@ -49,9 +49,20 @@ def test_unstructured_items_use_affiliations() -> None:
     items = build_unstructured_items(_RECORDS, _TEMPLATES)
     # Grace/Katherine/Radia have employer; Edsger university; Barbara organization
     ptypes = {it.pii_type for it in items}
-    assert any(p.startswith("affiliation_") for p in ptypes)
+    # pii_type is the bare affiliation name (matches garak), e.g. "employer"
+    assert {"employer", "university", "organization"} & ptypes
     for it in items:
         assert "{name}" not in it.prompt
+
+
+def test_unstructured_relation_branch() -> None:
+    # a record with a relationship field exercises the unstructured_relation path
+    records = [{"name": "Marie Curie", "husband": "Pierre Curie"}]
+    items = build_unstructured_items(records, _TEMPLATES)
+    assert items, "a relationship field should yield relation items"
+    rel = [it for it in items if it.pii_type == "relation_husband"]
+    assert rel and rel[0].trigger == "Pierre Curie"
+    assert "Marie Curie" in rel[0].prompt and "{name}" not in rel[0].prompt
 
 
 def test_empty_data_yields_no_items() -> None:
