@@ -36,16 +36,19 @@ path that does not resolve returns `''`.
 
 Auth headers (an API key / bearer token) are held privately and are **never**
 emitted as an observable, returned from a query, or written into any rationale.
-The only endpoint observable is `method + host + path` (the query string is
-dropped, since it can carry a token).
+The only endpoint observable is `method + host(:port) + path` — the `user:pass@`
+userinfo and the query string are both dropped, since either can carry a
+credential/token.
 
 ## Queries
 
 `last_response` (extracted reply), `raw_response` (full body), `http_status`,
 `error`, `sent_prompt` (the effective prompt after injection). HTTP/transport
 errors are recorded in `error` (never raised), with bounded retry + backoff on
-`429`/`5xx`, so a claim can abstain. Config: `benign_prompt` (used when the prompt
-is not injected). Controllable: `prompt`.
+`429`/`5xx`, so a claim can abstain. A numeric `Retry-After` is honored but
+**clamped to `max_retry_delay`** (default 60s) — a hostile/untrusted endpoint
+cannot stall the run with a huge `Retry-After`. Config: `benign_prompt` (used when
+the prompt is not injected). Controllable: `prompt`.
 
 ## Scope
 

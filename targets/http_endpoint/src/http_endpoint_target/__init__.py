@@ -32,6 +32,8 @@ def http_endpoint_target_factory(
     timeout: float = 30.0,
     transport: httpx.AsyncBaseTransport | None = None,
     max_retries: int = 3,
+    retry_backoff_base: float = 0.5,
+    max_retry_delay: float = 60.0,
     concurrency: int = 1,
 ) -> TargetFactory:
     """Build a :class:`TargetFactory` of fresh :class:`HttpEndpointTarget` instances."""
@@ -45,6 +47,8 @@ def http_endpoint_target_factory(
             timeout=timeout,
             transport=transport,
             max_retries=max_retries,
+            retry_backoff_base=retry_backoff_base,
+            max_retry_delay=max_retry_delay,
         ),
         concurrency=concurrency,
     )

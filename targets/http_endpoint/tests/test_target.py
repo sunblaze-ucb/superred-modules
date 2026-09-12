@@ -140,6 +140,73 @@ async def test_transport_error_recorded() -> None:
     assert "ConnectError" in t.query("error")
 
 
+async def test_5xx_retries_then_recovers() -> None:
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(500, json={})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "recovered"}}]})
+
+    t = _target(httpx.MockTransport(handler), max_retries=3, retry_backoff_base=0.0)
+    emit, send = _handlers("q")
+    await t.run(emit, send)
+    assert calls["n"] == 2  # retried once
+    assert t.query("last_response") == "recovered" and t.query("error") == ""
+
+
+async def test_transport_error_then_recovers() -> None:
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.ConnectError("transient")
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok now"}}]})
+
+    t = _target(httpx.MockTransport(handler), max_retries=3, retry_backoff_base=0.0)
+    emit, send = _handlers("q")
+    await t.run(emit, send)
+    assert calls["n"] == 2  # retried after the transient error
+    assert t.query("last_response") == "ok now" and t.query("error") == ""
+
+
+def test_userinfo_stripped_from_endpoint_observable() -> None:
+    # basic-auth credentials in the URL (user:pass@) must not leak into the
+    # endpoint observable, just like the query string.
+    t = HttpEndpointTarget(
+        url="https://user:SECRETPASS@host.example.com/v1/chat?tok=abc",
+        transport=_transport([], {}),
+    )
+    content = t.get_observables()[0].content
+    assert "SECRETPASS" not in content and "user:" not in content and "tok=abc" not in content
+    assert content == "POST host.example.com/v1/chat"
+
+
+async def test_retry_after_is_clamped(monkeypatch) -> None:  # noqa: ANN001
+    # a hostile/untrusted endpoint returning a huge Retry-After must not stall the
+    # run: the backoff delay is clamped to max_retry_delay (the request timeout does
+    # not bound the sleep).
+    import http_endpoint_target.target as mod
+
+    slept: list[float] = []
+
+    async def fake_sleep(d: float) -> None:
+        slept.append(d)
+
+    monkeypatch.setattr(mod.asyncio, "sleep", fake_sleep)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, headers={"Retry-After": "86400"}, json={})
+
+    t = _target(httpx.MockTransport(handler), max_retries=2, max_retry_delay=0.5)
+    emit, send = _handlers("q")
+    await t.run(emit, send)
+    assert slept  # it did back off
+    assert max(slept) <= 0.5  # clamped — never the 86400s the server asked for
+
+
 # -- secret handling ---------------------------------------------------------
 def test_auth_header_never_emitted() -> None:
     t = _target(_transport([], {}))

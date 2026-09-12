@@ -111,6 +111,7 @@ class HttpEndpointTarget(Target):
         transport: httpx.AsyncBaseTransport | None = None,
         max_retries: int = 3,
         retry_backoff_base: float = 0.5,
+        max_retry_delay: float = 60.0,
     ) -> None:
         self._url = url
         self._method = method.upper()
@@ -123,6 +124,7 @@ class HttpEndpointTarget(Target):
         self._transport = transport
         self._max_retries = max(1, max_retries)
         self._retry_backoff_base = retry_backoff_base
+        self._max_retry_delay = max_retry_delay
 
         self._benign_prompt = "Hello, can you help me?"
         self._reset_state()
@@ -204,16 +206,26 @@ class HttpEndpointTarget(Target):
                 observable=Observable(
                     name="endpoint",
                     security_domain=SYSTEM_TAG,
-                    description="The target endpoint (method + host only; never headers/auth).",
+                    description="The target endpoint: method + host(:port) + path "
+                    "(never userinfo, query, or headers/auth).",
                 ),
                 content=f"{self._method} {self._host()}",
             ),
         ]
 
     def _host(self) -> str:
-        # scheme+host+path only — drop any query string (which could carry a token).
-        no_scheme = self._url.split("://", 1)[-1]
-        return no_scheme.split("?", 1)[0]
+        # host(:port) + path only — never the scheme, the ``user:pass@`` userinfo,
+        # or the query string, any of which can carry credentials / tokens.
+        try:
+            u = httpx.URL(self._url)
+            hostport = u.host + (f":{u.port}" if u.port is not None else "")
+            return f"{hostport}{u.path}"
+        except Exception:  # noqa: BLE001 - malformed URL: strip userinfo+query manually
+            after_scheme = self._url.split("://", 1)[-1]
+            authority = after_scheme.split("/", 1)[0]
+            rest = after_scheme[len(authority):]
+            host = authority.rsplit("@", 1)[-1]  # drop any userinfo
+            return f"{host}{rest}".split("?", 1)[0]
 
     # -- Execution ------------------------------------------------------------
 
@@ -295,6 +307,10 @@ class HttpEndpointTarget(Target):
                 delay = max(delay, float(retry_after))
             except ValueError:
                 pass
+        # Clamp to max_retry_delay: this target points at an arbitrary/untrusted
+        # endpoint, so a hostile server-controlled Retry-After (e.g. 86400) must not
+        # be able to stall the run — the request timeout does not bound this sleep.
+        delay = min(delay, self._max_retry_delay)
         if delay > 0:
             await asyncio.sleep(delay)
 
