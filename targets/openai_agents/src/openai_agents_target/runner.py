@@ -74,22 +74,41 @@ async def run_agent_capture(
     result_out = AgentRunResult()
     try:
         result = await Runner.run(agent, user_input, run_config=run_config, max_turns=max_turns)
-    except InputGuardrailTripwireTriggered:
+    except InputGuardrailTripwireTriggered as exc:
         result_out.guardrail_tripped = True
         result_out.guardrail_stage = "input"
+        _salvage_tool_calls(result_out, exc)
         return result_out
-    except OutputGuardrailTripwireTriggered:
+    except OutputGuardrailTripwireTriggered as exc:
+        # Output guardrails run AFTER the agent loop, so tool calls (incl. a
+        # sensitive one) may already have happened before the block — salvage them
+        # so a blocked output isn't mis-scored as a clean defense.
         result_out.guardrail_tripped = True
         result_out.guardrail_stage = "output"
+        _salvage_tool_calls(result_out, exc)
         return result_out
     except Exception as exc:  # noqa: BLE001 - recorded as error, never raised
         result_out.error = f"{type(exc).__name__}: {exc}"
+        _salvage_tool_calls(result_out, exc)  # e.g. MaxTurnsExceeded after a tool call
         return result_out
 
     result_out.tool_calls = _extract_tool_calls(list(result.new_items))
     final = result.final_output
     result_out.final_response = str(final) if final is not None else ""
     return result_out
+
+
+def _salvage_tool_calls(result_out: AgentRunResult, exc: BaseException) -> None:
+    """Recover any tool calls the SDK attached to a partial run on an exception.
+
+    The Agents SDK attaches the partial run (with ``new_items``) to
+    ``AgentsException.run_data``, so a guardrail block / late error that fired
+    after the agent already called tools still exposes those calls.
+    """
+    run_data = getattr(exc, "run_data", None)
+    new_items = getattr(run_data, "new_items", None)
+    if new_items is not None:
+        result_out.tool_calls = _extract_tool_calls(list(new_items))
 
 
 __all__ = ["ToolCallRecord", "AgentRunResult", "run_agent_capture"]

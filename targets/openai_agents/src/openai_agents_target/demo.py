@@ -55,6 +55,12 @@ class ScriptedModel(Model):
         self._scripts = list(scripts)
         self._i = 0
 
+    def reset(self) -> None:
+        """Rewind to the first script. The target calls this at the start of each
+        run so a scripted model reused across tasks/runs replays from the top
+        (use ``concurrency=1`` with a scripted model — the counter is per-instance)."""
+        self._i = 0
+
     async def get_response(self, *args: Any, **kwargs: Any) -> ModelResponse:
         output = self._scripts[min(self._i, len(self._scripts) - 1)] if self._scripts else []
         self._i += 1

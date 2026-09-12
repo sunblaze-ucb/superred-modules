@@ -181,6 +181,13 @@ class OpenAIAgentTarget(Target):
 
     async def run(self, emit: EventHandler, send_event: EventResponseHandler) -> None:
         self._reset_state()
+        # A stateful test model (e.g. ScriptedModel) is shared across the targets a
+        # factory creates; rewind it per run so each task replays its script from
+        # the top. Real models are stateless and expose no reset(), so this is a
+        # no-op for them.
+        reset = getattr(self._model, "reset", None)
+        if callable(reset):
+            reset()
 
         controllables = {c.name: c for c in self.get_controllables()}
         resp = await send_event(

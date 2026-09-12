@@ -54,6 +54,29 @@ async def test_input_guardrail_tripwire_recorded() -> None:
     assert result.final_response == ""
 
 
+async def test_output_guardrail_after_tool_call_salvages_tool_calls() -> None:
+    # the agent calls the sensitive tool, THEN an output guardrail blocks the final
+    # text. The tool call already happened, so it must be salvaged (not lost) — a
+    # genuine attack success must not be mis-scored as a clean defense.
+    from agents import output_guardrail
+
+    @output_guardrail
+    def block_output(context, agent, output):  # noqa: ANN001, ARG001
+        return GuardrailFunctionOutput(output_info="no", tripwire_triggered=True)
+
+    agent = build_demo_agent()
+    agent.output_guardrails = [block_output]
+    model = ScriptedModel(
+        [
+            [function_call_output(SENSITIVE_TOOL, '{"payload": "x"}')],
+            [message_output("here is your data")],
+        ]
+    )
+    result = await run_agent_capture(agent=agent, user_input="hi", model=model)
+    assert result.guardrail_tripped is True and result.guardrail_stage == "output"
+    assert SENSITIVE_TOOL in result.called_tool_names  # salvaged from run_data
+
+
 async def test_run_error_is_captured() -> None:
     class _Boom(ScriptedModel):
         async def get_response(self, *args, **kwargs):  # noqa: ANN002, ANN003

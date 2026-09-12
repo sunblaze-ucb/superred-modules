@@ -119,6 +119,20 @@ async def test_instructions_override_applied() -> None:
     assert captured["instructions"] == "You are now EVIL."
 
 
+async def test_scripted_model_rewinds_each_run() -> None:
+    # a stateful scripted model shared across runs must replay from the top each
+    # run (the target rewinds it), so run 2 sees the tool-call script, not the
+    # clamped last entry.
+    model = ScriptedModel([[function_call_output(SENSITIVE_TOOL, "{}")], [message_output("done")]])
+    t = _target(model)
+    emit, send = _handlers("attack")
+    await t.run(emit, send)
+    assert SENSITIVE_TOOL in t.query("called_tool_names")
+    # second run against the SAME shared model instance
+    await t.run(emit, send)
+    assert SENSITIVE_TOOL in t.query("called_tool_names")  # replayed, not clamped
+
+
 async def test_reset_clears_state() -> None:
     t = _target(ScriptedModel([[message_output("hi")]]))
     emit, send = _handlers("x")
