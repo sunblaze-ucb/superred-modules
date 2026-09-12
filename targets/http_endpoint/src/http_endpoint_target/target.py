@@ -223,10 +223,14 @@ class HttpEndpointTarget(Target):
         # or the query string, any of which can carry credentials / tokens.
         try:
             u = httpx.URL(self._url)
-            if not u.host:
-                # A URL with no scheme://authority (e.g. a dropped "https://" leaves
-                # "user:pass@host/path" whole in u.path) parses WITHOUT raising, so
-                # the userinfo would leak through the happy path — redact it too.
+            # Redact unless the URL parses to a clean host with no smeared userinfo.
+            # httpx's lenient authority parse can (a) leave the whole "user:pass@..."
+            # in u.path when there's no scheme (u.host empty), or (b) misparse a
+            # numeric password prefix like "user:12/34@host" as host="user"/port=12
+            # with "34@host" in u.path — both leak credentials via the happy path. An
+            # '@' surviving in host/path is the tell (u.username/password are NOT
+            # included in the output, so a well-parsed "user:pass@host" is clean).
+            if not u.host or "@" in u.host or "@" in str(u.path):
                 return "(unparsable url)"
             hostport = u.host + (f":{u.port}" if u.port is not None else "")
             return f"{hostport}{u.path}"

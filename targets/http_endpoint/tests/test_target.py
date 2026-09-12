@@ -314,6 +314,17 @@ async def test_malformed_url_error_does_not_leak_creds() -> None:
     assert "aB/cD" not in err and "svc:" not in err and "cD@" not in err
 
 
+def test_numeric_password_slash_url_does_not_leak() -> None:
+    # httpx misparses "user:12/34@host" as host="user"/port=12 (valid port, no
+    # exception) with "34@host..." in u.path — _host() must redact, not leak.
+    t = HttpEndpointTarget(
+        url="https://user:12/34@api.example.com/v1/chat", transport=_transport([], {})
+    )
+    content = t.get_observables()[0].content
+    assert "user:12" not in content and "34@" not in content
+    assert content == "POST (unparsable url)"
+
+
 def test_schemeless_url_with_userinfo_does_not_leak() -> None:
     # a dropped "https://" leaves "svc:SECRETPASS@host/path" whole in u.path (httpx
     # parses it without raising) — _host() must redact, not emit the credentials.
