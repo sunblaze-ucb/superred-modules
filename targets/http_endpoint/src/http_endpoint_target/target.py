@@ -219,18 +219,22 @@ class HttpEndpointTarget(Target):
         ]
 
     def _host(self) -> str:
-        # host(:port) + path only — never the scheme, the ``user:pass@`` userinfo,
-        # or the query string, any of which can carry credentials / tokens.
+        # Emit host(:port) + path only — never userinfo, query, or fragment.
+        #
+        # httpx's lenient authority parse terminates at the first of '/', '?' or '#',
+        # so a malformed password containing any of those smears the "user:pass@..."
+        # credentials across host / path / query / fragment WITHOUT raising (e.g.
+        # "user:12/34@host", "user:12?34@host", a dropped scheme). Rather than chase
+        # each variant, use one bulletproof rule: if the raw URL contains an '@' that
+        # httpx did NOT recognize as userinfo (u.username / u.password unset), that
+        # '@' is a smeared credential separator — redact entirely. A well-formed
+        # "user:pass@host" IS recognized as userinfo, so its clean host still shows
+        # (userinfo is excluded from the output either way).
         try:
             u = httpx.URL(self._url)
-            # Redact unless the URL parses to a clean host with no smeared userinfo.
-            # httpx's lenient authority parse can (a) leave the whole "user:pass@..."
-            # in u.path when there's no scheme (u.host empty), or (b) misparse a
-            # numeric password prefix like "user:12/34@host" as host="user"/port=12
-            # with "34@host" in u.path — both leak credentials via the happy path. An
-            # '@' surviving in host/path is the tell (u.username/password are NOT
-            # included in the output, so a well-parsed "user:pass@host" is clean).
-            if not u.host or "@" in u.host or "@" in str(u.path):
+            after_scheme = self._url.split("://", 1)[-1] if "://" in self._url else self._url
+            unrecognized_at = "@" in after_scheme and not (u.username or u.password)
+            if not u.host or unrecognized_at:
                 return "(unparsable url)"
             hostport = u.host + (f":{u.port}" if u.port is not None else "")
             return f"{hostport}{u.path}"

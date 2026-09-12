@@ -325,6 +325,20 @@ def test_numeric_password_slash_url_does_not_leak() -> None:
     assert content == "POST (unparsable url)"
 
 
+def test_query_fragment_userinfo_smear_does_not_leak() -> None:
+    # httpx also terminates the authority at '?' and '#', smearing a malformed
+    # password's creds into query/fragment; the raw '@' isn't recognized as userinfo,
+    # so _host() must redact.
+    for url in (
+        "https://user:12?34@api.example.com/v1/chat",
+        "https://user:12#34@api.example.com/v1/chat",
+    ):
+        t = HttpEndpointTarget(url=url, transport=_transport([], {}))
+        content = t.get_observables()[0].content
+        assert "user:12" not in content and "@" not in content
+        assert content == "POST (unparsable url)"
+
+
 def test_schemeless_url_with_userinfo_does_not_leak() -> None:
     # a dropped "https://" leaves "svc:SECRETPASS@host/path" whole in u.path (httpx
     # parses it without raising) — _host() must redact, not emit the credentials.
