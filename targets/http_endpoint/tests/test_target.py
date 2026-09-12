@@ -386,6 +386,15 @@ def test_benign_percent40_in_path_is_redacted() -> None:
     assert t.get_observables()[0].content == "POST (unparsable url)"
 
 
+def test_idna_invalid_host_does_not_crash() -> None:
+    # A malformed "xn--" punycode host CONSTRUCTS via httpx.URL() but raises
+    # InvalidCodepoint on the u.host property access. _host() runs from
+    # get_observables(), so it must swallow that and redact — never propagate and
+    # crash the sweep (regression: property access must stay inside the try).
+    t = HttpEndpointTarget(url="https://xn--ftp-bulliger.com/x", transport=_transport([], {}))
+    assert t.get_observables()[0].content == "POST (unparsable url)"
+
+
 def test_host_port_and_ipv6_shown() -> None:
     # positive cases: a numeric port is shown, and an IPv6 literal is bracketed so
     # the ':port' is unambiguous. Neither carries userinfo, so both are emitted.

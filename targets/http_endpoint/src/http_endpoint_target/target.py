@@ -235,37 +235,39 @@ class HttpEndpointTarget(Target):
         # host="user", port=12). Six prior leak variants all rode the emitted path;
         # rather than blocklist each one, we DROP the path and positively ALLOWLIST
         # the output as a hostname/IP literal plus a numeric port. Redact otherwise.
+        # The ENTIRE body is guarded: httpx.URL() can reject a URL outright, and
+        # accessing u.host can itself raise (e.g. IDNA InvalidCodepoint on a
+        # malformed "xn--" punycode host that CONSTRUCTS but fails to decode). This
+        # runs from get_observables(), so it must be total — never crash the sweep.
         try:
             u = httpx.URL(self._url)
-        except Exception:  # noqa: BLE001 - malformed URL httpx rejects outright
-            # httpx itself refused to parse it; no hand-rolled parse is trustworthy
-            # (userinfo can contain '/', defeating naive splitting), so redact.
+            host = u.host  # httpx has already stripped any RECOGNIZED userinfo
+            if not host:
+                return "(unparsable url)"
+            # A URL carries credentials only through an '@' userinfo delimiter, so an
+            # unaccounted '@' is the tell that credentials spilled past the authority
+            # into host/port. Count every '@' that can materialize as a literal '@'
+            # in a client-decoded URL: a raw '@' OR a percent-encoded "%40" (httpx
+            # decodes %40 -> '@'). httpx recognizes exactly one '@' as userinfo iff
+            # u.username/u.password is set; any other '@' (raw or encoded) means a
+            # smeared credential separator — redact rather than emit the misparse.
+            at_total = self._url.count("@") + self._url.count("%40")
+            expected_at = 1 if (u.username or u.password) else 0
+            if at_total != expected_at:
+                return "(unparsable url)"
+            # Positively allowlist the host: a DNS name / IPv4, else an IPv6 literal
+            # (bracketed so the ':port' is unambiguous). This rejects any residual
+            # smear a count check could miss (stray delimiters, unicode). Port, if
+            # present, is already an int parsed by httpx.
+            if self._DNS_OR_IPV4.fullmatch(host):
+                hostpart = host
+            elif self._IPV6.fullmatch(host):
+                hostpart = f"[{host}]"
+            else:
+                return "(unparsable url)"
+            return hostpart if u.port is None else f"{hostpart}:{u.port}"
+        except Exception:  # noqa: BLE001 - malformed URL, or a raising property access
             return "(unparsable url)"
-        host = u.host  # httpx has already stripped any RECOGNIZED userinfo from host
-        if not host:
-            return "(unparsable url)"
-        # A URL carries credentials only through an '@' userinfo delimiter, so an
-        # unaccounted '@' is the tell that credentials spilled past the authority
-        # into host/port. Count every '@' that can materialize as a literal '@' in a
-        # client-decoded URL: a raw '@' OR a percent-encoded "%40" (httpx decodes
-        # %40 -> '@'). httpx recognizes exactly one '@' as userinfo iff
-        # u.username/u.password is set; any other '@' (raw or encoded) means a
-        # smeared credential separator — redact rather than emit the misparse.
-        at_total = self._url.count("@") + self._url.count("%40")
-        expected_at = 1 if (u.username or u.password) else 0
-        if at_total != expected_at:
-            return "(unparsable url)"
-        # Positively allowlist the host: a DNS name / IPv4, else an IPv6 literal
-        # (bracketed so the ':port' is unambiguous). This rejects any residual smear
-        # a count check could miss (stray delimiters, unicode). Port, if present, is
-        # already an int parsed by httpx.
-        if self._DNS_OR_IPV4.fullmatch(host):
-            hostpart = host
-        elif self._IPV6.fullmatch(host):
-            hostpart = f"[{host}]"
-        else:
-            return "(unparsable url)"
-        return hostpart if u.port is None else f"{hostpart}:{u.port}"
 
     # -- Execution ------------------------------------------------------------
 
