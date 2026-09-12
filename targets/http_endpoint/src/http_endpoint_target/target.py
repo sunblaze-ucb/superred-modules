@@ -125,6 +125,9 @@ class HttpEndpointTarget(Target):
         self._max_retries = max(1, max_retries)
         self._retry_backoff_base = retry_backoff_base
         self._max_retry_delay = max_retry_delay
+        # One client per target instance, reused across attempts and run() calls
+        # (connection pooling; the injected transport is NOT closed per attempt).
+        self._client = httpx.AsyncClient(transport=transport, timeout=timeout)
 
         self._benign_prompt = "Hello, can you help me?"
         self._reset_state()
@@ -267,12 +270,9 @@ class HttpEndpointTarget(Target):
         body = _render(self._body_template, prompt)
         for attempt in range(1, self._max_retries + 1):
             try:
-                async with httpx.AsyncClient(
-                    transport=self._transport, timeout=self._timeout
-                ) as client:
-                    resp = await client.request(
-                        self._method, self._url, json=body, headers=self._headers
-                    )
+                resp = await self._client.request(
+                    self._method, self._url, json=body, headers=self._headers
+                )
                 self._http_status = resp.status_code
                 self._raw_response = resp.text
                 if resp.status_code == 429 and attempt < self._max_retries:
@@ -299,6 +299,10 @@ class HttpEndpointTarget(Target):
                 self._last_response = _extract(data, self._response_path)
                 return
             except httpx.HTTPError as exc:
+                # Clear status/body so they never pair a prior attempt's response
+                # with this attempt's error.
+                self._http_status = None
+                self._raw_response = ""
                 self._error = f"{type(exc).__name__}: {exc}"
                 if attempt < self._max_retries:
                     await self._backoff(attempt, None)
@@ -309,6 +313,8 @@ class HttpEndpointTarget(Target):
                 # raises synchronously from client.request and is not an
                 # httpx.HTTPError — record it and stop (retrying can't fix the URL)
                 # so it never propagates out of run() and crashes the sweep.
+                self._http_status = None
+                self._raw_response = ""
                 self._error = f"{type(exc).__name__}: {exc}"
                 return
 
@@ -330,7 +336,11 @@ class HttpEndpointTarget(Target):
         self._reset_state()
 
     async def teardown(self) -> None:
-        pass
+        # Close the client only if we own its transport (transport=None -> httpx
+        # built a private one). An injected transport is the caller's to manage
+        # (and may be shared across instances / concurrency), so we never close it.
+        if self._transport is None:
+            await self._client.aclose()
 
 
 __all__ = ["HttpEndpointTarget", "PROMPT_PLACEHOLDER", "SYSTEM_TAG", "USER_INPUT_TAG"]
