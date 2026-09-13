@@ -18,6 +18,7 @@ Refresh the vendored files with `python scripts/sync_upstream.py`.
 | `src/dan_personas_optimizer/data/upstream/AntiDAN.json` | `garak/data/dan/AntiDAN.json` |
 | `src/dan_personas_optimizer/data/upstream/ChatGPT_Developer_Mode_RANTI.json` | `garak/data/dan/ChatGPT_Developer_Mode_RANTI.json` |
 | `src/dan_personas_optimizer/data/upstream/ChatGPT_Developer_Mode_v2.json` | `garak/data/dan/ChatGPT_Developer_Mode_v2.json` |
+| `src/dan_personas_optimizer/data/upstream/ChatGPT_Image_Markdown.json` | `garak/data/dan/ChatGPT_Image_Markdown.json` |
 | `src/dan_personas_optimizer/data/upstream/DAN_Jailbreak.json` | `garak/data/dan/DAN_Jailbreak.json` |
 | `src/dan_personas_optimizer/data/upstream/DUDE.json` | `garak/data/dan/DUDE.json` |
 | `src/dan_personas_optimizer/data/upstream/Dan_10_0.json` | `garak/data/dan/Dan_10_0.json` |
@@ -31,9 +32,10 @@ Refresh the vendored files with `python scripts/sync_upstream.py`.
 | `src/dan_personas_optimizer/data/upstream/inthewild_jailbreak_llms.json` | `garak/data/inthewild_jailbreak_llms.json` (see dataset origin below) |
 | `render()` in `src/dan_personas_optimizer/personas.py` | `garak/probes/dan.py` — `DANProbeMeta.probe()` |
 
-Not vendored: `ChatGPT_Image_Markdown` (multimodal), `Ablation_Dan_11_0`
-(AutoDAN data). See `ASSUMPTIONS.md`. (`DanInTheWild` **is** vendored, as
-`inthewild_jailbreak_llms.json` above — see the dataset origin below.)
+Not vendored: `Ablation_Dan_11_0` (AutoDAN data). See `ASSUMPTIONS.md`.
+(`ChatGPT_Image_Markdown` and `DanInTheWild` **are** vendored — the former in
+the table above, the latter as `inthewild_jailbreak_llms.json`; see the dataset
+origin below.)
 
 ## Dataset origin (one layer up from garak): the in-the-wild jailbreak corpus
 

@@ -69,11 +69,10 @@ persona-adoption check, which is what upstream actually measures. A claim
 judging this optimizer scores whether the *goal* was achieved, which is a
 stricter bar than upstream's.
 
-### 5. Three upstream classes are not ported
+### 5. One upstream class is not ported
 
 | Excluded | Why |
 | --- | --- |
-| `ChatGPT_Image_Markdown` | Multimodal — it exfiltrates via markdown image rendering, which needs image-carrying Events. |
 | `Ablation_Dan_11_0` | Reads `autodan/autodan_prompts.json`, not the DAN corpus; it is an AutoDAN ablation. |
 
 ### Injection-surface selection (superred adaptation)
