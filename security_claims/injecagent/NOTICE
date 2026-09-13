@@ -1,0 +1,46 @@
+# NOTICE
+
+superred-claim-injecagent
+
+This module is a port of InjecAgent into the superred red-teaming framework.
+Original code in this module (the superred adaptation: the pure judge, task
+model, factories, loaders, and tests) is licensed MIT (see LICENSE). It bundles
+benchmark data and reproduces evaluation logic from InjecAgent; the upstream MIT
+license text is preserved verbatim in
+`src/injecagent_claim/data/INJECAGENT_LICENSE` (and `LICENSES/InjecAgent-MIT.txt`).
+
+## Upstream: InjecAgent
+
+- Project: InjecAgent — "Benchmarking Indirect Prompt Injections in
+  Tool-Integrated Large Language Model Agents"
+- Repository: https://github.com/uiuc-kang-lab/InjecAgent (commit f19c9f2)
+- Paper: Zhan, Liang, Ying, Kang, ACL Findings 2024 (arXiv:2403.02691).
+- License: MIT
+- Copyright (c) 2023 Qiusi Zhan
+
+### Bundled data (vendored verbatim, MIT)
+
+Under `src/injecagent_claim/data/`:
+
+- `test_cases_dh_base.json`, `test_cases_dh_enhanced.json`,
+  `test_cases_ds_base.json`, `test_cases_ds_enhanced.json` — all 1,054 base test
+  cases (dh 510, ds 544) plus the enhanced-setting variants, byte-for-byte as
+  upstream ships them.
+- `INJECAGENT_LICENSE` — verbatim upstream MIT license.
+
+The tool *schemas* the agent sees are NOT bundled here — they live in the paired
+`superred-target-injecagent` package (and carry a separate ToolEmu Apache-2.0
+attribution). This claim vendors only InjecAgent's own synthetic test cases.
+
+### Ported evaluation logic (MIT)
+
+The deterministic prompted (text ReAct) and finetuned (function-calling)
+attack-success evaluators and the attack-success-rate scoring are ported from
+upstream `src/output_parsing.py` and `src/utils.py` into
+`src/injecagent_claim/judge.py` as pure, LLM-free functions over the agent's
+output. Deviations are documented in `ASSUMPTIONS.md`.
+
+## Citation
+
+When reporting numbers produced with this module, cite Zhan et al., 2024
+(arXiv:2403.02691, InjecAgent).

@@ -1,0 +1,60 @@
+# NOTICE
+
+superred-target-injecagent
+
+This module is a port of InjecAgent's agent-driving harness into the superred
+red-teaming framework. Original code in this module (the superred adaptation: the
+target, the agent/prompt builders, the ds-step-2 simulator, factories, and tests)
+is licensed MIT (see LICENSE). It bundles benchmark data and reproduces prompt
+construction and simulation from InjecAgent; the upstream MIT license text is
+preserved verbatim in `src/injecagent_target/data/INJECAGENT_LICENSE` (and
+`LICENSES/InjecAgent-MIT.txt`).
+
+## Upstream: InjecAgent
+
+- Project: InjecAgent — "Benchmarking Indirect Prompt Injections in
+  Tool-Integrated Large Language Model Agents"
+- Repository: https://github.com/uiuc-kang-lab/InjecAgent (commit f19c9f2)
+- Paper: Zhan, Liang, Ying, Kang, ACL Findings 2024 (arXiv:2403.02691).
+- License: MIT — Copyright (c) 2023 Qiusi Zhan
+
+### Bundled data (vendored verbatim)
+
+Under `src/injecagent_target/data/`:
+
+- `tools.json` — the tool schemas the agent is shown (330 tools / 38 toolkits).
+  **See the ToolEmu attribution below** — these schemas are adapted by InjecAgent
+  from ToolEmu, which is Apache-2.0.
+- `attacker_simulated_responses.json` — InjecAgent's own cache of simulated
+  exfiltration-tool responses for the ds step 2 (MIT).
+- `INJECAGENT_LICENSE` — verbatim upstream InjecAgent MIT license.
+
+### Ported logic (MIT)
+
+The agent prompts (`_vendor/agent_prompts.py`), the ds-simulation prompt
+(`_vendor/generation_prompts.py`), the tool-dictionary loader and prompt/message
+builders (`agent.py`), and the cache-first ds-step-2 simulator (`simulator.py`)
+are ported verbatim (prompts) or faithfully (builders) from upstream
+`src/prompts/*.py`, `src/utils.py`, `src/evaluate_prompted_agent.py`, and
+`src/evaluate_finetuned_agent.py`.
+
+## Upstream-of-upstream: ToolEmu (for `tools.json`)
+
+InjecAgent adapted its tool schemas from **ToolEmu** (Ruan et al., 2023):
+
+- Project: ToolEmu — "Identifying the Risks of LM Agents with an LM-Emulated
+  Sandbox"
+- Repository: https://github.com/ryoungj/ToolEmu
+- License: Apache License 2.0
+- Verbatim licence at `LICENSES/ToolEmu-Apache-2.0.txt`.
+
+Apache-2.0 is permissive and compatible with this module's MIT licence. Per
+Apache-2.0 §4, this NOTICE preserves attribution to the ToolEmu authors for the
+tool-schema material incorporated into `tools.json`. No ToolEmu source code (only
+the tool-specification data, as adapted by InjecAgent) is bundled.
+
+## Citation
+
+When reporting numbers produced with this module, cite Zhan et al., 2024
+(arXiv:2403.02691, InjecAgent); the tool schemas derive from Ruan et al., 2023
+(ToolEmu).
