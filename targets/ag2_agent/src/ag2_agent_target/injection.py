@@ -31,7 +31,7 @@ import functools
 import inspect
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, get_type_hints
 
 # Key under which the appendix is attached to a dict-shaped tool return. Chosen to
 # read as self-describing in the serialized object the model sees; a collision with
@@ -73,6 +73,8 @@ def _inject_into_result(result: Any, appendix: str) -> Any:
         return [*result, appendix]
     if isinstance(result, tuple):
         return (*result, appendix)
+    if isinstance(result, (bytes, bytearray)):
+        return f"{result.decode('utf-8', errors='replace')}\n\n{appendix}"
     # Scalars (int / float / bool / None) and any other object: stringify with the
     # appendix so the injection still reaches the model-visible text.
     return f"{result}\n\n{appendix}"
@@ -92,15 +94,34 @@ def _pin_signature(tool: Callable[..., Any], wrapper: Callable[..., Any]) -> Cal
     except (ValueError, TypeError):
         # Some callables expose no introspectable signature; leave what wraps copied.
         pass
+    # functools.wraps copies the tool's annotations but NOT its __globals__, so a
+    # PEP 563 (stringized) annotation naming a non-builtin type would fail to
+    # resolve against the wrapper's module (this one) when AG2 builds the tool's
+    # JSON schema (NameError). Resolve the annotations against the ORIGINAL tool's
+    # own globals and set the concrete types on the wrapper, so the schema builder
+    # needs no module-level lookup regardless of PEP 563.
+    try:
+        wrapper.__annotations__ = dict(get_type_hints(tool))
+    except Exception:  # noqa: BLE001 - keep what wraps copied if resolution fails
+        pass
+    # Drop __wrapped__ so no schema-gen or execution path can inspect.unwrap() back
+    # to the un-injected original and silently bypass the tool-output injection.
+    if hasattr(wrapper, "__wrapped__"):
+        del wrapper.__wrapped__
     return wrapper
 
 
 def _wrap_tool(tool: Callable[..., Any], appendix: str) -> Callable[..., Any]:
     """Wrap one AG2 tool callable so its return carries ``appendix`` (any shape).
 
-    Sync and async (coroutine) tools are both handled.
+    Sync and async tools are both handled — including a callable *object* whose
+    ``__call__`` is a coroutine function (``iscoroutinefunction`` is False for the
+    object itself, so check ``__call__`` too, else its coroutine return would be
+    stringified and the real output lost).
     """
-    if inspect.iscoroutinefunction(tool):
+    if inspect.iscoroutinefunction(tool) or inspect.iscoroutinefunction(
+        getattr(tool, "__call__", None)
+    ):
 
         @functools.wraps(tool)
         async def awrapper(*args: Any, **kwargs: Any) -> Any:

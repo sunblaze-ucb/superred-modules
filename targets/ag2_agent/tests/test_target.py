@@ -121,9 +121,36 @@ def test_wrap_tools_preserves_tool_schema_metadata() -> None:
     assert wrapped.__name__ == "get_weather"
     assert wrapped.__doc__ == "Get the current weather for a city."
     assert list(inspect.signature(wrapped).parameters) == ["city"]
-    # Annotations survive (this test module uses PEP 563, so they are stringified).
-    assert "city" in wrapped.__annotations__
-    assert wrapped.__annotations__ == get_weather.__annotations__
+    # Annotations are RESOLVED to concrete types on the wrapper (not left as PEP 563
+    # strings), so AG2 can build the schema without needing the original's globals.
+    assert wrapped.__annotations__["city"] is str
+
+
+class _CustomPayload:
+    """A non-builtin type used to exercise PEP 563 annotation resolution."""
+
+
+def _tool_with_custom_type(payload: _CustomPayload) -> str:
+    """A tool whose parameter is annotated with a non-builtin type."""
+    return "ok"
+
+
+def test_wrap_tools_resolves_stringized_nonbuiltin_annotations() -> None:
+    # This module uses `from __future__ import annotations`, so the tool's
+    # `payload: _CustomPayload` annotation is the STRING "_CustomPayload".
+    # functools.wraps alone would leave that string on the wrapper, and AG2's
+    # schema builder resolves it against the wrapper's module (injection.py), where
+    # `_CustomPayload` doesn't exist -> NameError, defeating the tool_output surface.
+    # The wrapper must carry the resolved concrete type instead.
+    import inspect
+    from typing import get_type_hints
+
+    (wrapped,) = InjectionSpec(tool_output_appendix="X").wrap_tools([_tool_with_custom_type])
+    # Must not raise (a stringized, unresolved annotation would NameError here):
+    hints = get_type_hints(wrapped)
+    assert hints["payload"] is _CustomPayload
+    # And nothing can inspect.unwrap() past the wrapper to bypass injection:
+    assert inspect.unwrap(wrapped) is wrapped
 
 
 def test_wrap_tools_injects_into_every_return_shape() -> None:
@@ -165,6 +192,11 @@ def test_wrap_tools_injects_into_every_return_shape() -> None:
     assert mark in wrap(lambda: None)()
     assert mark in wrap(lambda: True)()
 
+    # bytes -> decoded to text (not left as a b'...' repr) with the appendix.
+    out = wrap(lambda: b"raw page")()
+    assert out == f"raw page\n\n{mark}"
+    assert mark in wrap(lambda: bytearray(b"ba"))()
+
 
 async def test_wrap_tools_handles_async_tool() -> None:
     # AG2 tools may be coroutine functions; the wrapper must await and inject.
@@ -175,6 +207,25 @@ async def test_wrap_tools_handles_async_tool() -> None:
 
     (wrapped,) = InjectionSpec(tool_output_appendix=mark).wrap_tools([fetch])
     assert mark in await wrapped()
+
+
+async def test_wrap_tools_handles_async_callable_object() -> None:
+    # A callable *object* whose __call__ is a coroutine: iscoroutinefunction is
+    # False for the object, so the wrapper must also check __call__ — otherwise its
+    # coroutine return is stringified and the real output is lost (a silent no-op).
+    mark = "ASYNC_OBJ_MARK"
+
+    class Fetcher:
+        async def __call__(self) -> str:
+            return "obj body"
+
+    (wrapped,) = InjectionSpec(tool_output_appendix=mark).wrap_tools([Fetcher()])
+    result = wrapped()
+    import asyncio
+
+    assert asyncio.iscoroutine(result)
+    resolved = await result
+    assert resolved == f"obj body\n\n{mark}"
 
 
 async def test_factory_error_is_recorded_not_raised() -> None:
