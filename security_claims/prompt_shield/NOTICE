@@ -1,0 +1,35 @@
+# NOTICE
+
+superred-claim-prompt-shield
+
+This module red-teams Azure AI Content Safety "Prompt Shields" as a superred
+SecurityClaim. All code and the bundled seed prompts are original to this module
+and licensed MIT (see LICENSE). No third-party dataset or source is vendored.
+
+## Seed prompts
+
+The illustrative seed set in `src/prompt_shield_claim/seeds.py` (8 attack + 6
+benign) is original content authored for this module — canonical
+prompt-injection patterns and plainly-benign requests, not copied from any
+licensed dataset. It exists so the claim is runnable and testable out of the box
+and to seed an optimizer; it is not a benchmark. Supply your own corpus via
+`prompt_shield_claim(seeds=...)` for a real evaluation.
+
+## Service under test (not vendored)
+
+- Azure AI Content Safety — Prompt Shields, a Microsoft product. This module
+  calls the public `text:shieldPrompt` REST API against the user's own resource;
+  no Microsoft code or data is included.
+- API reference: https://learn.microsoft.com/en-us/rest/api/contentsafety/text-operations/shield-prompt
+  (api-version 2024-09-01). Concept: https://learn.microsoft.com/en-us/azure/ai-services/content-safety/concepts/jailbreak-detection
+
+## Terms of use
+
+Red-teaming your own Content Safety resource is permitted under Microsoft's
+Penetration Testing Rules of Engagement
+(https://www.microsoft.com/en-us/msrc/pentest-rules-of-engagement), which cover
+"testing your tenant's security monitoring and detection systems." Use only a
+resource you own, respect the tier's rate limits (no denial-of-service), and note
+that publishing *comparative* benchmark results of the service may be separately
+restricted by the Microsoft Product Terms — check before publishing. See the
+paired `superred-target-prompt-shield` README for details.
