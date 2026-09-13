@@ -3,11 +3,21 @@
 A [LlamaIndex](https://github.com/run-llama/llama_index) `ReActAgent` as a superred
 target — so red-team claims and optimizers can drive a real LlamaIndex agent.
 
-The attacker controls the agent's `user_input` (direct prompt injection). The
-target runs the agent and captures its final output and the tools it called (from
+The target exposes the agent's real attack surfaces as controllables, so an
+optimizer's surface classifier can choose where to inject:
+
+- `user_input` — a direct message to the agent (direct prompt injection);
+- `tool_output` — attacker content appended to every tool's return value, i.e. the
+  content a tool hands back that the agent then reads (indirect prompt injection via
+  tool results — the classic agent vector);
+- `system_prompt` — attacker text appended to the agent's own system prompt.
+
+It then runs the agent and captures its final output and the tools it called (from
 the workflow's `ToolCall` events). The tool-call signal is the security surface: an
 injection that makes the agent call a sensitive tool it should not is the failure a
-paired claim scores.
+paired claim scores. The `tool_output` / `system_prompt` surfaces are wired through
+the agent factory via an `InjectionSpec` (built per run) — see `injection.py` and
+`build_demo_agent` for the reference wiring a caller's own factory should follow.
 
 ## What it adds, and what the offline test proves
 
@@ -35,17 +45,25 @@ from llamaindex_agent_target import llamaindex_agent_target_factory, build_demo_
 from llama_index.llms.openai import OpenAI
 
 factory = llamaindex_agent_target_factory(
-    agent_factory=build_demo_agent,   # your own (llm) -> ReActAgent(...)
+    agent_factory=build_demo_agent,   # (llm, injection_spec) -> ReActAgent(...)
     llm=OpenAI(model="gpt-4o-mini"),  # required: a LlamaIndex LLM
 )
 ```
 
-`agent_factory` takes the `llm` and returns a fresh `ReActAgent`; its tools and
-system prompt are the factory's concern. `llm` is **required** — a ReActAgent
+`agent_factory` is a callable `(llm, injection_spec) -> ReActAgent`: it receives the
+`llm` **and** the run's `InjectionSpec`, and returns a fresh `ReActAgent`. It owns
+the tools, and it must wire the spec so the attack surfaces are live — feed the
+system prompt through `injection_spec.apply_system_prompt(...)` (pass the result as
+the ReActAgent's `system_prompt`) and wrap the tools with
+`injection_spec.wrap_tools(...)` for the tool-return surface. A factory that ignores
+the spec silently disables the `system_prompt` / `tool_output` surfaces, and a
+one-argument factory raises `TypeError` at run time (recorded as a run error); see
+`build_demo_agent` for the reference wiring. `llm` is **required** — a ReActAgent
 cannot run without one. The target holds **no API key**: the model's auth lives on
 the `llm` you supply, and only its model name / class name is ever emitted as an
 observable (never the `llm` object), so no secret passes through this target.
-Config: `user_task` (benign default input). Controllable: `user_input`.
+Config: `user_task` (benign default input). Controllables: `user_input`,
+`tool_output`, `system_prompt`.
 
 ## Queries
 

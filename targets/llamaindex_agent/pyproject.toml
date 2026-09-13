@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11,<3.14"
 license = "MIT"
 license-files = ["LICENSE"]
-authors = [{ name = "Simon Sure", email = "info@simonsure.com" }]
+authors = [{ name = "Rishabh Sinha", email = "rsinha17@terpmail.umd.edu" }]
 keywords = ["superred", "red-teaming", "ai-safety", "security", "llm", "target", "llama-index", "agent", "prompt-injection"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -53,6 +53,14 @@ files = ["src"]
 [[tool.mypy.overrides]]
 module = ["llama_index.*"]
 ignore_missing_imports = true
+[[tool.mypy.overrides]]
+# demo.py's ScriptedReActLLM subclasses llama-index's CustomLLM, which mypy sees as
+# ``Any`` while the framework is not installed (its import is ignored above), so
+# strict's disallow_subclassing_any would flag the subclass. Relax just this offline
+# test-fixture module: a no-op once llama-index is installed (CustomLLM becomes a
+# real base), so it never masks a real subclassing error in the framework-present env.
+module = ["llamaindex_agent_target.demo"]
+disallow_subclassing_any = false
 
 [tool.ruff]
 line-length = 100
