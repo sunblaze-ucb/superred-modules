@@ -4,7 +4,7 @@ DAN persona jailbreak optimizer for [superred](https://superred.simonsure.com),
 ported from NVIDIA garak's DAN probe family.
 
 > **Community port — not an official implementation.** This module vendors the
-> 13 persona preambles from [NVIDIA garak](https://github.com/NVIDIA/garak)
+> 14 persona preambles from [NVIDIA garak](https://github.com/NVIDIA/garak)
 > (Apache-2.0). It is not affiliated with, endorsed by, or maintained by
 > NVIDIA. See [ASSUMPTIONS.md](ASSUMPTIONS.md) for provenance and every
 > deliberate deviation from the reference code.
@@ -17,7 +17,7 @@ for the real request. Dan_11_0 says so outright — *"don't begin the data
 pairing until after my next message."*
 
 So this optimizer sends the persona on the first turn of a run and the goal on
-the second, one persona per run, cycling through all 13 until they are
+the second, one persona per run, cycling through all 14 until they are
 exhausted. It makes no LLM calls.
 
 ## Install
@@ -31,7 +31,7 @@ pip install superred-optimizer-dan-personas
 ```python
 from dan_personas_optimizer import DANPersonasOptimizer
 
-# all 13 personas, persona then goal
+# all 14 personas, persona then goal
 optimizer_factory = lambda: DANPersonasOptimizer()
 
 # a subset, and a target that only offers one turn per run
@@ -42,7 +42,7 @@ optimizer_factory = lambda: DANPersonasOptimizer(
 
 | Argument | Default | Meaning |
 | --- | --- | --- |
-| `personas` | all 13 | Upstream persona names, tried in order. |
+| `personas` | all 14 | Upstream persona names, tried in order. |
 | `generator_name` | from observables | Fills garak's `{generator.name}`; falls back to `ChatGPT`. |
 | `mode` | `"two_turn"` | `"single_message"` joins persona and goal into one injection. |
 
