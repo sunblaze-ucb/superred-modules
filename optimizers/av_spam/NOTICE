@@ -16,7 +16,8 @@ scanner-test standards, reproduced here verbatim as garak carries them:
     non-malicious string for testing antivirus scanners.
   - GTUBE: the Generic Test for Unsolicited Bulk Email, published by the
     Apache SpamAssassin project (https://spamassassin.apache.org/gtube/).
-  - GTphish: the analogous generic anti-phishing test string.
+  - GTphish: the analogous anti-phishing test string (garak cites a Cisco
+    Email Security Appliance page as its origin, not SpamAssassin).
 Only the repetition prompt templates that wrap these signatures are garak's.
 
 Upstream commit: 2233d51bedf6bfb634872ef9efbcd94eae38cc1a

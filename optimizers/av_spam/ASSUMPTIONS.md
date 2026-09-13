@@ -20,7 +20,9 @@ which are in turn the published test strings: the **EICAR** Standard
 Anti-Virus Test File (EICAR — European Institute for Computer Antivirus
 Research), the **GTUBE** generic test string from the
 [Apache SpamAssassin](https://spamassassin.apache.org/gtube/) project, and
-the analogous **GTphish** anti-phishing test string (SpamAssassin-style).
+the analogous **GTphish** anti-phishing test string (a Cisco Email Security
+Appliance test string per garak's `doc_uri`, not SpamAssassin — see
+`LICENSES/NOTICE.md`).
 They are public scanner-test standards, not garak's authorship; only the
 repetition templates that wrap them are garak's. See `NOTICE`.
 
