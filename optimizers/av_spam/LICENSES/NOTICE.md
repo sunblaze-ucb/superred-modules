@@ -18,7 +18,7 @@ garak carries them verbatim and this module reproduces them unchanged:
 | --- | --- |
 | EICAR test file | EICAR — European Institute for Computer Antivirus Research (free public test string) |
 | GTUBE | Apache SpamAssassin — https://spamassassin.apache.org/gtube/ |
-| GTphish | generic anti-phishing test string (SpamAssassin-style) |
+| GTphish | Cisco — outbreak-filter URL-rewriting test string (per garak's `GTphish` `doc_uri`, a Cisco Email Security Appliance page; not SpamAssassin) |
 
 They are fixed public test constants cited as their standards, not carried under
 a software licence. Only the repetition prompt templates around them are garak's.
