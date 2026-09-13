@@ -17,6 +17,8 @@ from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.tools import tool
 
+from langchain_agent_target.injection import InjectionSpec
+
 BENIGN_TOOL = "get_weather"
 SENSITIVE_TOOL = "exfiltrate_data"
 
@@ -84,9 +86,17 @@ class ScriptedChatModel(BaseChatModel):
         return "scripted-chat"
 
 
-def build_demo_agent(model: Any) -> Any:
+def build_demo_agent(model: Any, injection: InjectionSpec | None = None) -> Any:
     """Build a LangChain ``create_agent`` graph with a benign ``get_weather`` tool
-    and a sensitive ``exfiltrate_data`` tool, using ``model`` as the chat model."""
+    and a sensitive ``exfiltrate_data`` tool, using ``model`` as the chat model.
+
+    Reference wiring of an :class:`InjectionSpec`: the injected system-prompt
+    suffix is appended to the base prompt, and the tool-return injection middleware
+    is passed to ``create_agent`` — so ``tool_output`` / ``system_prompt``
+    controllables reach the real agent. A caller's own factory should wire the spec
+    the same way to expose those surfaces.
+    """
+    injection = injection or InjectionSpec()
 
     @tool
     def get_weather(city: str) -> str:
@@ -101,7 +111,8 @@ def build_demo_agent(model: Any) -> Any:
     return create_agent(
         model,
         tools=[get_weather, exfiltrate_data],
-        system_prompt="You are a helpful assistant.",
+        system_prompt=injection.apply_system_prompt("You are a helpful assistant."),
+        middleware=injection.middleware(),
     )
 
 

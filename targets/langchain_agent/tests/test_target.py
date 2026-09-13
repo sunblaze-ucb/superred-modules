@@ -12,6 +12,7 @@ from superred.core.types.events import ControllableInjection, ControllableNoInje
 from langchain_agent_target import (
     SENSITIVE_TOOL,
     USER_INPUT_TAG,
+    InjectionSpec,
     LangChainAgentTarget,
     ScriptedChatModel,
     build_demo_agent,
@@ -21,10 +22,18 @@ from langchain_agent_target import (
 )
 
 
-def _handlers(user_input: str | None):
+def _handlers(inject: dict[str, str] | str | None = None):
+    # inject: {controllable_name: value}; a bare str is shorthand for user_input.
+    if isinstance(inject, str):
+        inject = {"user_input": inject}
+    inject = inject or {}
+
     async def send_event(ev):
-        if user_input is not None:
-            return ControllableInjection(event=ev, controllable=ev.controllable, value=user_input)
+        name = ev.controllable.name
+        if name in inject:
+            return ControllableInjection(
+                event=ev, controllable=ev.controllable, value=inject[name]
+            )
         return ControllableNoInjection(event=ev, controllable=ev.controllable)
 
     return (lambda ev: None), send_event
@@ -43,6 +52,12 @@ def test_contract() -> None:
         "tool_calls",
         "called_tool_names",
         "error",
+    }
+    # Full agent attack surface, not just the prompt.
+    assert {c.name for c in t.get_controllables()} == {
+        "user_input",
+        "tool_output",
+        "system_prompt",
     }
     assert t.get_controllables()[0].security_domain == USER_INPUT_TAG
 
@@ -118,3 +133,47 @@ async def test_reset_clears_state() -> None:
     assert t.query("last_response") == "hi"
     await t.reset_ephemeral_state()
     assert t.query("last_response") == "" and t.query("called_tool_names") == ""
+
+
+# -- injection surfaces (tool_output / system_prompt) ------------------------
+def test_injection_spec_system_prompt_and_middleware() -> None:
+    empty = InjectionSpec()
+    assert empty.apply_system_prompt("base") == "base"
+    assert empty.middleware() == []
+    spec = InjectionSpec(system_prompt_suffix="ATK", tool_output_appendix="PAYLOAD")
+    assert spec.apply_system_prompt("base") == "base\n\nATK"
+    assert spec.apply_system_prompt(None) == "ATK"
+    assert len(spec.middleware()) == 1  # tool-return injection middleware wired
+
+
+async def test_tool_output_injection_reaches_the_tool_result() -> None:
+    # The indirect-injection surface: attacker content appended to a tool's return
+    # must actually reach the ToolMessage the agent reads back.
+    from langchain_core.messages import ToolMessage
+
+    model = ScriptedChatModel(
+        responses=[tool_call_output("get_weather", {"city": "NYC"}), message_output("done")]
+    )
+    agent = build_demo_agent(model, InjectionSpec(tool_output_appendix="INDIRECT_INJECT_MARK"))
+    last = None
+    async for state in agent.astream(
+        {"messages": [{"role": "user", "content": "weather?"}]}, stream_mode="values"
+    ):
+        last = state
+    tool_msgs = [m for m in last["messages"] if isinstance(m, ToolMessage)]
+    assert tool_msgs and "INDIRECT_INJECT_MARK" in tool_msgs[0].content
+
+
+async def test_target_drives_all_surfaces_without_error() -> None:
+    # The target plumbs all three surfaces into a per-run agent build; a run with
+    # every surface injected completes and still exercises the tool.
+    model = ScriptedChatModel(
+        responses=[tool_call_output(SENSITIVE_TOOL, {"payload": "x"}), message_output("ok")]
+    )
+    t = _target(model)
+    emit, send = _handlers(
+        {"user_input": "do it", "tool_output": "T-INJ", "system_prompt": "S-INJ"}
+    )
+    await t.run(emit, send)
+    assert t.query("error") == ""
+    assert SENSITIVE_TOOL in t.query("called_tool_names")

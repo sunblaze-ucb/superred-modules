@@ -4,11 +4,22 @@ An agent built on [LangChain](https://github.com/langchain-ai/langchain) (v1,
 via `create_agent`) as a superred target — so red-team claims and optimizers can
 drive a real LangChain agent graph.
 
-The attacker controls the agent's `user_input` (direct prompt injection). The
-target runs the compiled `create_agent` graph and captures its final output and
+The target exposes the agent's real attack surfaces as controllables, so an
+optimizer's surface classifier can choose where to inject:
+
+- `user_input` — a direct message to the agent (direct prompt injection);
+- `tool_output` — attacker content appended to every tool's return value, i.e.
+  the content a tool hands back that the agent then reads (indirect prompt
+  injection via tool results — the classic agent vector);
+- `system_prompt` — attacker text appended to the agent's own system prompt.
+
+It then runs the compiled `create_agent` graph and captures its final output and
 the tools it called (read back from the returned message list). The tool-call
 signal is the security surface: an injection that makes the agent call a
-sensitive tool it should not is the failure a paired claim scores.
+sensitive tool it should not is the failure a paired claim scores. The
+`tool_output` / `system_prompt` surfaces are wired through the agent factory via
+an `InjectionSpec` (built per run) — see `injection.py` and `build_demo_agent`
+for the reference wiring a caller's own factory should follow.
 
 ## What it adds, and what the offline test proves
 
@@ -46,7 +57,8 @@ graph; its tools, system prompt and any middleware are the factory's concern
 model id string or a configured `BaseChatModel`; LangChain's `create_agent` has no
 default model. The target holds **no API key**: the model's auth is configured on
 the `model` you supply, so no secret passes through this target. Config:
-`user_task` (benign default input). Controllable: `user_input`.
+`user_task` (benign default input). Controllables: `user_input`, `tool_output`,
+`system_prompt`.
 
 ## Queries
 

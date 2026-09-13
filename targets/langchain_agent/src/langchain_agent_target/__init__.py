@@ -1,8 +1,10 @@
 """LangChain (v1) agent target for superred.
 
 Wraps a LangChain ``create_agent`` graph so red-team claims/optimizers can drive
-it via the attacker-controlled ``user_input``; captures the final output and the
-tools the agent called. Offline-testable via a scripted ``BaseChatModel``.
+it across the agent's real attack surfaces — ``user_input`` (direct), ``tool_output``
+(indirect injection via tool returns), and ``system_prompt`` — and captures the
+final output and the tools the agent called. Offline-testable via a scripted
+``BaseChatModel``.
 """
 
 from __future__ import annotations
@@ -17,9 +19,12 @@ from langchain_agent_target.demo import (
     message_output,
     tool_call_output,
 )
+from langchain_agent_target.injection import InjectionSpec
 from langchain_agent_target.runner import AgentRunResult, ToolCallRecord, run_agent_capture
 from langchain_agent_target.target import (
+    SYSTEM_PROMPT_TAG,
     SYSTEM_TAG,
+    TOOL_OUTPUT_TAG,
     USER_INPUT_TAG,
     AgentFactory,
     LangChainAgentTarget,
@@ -49,9 +54,12 @@ def langchain_agent_target_factory(
 __all__ = [
     "LangChainAgentTarget",
     "AgentFactory",
+    "InjectionSpec",
     "langchain_agent_target_factory",
     "SYSTEM_TAG",
     "USER_INPUT_TAG",
+    "TOOL_OUTPUT_TAG",
+    "SYSTEM_PROMPT_TAG",
     # runner
     "AgentRunResult",
     "ToolCallRecord",
