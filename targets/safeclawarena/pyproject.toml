@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE", "NOTICE", "LICENSES/*"]
 requires-python = ">=3.11,<3.14"
-authors = [{ name = "Simon Sure", email = "info@simonsure.com" }]
+authors = [{ name = "Rishabh Sinha", email = "rsinha17@terpmail.umd.edu" }]
 keywords = ["red-teaming", "ai-safety", "security", "llm", "agent-security", "openclaw", "nemoclaw", "safeclawarena", "target", "docker"]
 classifiers = [
     "Development Status :: 3 - Alpha",
