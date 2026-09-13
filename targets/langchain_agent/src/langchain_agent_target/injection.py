@@ -66,7 +66,7 @@ class _ToolOutputInjection(AgentMiddleware):
             # str (the common case), or any other scalar shape → string-append.
             message.content = f"{content}\n\n{self._appendix}"
 
-    def _inject_into_command(self, command: Command) -> None:
+    def _inject_into_command(self, command: Command[Any]) -> None:
         # Command is frozen, but the ToolMessage objects it references are not;
         # mutate those in place. update is normally {"messages": [ToolMessage,...]}
         # but may be a bare list of state updates in some graphs — handle both.
