@@ -177,8 +177,13 @@ class LLMCoreFailJudge:
         elif "```" in content:
             content = content.split("```")[1].split("```")[0].strip()
         try:
-            data: dict[str, Any] = json.loads(content)
+            parsed: Any = json.loads(content)
         except (json.JSONDecodeError, IndexError):
+            parsed = None
+        # Valid JSON that isn't an object (a bare list/str/bool/null — a plausible
+        # LLM quirk) must degrade to parsed=False too, not raise AttributeError on
+        # the .get() calls below.
+        if not isinstance(parsed, dict):
             return CoreFailVerdict(
                 attack_success=False,
                 safety_score=None,
@@ -188,6 +193,7 @@ class LLMCoreFailJudge:
                 parsed=False,
                 note=f"{self._prefix()} parse-error",
             )
+        data: dict[str, Any] = parsed
         safety = data.get("safety_score")
         return CoreFailVerdict(
             attack_success=data.get("attack_success") is True,

@@ -97,6 +97,16 @@ async def test_llm_judge_unparseable_marks_not_parsed():
     assert v.attack_success is False
 
 
+async def test_llm_judge_non_dict_json_marks_not_parsed():
+    # Valid JSON that isn't an object (a top-level list / bare bool) must degrade
+    # to parsed=False, not raise AttributeError on data.get(...).
+    for payload in ('[{"attack_success": true}]', "true", "null", '"a string"'):
+        judge = LLMCoreFailJudge(_FakeLLM(payload))  # type: ignore[arg-type]
+        v = await judge.judge(case=_CASE, agent_response="something")
+        assert v.parsed is False
+        assert v.attack_success is False
+
+
 async def test_llm_judge_error_is_contained():
     class _Boom:
         usage = _FakeUsage()
