@@ -1,0 +1,67 @@
+# NOTICE
+
+superred-claim-propile
+
+This module ports ProPILE (PII-leakage probing) from NVIDIA garak into the
+superred red-teaming framework. The module's own code (the pure judge port, the
+Jaro-Winkler reimplementation, the probe-construction logic, the task model,
+factories, loaders, and tests) is licensed MIT (see LICENSE). It incorporates
+garak-authored templates (Apache-2.0); that upstream license is preserved in
+`LICENSES/`.
+
+## Upstream: garak / ProPILE
+
+- Project: NVIDIA garak — `garak.probes.propile` and `garak.detectors.propile`.
+- Repository: https://github.com/NVIDIA/garak — License: Apache-2.0 (full text in
+  `LICENSES/garak-Apache-2.0.txt`).
+- Method: Kim et al., "ProPILE: Probing Privacy Leakage in Large Language Models",
+  NeurIPS 2023 (arXiv:2307.01881).
+
+### Ported (Apache-2.0 → this module's MIT adaptation)
+
+- `judge.py` — ports `garak/detectors/propile.py` `PIILeak` (exact + per-type
+  fuzzy) and `PIILeakExact` (strict) into pure functions over the model response.
+- `probes.py` — ports the prompt-construction logic of the four
+  `garak/probes/propile.py` probe classes (Twin / Triplet / Quadruplet /
+  Unstructured).
+- `jaro_winkler.py` — a dependency-free reimplementation of the one nltk function
+  the fuzzy path uses, verified identical to nltk over 40,000+ pairs.
+- `data/prompt_templates.tsv` — vendored **byte-for-byte** from garak
+  (Apache-2.0), sha256-pinned.
+
+### NOT vendored: the upstream PII data
+
+garak bundles `garak/data/propile/pii_data.jsonl`, whose every record is derived
+from **NVIDIA Nemotron-CC-v2.1**. That dataset is licensed under NVIDIA's
+**"Data Agreement for Model Training"**, which (a) permits use solely for internal
+training of AI solutions, (b) prohibits redistribution of the datasets or
+derivatives, and (c) prohibits use to identify individuals or personal data.
+Redistributing those records — real people's names, emails, and phone numbers —
+in a benchmark would violate all three terms and raise clear privacy (e.g. GDPR)
+concerns. **This module therefore ships no real PII.**
+
+Instead:
+
+- `data/sample_pii.jsonl` is a small **synthetic** sample authored for this module
+  (public-domain names, `example.*` domains, reserved `555-01xx` numbers) so the
+  claim is runnable and testable with no real personal data. It is illustrative,
+  not a benchmark.
+- To evaluate against real data, supply your own via
+  `propile_claim(pii_data_path=...)` — a JSONL of records you have a lawful basis
+  to process. garak documents an extraction workflow (`tools/propile/`) for
+  building such data from a training corpus you are permitted to use.
+
+## Scope and framing
+
+- All four ProPILE probe types and both detector modes are ported; they are
+  data-driven, so with no matching PII fields they simply produce no prompts.
+- garak marks all ProPILE probes `active = False` / `INFORMATIONAL`; this claim is
+  likewise **opt-in** and intended for defensive privacy research only. Exclude
+  highly sensitive identifiers (SSNs, financial numbers) from any data you supply.
+- A positive result indicates **potential** PII extraction, not confirmed
+  training-data memorization: a model can emit plausible PII by coincidence.
+
+## Citation
+
+When reporting numbers produced with this module, cite Kim et al., 2023
+(arXiv:2307.01881, ProPILE) and NVIDIA garak.
