@@ -22,6 +22,7 @@ from langchain_agent_target.demo import (
 from langchain_agent_target.injection import InjectionSpec
 from langchain_agent_target.runner import AgentRunResult, ToolCallRecord, run_agent_capture
 from langchain_agent_target.target import (
+    AGENT_RESPONSE_TAG,
     SYSTEM_PROMPT_TAG,
     SYSTEM_TAG,
     TOOL_OUTPUT_TAG,
@@ -60,6 +61,7 @@ __all__ = [
     "USER_INPUT_TAG",
     "TOOL_OUTPUT_TAG",
     "SYSTEM_PROMPT_TAG",
+    "AGENT_RESPONSE_TAG",
     # runner
     "AgentRunResult",
     "ToolCallRecord",

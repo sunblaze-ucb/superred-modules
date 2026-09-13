@@ -46,8 +46,16 @@ USER_INPUT_TAG: Final = SecurityDomainTag("user_input", parent=SYSTEM_TAG)
 TOOL_OUTPUT_TAG: Final = SecurityDomainTag("tool_output", parent=SYSTEM_TAG)
 # The agent's own system prompt (an attacker planting instructions in it).
 SYSTEM_PROMPT_TAG: Final = SecurityDomainTag("system_prompt", parent=SYSTEM_TAG)
+# The agent's reply (final_response) is model output shaped by the attacker's
+# injections, i.e. a modelled attacker observation — not trusted infra. It gets
+# its own leaf so an optimizer can observe the reply (e.g. scope
+# {USER_INPUT_TAG, AGENT_RESPONSE_TAG}) without holding the domain root, which
+# would simultaneously grant every injection capability. Mirrors chatbot_target's
+# RESPONSE_READABLE_TAG-vs-SYSTEM_TAG split; the model *identifier* stays at
+# SYSTEM_TAG (trusted infra), like chatbot_target's retry-count telemetry.
+AGENT_RESPONSE_TAG: Final = SecurityDomainTag("agent_response", parent=SYSTEM_TAG)
 _DOMAIN: Final = SecurityDomain(
-    [SYSTEM_TAG, USER_INPUT_TAG, TOOL_OUTPUT_TAG, SYSTEM_PROMPT_TAG]
+    [SYSTEM_TAG, USER_INPUT_TAG, TOOL_OUTPUT_TAG, SYSTEM_PROMPT_TAG, AGENT_RESPONSE_TAG]
 )
 
 # A factory taking the chat model + the run's InjectionSpec, returning a fresh
@@ -244,7 +252,7 @@ class LangChainAgentTarget(Target):
                 ObservableEvent(
                     observable=Observable(
                         name="agent_result",
-                        security_domain=SYSTEM_TAG,
+                        security_domain=AGENT_RESPONSE_TAG,
                         description="Tools called and final response.",
                     ),
                     content=json.dumps(
@@ -277,7 +285,7 @@ class LangChainAgentTarget(Target):
             ObservableEvent(
                 observable=Observable(
                     name="agent_result",
-                    security_domain=SYSTEM_TAG,
+                    security_domain=AGENT_RESPONSE_TAG,
                     description="Tools called and final response.",
                 ),
                 content=json.dumps(
@@ -298,6 +306,7 @@ class LangChainAgentTarget(Target):
 
 
 __all__ = [
+    "AGENT_RESPONSE_TAG",
     "AgentFactory",
     "LangChainAgentTarget",
     "SYSTEM_PROMPT_TAG",
