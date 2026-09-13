@@ -138,7 +138,8 @@ class OpenAIAgentTarget(Target):
             ),
             QuerySpec(
                 name="guardrail_stage",
-                description="'input'/'output' (which guardrail fired) or ''.",
+                description="Which guardrail fired: 'input'/'output'/'tool_input'/"
+                "'tool_output', or '' if none.",
             ),
             QuerySpec(name="error", description="Error detail if the run failed, else ''."),
         ]
@@ -243,7 +244,20 @@ class OpenAIAgentTarget(Target):
             agent = self._agent_factory()
             base_instructions = self._instructions_override or agent.instructions
             agent.instructions = spec.apply_instructions(base_instructions)
-            agent.tools = spec.wrap_tools(getattr(agent, "tools", []))
+            # Wrap tool outputs at the get_all_tools() boundary — the SDK's own
+            # collection point — so BOTH the static agent.tools AND run-time tools
+            # built from agent.mcp_servers are covered. Wrapping only agent.tools
+            # would miss MCP-server tools (a silent no-op on the tool_output surface
+            # for MCP agents). No-op when nothing is injected.
+            if spec.tool_output_appendix:
+                _orig_get_all_tools = agent.get_all_tools
+
+                async def _get_all_tools_injected(*a: Any, **k: Any) -> Any:
+                    return spec.wrap_tools(await _orig_get_all_tools(*a, **k))
+
+                # Per-instance override of the collection point (Agent is a
+                # dataclass, so this shadows the bound method for this run only).
+                agent.get_all_tools = _get_all_tools_injected  # type: ignore[method-assign]
         except Exception as exc:  # noqa: BLE001 - recorded as a run error, not raised
             self._run = AgentRunResult(error=f"agent_build: {type(exc).__name__}: {exc}")
             emit(

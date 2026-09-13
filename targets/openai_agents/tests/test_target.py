@@ -200,6 +200,21 @@ def test_injection_spec_apply_instructions_and_wrap_tools() -> None:
     assert [w.name for w in wrapped] == [t.name for t in tools]
 
 
+def test_inject_tool_output_dict_without_text_key_preserves_fields() -> None:
+    # A dict tool return with type="text" but NO "text" field does NOT validate as
+    # ToolOutputText (the SDK str()s it, so the model sees every field). Forging a
+    # "text" key would make it validate and drop the other fields, so injection must
+    # str()+append instead — never silently replace the real output.
+    from openai_agents_target.injection import _inject_tool_output
+
+    out = _inject_tool_output({"type": "text", "body": "important"}, "MARK")
+    assert isinstance(out, str)
+    assert "important" in out and "MARK" in out  # real field preserved + payload
+    # A dict that DOES validate as ToolOutputText -> append to its existing text.
+    merged = _inject_tool_output({"type": "text", "text": "hi"}, "MARK")
+    assert merged["type"] == "text" and "hi" in merged["text"] and "MARK" in merged["text"]
+
+
 async def test_tool_output_injection_reaches_str_result() -> None:
     # The indirect-injection surface: attacker content appended to a tool's return
     # must actually reach the tool-result the agent reads back.

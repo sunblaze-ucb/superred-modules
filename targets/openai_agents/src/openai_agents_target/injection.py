@@ -93,11 +93,19 @@ def _inject_tool_output(result: Any, appendix: str) -> Any:
     if isinstance(result, (ToolOutputImage, ToolOutputFileContent)):
         return [result, text_item]
     if isinstance(result, dict) and _is_structured_item(result):
-        if result.get("type") == "text":
+        if result.get("type") == "text" and "text" in result:
+            # A dict that already validates as ToolOutputText: append to its text.
             merged = dict(result)
-            merged["text"] = _append_text(str(result.get("text", "")), appendix)
+            merged["text"] = _append_text(str(result["text"]), appendix)
             return merged
-        return [result, text_item]
+        if result.get("type") != "text":
+            # A structured non-text item (image/file): add a separate text item so
+            # the original block is preserved.
+            return [result, text_item]
+        # type == "text" but no "text" field: it does NOT validate as ToolOutputText
+        # (the SDK str()s the whole dict, showing every field), so forging a "text"
+        # key would DROP the real fields. Fall through to the generic str()+append
+        # below, which mirrors the SDK's own fallback and keeps the fields.
     if isinstance(result, (list, tuple)):
         items = list(result)
         if items and all(_is_structured_item(it) for it in items):

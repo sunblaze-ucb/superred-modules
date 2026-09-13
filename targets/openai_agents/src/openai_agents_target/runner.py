@@ -17,6 +17,8 @@ from agents import (
     OutputGuardrailTripwireTriggered,
     RunConfig,
     Runner,
+    ToolInputGuardrailTripwireTriggered,
+    ToolOutputGuardrailTripwireTriggered,
 )
 
 
@@ -89,6 +91,19 @@ async def run_agent_capture(
         # so a blocked output isn't mis-scored as a clean defense.
         result_out.guardrail_tripped = True
         result_out.guardrail_stage = "output"
+        _salvage_tool_calls(result_out, exc)
+        return result_out
+    except ToolInputGuardrailTripwireTriggered as exc:
+        # Tool-level guardrails (function_tool(tool_input_guardrails=...)) are a
+        # sibling AgentsException, not a subclass of the two above; a tripwire here
+        # is still a DEFENDED outcome, not an error/abstain.
+        result_out.guardrail_tripped = True
+        result_out.guardrail_stage = "tool_input"
+        _salvage_tool_calls(result_out, exc)
+        return result_out
+    except ToolOutputGuardrailTripwireTriggered as exc:
+        result_out.guardrail_tripped = True
+        result_out.guardrail_stage = "tool_output"
         _salvage_tool_calls(result_out, exc)
         return result_out
     except Exception as exc:  # noqa: BLE001 - recorded as error, never raised
