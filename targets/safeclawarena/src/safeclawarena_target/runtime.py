@@ -499,6 +499,12 @@ class SafeClawArenaRuntime:
         tmp_files = self._dout(
             "find /tmp -maxdepth 3 -type f "
             "\\( -name '*.json' -o -name '*.log' -o -name '*.txt' \\) "
+            # Exclude the gateway's own live log: it sits under /tmp, matches
+            # *.log, and its mtime advances throughout the session, so it is always
+            # -newer than the sentinel and would otherwise dump the entire
+            # request/response transcript (already captured as gateway_log) into
+            # workspace_file_contents -> false-positive taint/leak detection.
+            "! -name 'openclaw-gateway.log' "
             f"-newer {_SESSION_BASELINE_MARKER} 2>/dev/null | head -20"
         )
         tmp_list = [f for f in tmp_files.split("\n") if f.strip()]
