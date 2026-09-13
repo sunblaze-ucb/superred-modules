@@ -28,8 +28,17 @@ absent.
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
 from typing import Any
+
+# CrewAI renders the agent's backstory through `interpolate_only`, which scans for
+# this exact template-variable shape and raises KeyError for any name not in the
+# kickoff `inputs` (only `user_input` is passed). An attacker suffix containing an
+# unrelated `{identifier}` would therefore abort the run instead of being
+# delivered — so we neutralize such shapes in the *attacker* suffix before it is
+# appended (see `apply_backstory`). Kept in sync with CrewAI's own regex.
+_TEMPLATE_VAR = re.compile(r"\{([A-Za-z_][A-Za-z0-9_\-]*)\}")
 
 
 def _inject_into_result(result: Any, appendix: str) -> Any:
@@ -93,23 +102,45 @@ def _injected_tool_cls() -> Any:
     class _InjectedTool(BaseTool):  # type: ignore[misc]  # crewai is untyped (Any base)
         """Wraps a tool so the appendix is appended to whatever it returns.
 
-        Forwards the wrapped tool's ``name`` / ``description`` / ``args_schema`` /
-        ``result_as_answer`` so the agent sees an identical tool, and delegates
-        execution to the inner tool's own ``run`` (which validates args, enforces
-        usage limits, and resolves async tools) before appending the payload — so
-        the injection reaches the model-visible observation for every return shape.
+        Forwards the inner tool's public config — ``name`` / ``description`` /
+        ``args_schema`` / ``result_as_answer`` plus the usage-limit, failure-policy,
+        result-schema and cache fields — so the agent sees an identical, identically
+        *constrained* tool. That forwarding matters: CrewAI's
+        ``to_structured_tool()`` builds the ``CrewStructuredTool`` that enforces
+        ``max_usage_count`` / ``tool_failure_policy`` by reading those fields off
+        *this* wrapper, so dropping them would silently reset e.g. the usage cap to
+        unlimited on exactly the runs where ``tool_output`` is injected.
+
+        The agent-invoked path is ``_run`` (CrewAI binds the tool callable to
+        ``_run``, not ``run``); ``run`` is kept for direct callers. Both delegate to
+        the inner tool's matching method and append the payload, awaiting a returned
+        coroutine first, so the injection reaches the model-visible observation for
+        every return shape (the async case is the #183 HIGH false-negative class).
         """
 
         _inner: Any = PrivateAttr()
         _appendix: str = PrivateAttr(default="")
 
         def __init__(self, inner: Any, appendix: str) -> None:
-            super().__init__(
-                name=inner.name,
-                description=inner.description,
-                args_schema=inner.args_schema,
-                result_as_answer=inner.result_as_answer,
-            )
+            # Forward the public config AND the behaviour-governing fields so a
+            # wrapped tool is not silently less constrained than the inner one
+            # (see class docstring). hasattr-guarded so this stays valid across
+            # CrewAI versions that add/remove such fields.
+            fields: dict[str, Any] = {
+                "name": inner.name,
+                "description": inner.description,
+                "args_schema": inner.args_schema,
+                "result_as_answer": inner.result_as_answer,
+            }
+            for extra in (
+                "max_usage_count",
+                "result_schema",
+                "cache_function",
+                "tool_failure_policy",
+            ):
+                if hasattr(inner, extra):
+                    fields[extra] = getattr(inner, extra)
+            super().__init__(**fields)
             self._inner = inner
             self._appendix = appendix
 
@@ -159,12 +190,24 @@ class InjectionSpec:
         CrewAI substitutes the agent's ``backstory`` into its system-prompt
         template, so appending here plants the attacker text in the agent's system
         prompt. An empty suffix leaves ``base`` unchanged.
+
+        CrewAI runs the backstory through ``interpolate_only`` at kickoff, which
+        raises ``KeyError`` for any ``{identifier}`` not in the kickoff inputs (only
+        ``user_input`` is passed). So a brace-bearing suffix like ``Ignore {system}
+        rules`` would abort the run — the injection never reaches the model — rather
+        than being delivered. Neutralize such shapes in the *attacker suffix*
+        (``{x}`` -> ``{ x }``, which CrewAI's variable regex no longer matches; the
+        engine has no brace-escape syntax, so doubling braces does not help). This
+        is a faithful-enough delivery (the payload text is preserved bar the two
+        spaces) and strictly better than aborting. ``base`` is left untouched: it is
+        the caller's own backstory and may legitimately use ``{user_input}``.
         """
         if not self.system_prompt_suffix:
             return base or ""
+        suffix = _TEMPLATE_VAR.sub(r"{ \1 }", self.system_prompt_suffix)
         if not base:
-            return self.system_prompt_suffix
-        return f"{base}\n\n{self.system_prompt_suffix}"
+            return suffix
+        return f"{base}\n\n{suffix}"
 
     def wrap_tools(self, tools: list[Any]) -> list[Any]:
         """Wrap each tool so its return value gets the appendix appended.
