@@ -308,6 +308,7 @@ class OpenAIAgentTarget(Target):
                         "called_tool_names": self._run.called_tool_names,
                         "guardrail_tripped": self._run.guardrail_tripped,
                         "final_response": self._run.final_response[:500],
+                        "error": self._run.error,
                     }
                 ),
             )
