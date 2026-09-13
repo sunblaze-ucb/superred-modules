@@ -6,8 +6,9 @@ This product includes software developed at NVIDIA Corporation.
 Portions of this module are derived from NVIDIA garak
 (https://github.com/NVIDIA/garak), licensed under the Apache License,
 Version 2.0. Specifically, DEFAULT_HOMOGLYPH_MAP, the homoglyph_replace
-algorithm and the hypothetical-response prompt template in
-src/token_smuggling_optimizer/smuggling.py are derived from
+algorithm, the hypothetical-response prompt template and the FunctionMasking
+prompt (UPSTREAM_FUNCTION_MASKING_PROMPT, kept byte-identical as the fallback)
+in src/token_smuggling_optimizer/smuggling.py are derived from
 garak/probes/smuggling.py.
 
 Upstream commit: 2233d51bedf6bfb634872ef9efbcd94eae38cc1a

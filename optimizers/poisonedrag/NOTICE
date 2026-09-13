@@ -20,8 +20,14 @@ following files are transcribed verbatim into
 - `hotpotqa.json` (from `results/adv_targeted_results/hotpotqa.json`)
 - `msmarco.json`  (from `results/adv_targeted_results/msmarco.json`)
 
-License: MIT, Copyright (c) 2024 Runpeng Geng. Full text in
-`LICENSES/PoisonedRAG-MIT.txt`.
+License: the PoisonedRAG repository is MIT, Copyright (c) 2024 Runpeng Geng
+(full text in `LICENSES/PoisonedRAG-MIT.txt`). MIT covers PoisonedRAG's own
+contribution in these files — the adversarial passages and the assembly of the
+records. It does **not** relicense the benchmark questions and gold answers
+carried over inside them: those retain the terms of their source QA datasets,
+set out under "Underlying benchmark data" below (notably HotpotQA under
+CC BY-SA 4.0 and MS MARCO under its non-commercial terms), which are narrower
+than MIT.
 
 ### Underlying benchmark data (one layer up from PoisonedRAG)
 
