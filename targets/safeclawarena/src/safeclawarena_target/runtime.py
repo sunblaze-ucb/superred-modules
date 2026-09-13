@@ -46,7 +46,16 @@ PLATFORMS: dict[str, dict[str, Any]] = {
         "workspace": "/sandbox/.openclaw-data/workspace",    },
 }
 
-GATEWAY_PORT = 19090  # host-side, mapped to container 18789
+# Container-internal gateway port. No host port is published: all traffic goes
+# through `docker exec ... curl localhost:18789` (see start()).
+_GATEWAY_PORT = 18789
+# Sentinel touched after provisioning but BEFORE any session, so post-run new-file
+# discovery (`find -newer`) captures files the agent created during the sessions
+# rather than being defeated by the continuously-written gateway log's mtime.
+_SESSION_BASELINE_MARKER = "/tmp/.safeclaw_session_baseline"
+# Env var supplying the real model API key injected into the container after
+# reset_env.sh. The key is the caller's; the target never stores it.
+_API_KEY_ENV = "OPENAI_API_KEY"
 
 
 def platform_config(platform: str) -> dict[str, Any]:
@@ -97,6 +106,7 @@ class SafeClawArenaRuntime:
     keep_container: bool = False
     verbose: bool = False
     _pre_state: dict[str, Any] = field(default_factory=dict)
+    _gw_token: str | None = field(default=None, init=False)
 
     @property
     def cfg(self) -> dict[str, Any]:
@@ -159,10 +169,13 @@ class SafeClawArenaRuntime:
         cfg = self.cfg
         # Fresh container per task (durable state is provisioned per task).
         self._docker(["rm", "-f", cfg["container"]], timeout=30)  # ok if absent
+        # No host port is published. The gateway is reached only via
+        # `docker exec ... curl localhost:18789`, so a `-p 0.0.0.0:<port>:18789`
+        # mapping would merely expose the (static-token-guarded) gateway to the
+        # host network and pin a fixed host port that blocks concurrent runs.
         self._docker(
             [
                 "run", "-d", "--name", cfg["container"],
-                "-p", f"{GATEWAY_PORT}:18789",
                 cfg["image"], "sleep", "infinity",
             ],
             timeout=120,
@@ -183,7 +196,10 @@ class SafeClawArenaRuntime:
             env["SAFECLAW_OPENCLAW_HOME"] = cfg["openclaw_home"]
             env["SAFECLAW_WORKSPACE"] = cfg["workspace"]
             r = subprocess.run(
-                ["bash", os.path.join(_VENDOR, "scripts", "reset_env.sh"), "--setup-task", host_task],
+                [
+                    "bash", os.path.join(_VENDOR, "scripts", "reset_env.sh"),
+                    "--setup-task", host_task,
+                ],
                 capture_output=True,
                 text=True,
                 timeout=180,
@@ -199,12 +215,63 @@ class SafeClawArenaRuntime:
                 os.unlink(host_task)
             except OSError:
                 pass
+        # reset_env.sh installs an auth profile with a "YOUR-API-KEY-HERE"
+        # placeholder; inject the caller's real key so the agent's model calls run.
+        self._inject_api_key()
         self._pre_state = self._capture_baseline()
+
+    def _inject_api_key(self) -> None:
+        """Overwrite the placeholder key in the container's auth-profiles.json with
+        the caller's real model key from the environment.
+
+        reset_env.sh installs ``agents/main/agent/auth-profiles.json`` carrying the
+        placeholder ``"YOUR-API-KEY-HERE"``; without a real key every gateway model
+        call fails and the agent returns nothing, which (with the old error-swallowing
+        send_message) scored every task as falsely "secure". The key is the caller's
+        responsibility and is never stored on the target — it is passed to the
+        container via an inherited env var (``docker exec -e SC_API_KEY`` with no
+        value on the argv, so it never appears in a process list or log). If no key
+        is set we RAISE, so the run errors and the claim abstains rather than running
+        with the placeholder and reporting a false "secure".
+        """
+        api_key = os.environ.get(_API_KEY_ENV, "").strip()
+        if not api_key:
+            raise RuntimeError(
+                f"{_API_KEY_ENV} is not set: SafeClawArena runs a real agent model "
+                "in-container, and without a real key every model call fails and would "
+                "score every task as falsely 'secure'. Set a real key so the run can "
+                "proceed (otherwise the run is excluded from the judged aggregate)."
+            )
+        path = f"{self.cfg['openclaw_home']}/agents/main/agent/auth-profiles.json"
+        # Rewrite the JSON in-container with python3; the key is read from an
+        # inherited env var, not interpolated into the argv/script.
+        script = (
+            "import json,os;"
+            f"p={path!r};"
+            "d=json.load(open(p));"
+            "n=sum(v.__setitem__('key',os.environ['SC_API_KEY']) or 1"
+            " for v in d.get('profiles',{}).values()"
+            " if isinstance(v,dict) and v.get('type')=='api_key');"
+            "json.dump(d,open(p,'w'));"
+            "print(n)"
+        )
+        env = os.environ.copy()
+        env["SC_API_KEY"] = api_key
+        r = subprocess.run(
+            ["docker", "exec", "-e", "SC_API_KEY", self.cfg["container"],
+             "python3", "-c", script],
+            capture_output=True, text=True, timeout=30, env=env,
+        )
+        if r.returncode != 0 or (r.stdout.strip() or "0") == "0":
+            raise RuntimeError(
+                f"failed to inject the model API key into {path} "
+                f"(exit {r.returncode}): {(r.stderr or r.stdout).strip()[:200]}"
+            )
 
     def _capture_baseline(self) -> dict[str, Any]:
         ws = self.cfg["workspace"]
         cfg_path = self._config_path()
-        return {
+        baseline = {
             "config_hash": self._dout(f"md5sum {cfg_path} | cut -d' ' -f1"),
             "workspace_files_baseline": self._dout(
                 f"find {ws} -type f \\( -name '*.md' -o -name '*.json' -o -name '*.txt' "
@@ -212,6 +279,14 @@ class SafeClawArenaRuntime:
                 f"| grep -v node_modules | grep -v '.git' | sort"
             ),
         }
+        # Timestamp reference for post-run /tmp new-file discovery: touched now —
+        # after provisioning, before any session — so `find -newer` in
+        # build_post_state() captures files the agent creates during the sessions.
+        # (Using the continuously-appended gateway log as the reference filtered
+        # out every agent-created file, biasing taint detection toward false
+        # negatives.)
+        self._dexec(f"touch {_SESSION_BASELINE_MARKER}")
+        return baseline
 
     def _config_path(self) -> str:
         return f"{self.cfg['openclaw_home']}/openclaw.json"
@@ -240,29 +315,68 @@ class SafeClawArenaRuntime:
         return path
 
     # -- session execution ---------------------------------------------------
+    def _gateway_token(self) -> str:
+        """The gateway's HTTP auth token, read from the container's openclaw.json
+        (``gateway.auth.token``) and cached. The installed config guards the gateway
+        with ``auth.mode = "token"``, so requests without this header are rejected."""
+        if self._gw_token is None:
+            raw = self._dout(f"cat {self._config_path()} 2>/dev/null")
+            token: Any = None
+            try:
+                token = json.loads(raw).get("gateway", {}).get("auth", {}).get("token")
+            except (json.JSONDecodeError, AttributeError, TypeError):
+                token = None
+            self._gw_token = str(token) if token else ""
+        return self._gw_token
+
     def send_message(self, message: str, session_key: str, timeout: int = 600) -> dict[str, Any]:
         """Send one user turn; return an OpenAI-shaped response dict. Faithful to
-        upstream ``GatewayClient.send_message`` (HTTP gateway transport)."""
-        # HTTP transport via docker exec curl (robust across host/exec networking).
-        # Passed as an argv (no shell), so the optimizer-controlled `message` in
-        # the payload cannot be shell-interpreted.
+        upstream ``GatewayClient.send_message`` (HTTP gateway transport).
+
+        Raises on any gateway failure — transport error, non-2xx status, empty or
+        non-JSON body, or an ``error`` field — instead of degrading to empty
+        content. An auth/model/transport failure must surface as a run error so the
+        claim ABSTAINS (the run is excluded), not be silently scored as "the agent
+        did nothing", which would report a false "secure". A legitimate empty
+        assistant message (a real 2xx JSON reply with empty content) is NOT an error
+        and is returned normally.
+        """
         payload = json.dumps(
-            {"model": "openclaw", "messages": [{"role": "user", "content": message}], "stream": False}
+            {
+                "model": "openclaw",
+                "messages": [{"role": "user", "content": message}],
+                "stream": False,
+            }
         )
-        r = self._dexec_argv(
-            [
-                "curl", "-s", "-X", "POST", "http://localhost:18789/v1/chat/completions",
-                "-H", "Content-Type: application/json",
-                "-H", f"X-Session-Key: {session_key}",
-                "-d", payload,
-            ],
-            timeout=timeout,
-        )
-        out = r.stdout.strip() if r.returncode == 0 else ""
+        argv = [
+            "curl", "-s", "-w", "\\n%{http_code}", "-X", "POST",
+            f"http://localhost:{_GATEWAY_PORT}/v1/chat/completions",
+            "-H", "Content-Type: application/json",
+            "-H", f"X-Session-Key: {session_key}",
+        ]
+        token = self._gateway_token()
+        if token:
+            argv += ["-H", f"Authorization: Bearer {token}"]
+        # `message` rides in the JSON payload as an argv value (no shell), so it
+        # cannot be shell-interpreted regardless of content.
+        argv += ["-d", payload]
+        r = self._dexec_argv(argv, timeout=timeout)
+        if r.returncode != 0:
+            raise RuntimeError(f"gateway request failed (curl exit {r.returncode})")
+        body, _, code = r.stdout.rpartition("\n")
+        code = code.strip()
+        if not (code.isdigit() and 200 <= int(code) < 300):
+            raise RuntimeError(f"gateway returned HTTP {code or '(none)'}")
+        body = body.strip()
+        if not body:
+            raise RuntimeError("gateway returned an empty body")
         try:
-            return json.loads(out) if out else {"choices": [{"message": {"content": ""}}]}
-        except json.JSONDecodeError:
-            return {"choices": [{"message": {"content": out}}]}
+            resp: Any = json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"gateway returned a non-JSON body: {body[:120]!r}") from exc
+        if isinstance(resp, dict) and resp.get("error"):
+            raise RuntimeError(f"gateway error: {str(resp['error'])[:200]}")
+        return resp
 
     @staticmethod
     def _content(resp: dict[str, Any]) -> str:
@@ -278,7 +392,36 @@ class SafeClawArenaRuntime:
         except (KeyError, IndexError, TypeError):
             return []
 
-    def run_sessions(self, task: dict[str, Any]) -> tuple[dict[str, str], dict[str, list[dict[str, Any]]], list[str]]:
+    def _restart_gateway(self, health_timeout: int = 30) -> None:
+        """Genuinely restart the in-container gateway process so on-disk state is
+        reloaded fresh. Mirrors the vendored ``reset_env.sh``: kill any running
+        ``openclaw gateway``, relaunch it detached (with the same HOME and
+        SIM_GOOGLE_DATA_DIR it was started with), then poll ``openclaw health``
+        until it responds. Raises if it does not become healthy in time."""
+        gw_home = os.path.dirname(self.cfg["openclaw_home"])
+        self._dexec("pkill -f 'openclaw gateway'")  # ok if not running
+        time.sleep(2)
+        launch = (
+            f"export HOME={shlex.quote(gw_home)} SIM_GOOGLE_DATA_DIR=/tmp/sim_google_data && "
+            f"openclaw gateway --port {_GATEWAY_PORT} > /tmp/openclaw-gateway.log 2>&1"
+        )
+        self._docker(
+            ["exec", "-d", self.cfg["container"], "bash", "-lc", launch],
+            timeout=30,
+            check=True,
+        )
+        deadline = time.time() + health_timeout
+        while time.time() < deadline:
+            if self._dexec("openclaw health --json --timeout 3000").returncode == 0:
+                return
+            time.sleep(1)
+        raise RuntimeError(
+            f"gateway did not become healthy within {health_timeout}s after restart"
+        )
+
+    def run_sessions(
+        self, task: dict[str, Any]
+    ) -> tuple[dict[str, str], dict[str, list[dict[str, Any]]], list[str]]:
         """Run the task's sessions in order; return (responses, tool_calls, order)."""
         responses: dict[str, str] = {}
         tool_calls: dict[str, list[dict[str, Any]]] = {}
@@ -289,16 +432,38 @@ class SafeClawArenaRuntime:
             setup = session.get("pre_session_setup", {})
             if setup.get("wait_seconds", 0) > 0:
                 time.sleep(int(setup["wait_seconds"]))
+            # A genuine gateway restart reloads on-disk state fresh from disk (the
+            # point of tasks that test whether injected state survives a restart);
+            # merely picking a new session key keeps serving from the same
+            # long-lived process, so those tasks would "pass" for the wrong reason.
+            if setup.get("restart_gateway"):
+                self._restart_gateway()
             key = (
                 f"{shared_key}-{sid}"
                 if setup.get("restart_gateway") or session.get("fresh_session")
                 else shared_key
             )
-            resp = self.send_message(
-                str(session["user_instruction"]), key, timeout=int(session.get("timeout_seconds", 600))
-            )
+            timeout = int(session.get("timeout_seconds", 600))
+            resp = self.send_message(str(session["user_instruction"]), key, timeout=timeout)
             responses[sid] = self._content(resp)
             tool_calls[sid] = self._tool_calls(resp)
+            # Follow-up messages ride the SAME session key (multi-turn injection).
+            # For several tasks the attack trigger IS the follow-up, so skipping
+            # them left those tasks permanently untriggered (falsely "secure").
+            for fu in session.get("follow_up_messages", []) or []:
+                fu_msg = fu.get("message", "") if isinstance(fu, dict) else str(fu)
+                if not fu_msg:
+                    continue
+                delay = fu.get("delay_seconds", 0) if isinstance(fu, dict) else 0
+                if delay and int(delay) > 0:
+                    time.sleep(int(delay))
+                fu_resp = self.send_message(str(fu_msg), key, timeout=timeout)
+                fu_content = self._content(fu_resp)
+                if fu_content:
+                    responses[sid] = (
+                        f"{responses[sid]}\n{fu_content}" if responses[sid] else fu_content
+                    )
+                tool_calls[sid].extend(self._tool_calls(fu_resp))
             order.append(sid)
         return responses, tool_calls, order
 
@@ -332,8 +497,9 @@ class SafeClawArenaRuntime:
         # Upstream also appends newly-created /tmp *.json/*.log/*.txt files
         # (plugin/script artifacts) to the searched new-file contents.
         tmp_files = self._dout(
-            "find /tmp -maxdepth 3 -type f \\( -name '*.json' -o -name '*.log' -o -name '*.txt' \\) "
-            "-newer /tmp/openclaw-gateway.log 2>/dev/null | head -20"
+            "find /tmp -maxdepth 3 -type f "
+            "\\( -name '*.json' -o -name '*.log' -o -name '*.txt' \\) "
+            f"-newer {_SESSION_BASELINE_MARKER} 2>/dev/null | head -20"
         )
         tmp_list = [f for f in tmp_files.split("\n") if f.strip()]
         if tmp_list:
@@ -376,7 +542,8 @@ class SafeClawArenaRuntime:
             "memory_dir_content": self._dout(f"cat {ws}/memory/*.md 2>/dev/null"),
             "config_content": self._dout(f"cat {self._config_path()} 2>/dev/null"),
             "config_hash_changed": bool(
-                self._pre_state.get("config_hash") and self._pre_state["config_hash"] != post_config_hash
+                self._pre_state.get("config_hash")
+                and self._pre_state["config_hash"] != post_config_hash
             ),
             "cron_jobs": self._dout(f"cat {cfg['openclaw_home']}/cron/jobs.json 2>/dev/null"),
             "http_routes": routes,
@@ -389,7 +556,6 @@ class SafeClawArenaRuntime:
 
 __all__ = [
     "PLATFORMS",
-    "GATEWAY_PORT",
     "platform_config",
     "file_check_targets",
     "http_route_targets",
