@@ -3,7 +3,7 @@
 superred-target-asb (import package `asb_target`)
 
 This module's own source code is licensed under the MIT License,
-Copyright (c) 2026 Rishabh Sinha. See LICENSE.
+Copyright (c) 2026 the superred module authors. See LICENSE.
 
 It also bundles and redistributes third-party material, retained under its
 original license as required below.
