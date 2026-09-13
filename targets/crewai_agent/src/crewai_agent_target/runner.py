@@ -53,7 +53,26 @@ async def run_crew_capture(*, crew: Any, user_input: str) -> CrewRunResult:
     # step_callback to agents that DON'T already have one, so a custom crew_factory
     # that gives its agent a step_callback would silently drop our tool capture if we
     # only set it on the crew. Chain onto any existing agent callback so both fire.
-    agents = getattr(crew, "agents", None) or []
+    #
+    # Cover the UNION of every agent that can execute a task, not just crew.agents:
+    # a Task(agent=...) can name an agent absent from crew.agents, and a
+    # Process.hierarchical crew's manager_agent is (by CrewAI's own validation) never
+    # in crew.agents yet is the executor whose delegation tool calls we most want to
+    # capture. Deduplicate by identity (agents are unhashable pydantic models).
+    agents: list[Any] = []
+    _seen: set[int] = set()
+    for _agent in [
+        *(getattr(crew, "agents", None) or []),
+        *(
+            getattr(t, "agent", None)
+            for t in (getattr(crew, "tasks", None) or [])
+            if getattr(t, "agent", None) is not None
+        ),
+        getattr(crew, "manager_agent", None),
+    ]:
+        if _agent is not None and id(_agent) not in _seen:
+            _seen.add(id(_agent))
+            agents.append(_agent)
     # A crew-level step_callback (Crew(..., step_callback=cb)) is normally copied by
     # CrewAI onto agents that lack their own — but since we set every agent's
     # callback below, that copy never happens, so fall back to chaining the
