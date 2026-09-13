@@ -71,7 +71,7 @@ await controller.run()
 ## Credits / upstream
 
 This package is a superred port/adapter of the **AgentDojo** benchmark. It is
-original code (MIT, Copyright (c) 2026 Simon Sure) that wraps the upstream
+original code (MIT, Copyright (c) 2026 Rishabh Sinha) that wraps the upstream
 `agentdojo` library as a pinned runtime dependency (`agentdojo==0.1.35`). No
 AgentDojo source code or data is bundled: the four suites' environment data is
 loaded at run time from the installed `agentdojo` package.

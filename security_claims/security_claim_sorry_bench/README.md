@@ -271,7 +271,7 @@ pin a specific value lives outside this branch.
 ## Credits / upstream
 
 This module is an original superred `SecurityClaim` port of **SORRY-Bench**.
-The port code is MIT-licensed, Copyright (c) 2026 Simon Sure.
+The port code is MIT-licensed, Copyright (c) 2026 Rishabh Sinha.
 
 - **Paper / methodology**: Tinghao Xie et al., *SORRY-Bench: Systematically
   Evaluating Large Language Model Safety Refusal*, ICLR 2025,

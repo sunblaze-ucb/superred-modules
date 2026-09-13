@@ -3,7 +3,7 @@
 superred-target-dtap-claudecode
 
 This module's own code is licensed under the MIT License, Copyright (c) 2026
-Simon Sure (see LICENSE).
+Rishabh Sinha (see LICENSE).
 
 ## Upstream: DecodingTrust-Agent (DTAP)
 

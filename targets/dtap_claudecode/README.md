@@ -153,4 +153,4 @@ At Docker-image build time the agent image pulls Anthropic's
 directly from PyPI/npm; neither is redistributed inside this package.
 
 This module's own code is released under the MIT License,
-Copyright (c) 2026 Simon Sure.
+Copyright (c) 2026 Rishabh Sinha.

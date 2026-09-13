@@ -1,7 +1,7 @@
 # NOTICE
 
 security-claim-agentharm (superred-claim-agentharm) is an original superred
-SecurityClaim released under the MIT License, Copyright (c) 2026 Simon Sure.
+SecurityClaim released under the MIT License, Copyright (c) 2026 Rishabh Sinha.
 
 It does NOT bundle any third-party source code or dataset rows. All AgentHarm
 functionality (harmful tools, per-behavior grading functions, refusal and
@@ -13,7 +13,7 @@ runtime obligations they carry.
 
 ## This module's code
 
-MIT, Copyright (c) 2026 Simon Sure. See `LICENSE`. The only bundled data file,
+MIT, Copyright (c) 2026 Rishabh Sinha. See `LICENSE`. The only bundled data file,
 `src/agentharm_claim/data/benign_covers.json` (41 "benign cover" tasks), is
 original work authored for superred and is covered by this same MIT license. It
 is NOT derived from AgentHarm's benign split. The cover tasks reference some

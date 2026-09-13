@@ -172,7 +172,7 @@ Upstream MIT license texts are preserved in `LICENSES/dsbowen-MIT.txt` and `LICE
 
 ## Credits and upstream
 
-The framework code in this package is original work by Simon Sure, released
+The framework code in this package is original work by Rishabh Sinha, released
 under the MIT License (see `LICENSE`).
 
 This package bundles and builds upon the **StrongREJECT** benchmark

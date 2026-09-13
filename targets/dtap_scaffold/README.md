@@ -19,7 +19,7 @@ lives in the separate `security-claim-dtap` package.
 
 ## Credits / upstream
 
-This package is original work (MIT, Copyright (c) 2026 Simon Sure). It contains
+This package is original work (MIT, Copyright (c) 2026 Rishabh Sinha). It contains
 no vendored third-party source code and no bundled benchmark dataset.
 
 It is a faithful superred port of, and a runtime wrapper around, the

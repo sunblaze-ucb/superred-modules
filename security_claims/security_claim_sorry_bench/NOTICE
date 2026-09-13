@@ -4,7 +4,7 @@ superred-claim-sorry-bench
 
 This package is an original superred SecurityClaim port of SORRY-Bench.
 The code in this package is licensed MIT (see LICENSE), Copyright (c) 2026
-Simon Sure. It also incorporates a small amount of third-party material,
+Rishabh Sinha. It also incorporates a small amount of third-party material,
 attributed below.
 
 ## Vendored judge prompt templates
