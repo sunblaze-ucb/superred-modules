@@ -4,12 +4,31 @@ An agent built on the [OpenAI Agents SDK](https://github.com/openai/openai-agent
 as a superred target — so red-team claims and optimizers can drive a real
 Agents-SDK agent.
 
-The attacker controls the agent's `user_input` (direct prompt injection). The
-target runs the agent through the SDK's `Runner` and captures its final output,
+The target exposes the agent's real attack surfaces as controllables, so an
+optimizer's surface classifier can choose where to inject:
+
+- `user_input` — a direct message to the agent (direct prompt injection);
+- `tool_output` — attacker content appended to every tool's return value, i.e.
+  the content a tool hands back that the agent then reads (indirect prompt
+  injection via tool results — the classic agent vector);
+- `system_prompt` — attacker text appended to the agent's own system instructions.
+
+It then runs the agent through the SDK's `Runner` and captures its final output,
 the tools it called, and whether a **guardrail tripwire** fired (the SDK's
 built-in input/output guardrails — a blocked attack). The paired
 [`superred-claim-openai-agent-injection`](../../security_claims/openai_agent_injection)
 scores whether an injection makes the agent call a sensitive tool.
+
+The Agents SDK `Agent` is **mutable**, so — unlike a framework that bakes tools
+and the system prompt in at build time — the target builds the agent once (your
+zero-arg factory) and applies the run's `InjectionSpec` to it directly: it
+appends the `system_prompt` suffix to the agent's instructions and swaps
+`agent.tools` for tools whose output carries the `tool_output` appendix. Tool-
+output injection reaches the **model-visible text** for every shape a
+`function_tool` may return — a `str`, a structured `ToolOutputText` /
+`ToolOutputImage` / `ToolOutputFileContent`, or a list of them (for a non-text
+image/file output the payload is added as an additional text item, not dropped).
+See `injection.py`.
 
 ## What it adds, and what the offline test proves
 
@@ -42,8 +61,10 @@ factory = openai_agent_target_factory(
 The target holds **no API key**: the model's auth is configured on the `model`
 you supply (a configured `Model`/`LitellmModel`, or the SDK default via env), so
 no secret passes through this target. Config: `instructions_override` (replace the
-agent's system instructions), `user_task` (benign default input). Controllable:
-`user_input`.
+agent's **base** system instructions with a benign task-set value), `user_task`
+(benign default input). Controllables: `user_input`, `tool_output`,
+`system_prompt` — the `system_prompt` controllable is the attacker appending a
+suffix on top of the effective (post-`instructions_override`) instructions.
 
 ## Queries
 

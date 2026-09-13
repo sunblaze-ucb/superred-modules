@@ -1,8 +1,10 @@
 """OpenAI Agents SDK agent target for superred.
 
-Wraps an ``agents.Agent`` so red-team claims/optimizers can drive it via the
-attacker-controlled ``user_input``; captures the final output, tool calls, and
-guardrail tripwires. Offline-testable via a scripted ``Model``.
+Wraps an ``agents.Agent`` so red-team claims/optimizers can drive it across the
+agent's real attack surfaces — ``user_input`` (direct), ``tool_output`` (indirect
+injection via tool returns), and ``system_prompt`` — and captures the final
+output, tool calls, and guardrail tripwires. Offline-testable via a scripted
+``Model``.
 """
 
 from __future__ import annotations
@@ -17,9 +19,12 @@ from openai_agents_target.demo import (
     function_call_output,
     message_output,
 )
+from openai_agents_target.injection import InjectionSpec
 from openai_agents_target.runner import AgentRunResult, ToolCallRecord, run_agent_capture
 from openai_agents_target.target import (
+    SYSTEM_PROMPT_TAG,
     SYSTEM_TAG,
+    TOOL_OUTPUT_TAG,
     USER_INPUT_TAG,
     AgentFactory,
     OpenAIAgentTarget,
@@ -45,9 +50,12 @@ def openai_agent_target_factory(
 __all__ = [
     "OpenAIAgentTarget",
     "AgentFactory",
+    "InjectionSpec",
     "openai_agent_target_factory",
     "SYSTEM_TAG",
     "USER_INPUT_TAG",
+    "TOOL_OUTPUT_TAG",
+    "SYSTEM_PROMPT_TAG",
     # runner
     "AgentRunResult",
     "ToolCallRecord",

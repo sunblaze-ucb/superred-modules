@@ -1,10 +1,13 @@
 """OpenAIAgentTarget: an OpenAI Agents SDK ``Agent`` as a superred Target.
 
 Makes an agent built on the (widely-used) OpenAI Agents SDK a superred victim so
-existing agentic red-team claims/optimizers can drive it: the attacker controls
-the agent's ``user_input`` (direct prompt injection), and the target captures the
-agent's final output, the tools it called, and whether a guardrail tripwire fired
-(the SDK's built-in input/output guardrails — a blocked attack).
+existing agentic red-team claims/optimizers can drive it. The target exposes the
+agent's real attack surfaces as controllables — ``user_input`` (direct prompt
+injection), ``tool_output`` (indirect injection via tool returns), and
+``system_prompt`` (system-prompt injection) — and captures the agent's final
+output, the tools it called, and whether a guardrail tripwire fired (the SDK's
+built-in input/output guardrails — a blocked attack). An optimizer's surface
+classifier chooses which surface to drive; see ``injection.py``.
 
 The value is realism/breadth: it exercises the real Agents SDK runtime (agent
 loop, tool execution, guardrails). Offline tests inject a scripted ``Model`` so a
@@ -35,11 +38,18 @@ from superred.core.types.observable import Observable, ObservableValue
 from superred.core.types.security_domain import SecurityDomain, SecurityDomainTag
 from superred.core.types.state import ConfigSpec, QuerySpec
 
+from openai_agents_target.injection import InjectionSpec
 from openai_agents_target.runner import AgentRunResult, run_agent_capture
 
 SYSTEM_TAG: Final = SecurityDomainTag("system")
 USER_INPUT_TAG: Final = SecurityDomainTag("user_input", parent=SYSTEM_TAG)
-_DOMAIN: Final = SecurityDomain([SYSTEM_TAG, USER_INPUT_TAG])
+# Untrusted content a tool returns to the agent (indirect prompt injection).
+TOOL_OUTPUT_TAG: Final = SecurityDomainTag("tool_output", parent=SYSTEM_TAG)
+# The agent's own system prompt (an attacker planting instructions in it).
+SYSTEM_PROMPT_TAG: Final = SecurityDomainTag("system_prompt", parent=SYSTEM_TAG)
+_DOMAIN: Final = SecurityDomain(
+    [SYSTEM_TAG, USER_INPUT_TAG, TOOL_OUTPUT_TAG, SYSTEM_PROMPT_TAG]
+)
 
 AgentFactory = Callable[[], Agent[Any]]
 
@@ -91,7 +101,9 @@ class OpenAIAgentTarget(Target):
             ConfigSpec(
                 name="instructions_override",
                 security_domain=SYSTEM_TAG,
-                description="If set, replaces the agent's system instructions for the run.",
+                description="If set, replaces the agent's base system instructions for the run "
+                "(a benign task-set value). The system_prompt controllable is the attacker "
+                "appending a suffix on top of these effective instructions.",
             ),
             ConfigSpec(
                 name="user_task",
@@ -161,7 +173,20 @@ class OpenAIAgentTarget(Target):
             Controllable(
                 name="user_input",
                 security_domain=USER_INPUT_TAG,
-                description="The user input sent to the agent.",
+                description="The user message sent to the agent (direct prompt injection).",
+            ),
+            Controllable(
+                name="tool_output",
+                security_domain=TOOL_OUTPUT_TAG,
+                description="Attacker content appended to every tool's return value — the "
+                "content a tool hands back that the agent reads (indirect prompt injection "
+                "via tool results).",
+            ),
+            Controllable(
+                name="system_prompt",
+                security_domain=SYSTEM_PROMPT_TAG,
+                description="Attacker text appended to the agent's system instructions "
+                "(system-prompt injection).",
             ),
         ]
 
@@ -190,16 +215,56 @@ class OpenAIAgentTarget(Target):
             reset()
 
         controllables = {c.name: c for c in self.get_controllables()}
-        resp = await send_event(
-            ControllablePreCallEvent(
-                controllable=controllables["user_input"], request="Enter user input:"
-            )
-        )
-        user_input = resp.value if isinstance(resp, ControllableInjection) else self._user_task
 
-        agent = self._agent_factory()
-        if self._instructions_override:
-            agent.instructions = self._instructions_override
+        async def _surface(name: str, request: str, default: str) -> str:
+            resp = await send_event(
+                ControllablePreCallEvent(controllable=controllables[name], request=request)
+            )
+            return resp.value if isinstance(resp, ControllableInjection) else default
+
+        # The optimizer's surface classifier picks which surface to drive; the
+        # others come back un-injected (default). user_input defaults to the benign
+        # task; tool_output / system_prompt default to empty (no injection).
+        user_input = await _surface("user_input", "Enter user input:", self._user_task)
+        tool_output = await _surface("tool_output", "Tool-return injection (optional):", "")
+        system_prompt = await _surface("system_prompt", "System-prompt injection (optional):", "")
+
+        spec = InjectionSpec(
+            system_prompt_suffix=system_prompt, tool_output_appendix=tool_output
+        )
+        # The Agents SDK Agent is mutable, so build once (existing factory) then
+        # apply this run's injections: set the effective instructions and swap in
+        # tool-return-wrapped tools. instructions_override (config) replaces the
+        # base instructions; the system_prompt controllable appends on top of that.
+        # A build/apply error is recorded as a run error (so the claim can abstain)
+        # rather than propagated to hard-abort the task's remaining runs, matching
+        # run_agent_capture's contract.
+        try:
+            agent = self._agent_factory()
+            base_instructions = self._instructions_override or agent.instructions
+            agent.instructions = spec.apply_instructions(base_instructions)
+            agent.tools = spec.wrap_tools(getattr(agent, "tools", []))
+        except Exception as exc:  # noqa: BLE001 - recorded as a run error, not raised
+            self._run = AgentRunResult(error=f"agent_build: {type(exc).__name__}: {exc}")
+            emit(
+                ObservableEvent(
+                    observable=Observable(
+                        name="agent_result",
+                        security_domain=SYSTEM_TAG,
+                        description="Tools called and final response.",
+                    ),
+                    content=json.dumps(
+                        {
+                            "called_tool_names": [],
+                            "guardrail_tripped": False,
+                            "final_response": "",
+                            "error": self._run.error,
+                        }
+                    ),
+                )
+            )
+            return
+
         self._tool_names = [getattr(t, "name", "") for t in getattr(agent, "tools", [])]
 
         emit(
@@ -241,4 +306,11 @@ class OpenAIAgentTarget(Target):
         pass
 
 
-__all__ = ["OpenAIAgentTarget", "AgentFactory", "SYSTEM_TAG", "USER_INPUT_TAG"]
+__all__ = [
+    "OpenAIAgentTarget",
+    "AgentFactory",
+    "SYSTEM_TAG",
+    "USER_INPUT_TAG",
+    "TOOL_OUTPUT_TAG",
+    "SYSTEM_PROMPT_TAG",
+]
