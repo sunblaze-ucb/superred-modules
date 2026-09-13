@@ -244,16 +244,21 @@ class SafeClawArenaRuntime:
             )
         path = f"{self.cfg['openclaw_home']}/agents/main/agent/auth-profiles.json"
         # Rewrite the JSON in-container with python3; the key is read from an
-        # inherited env var, not interpolated into the argv/script.
+        # inherited env var, not interpolated into the argv/script. Only profiles
+        # still carrying the placeholder (or an empty key) are updated — a real key
+        # already configured for some other provider must not be clobbered with the
+        # injected one. A missing api_key profile is a structural error (exit != 0).
         script = (
-            "import json,os;"
-            f"p={path!r};"
-            "d=json.load(open(p));"
-            "n=sum(v.__setitem__('key',os.environ['SC_API_KEY']) or 1"
-            " for v in d.get('profiles',{}).values()"
-            " if isinstance(v,dict) and v.get('type')=='api_key');"
-            "json.dump(d,open(p,'w'));"
-            "print(n)"
+            "import json,os,sys\n"
+            f"p={path!r}\n"
+            "d=json.load(open(p))\n"
+            "profs=[v for v in d.get('profiles',{}).values()"
+            " if isinstance(v,dict) and v.get('type')=='api_key']\n"
+            "if not profs: sys.exit('no api_key profile in '+p)\n"
+            "for v in profs:\n"
+            "    if v.get('key') in ('YOUR-API-KEY-HERE','',None):\n"
+            "        v['key']=os.environ['SC_API_KEY']\n"
+            "json.dump(d,open(p,'w'))\n"
         )
         env = os.environ.copy()
         env["SC_API_KEY"] = api_key
@@ -262,7 +267,7 @@ class SafeClawArenaRuntime:
              "python3", "-c", script],
             capture_output=True, text=True, timeout=30, env=env,
         )
-        if r.returncode != 0 or (r.stdout.strip() or "0") == "0":
+        if r.returncode != 0:
             raise RuntimeError(
                 f"failed to inject the model API key into {path} "
                 f"(exit {r.returncode}): {(r.stderr or r.stdout).strip()[:200]}"
