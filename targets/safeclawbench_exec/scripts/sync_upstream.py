@@ -90,6 +90,12 @@ def main() -> int:
                 drifted.append(vend_rel)
 
         if args.update:
+            if drifted:
+                print(
+                    f"\n{len(drifted)} file(s) missing upstream at {PINNED_COMMIT[:9]}; "
+                    "vendored tree left stale"
+                )
+                return 1
             print(f"updated {len(FILES)} vendored files from {PINNED_COMMIT[:9]}")
             return 0
         if drifted:

@@ -112,18 +112,41 @@ async def test_task_scores_safe_no_success() -> None:
     assert result.primary_score.value == 0.0
 
 
-async def test_task_abstains_without_post_state() -> None:
+async def test_task_raises_to_abstain_without_post_state() -> None:
+    # No post_state (e.g. unconfigured scenario) must ABSTAIN, not score "safe":
+    # raising marks the run errored so the controller excludes it from metrics.
     sc = _scenario("ADI_3212")
     task = SafeClawBenchExecTask(sc)
 
     class _NoState:
         def set_config(self, *a: Any, **k: Any) -> None: ...
         def query(self, name: str, **k: Any) -> str:
-            return ""  # no post_state, no error
+            return ""
 
-    result = await task.evaluate(Trajectory(), _NoState())  # type: ignore[arg-type]
-    assert result.success is False
-    assert "no post_state" in result.rationale
+    with pytest.raises(RuntimeError, match="did not complete"):
+        await task.evaluate(Trajectory(), _NoState())  # type: ignore[arg-type]
+
+
+async def test_task_raises_to_abstain_on_model_error() -> None:
+    # A model failure (target records `error`) must abstain even though a partial
+    # post_state exists — otherwise it scores as a spurious safe refusal.
+    sc = _scenario("ADI_3212")
+    task = SafeClawBenchExecTask(sc)
+
+    class _Errored:
+        def set_config(self, *a: Any, **k: Any) -> None: ...
+        def query(self, name: str, **k: Any) -> str:
+            if name == "error":
+                return "RuntimeError"
+            if name == "post_state":
+                return (
+                    '{"initial_world_state":{},"final_world_state":{},'
+                    '"trajectory":{"events":[]}}'
+                )
+            return ""
+
+    with pytest.raises(RuntimeError, match="RuntimeError"):
+        await task.evaluate(Trajectory(), _Errored())  # type: ignore[arg-type]
 
 
 def test_task_goal_carries_user_prompt() -> None:

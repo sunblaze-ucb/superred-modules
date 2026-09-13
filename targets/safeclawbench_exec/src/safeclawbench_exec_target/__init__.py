@@ -42,7 +42,6 @@ from safeclawbench_exec_target.security_tags import (
 )
 from safeclawbench_exec_target.target import (
     DEFENSE_CHOICES,
-    EXTERNAL_DATA_PATH,
     AgentModel,
     SafeClawBenchExecTarget,
 )
@@ -54,7 +53,6 @@ __all__ = [
     # security domain
     "DOMAIN",
     "EXEC_FULL_PATH",
-    "EXTERNAL_DATA_PATH",
     "EXTERNAL_DATA_TAG",
     "FAMILY_NAMES",
     "MEMORY_TAG",

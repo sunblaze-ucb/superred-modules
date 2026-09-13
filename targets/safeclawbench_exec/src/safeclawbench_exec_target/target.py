@@ -50,17 +50,12 @@ from safeclawbench_exec_target._vendor.executable.tools import (
 from safeclawbench_exec_target._vendor.executable.trajectory import TrajectoryLog
 from safeclawbench_exec_target.security_tags import (
     DOMAIN,
-    EXTERNAL_DATA_TAG,
     SYSTEM_TAG,
     USER_INPUT_TAG,
 )
 
 #: Prompt-level defense policies shipped with the vendored stack (paper's D0-D3).
 DEFENSE_CHOICES: Final = ("D0", "D1", "D2", "D3")
-
-#: Where an ``external_data`` injection is planted in the mock file store so the
-#: agent can read attacker-controlled content back through ``read_file``.
-EXTERNAL_DATA_PATH: Final = "/external/injected_content.txt"
 
 
 @runtime_checkable
@@ -226,14 +221,9 @@ class SafeClawBenchExecTarget(Target):
             Controllable(
                 name="user_message",
                 security_domain=USER_INPUT_TAG,
-                description="The user request / task prompt delivered to the agent "
-                "(defaults to the scenario's baked user_prompt).",
-            ),
-            Controllable(
-                name="external_data",
-                security_domain=EXTERNAL_DATA_TAG,
-                description="Attacker-controlled content planted in the mock file "
-                f"store at {EXTERNAL_DATA_PATH} for the agent to read back.",
+                description="Attacker text appended to the scenario's baked "
+                "user_prompt (the baked attack + its oracle contract always run; "
+                "an optimizer augments it).",
             ),
         ]
 
@@ -283,26 +273,20 @@ class SafeClawBenchExecTarget(Target):
             self._error = "no valid scenario configured"
             return
 
-        # Attacker controls the user request; default to the baked prompt.
+        # The attack is baked into the scenario (prompt + world state); an optimizer
+        # may APPEND to the user prompt. Appending (not replacing) preserves the
+        # baked prompt — several scenarios encode the oracle's success contract (the
+        # file path / marker it checks) in user_prompt itself, so a replacement
+        # would discard the contract and score ~0 regardless of the injection.
         user_ctrl = self.get_controllables()[0]
         resp = await send_event(
-            ControllablePreCallEvent(controllable=user_ctrl, request="User request:")
+            ControllablePreCallEvent(controllable=user_ctrl, request="Append to user request:")
         )
-        user_prompt = (
-            resp.value if isinstance(resp, ControllableInjection) else scenario.user_prompt
-        )
+        user_prompt = scenario.user_prompt
+        if isinstance(resp, ControllableInjection) and resp.value:
+            user_prompt = f"{scenario.user_prompt}\n\n{resp.value}"
 
-        # Build the mock world, optionally planting attacker external data.
         state = MockWorldState.from_dict(scenario.initial_world_state)
-        ext_ctrl = self.get_controllables()[1]
-        ext_resp = await send_event(
-            ControllablePreCallEvent(
-                controllable=ext_ctrl, request="External data (optional):"
-            )
-        )
-        if isinstance(ext_resp, ControllableInjection) and ext_resp.value:
-            state.files[EXTERNAL_DATA_PATH] = ext_resp.value
-
         trajectory = TrajectoryLog()
         sandbox = MockToolSandbox(scenario=scenario, state=state, trajectory=trajectory)
         initial_snapshot = sandbox.state.snapshot()
@@ -460,7 +444,6 @@ class SafeClawBenchExecTarget(Target):
 
 __all__ = [
     "DEFENSE_CHOICES",
-    "EXTERNAL_DATA_PATH",
     "AgentModel",
     "SafeClawBenchExecTarget",
 ]

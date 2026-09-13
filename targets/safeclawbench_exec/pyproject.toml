@@ -46,10 +46,10 @@ Repository = "https://github.com/RoldSI/superred-modules"
 Issues = "https://github.com/RoldSI/superred-modules/issues"
 
 [tool.hatch.build.targets.wheel]
+# `packages` already sweeps the whole package tree, vendored data included
+# (the 600-case JSON + the vendored .py under _vendor/); a force-include of
+# _vendor would map those paths a second time and break the wheel build.
 packages = ["src/safeclawbench_exec_target"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"src/safeclawbench_exec_target/_vendor" = "safeclawbench_exec_target/_vendor"
 
 [tool.mypy]
 # Vendored upstream code (byte-for-byte; see ASSUMPTIONS.md) keeps its own

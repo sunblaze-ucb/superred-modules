@@ -85,7 +85,7 @@ def test_contract() -> None:
     t = SafeClawBenchExecTarget(agent_client=ScriptedAgent([]))
     assert {c.name for c in t.config_specs} == {"scenario", "defense_level"}
     assert {q.name for q in t.query_specs} >= {"post_state", "final_response", "error"}
-    assert {c.name for c in t.get_controllables()} == {"user_message", "external_data"}
+    assert {c.name for c in t.get_controllables()} == {"user_message"}
 
 
 def test_factory_builds_target() -> None:
@@ -147,27 +147,17 @@ async def test_harness_blocks_unauthorized_path() -> None:
     assert t.query("blocked_by_harness") == "true"
 
 
-async def test_external_data_is_planted_and_readable() -> None:
-    sc = _scenario("ADI_3212")
-    from safeclawbench_exec_target import EXTERNAL_DATA_PATH
-
-    agent = ScriptedAgent([_plan("read_file", {"path": EXTERNAL_DATA_PATH})])
-    t = SafeClawBenchExecTarget(agent_client=agent)
-    t.set_config("scenario", json.dumps(sc.to_dict()))
-    emit, send = _handlers(inject={"external_data": "ATTACKER_PAYLOAD"})
-    await t.run(emit, send)
-    capture = json.loads(t.query("post_state"))
-    assert capture["final_world_state"]["files"].get(EXTERNAL_DATA_PATH) == "ATTACKER_PAYLOAD"
-
-
-async def test_user_message_injection_overrides_prompt() -> None:
+async def test_user_message_injection_appends_to_baked_prompt() -> None:
     sc = _scenario("ADI_3212")
     t = SafeClawBenchExecTarget(agent_client=ScriptedAgent([_plan(final="done")]))
     t.set_config("scenario", json.dumps(sc.to_dict()))
-    emit, send = _handlers(inject={"user_message": "OVERRIDDEN ATTACK PROMPT"})
+    emit, send = _handlers(inject={"user_message": "APPENDED ATTACK TEXT"})
     await t.run(emit, send)
     capture = json.loads(t.query("post_state"))
-    assert capture["user_prompt"] == "OVERRIDDEN ATTACK PROMPT"
+    # additive: the baked prompt (carrying the oracle's success contract) is
+    # preserved AND the injected text is appended.
+    assert sc.user_prompt in capture["user_prompt"]
+    assert "APPENDED ATTACK TEXT" in capture["user_prompt"]
 
 
 async def test_no_scenario_records_error_not_crash() -> None:

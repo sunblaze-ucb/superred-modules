@@ -40,9 +40,9 @@ The target exposes:
 - **config** — `scenario` (the executable case JSON) and `defense_level`.
 - **query** — `post_state` (JSON: initial/final world state + trajectory), plus
   `final_response`, `blocked_by_harness`, `error`.
-- **controllables** — `user_message` (override the task prompt) and
-  `external_data` (plant an attacker file the agent can read back); the baked
-  scenario attack runs regardless.
+- **controllables** — `user_message` (attacker text **appended** to the baked
+  task prompt, so the baked attack and the deterministic oracle's success
+  contract always run while an optimizer augments the prompt).
 - **security domain** — `system → {user_input, external_data, memory, tools}`.
 
 The agent tool-call budget is bounded (`max_tool_calls`); model failures are

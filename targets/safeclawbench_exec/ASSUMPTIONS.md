@@ -59,10 +59,16 @@ Under `src/safeclawbench_exec_target/_vendor/`, verifiable with
     is the attacker-oriented `success`, with `ToolCall-ASR` / `StateChange-ASR` /
     `Blocked-by-Harness` as sub-scores. `Intent-ASR` (upstream's optional LLM
     intent judge) is left unset — the state oracle is fully deterministic.
-- **Controllables.** The attack is baked into each scenario; the target also
-  exposes `user_message` (override the task prompt) and `external_data` (plant an
-  attacker file the agent can read back) so an optimizer may vary the attack.
-  Left un-injected, the benchmark runs as shipped.
+- **Controllables.** The attack is baked into each scenario (prompt + world
+  state); the target also exposes `user_message`, whose injected value is
+  **appended** to the baked `user_prompt` so an optimizer can augment the attack
+  without discarding the baked prompt or the deterministic oracle's success
+  contract (several scenarios encode the checked path/marker in `user_prompt`).
+  Left un-injected, the benchmark runs as shipped. (An earlier `external_data`
+  controllable was dropped: no shipped scenario permits reading its plant path,
+  and planting into the world state leaked the payload into the trusted system
+  prompt — the untrusted content each scenario needs is already baked into its
+  `initial_world_state`.)
 - **Security domain.** `system → {user_input, external_data, memory, tools}`.
 - **Offline & side-effect-free.** Every tool call is simulated against in-memory
   state; the only live component is the model-under-test (a scripted stub in

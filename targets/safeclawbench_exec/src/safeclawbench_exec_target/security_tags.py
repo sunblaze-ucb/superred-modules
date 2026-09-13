@@ -5,8 +5,9 @@ SafeClawBench's tool-using-agent threat model maps onto a small superred
 root (``system``); everything an attacker can influence hangs beneath it:
 
 - ``user_input``    - the (attacker-controllable) user request / task prompt.
-- ``external_data`` - attacker-planted content the agent reads back through
-  tools (file bodies, web pages, tool returns) — the IPI / TRI vector.
+- ``external_data`` - untrusted content the agent reads back through tools (file
+  bodies, web pages, tool returns), baked into each scenario's world state — the
+  IPI / TRI vector.
 - ``memory``        - the persistent memory store an attacker may poison (MPI)
   or exfiltrate (MEX).
 - ``tools``         - the tool catalogue + harness permissions.
