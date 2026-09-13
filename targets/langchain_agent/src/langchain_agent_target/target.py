@@ -60,10 +60,18 @@ class LangChainAgentTarget(Target):
     """A LangChain ``create_agent`` graph, red-teamed for prompt-injection / agent misuse.
 
     Args:
-        agent_factory: callable taking the chat ``model`` and returning a fresh
-            compiled ``create_agent`` graph (its tools, system prompt and any
-            middleware are the factory's concern — LangChain bakes the system
-            prompt in at build time).
+        agent_factory: callable ``(model, injection_spec) -> compiled graph``. It
+            receives the chat ``model`` **and** the run's
+            :class:`~langchain_agent_target.injection.InjectionSpec`, and returns a
+            fresh compiled ``create_agent`` graph. The factory owns the tools; it
+            must also wire the spec so the injection surfaces are live — feed the
+            system prompt through ``injection_spec.apply_system_prompt(...)``
+            (LangChain bakes the system prompt in at build time) and pass
+            ``injection_spec.middleware()`` to ``create_agent`` for the tool-return
+            surface. A factory that ignores the spec silently defeats the
+            ``system_prompt`` / ``tool_output`` surfaces; a one-argument factory
+            raises ``TypeError`` at call time. See ``build_demo_agent`` for the
+            reference wiring.
         model: chat model passed to the factory — **required**: a model id string
             or a configured ``BaseChatModel``. LangChain's ``create_agent`` has no
             default model, so ``None`` is rejected. Its auth is the caller's
@@ -223,7 +231,32 @@ class LangChainAgentTarget(Target):
             system_prompt_suffix=system_prompt, tool_output_appendix=tool_output
         )
         # Built per run so the middleware/system-prompt carry this run's injections.
-        agent = self._agent_factory(self._model, spec)
+        # A factory that raises on a given spec is recorded as a run error (so the
+        # claim can abstain), matching run_agent_capture's contract, rather than
+        # propagating and hard-aborting the task's remaining runs.
+        try:
+            agent = self._agent_factory(self._model, spec)
+        except Exception as exc:  # noqa: BLE001 - recorded as a run error, not raised
+            self._run = AgentRunResult(
+                error=f"agent_factory: {type(exc).__name__}: {exc}"
+            )
+            emit(
+                ObservableEvent(
+                    observable=Observable(
+                        name="agent_result",
+                        security_domain=SYSTEM_TAG,
+                        description="Tools called and final response.",
+                    ),
+                    content=json.dumps(
+                        {
+                            "called_tool_names": [],
+                            "final_response": "",
+                            "error": self._run.error,
+                        }
+                    ),
+                )
+            )
+            return
 
         emit(
             ObservableEvent(

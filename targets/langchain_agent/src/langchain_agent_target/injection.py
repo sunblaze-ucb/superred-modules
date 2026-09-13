@@ -25,6 +25,7 @@ from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import ToolMessage
+from langgraph.types import Command
 
 
 class _ToolOutputInjection(AgentMiddleware):
@@ -39,9 +40,46 @@ class _ToolOutputInjection(AgentMiddleware):
         self._appendix = appendix
 
     def _inject(self, result: Any) -> Any:
-        if isinstance(result, ToolMessage) and isinstance(result.content, str):
-            result.content = f"{result.content}\n\n{self._appendix}"
+        """Append the payload to whatever tool-return shape LangChain hands back.
+
+        The tool-call handler may return a :class:`ToolMessage` — whose
+        ``content`` is ``str`` *or* a content-block ``list`` — or a
+        :class:`~langgraph.types.Command` whose ``update`` carries the
+        ToolMessage(s) (the idiomatic v1 shape for handoff / state-update tools).
+        Injecting only into ``str``-content ToolMessages, the previous behaviour,
+        silently dropped the payload for content-block tools and for every
+        Command-returning tool — a false negative on the exact surface this
+        middleware exists to exercise, with no error to signal it.
+        """
+        if isinstance(result, ToolMessage):
+            self._append(result)
+        elif isinstance(result, Command):
+            self._inject_into_command(result)
         return result
+
+    def _append(self, message: ToolMessage) -> None:
+        content = message.content
+        if isinstance(content, list):
+            # Content blocks: add a text block rather than mangling existing ones.
+            message.content = [*content, {"type": "text", "text": self._appendix}]
+        else:
+            # str (the common case), or any other scalar shape → string-append.
+            message.content = f"{content}\n\n{self._appendix}"
+
+    def _inject_into_command(self, command: Command) -> None:
+        # Command is frozen, but the ToolMessage objects it references are not;
+        # mutate those in place. update is normally {"messages": [ToolMessage,...]}
+        # but may be a bare list of state updates in some graphs — handle both.
+        update = command.update
+        messages: Any = None
+        if isinstance(update, dict):
+            messages = update.get("messages")
+        elif isinstance(update, list):
+            messages = update
+        if isinstance(messages, list):
+            for message in messages:
+                if isinstance(message, ToolMessage):
+                    self._append(message)
 
     def wrap_tool_call(self, request: Any, handler: Any) -> Any:
         return self._inject(handler(request))

@@ -177,3 +177,50 @@ async def test_target_drives_all_surfaces_without_error() -> None:
     await t.run(emit, send)
     assert t.query("error") == ""
     assert SENSITIVE_TOOL in t.query("called_tool_names")
+
+
+async def test_tool_output_injection_handles_list_content() -> None:
+    # A tool whose ToolMessage content is a content-block *list* (multimodal /
+    # content_and_artifact tools) must still receive the injection — the old
+    # str-only guard silently dropped it, a false negative on this surface.
+    from langchain_core.messages import ToolMessage
+
+    mw = InjectionSpec(tool_output_appendix="LIST_MARK").middleware()[0]
+
+    async def handler(_request):
+        return ToolMessage(
+            content=[{"type": "text", "text": "weather: sunny"}], tool_call_id="t1"
+        )
+
+    result = await mw.awrap_tool_call(object(), handler)
+    assert "LIST_MARK" in json.dumps(result.content)
+
+
+async def test_tool_output_injection_handles_command_return() -> None:
+    # A Command-returning tool (handoff / state-update, the idiomatic v1 shape)
+    # carries its ToolMessage in command.update["messages"]; the injection must
+    # reach it rather than pass the Command through untouched.
+    from langchain_core.messages import ToolMessage
+    from langgraph.types import Command
+
+    mw = InjectionSpec(tool_output_appendix="CMD_MARK").middleware()[0]
+
+    async def handler(_request):
+        return Command(update={"messages": [ToolMessage(content="payload", tool_call_id="t2")]})
+
+    result = await mw.awrap_tool_call(object(), handler)
+    injected = [m for m in result.update["messages"] if isinstance(m, ToolMessage)]
+    assert injected and "CMD_MARK" in injected[0].content
+
+
+async def test_factory_error_is_recorded_not_raised() -> None:
+    # A factory that raises on a run must be recorded as a run error (so the claim
+    # can abstain), not propagated to hard-abort the task's remaining runs.
+    def boom_factory(model, spec):
+        raise RuntimeError("factory blew up")
+
+    t = LangChainAgentTarget(agent_factory=boom_factory, model="gpt-4o-mini")
+    emit, send = _handlers("x")
+    await t.run(emit, send)  # must not raise
+    assert "factory blew up" in t.query("error")
+    assert t.query("called_tool_names") == ""

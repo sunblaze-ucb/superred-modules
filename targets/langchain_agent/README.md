@@ -46,14 +46,20 @@ stateless, so live runs have no such constraint.
 from langchain_agent_target import langchain_agent_target_factory, build_demo_agent
 
 factory = langchain_agent_target_factory(
-    agent_factory=build_demo_agent,   # your own (model) -> create_agent(...) graph
+    agent_factory=build_demo_agent,   # (model, injection_spec) -> create_agent(...) graph
     model="gpt-4o-mini",              # required: a model id string or a BaseChatModel
 )
 ```
 
-`agent_factory` takes the chat model and returns a fresh compiled `create_agent`
-graph; its tools, system prompt and any middleware are the factory's concern
-(LangChain bakes the system prompt in at build time). `model` is **required** — a
+`agent_factory` is a callable `(model, injection_spec) -> compiled graph`: it
+receives the chat model **and** the run's `InjectionSpec`, and returns a fresh
+compiled `create_agent` graph. It owns the tools, and it must wire the spec so the
+attack surfaces are live — feed the system prompt through
+`injection_spec.apply_system_prompt(...)` (LangChain bakes it in at build time) and
+pass `injection_spec.middleware()` to `create_agent` for the tool-return surface. A
+factory that ignores the spec silently disables the `system_prompt` / `tool_output`
+surfaces, and a one-argument factory raises `TypeError` at run time; see
+`build_demo_agent` for the reference wiring. `model` is **required** — a
 model id string or a configured `BaseChatModel`; LangChain's `create_agent` has no
 default model. The target holds **no API key**: the model's auth is configured on
 the `model` you supply, so no secret passes through this target. Config:
