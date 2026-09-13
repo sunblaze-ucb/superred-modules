@@ -1,0 +1,38 @@
+# NOTICE
+
+superred-target-hackaprompt
+
+This module is a port of HackAPrompt's level defenses into the superred
+red-teaming framework. Original code in this module (the superred adaptation: the
+target, completer, factory, and tests) is licensed MIT (see LICENSE). It
+reproduces the level prompt templates and input filters from HackAPrompt; the
+upstream MIT license text is preserved in `LICENSES/HackAPrompt-MIT.txt`.
+
+## Upstream: HackAPrompt
+
+- Project: HackAPrompt — "Ignore This Title and HackAPrompt: Exposing Systemic
+  Vulnerabilities of LLMs through a Global Prompt Hacking Competition"
+- Repository: https://github.com/PromptLabs/hackaprompt (commit f0a035a)
+- Paper: Schulhoff et al., EMNLP 2023 (arXiv:2311.16119).
+- License: MIT — Copyright (c) 2023 hackaprompt team
+
+### Ported verbatim (level defenses)
+
+`src/hackaprompt_target/_vendor/levels.py` is a byte-faithful port of the 11 level
+`format_prompt` templates (upstream `hackaprompt/evaluator.py` `Level*Evaluator`)
+and the input-filter defenses (`hackaprompt/utils.py`: `contains_blacklisted_word`,
+`contains_pwned_letters`, `remove_non_emoji`). Every level's prompt was verified
+byte-identical to upstream. Kept under `_vendor` (ruff-excluded) so the upstream
+text is preserved exactly.
+
+### Ported logic (MIT)
+
+`target.py` orchestrates each level (filter/escape → model call → Level 6's second
+turn) and `completer.py` reaches the model via litellm. The upstream completer
+(pre-1.0 OpenAI SDK + a FlanT5 HF space), the MongoDB game DB, and the Gradio UI
+are NOT ported. Deviations are documented in `ASSUMPTIONS.md`.
+
+## Citation
+
+When reporting numbers produced with this module, cite Schulhoff et al., 2023
+(arXiv:2311.16119, HackAPrompt).
