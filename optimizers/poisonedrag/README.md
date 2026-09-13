@@ -50,8 +50,12 @@ target's README (e.g. `superred-target-chatbot`) for a full `Controller.run()` e
 
 MIT for this port's code (see [LICENSE](LICENSE)). The upstream reference
 implementation, [`sleeepeer/PoisonedRAG`](https://github.com/sleeepeer/PoisonedRAG),
-is MIT licensed. The bundled official attack-result datasets originate from that
-repository; its MIT copyright notice is preserved in [`NOTICE`](NOTICE) and
-[`LICENSES/PoisonedRAG-MIT.txt`](LICENSES/PoisonedRAG-MIT.txt). This port
-reimplements the attack against superred's event model rather than vendoring
+is MIT licensed, and its MIT notice is preserved in [`NOTICE`](NOTICE) and
+[`LICENSES/PoisonedRAG-MIT.txt`](LICENSES/PoisonedRAG-MIT.txt). The bundled
+attack-result datasets are **not** wholly MIT, though: MIT covers PoisonedRAG's own
+contribution (the adversarial passages and record assembly), while the benchmark
+questions and gold answers carried inside them retain their source datasets' terms —
+notably HotpotQA under CC BY-SA 4.0 and MS MARCO under its non-commercial terms.
+See [`NOTICE`](NOTICE) ("Underlying benchmark data") for the full breakdown. This
+port reimplements the attack against superred's event model rather than vendoring
 upstream runtime source.
