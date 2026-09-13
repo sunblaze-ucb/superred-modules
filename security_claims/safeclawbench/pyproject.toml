@@ -22,9 +22,7 @@ keywords = [
     "claim",
     "agent",
 ]
-# TODO(rebase on #73): rename to "superred-target-openclaw" once this branch
-# picks up the openclaw-target dist-name rename from feat/openclaw-target-migrate.
-dependencies = ["superred>=0.1.0", "openclaw-target"]
+dependencies = ["superred>=0.1.0", "superred-target-openclaw"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",

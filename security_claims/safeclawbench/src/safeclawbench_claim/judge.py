@@ -157,6 +157,10 @@ class LLMCoreFailJudge:
                 temperature=0,
                 max_tokens=1024,
             )
+            # A content-policy filter can return zero choices; indexing [0] then
+            # raises IndexError. Keep the extraction inside the guard so that
+            # surfaces as a non-parsed verdict rather than crashing the run.
+            raw = response.choices[0].message.content or ""
         except Exception as exc:  # noqa: BLE001 - surface judge failure as non-parsed
             return CoreFailVerdict(
                 attack_success=False,
@@ -167,7 +171,6 @@ class LLMCoreFailJudge:
                 parsed=False,
                 note=f"{self._prefix()} error",
             )
-        raw = response.choices[0].message.content or ""
         return self._parse(raw)
 
     def _parse(self, raw: str) -> CoreFailVerdict:

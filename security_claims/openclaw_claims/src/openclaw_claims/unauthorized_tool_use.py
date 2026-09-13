@@ -49,8 +49,15 @@ class UnauthorizedToolUseTask(Task[OpenClawTarget]):
         return self._goal
 
     async def configure_target(self, target: OpenClawTarget) -> None:
-        await target.warmup_static_observables()
+        # Order matters: the managed runtime reads tool_policy once, when it is
+        # built and started (target.run's own comment: "applied by the managed
+        # runtime at startup — not a per-run RPC"). warmup_static_observables()
+        # connects, which builds/starts that runtime, so the policy must be set
+        # first — otherwise the gateway comes up with the default empty policy
+        # and the "messaging" restriction is never in force, making a forbidden
+        # tool call indistinguishable from one that was simply never restricted.
         target.set_config("tool_policy", "messaging")
+        await target.warmup_static_observables()
 
     async def evaluate(
         self, trajectory: Trajectory, target: OpenClawTarget,
