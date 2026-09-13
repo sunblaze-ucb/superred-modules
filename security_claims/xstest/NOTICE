@@ -1,0 +1,65 @@
+# NOTICE
+
+superred-claim-xstest
+
+This module ports the XSTest test suite into the superred red-teaming framework.
+The original code in this module (the superred adaptation: the pure judge port,
+the scoring policy, the task model, the factories, the loaders, and the tests) is
+licensed MIT (see LICENSE). It incorporates material from XSTest, which is
+licensed CC-BY-4.0; that upstream license and the required attribution are
+preserved here and in `LICENSES/`.
+
+## Upstream: XSTest (CC-BY-4.0)
+
+- Project: XSTest — "A Test Suite for Identifying Exaggerated Safety Behaviours
+  in Large Language Models"
+- Authors / creators: Paul Röttger, Hannah Rose Kirk, Bertie Vidgen, Giuseppe
+  Attanasio, Federico Bianchi, Dirk Hovy
+- Repository: https://github.com/paul-rottger/xstest
+- Dataset: https://huggingface.co/datasets/Paul/XSTest
+- Paper: Röttger et al., NAACL 2024 (aclanthology.org/2024.naacl-long.301/,
+  doi:10.18653/v1/2024.naacl-long.301)
+- License: Creative Commons Attribution 4.0 International (CC-BY-4.0). Full text
+  in `LICENSES/XSTest-CC-BY-4.0.txt`.
+
+### Attribution and modification notice (CC-BY-4.0 §3(a))
+
+The XSTest prompt suite © Paul Röttger et al., used under CC-BY-4.0. Changes were
+made: the prompts are redistributed unmodified as a vendored CSV, but the
+refusal-classification code was adapted (ported to pure Python functions over a
+single response string, and paired with a superred scoring policy). This module
+is not endorsed by the XSTest authors.
+
+Disclaimer of warranties (CC-BY-4.0 §5): Unless otherwise separately undertaken
+by the Licensor, to the extent possible, the Licensor offers the Licensed
+Material as-is and as-available, and makes no representations or warranties of
+any kind concerning it, whether express, implied, statutory, or other. The full
+disclaimer and limitation of liability are in Section 5 of the license text at
+`LICENSES/XSTest-CC-BY-4.0.txt`.
+
+### Vendored material (unmodified, CC-BY-4.0)
+
+- `src/xstest_claim/data/xstest_prompts.csv` — the 450-prompt XSTest v2 suite,
+  byte-for-byte from upstream (sha256-pinned in `data/sha256.txt`).
+
+### Ported evaluation logic (adapted from CC-BY-4.0 source)
+
+- `judge.py` — `strmatch_label` is a verbatim port of upstream
+  `evaluation/classify_completions_strmatch.py:strmatch_label` (the deterministic
+  refusal-prefix classifier). Verified against upstream's own published
+  `automated_evaluation_labels/*_streval.csv` labels (2250/2250 exact,
+  `tests/test_judge_differential.py`).
+- `judge.py` — the GPT classifier (`render_gpt_prompt` + `gpt_label`) reproduces
+  upstream `evaluation/classify_completions_gpt.py`: the classification prompt is
+  vendored byte-for-byte at `data/gpt_judge_prompt.txt` (sha256-pinned), with the
+  same decoding parameters. This path is opt-in and non-deterministic. Deviations
+  are documented in `ASSUMPTIONS.md`.
+
+The upstream `model_completions/*.csv` (Meta/Mistral/OpenAI-licensed model
+outputs) are **not** vendored; they are used only during development to verify
+judge fidelity and are not required to run the benchmark.
+
+## Citation
+
+When reporting numbers produced with this module, cite Röttger et al., 2024
+(NAACL, XSTest).
