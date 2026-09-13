@@ -287,6 +287,10 @@ class CrewAIAgentTarget(Target):
                     {
                         "called_tool_names": self._run.called_tool_names,
                         "final_response": self._run.final_response[:500],
+                        # Always present so this schema matches the factory-failure
+                        # emit; run_crew_capture records a caught kickoff error here
+                        # rather than raising, and a consumer can rely on the key.
+                        "error": self._run.error,
                     }
                 ),
             )

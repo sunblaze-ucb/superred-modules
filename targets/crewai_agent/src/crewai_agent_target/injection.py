@@ -114,15 +114,27 @@ def _injected_tool_cls() -> Any:
             self._appendix = appendix
 
         def run(self, *args: Any, **kwargs: Any) -> Any:
-            # CrewAI's tool-execution entry point. inner.run() validates args,
-            # enforces usage limits, and resolves async tools to a concrete value;
-            # inject into that so the payload reaches the observation.
-            return _inject_into_result(self._inner.run(*args, **kwargs), self._appendix)
+            # inner.run() validates args, enforces usage limits, and (for most
+            # tools) resolves the value; inject into that.
+            result = self._inner.run(*args, **kwargs)
+            if asyncio.iscoroutine(result):
+                return self._await_and_inject(result)
+            return _inject_into_result(result, self._appendix)
 
         def _run(self, *args: Any, **kwargs: Any) -> Any:
-            # CrewAI drives tools through run(); this abstract method is implemented
-            # for the direct-call path and injects the same way.
-            return _inject_into_result(self._inner._run(*args, **kwargs), self._appendix)
+            # THE agent-driven path: CrewAI's to_structured_tool() binds the
+            # tool's callable to _run (not run), so this is what actually executes
+            # under the agent. For an ASYNC inner tool, inner._run(...) returns an
+            # un-awaited coroutine — return an async wrapper that awaits it and
+            # injects into the concrete result, so the appendix is not silently
+            # dropped for async tools (the #183 HIGH-bug false-negative class).
+            result = self._inner._run(*args, **kwargs)
+            if asyncio.iscoroutine(result):
+                return self._await_and_inject(result)
+            return _inject_into_result(result, self._appendix)
+
+        async def _await_and_inject(self, coro: Any) -> Any:
+            return _inject_into_result(await coro, self._appendix)
 
     _INJECTED_TOOL_CLS = _InjectedTool
     return _InjectedTool

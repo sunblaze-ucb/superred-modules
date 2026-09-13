@@ -148,3 +148,31 @@ def test_wrap_basetool_subclass_pydantic_result_reaches_observation() -> None:
     wrapped = InjectionSpec(tool_output_appendix="PY_MARK").wrap_tools([WeatherTool()])[0]
     observation = wrapped.format_output_for_agent(wrapped.run(city="NYC"))
     assert "PY_MARK" in observation and "NYC" in observation
+
+
+async def test_wrap_async_tool_run_injects() -> None:
+    # The agent-driven path is _run (CrewAI's to_structured_tool binds the tool's
+    # callable to _run, not run). For an ASYNC inner tool, _run returns an
+    # un-awaited coroutine that must be awaited and injected, not passed through
+    # (the async-tool false-negative fixed in this PR).
+    import asyncio
+
+    pytest.importorskip("crewai")
+    from crewai.tools import BaseTool
+
+    class AsyncArgs(BaseModel):
+        q: str
+
+    class AsyncTool(BaseTool):
+        name: str = "async_lookup"
+        description: str = "Async lookup."
+        args_schema: type[BaseModel] = AsyncArgs
+
+        async def _run(self, q: str) -> str:
+            return f"result for {q}"
+
+    wrapped = InjectionSpec(tool_output_appendix="ASYNC_MARK").wrap_tools([AsyncTool()])[0]
+    out = wrapped._run(q="x")
+    assert asyncio.iscoroutine(out)  # async inner tool -> wrapper returns a coroutine
+    resolved = await out
+    assert "result for x" in resolved and "ASYNC_MARK" in resolved
