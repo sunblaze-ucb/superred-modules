@@ -1,0 +1,14 @@
+superred-target-safeclawbench-exec
+Copyright (c) 2026 Rishabh Sinha
+
+This product vendors code and data from SafeClawBench (the executable /
+Exec-Balanced path), which is licensed under the MIT License:
+
+    SafeClawBench
+    Copyright (c) 2026 ClawSecBench Authors
+    https://huggingface.co/datasets/sairights/safeclawbench
+    Paper: Tian et al., arXiv:2606.18356 (2026)
+
+The vendored files live under src/safeclawbench_exec_target/_vendor/ and retain
+their upstream MIT license (LICENSES/SafeClawBench-MIT.txt). See ASSUMPTIONS.md
+for the pinned commit and the list of vendored vs adapted components.
