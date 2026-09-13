@@ -81,8 +81,18 @@ def _append_appendix(result: Any, appendix: str) -> Any:
         return f"{result}\n\n{appendix}"
     content = getattr(result, "content", _MISSING)
     if content is not _MISSING:
-        result.content = f"{_as_text(content)}\n\n{appendix}"
-        _append_block(result, appendix)
+        blocks = getattr(result, "blocks", None)
+        if isinstance(blocks, list):
+            # llama-index >=0.14 (this module's pinned range): ``content`` is a
+            # PROPERTY backed by ``blocks`` — setting ``.content`` REPLACES the
+            # blocks (dropping any multimodal ones) and, combined with a separate
+            # block append, would inject the payload TWICE. Append a single text
+            # block to the existing blocks instead: ``content`` (derived from the
+            # blocks) then carries the appendix exactly once, multimodal preserved.
+            _append_block(result, appendix)
+        else:
+            # Older / block-less shape: ``content`` is its own storage.
+            result.content = f"{_as_text(content)}\n\n{appendix}"
         raw = getattr(result, "raw_output", _MISSING)
         if isinstance(raw, str):
             result.raw_output = f"{raw}\n\n{appendix}"

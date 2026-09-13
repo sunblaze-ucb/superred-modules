@@ -167,6 +167,9 @@ def test_append_appendix_handles_tool_output_shapes() -> None:
     )
     out = _append_appendix(structured, "STRUCT_MARK")
     assert "STRUCT_MARK" in out.content
+    # Injected exactly once: in >=0.14 `content` is a property over `blocks`, so
+    # setting content AND appending a block would duplicate the payload.
+    assert out.content.count("STRUCT_MARK") == 1
     assert out.raw_output == {"temp": 22}  # structure preserved, not mangled
 
     stringy = ToolOutput(
@@ -174,6 +177,7 @@ def test_append_appendix_handles_tool_output_shapes() -> None:
     )
     out2 = _append_appendix(stringy, "STR_MARK")
     assert "STR_MARK" in out2.content and "STR_MARK" in out2.raw_output
+    assert out2.content.count("STR_MARK") == 1
 
 
 async def test_tool_output_injection_reaches_non_string_tool_return() -> None:
