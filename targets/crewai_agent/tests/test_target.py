@@ -1,4 +1,8 @@
-"""CrewAIAgentTarget tests: contract + e2e through a real crewai.Crew (scripted LLM, offline)."""
+"""CrewAIAgentTarget tests: contract + e2e through a real crewai.Crew (scripted LLM, offline).
+
+These exercise a real ``crewai.Crew`` and so require ``crewai`` installed (CI); the
+pure ``InjectionSpec`` shape logic is covered offline in ``test_injection.py``.
+"""
 
 from __future__ import annotations
 
@@ -20,10 +24,18 @@ from crewai_agent_target import (
 )
 
 
-def _handlers(user_input: str | None):
+def _handlers(inject: dict[str, str] | str | None = None):
+    # inject: {controllable_name: value}; a bare str is shorthand for user_input.
+    if isinstance(inject, str):
+        inject = {"user_input": inject}
+    inject = inject or {}
+
     async def send_event(ev):
-        if user_input is not None:
-            return ControllableInjection(event=ev, controllable=ev.controllable, value=user_input)
+        name = ev.controllable.name
+        if name in inject:
+            return ControllableInjection(
+                event=ev, controllable=ev.controllable, value=inject[name]
+            )
         return ControllableNoInjection(event=ev, controllable=ev.controllable)
 
     return (lambda ev: None), send_event
@@ -42,6 +54,12 @@ def test_contract() -> None:
         "tool_calls",
         "called_tool_names",
         "error",
+    }
+    # Full agent attack surface, not just the prompt.
+    assert {c.name for c in t.get_controllables()} == {
+        "user_input",
+        "tool_output",
+        "system_prompt",
     }
     assert t.get_controllables()[0].security_domain == USER_INPUT_TAG
 
@@ -96,8 +114,8 @@ async def test_e2e_uses_injected_input_else_user_task() -> None:
 async def test_captures_tools_even_with_agent_step_callback() -> None:
     # a crew_factory whose Agent already has its own step_callback must not silently
     # defeat tool capture (CrewAI keeps the agent's callback over the crew's).
-    def factory_with_agent_cb(llm):
-        crew = build_demo_crew(llm)
+    def factory_with_agent_cb(llm, injection):
+        crew = build_demo_crew(llm, injection)
         crew.agents[0].step_callback = lambda step: None  # pre-existing agent callback
         return crew
 
@@ -113,8 +131,8 @@ async def test_captures_tools_even_with_agent_step_callback() -> None:
 async def test_captures_tools_even_if_agent_callback_raises() -> None:
     # a foreign agent step_callback that raises must not drop our tool capture
     # (we record before invoking it).
-    def factory_with_raising_cb(llm):
-        crew = build_demo_crew(llm)
+    def factory_with_raising_cb(llm, injection):
+        crew = build_demo_crew(llm, injection)
 
         def boom(step):  # noqa: ANN001, ANN202
             raise RuntimeError("foreign callback boom")
@@ -136,8 +154,8 @@ async def test_captures_and_preserves_crew_level_callback() -> None:
     # we set agent-level recorders (which stops CrewAI copying the crew callback).
     seen = []
 
-    def factory_with_crew_cb(llm):
-        crew = build_demo_crew(llm)
+    def factory_with_crew_cb(llm, injection):
+        crew = build_demo_crew(llm, injection)
         crew.step_callback = lambda step: seen.append(1)
         return crew
 
@@ -164,7 +182,9 @@ async def test_scripted_llm_rewinds_each_run() -> None:
 
 
 async def test_crew_factory_error_recorded_not_raised() -> None:
-    def bad_factory(llm):
+    # A factory that raises on a run must be recorded as a run error (so the claim
+    # can abstain), not propagated to hard-abort the task's remaining runs.
+    def bad_factory(llm, spec):
         raise ValueError("bad crew config")
 
     t = CrewAIAgentTarget(crew_factory=bad_factory, llm=scripted_llm(final_answer("x")))
@@ -181,3 +201,17 @@ async def test_reset_clears_state() -> None:
     assert t.query("last_response") == "hi"
     await t.reset_ephemeral_state()
     assert t.query("last_response") == "" and t.query("called_tool_names") == ""
+
+
+# -- injection surfaces (tool_output / system_prompt) ------------------------
+async def test_target_drives_all_surfaces_without_error() -> None:
+    # The target plumbs all three surfaces into a per-run crew build; a run with
+    # every surface injected completes and still exercises the tool.
+    llm = scripted_llm(tool_action(SENSITIVE_TOOL, '{"payload": "x"}'), final_answer("ok"))
+    t = _target(llm)
+    emit, send = _handlers(
+        {"user_input": "do it", "tool_output": "T-INJ", "system_prompt": "S-INJ"}
+    )
+    await t.run(emit, send)
+    assert t.query("error") == ""
+    assert SENSITIVE_TOOL in t.query("called_tool_names")

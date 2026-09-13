@@ -3,11 +3,23 @@
 A [CrewAI](https://github.com/crewAIInc/crewAI) crew as a superred target — so
 red-team claims and optimizers can drive a real CrewAI multi-agent crew.
 
-The attacker controls the crew's `user_input` (injected into the task via
-`kickoff(inputs=...)`, direct prompt injection). The target runs the crew and
-captures its final output and the tools its agent called. The tool-call signal is
-the security surface: an injection that makes the agent call a sensitive tool it
-should not is the failure a paired claim scores.
+The target exposes the crew's real attack surfaces as controllables, so an
+optimizer's surface classifier can choose where to inject:
+
+- `user_input` — the task input, injected via `kickoff(inputs=...)` (direct prompt
+  injection);
+- `tool_output` — attacker content appended to every tool's return value, i.e. the
+  content a tool hands back that the agent then reads (indirect prompt injection
+  via tool results — the classic agent vector);
+- `system_prompt` — attacker text appended to the agent's `backstory`, which CrewAI
+  substitutes into the agent's system prompt.
+
+The target runs the crew and captures its final output and the tools its agent
+called. The tool-call signal is the security surface: an injection that makes the
+agent call a sensitive tool it should not is the failure a paired claim scores.
+The `tool_output` / `system_prompt` surfaces are wired through the crew factory via
+an `InjectionSpec` (built per run) — see `injection.py` and `build_demo_crew` for
+the reference wiring a caller's own factory should follow.
 
 ## What it adds, and what the offline test proves
 
@@ -35,18 +47,26 @@ from crewai_agent_target import crewai_agent_target_factory, build_demo_crew
 from crewai import LLM
 
 factory = crewai_agent_target_factory(
-    crew_factory=build_demo_crew,     # your own (llm) -> crewai.Crew
+    crew_factory=build_demo_crew,     # (llm, injection_spec) -> crewai.Crew
     llm=LLM(model="gpt-4o-mini"),     # required: a crewai.LLM or a BaseLLM
 )
 ```
 
-`crew_factory` takes the `llm` and returns a fresh `crewai.Crew` whose task
-description templates `{user_input}` (the attacker-controlled input the target
-fills at kickoff). `llm` is **required** — a CrewAI agent cannot run without one.
-The target holds **no API key**: the model's auth lives on the `llm` you supply,
-and only its model id / class name is ever emitted as an observable (never the
-`llm` object), so no secret passes through this target. Config: `user_task`
-(benign default input). Controllable: `user_input`.
+`crew_factory` is a callable `(llm, injection_spec) -> crewai.Crew`: it receives the
+`llm` **and** the run's `InjectionSpec`, and returns a fresh `crewai.Crew` whose
+task description templates `{user_input}` (the attacker-controlled input the target
+fills at kickoff). It owns the agent and tools, and it must wire the spec so the
+attack surfaces are live — feed the agent's backstory through
+`injection_spec.apply_backstory(...)` and its tools through
+`injection_spec.wrap_tools(...)` (CrewAI bakes both into the Agent at build time). A
+factory that ignores the spec silently disables the `system_prompt` / `tool_output`
+surfaces, and a one-argument factory raises `TypeError` at run time; see
+`build_demo_crew` for the reference wiring. `llm` is **required** — a CrewAI agent
+cannot run without one. The target holds **no API key**: the model's auth lives on
+the `llm` you supply, and only its model id / class name is ever emitted as an
+observable (never the `llm` object), so no secret passes through this target.
+Config: `user_task` (benign default input). Controllables: `user_input`,
+`tool_output`, `system_prompt`.
 
 ## Queries
 
