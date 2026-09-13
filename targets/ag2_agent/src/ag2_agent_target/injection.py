@@ -81,31 +81,59 @@ def _inject_into_result(result: Any, appendix: str) -> Any:
 
 
 def _pin_signature(tool: Callable[..., Any], wrapper: Callable[..., Any]) -> Callable[..., Any]:
-    """Pin the wrapper's advertised signature to the tool's real one.
+    """Give the wrapper the tool's real name, signature, and RESOLVED annotations.
 
-    ``functools.wraps`` copies the name / docstring / annotations AG2 reads to build
-    a tool's JSON schema, and sets ``__wrapped__`` so ``inspect.signature`` follows
-    through to the original; pinning ``__signature__`` makes that robust even for an
-    inspector that does not follow ``__wrapped__``. Without it a ``*args/**kwargs``
-    wrapper would advertise the wrong parameters and corrupt the tool schema.
+    AG2 builds a tool's JSON schema from the callable's name, signature, and type
+    hints. ``functools.wraps`` copies these for a plain function, but two gaps
+    remain that this closes:
+
+    - Annotations are copied as-is; under PEP 563 they are STRINGS resolvable only
+      against the ORIGINAL tool's ``__globals__``, which this wrapper's module does
+      not share, so a non-builtin annotation would ``NameError`` in AG2's schema
+      builder. Resolve the hints against the tool's own globals and pin the concrete
+      types on BOTH ``__annotations__`` and the pinned ``__signature__`` — a
+      consumer may read either.
+    - For a callable OBJECT (an instance whose ``__call__`` is the tool), ``wraps``
+      can't copy ``__name__``/``__doc__`` (the instance has none); take the name
+      from the class and read the signature/hints from ``__call__``.
+
+    Also drops ``__wrapped__`` so nothing can ``inspect.unwrap()`` back to the
+    un-injected original and bypass the tool-output injection.
     """
+    is_function = inspect.isfunction(tool) or inspect.ismethod(tool)
+    hint_source: Any = tool if is_function else getattr(tool, "__call__", tool)
+    # Name/doc: correct even for a callable object (whose instance lacks __name__).
+    name = getattr(tool, "__name__", None) or type(tool).__name__
+    wrapper.__name__ = name
+    wrapper.__qualname__ = getattr(tool, "__qualname__", None) or name
+    doc = getattr(tool, "__doc__", None)
+    if doc:
+        wrapper.__doc__ = doc
     try:
-        setattr(wrapper, "__signature__", inspect.signature(tool))
+        sig = inspect.signature(tool)
     except (ValueError, TypeError):
         # Some callables expose no introspectable signature; leave what wraps copied.
-        pass
-    # functools.wraps copies the tool's annotations but NOT its __globals__, so a
-    # PEP 563 (stringized) annotation naming a non-builtin type would fail to
-    # resolve against the wrapper's module (this one) when AG2 builds the tool's
-    # JSON schema (NameError). Resolve the annotations against the ORIGINAL tool's
-    # own globals and set the concrete types on the wrapper, so the schema builder
-    # needs no module-level lookup regardless of PEP 563.
+        return _drop_wrapped(wrapper)
     try:
-        wrapper.__annotations__ = dict(get_type_hints(tool))
-    except Exception:  # noqa: BLE001 - keep what wraps copied if resolution fails
-        pass
-    # Drop __wrapped__ so no schema-gen or execution path can inspect.unwrap() back
-    # to the un-injected original and silently bypass the tool-output injection.
+        hints = dict(get_type_hints(hint_source))
+    except Exception:  # noqa: BLE001 - unresolved hints: keep the raw signature
+        hints = {}
+    if hints:
+        params = [
+            p.replace(annotation=hints.get(n, p.annotation))
+            for n, p in sig.parameters.items()
+        ]
+        sig = sig.replace(
+            parameters=params,
+            return_annotation=hints.get("return", sig.return_annotation),
+        )
+        wrapper.__annotations__ = hints
+    setattr(wrapper, "__signature__", sig)
+    return _drop_wrapped(wrapper)
+
+
+def _drop_wrapped(wrapper: Callable[..., Any]) -> Callable[..., Any]:
+    """Remove ``__wrapped__`` so nothing can ``inspect.unwrap()`` past the wrapper."""
     if hasattr(wrapper, "__wrapped__"):
         del wrapper.__wrapped__
     return wrapper

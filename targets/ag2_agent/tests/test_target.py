@@ -149,6 +149,9 @@ def test_wrap_tools_resolves_stringized_nonbuiltin_annotations() -> None:
     # Must not raise (a stringized, unresolved annotation would NameError here):
     hints = get_type_hints(wrapped)
     assert hints["payload"] is _CustomPayload
+    # The resolution must also reach signature-based consumers: the pinned
+    # __signature__'s parameter annotation is the concrete type, not the string.
+    assert inspect.signature(wrapped).parameters["payload"].annotation is _CustomPayload
     # And nothing can inspect.unwrap() past the wrapper to bypass injection:
     assert inspect.unwrap(wrapped) is wrapped
 
@@ -220,6 +223,9 @@ async def test_wrap_tools_handles_async_callable_object() -> None:
             return "obj body"
 
     (wrapped,) = InjectionSpec(tool_output_appendix=mark).wrap_tools([Fetcher()])
+    # A callable object has no __name__; the wrapper takes the class name so AG2's
+    # tool schema keeps a real, correct name instead of "awrapper".
+    assert wrapped.__name__ == "Fetcher"
     result = wrapped()
     import asyncio
 
