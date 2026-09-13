@@ -12,11 +12,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-# Canonical location of the event class; ``ag2.testing`` re-exports the identical
-# class (``ag2.testing.ToolCallEvent is ag2.events.tool_events.ToolCallEvent``), so
-# this isinstance check matches events produced by scripted (demo) and real runs alike.
-from ag2.events.tool_events import ToolCallEvent
-
 
 @dataclass
 class ToolCallRecord:
@@ -40,6 +35,13 @@ class AgentRunResult:
 
 
 def _extract_tool_calls(events: list[Any]) -> list[ToolCallRecord]:
+    # Lazy framework import: keeps the module importable without ag2 installed
+    # (only real runs, which need ag2 anyway, reach here). ``ag2.testing``
+    # re-exports the identical class (``ag2.testing.ToolCallEvent is
+    # ag2.events.tool_events.ToolCallEvent``), so this isinstance check matches
+    # events produced by scripted (demo) and real runs alike.
+    from ag2.events.tool_events import ToolCallEvent
+
     calls: list[ToolCallRecord] = []
     for e in events:
         if isinstance(e, ToolCallEvent):

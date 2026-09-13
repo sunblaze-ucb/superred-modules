@@ -35,22 +35,45 @@ from superred.core.types.observable import Observable, ObservableValue
 from superred.core.types.security_domain import SecurityDomain, SecurityDomainTag
 from superred.core.types.state import ConfigSpec, QuerySpec
 
+from ag2_agent_target.injection import InjectionSpec
 from ag2_agent_target.runner import AgentRunResult, run_agent_capture
 
 SYSTEM_TAG: Final = SecurityDomainTag("system")
 USER_INPUT_TAG: Final = SecurityDomainTag("user_input", parent=SYSTEM_TAG)
-_DOMAIN: Final = SecurityDomain([SYSTEM_TAG, USER_INPUT_TAG])
+# Untrusted content a tool returns to the agent (indirect prompt injection).
+TOOL_OUTPUT_TAG: Final = SecurityDomainTag("tool_output", parent=SYSTEM_TAG)
+# The agent's own system prompt (an attacker planting instructions in it).
+SYSTEM_PROMPT_TAG: Final = SecurityDomainTag("system_prompt", parent=SYSTEM_TAG)
+_DOMAIN: Final = SecurityDomain(
+    [SYSTEM_TAG, USER_INPUT_TAG, TOOL_OUTPUT_TAG, SYSTEM_PROMPT_TAG]
+)
 
-# A factory that takes the AG2 model config and returns a fresh ``ag2.Agent``.
-AgentFactory = Callable[[Any], Any]
+# A factory taking the AG2 model config + the run's InjectionSpec and returning a
+# fresh ``ag2.Agent`` that wires the spec (system-message suffix + tool-return
+# wrapping). See ``build_demo_agent`` for the reference wiring.
+AgentFactory = Callable[[Any, InjectionSpec], Any]
 
 
 class AG2AgentTarget(Target):
     """An AG2 (AutoGen) agent, red-teamed for prompt-injection / agent misuse.
 
+    Exposes the agent's real attack surfaces as controllables — ``user_input``
+    (direct prompt injection), ``tool_output`` (indirect injection via tool
+    returns), and ``system_prompt`` (system-prompt injection) — and captures the
+    agent's final output and the tools it called. An optimizer's surface classifier
+    chooses which surface to drive; see ``injection.py``.
+
     Args:
-        agent_factory: callable taking the ``model`` config and returning a fresh
-            ``ag2.Agent`` (its tools and system prompt are the factory's concern).
+        agent_factory: callable ``(model, injection_spec) -> ag2.Agent``. It receives
+            the ``model`` config **and** the run's :class:`InjectionSpec`, and returns
+            a fresh ``ag2.Agent``. The factory owns the tools; it must also wire the
+            spec so the injection surfaces are live — feed the system message through
+            ``injection_spec.apply_system_prompt(...)`` and the tools through
+            ``injection_spec.wrap_tools(...)`` (AG2 bakes both in at construction). A
+            factory that ignores the spec silently defeats the ``system_prompt`` /
+            ``tool_output`` surfaces; a one-argument factory raises ``TypeError`` at
+            call time (recorded as a run error). See ``build_demo_agent`` for the
+            reference wiring.
         model: the AG2 model config passed to the factory — **required**: a real
             ``ModelConfig`` (live) or an ``ag2.testing.TestConfig`` (offline). An
             ``ag2.Agent`` with no config cannot reach a model. Its auth is the
@@ -147,7 +170,21 @@ class AG2AgentTarget(Target):
             Controllable(
                 name="user_input",
                 security_domain=USER_INPUT_TAG,
-                description="The user input sent to the agent.",
+                description="The user input sent to the agent (direct prompt "
+                "injection).",
+            ),
+            Controllable(
+                name="tool_output",
+                security_domain=TOOL_OUTPUT_TAG,
+                description="Attacker content appended to every tool's return value "
+                "— the content a tool hands back that the agent reads (indirect "
+                "prompt injection via tool results).",
+            ),
+            Controllable(
+                name="system_prompt",
+                security_domain=SYSTEM_PROMPT_TAG,
+                description="Attacker text appended to the agent's system message "
+                "(system-prompt injection).",
             ),
         ]
 
@@ -169,14 +206,52 @@ class AG2AgentTarget(Target):
         self._reset_state()
 
         controllables = {c.name: c for c in self.get_controllables()}
-        resp = await send_event(
-            ControllablePreCallEvent(
-                controllable=controllables["user_input"], request="Enter user input:"
-            )
-        )
-        user_input = resp.value if isinstance(resp, ControllableInjection) else self._user_task
 
-        agent = self._agent_factory(self._model)
+        async def _surface(name: str, request: str, default: str) -> str:
+            resp = await send_event(
+                ControllablePreCallEvent(controllable=controllables[name], request=request)
+            )
+            return resp.value if isinstance(resp, ControllableInjection) else default
+
+        # The optimizer's surface classifier picks which surface to drive; the
+        # others come back un-injected (default). user_input defaults to the benign
+        # task; tool_output / system_prompt default to empty (no injection).
+        user_input = await _surface("user_input", "Enter user input:", self._user_task)
+        tool_output = await _surface("tool_output", "Tool-return injection (optional):", "")
+        system_prompt = await _surface(
+            "system_prompt", "System-prompt injection (optional):", ""
+        )
+
+        spec = InjectionSpec(
+            system_prompt_suffix=system_prompt, tool_output_appendix=tool_output
+        )
+        # Built per run so the wrapped tools / system message carry this run's
+        # injections. A factory that raises on a given spec is recorded as a run
+        # error (so the claim can abstain), matching run_agent_capture's contract,
+        # rather than propagating and hard-aborting the task's remaining runs.
+        try:
+            agent = self._agent_factory(self._model, spec)
+        except Exception as exc:  # noqa: BLE001 - recorded as a run error, not raised
+            self._run = AgentRunResult(
+                error=f"agent_factory: {type(exc).__name__}: {exc}"
+            )
+            emit(
+                ObservableEvent(
+                    observable=Observable(
+                        name="agent_result",
+                        security_domain=SYSTEM_TAG,
+                        description="Tools called and final response.",
+                    ),
+                    content=json.dumps(
+                        {
+                            "called_tool_names": [],
+                            "final_response": "",
+                            "error": self._run.error,
+                        }
+                    ),
+                )
+            )
+            return
 
         emit(
             ObservableEvent(
@@ -214,4 +289,11 @@ class AG2AgentTarget(Target):
         pass
 
 
-__all__ = ["AG2AgentTarget", "AgentFactory", "SYSTEM_TAG", "USER_INPUT_TAG"]
+__all__ = [
+    "AG2AgentTarget",
+    "AgentFactory",
+    "SYSTEM_PROMPT_TAG",
+    "SYSTEM_TAG",
+    "TOOL_OUTPUT_TAG",
+    "USER_INPUT_TAG",
+]
