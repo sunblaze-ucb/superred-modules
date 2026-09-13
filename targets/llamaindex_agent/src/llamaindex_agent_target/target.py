@@ -281,6 +281,7 @@ class LlamaIndexAgentTarget(Target):
                     {
                         "called_tool_names": self._run.called_tool_names,
                         "final_response": self._run.final_response[:500],
+                        "error": self._run.error,
                     }
                 ),
             )
