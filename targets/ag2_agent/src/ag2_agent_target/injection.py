@@ -115,7 +115,12 @@ def _pin_signature(tool: Callable[..., Any], wrapper: Callable[..., Any]) -> Cal
         # Some callables expose no introspectable signature; leave what wraps copied.
         return _drop_wrapped(wrapper)
     try:
-        hints = dict(get_type_hints(hint_source))
+        # include_extras=True keeps Annotated[T, ...] metadata (AG2's canonical
+        # Annotated[str, "description"] param docs, Depends(...) markers) intact —
+        # else the injected arm gets a stripped tool schema while the no-injection
+        # control arm (wrap_tools is a no-op) keeps the full one, confounding the
+        # before/after comparison.
+        hints = dict(get_type_hints(hint_source, include_extras=True))
     except Exception:  # noqa: BLE001 - unresolved hints: keep the raw signature
         hints = {}
     if hints:
