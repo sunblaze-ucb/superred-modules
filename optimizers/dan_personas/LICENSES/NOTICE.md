@@ -30,12 +30,13 @@ Refresh the vendored files with `python scripts/sync_upstream.py`.
 | `src/dan_personas_optimizer/data/upstream/Dan_9_0.json` | `garak/data/dan/Dan_9_0.json` |
 | `src/dan_personas_optimizer/data/upstream/STAN.json` | `garak/data/dan/STAN.json` |
 | `src/dan_personas_optimizer/data/upstream/inthewild_jailbreak_llms.json` | `garak/data/inthewild_jailbreak_llms.json` (see dataset origin below) |
+| `src/dan_personas_optimizer/data/upstream/ablation_dan_11_0_segments.json` | `garak/probes/dan.py` — `Ablation_Dan_11_0` segments, extracted verbatim from the probe's string literals (see `ASSUMPTIONS.md`) |
 | `render()` in `src/dan_personas_optimizer/personas.py` | `garak/probes/dan.py` — `DANProbeMeta.probe()` |
 
-Not vendored: `Ablation_Dan_11_0` (AutoDAN data). See `ASSUMPTIONS.md`.
-(`ChatGPT_Image_Markdown` and `DanInTheWild` **are** vendored — the former in
-the table above, the latter as `inthewild_jailbreak_llms.json`; see the dataset
-origin below.)
+Not vendored: `AutoDAN` / `AutoDANCached` — a genetic search, not a corpus; out
+of scope here (superred ships `optimizers/autodan_turbo`). See `ASSUMPTIONS.md`.
+(`ChatGPT_Image_Markdown`, `Ablation_Dan_11_0`, and `DanInTheWild` **are** all
+vendored — see the table above and the dataset origin below.)
 
 ## Dataset origin (one layer up from garak): the in-the-wild jailbreak corpus
 
@@ -50,5 +51,5 @@ via its `dan.py` `doc_uri`; this module vendors garak's byte-identical copy and
 loads it as `corpus="in_the_wild"`. Provenance chain: verazuo/jailbreak_llms
 (MIT) -> garak -> here.
 
-The 13 DAN persona preambles, by contrast, are community-authored folklore that
+The 14 DAN persona preambles, by contrast, are community-authored folklore that
 garak curates; no distinct licensed upstream exists for them.

@@ -14,10 +14,12 @@ Provenance and every deliberate departure from the reference implementation.
 
 ## Copied byte-for-byte
 
-The 13 JSON files under `src/dan_personas_optimizer/data/upstream/` are
-byte-identical copies of `garak/data/dan/*.json`. `scripts/sync_upstream.py
---check` re-downloads them and fails on any drift, so the vendored corpus can
-be re-verified at any time without trusting this file.
+The 14 per-file DAN persona JSONs under `src/dan_personas_optimizer/data/upstream/`
+are byte-identical copies of `garak/data/dan/*.json` (the in-the-wild corpus and
+the extracted `Ablation_Dan_11_0` segments alongside them are documented
+separately). `scripts/sync_upstream.py --check` re-downloads them and fails on
+any drift, so the vendored corpus can be re-verified at any time without trusting
+this file.
 
 `Persona.render()` reproduces upstream's `DANProbeMeta.probe()`: substitute
 `{generator.name}` only when the placeholder is present, otherwise send the
@@ -69,11 +71,14 @@ persona-adoption check, which is what upstream actually measures. A claim
 judging this optimizer scores whether the *goal* was achieved, which is a
 stricter bar than upstream's.
 
-### 5. One upstream class is not ported
+### 5. AutoDAN is the only upstream class not ported
 
 | Excluded | Why |
 | --- | --- |
-| `Ablation_Dan_11_0` | Reads `autodan/autodan_prompts.json`, not the DAN corpus; it is an AutoDAN ablation. |
+| `AutoDAN` / `AutoDANCached` | Not a persona corpus but a genetic search (`garak.resources.autodan.autodan_generate`) with its own `goal_str`/`target` params; it belongs in its own module, and superred ships `optimizers/autodan_turbo`. |
+
+(`Ablation_Dan_11_0` and `DanInTheWild` **are** ported — see the coverage table
+below — and `ChatGPT_Image_Markdown` is vendored with the other personas.)
 
 ### Injection-surface selection (superred adaptation)
 
