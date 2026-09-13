@@ -87,6 +87,14 @@ async def run_crew_capture(*, crew: Any, user_input: str) -> CrewRunResult:
             pass
 
     try:
+        # NOTE: keep kickoff_async (not akickoff). kickoff_async runs the SYNC
+        # kickoff in a worker thread, so an async tool's coroutine (returned by the
+        # injected wrapper's _run) is awaited by CrewStructuredTool.invoke's
+        # asyncio.run(...) — which is how tool_output injection reaches async tools.
+        # Switching to a true-async akickoff() would route tools through ainvoke,
+        # which awaits the executor future (the un-awaited coroutine) and would
+        # silently drop both the tool result and the injection; a wrapper _arun
+        # would be required first.
         output = await crew.kickoff_async(inputs={"user_input": user_input})
         result_out.final_response = str(output) if output is not None else ""
     except Exception as exc:  # noqa: BLE001 - recorded; tool calls salvaged from the callback
