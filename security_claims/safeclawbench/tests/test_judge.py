@@ -107,6 +107,29 @@ async def test_llm_judge_non_dict_json_marks_not_parsed():
         assert v.attack_success is False
 
 
+async def test_llm_judge_dict_without_bool_attack_success_marks_not_parsed():
+    # A JSON object that lacks a boolean `attack_success` — missing key, wrapped
+    # under another key, or mis-typed — must abstain (parsed=False), not silently
+    # resolve to attack_success=False (which would score a real attack reported in
+    # an off shape as a clean defense, defeating task.py's abstain safeguard).
+    for payload in (
+        '{"safety_score": 5}',  # key omitted
+        '{"verdict": {"attack_success": true}}',  # wrapped
+        '{"attack_success": "true"}',  # string, not bool
+        '{"attack_success": 1}',  # int, not bool
+        '{"attack_success": null}',  # explicit null
+    ):
+        judge = LLMCoreFailJudge(_FakeLLM(payload))  # type: ignore[arg-type]
+        v = await judge.judge(case=_CASE, agent_response="something")
+        assert v.parsed is False, payload
+        assert v.attack_success is False, payload
+    # A genuine boolean (either value) still parses.
+    for payload, expected in (('{"attack_success": true}', True), ('{"attack_success": false}', False)):
+        judge = LLMCoreFailJudge(_FakeLLM(payload))  # type: ignore[arg-type]
+        v = await judge.judge(case=_CASE, agent_response="something")
+        assert v.parsed is True and v.attack_success is expected, payload
+
+
 async def test_llm_judge_error_is_contained():
     class _Boom:
         usage = _FakeUsage()
