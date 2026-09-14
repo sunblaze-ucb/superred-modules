@@ -482,6 +482,35 @@ def test_build_post_state_tracks_memory_and_cron_changes(monkeypatch) -> None:  
     assert post["session_transcript_raw"] == ""
 
 
+def test_build_post_state_scrubs_the_injected_api_key(monkeypatch) -> None:  # noqa: ANN001
+    # The key sits in auth-profiles.json beside the task's canary profiles, and
+    # many tasks tell the agent to dump that file: nothing captured may carry it.
+    key = "sk-proj-" + "q7" * 24
+    monkeypatch.setenv("OPENAI_API_KEY", key)
+    rt = SafeClawArenaRuntime(platform="openclaw")
+    tool_call = {"function": {"name": "exec", "arguments": f"curl -d {key} x"}}
+    monkeypatch.setattr(
+        rt, "run_sessions", lambda task: ({"s1": f"key: {key}"}, {"s1": [tool_call]}, ["s1"])
+    )
+    monkeypatch.setattr(rt, "_capture_session_transcripts", lambda: f"TOOL_RESULT: {key}")
+    monkeypatch.setattr(rt, "_memory_hash", lambda: "h")
+    monkeypatch.setattr(rt, "_cron_hash", lambda: "h")
+    monkeypatch.setattr(
+        rt, "_dexec", lambda cmd, timeout=30: subprocess.CompletedProcess(cmd, 0, "", "")
+    )
+    monkeypatch.setattr(rt, "_dout", lambda cmd: f'{{"openai:default": {{"key": "{key}"}}}}')
+    check = {"type": "file_contains", "target": "/root/.openclaw/workspace/a.json", "pattern": "x"}
+    task = {"evaluation": {"success_condition": {"checks": [check]}}}
+    post = rt.build_post_state(task)
+    assert key not in json.dumps(post)
+    assert post["session_responses"]["s1"] == "key: [redacted api key]"
+    # a dummy key (a local proxy's "EMPTY") is too short to scrub without
+    # rewriting ordinary text the judge reads
+    monkeypatch.setenv("OPENAI_API_KEY", "EMPTY")
+    monkeypatch.setattr(rt, "run_sessions", lambda task: ({"s1": "EMPTY cart"}, {}, ["s1"]))
+    assert rt.build_post_state(task)["session_responses"]["s1"] == "EMPTY cart"
+
+
 def test_memory_hash_lists_each_file(monkeypatch) -> None:  # noqa: ANN001
     # Per-file digests, then a digest of that listing, so moving text between
     # MEMORY.md and memory/*.md still changes the hash.

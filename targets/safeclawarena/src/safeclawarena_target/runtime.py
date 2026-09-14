@@ -58,6 +58,25 @@ _SESSION_BASELINE_MARKER = "/tmp/.safeclaw_session_baseline"
 # Env var supplying the real model API key injected into the container after
 # reset_env.sh. The key is the caller's; the target never stores it.
 _API_KEY_ENV = "OPENAI_API_KEY"
+# The injected key sits in the container's auth-profiles.json beside the task's
+# canary profiles, a file many tasks tell the agent to dump, so everything
+# captured after the run is scrubbed of it: neither the target's observables nor
+# query("post_state") may carry it out. A key shorter than this is a dummy (a
+# local proxy's "EMPTY"), and scrubbing it would rewrite text the judge reads.
+_MIN_SCRUBBED_KEY_LEN = 8
+_SCRUBBED_KEY = "[redacted api key]"
+
+
+def _scrub(value: Any, secret: str) -> Any:
+    """``value`` with ``secret`` replaced in every string, through nested dicts
+    and lists. Pure."""
+    if isinstance(value, str):
+        return value.replace(secret, _SCRUBBED_KEY)
+    if isinstance(value, dict):
+        return {k: _scrub(v, secret) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_scrub(v, secret) for v in value]
+    return value
 
 
 def platform_config(platform: str) -> dict[str, Any]:
@@ -236,9 +255,10 @@ class SafeClawArenaRuntime:
         send_message) scored every task as falsely "secure". The key is the caller's
         responsibility and is never stored on the target — it is passed to the
         container via an inherited env var (``docker exec -e SC_API_KEY`` with no
-        value on the argv, so it never appears in a process list or log). If no key
-        is set we RAISE, so the run errors and the claim abstains rather than running
-        with the placeholder and reporting a false "secure".
+        value on the argv, so it never appears in a process list or log), and
+        :meth:`build_post_state` scrubs it from everything captured after the run.
+        If no key is set we RAISE, so the run errors and the claim abstains rather
+        than running with the placeholder and reporting a false "secure".
         """
         api_key = os.environ.get(_API_KEY_ENV, "").strip()
         if not api_key:
@@ -589,7 +609,8 @@ class SafeClawArenaRuntime:
         targeting so ``file_*`` / ``taint_detected_in_file`` / ``http_route_exists``
         checks resolve against real captured state. ``memory_changed`` and
         ``cron_changed`` are extra: the target's observables use them and the
-        judge ignores them.
+        judge ignores them. Every captured string has the injected API key
+        replaced (see ``_MIN_SCRUBBED_KEY_LEN``).
         """
         cfg = self.cfg
         ws = cfg["workspace"]
@@ -650,7 +671,7 @@ class SafeClawArenaRuntime:
 
         sessions_glob = f"{self._sessions_dir()}/*.jsonl"
         transcript = self._dout(f"cat {sessions_glob} 2>/dev/null")
-        return {
+        post_state: dict[str, Any] = {
             "session_responses": responses,
             "session_tool_calls": tool_calls,
             "session_order": order,
@@ -682,6 +703,11 @@ class SafeClawArenaRuntime:
             "cron_jobs": self._dout(f"cat {cfg['openclaw_home']}/cron/jobs.json 2>/dev/null"),
             "http_routes": routes,
         }
+        key = os.environ.get(_API_KEY_ENV, "").strip()
+        if len(key) < _MIN_SCRUBBED_KEY_LEN:
+            return post_state
+        scrubbed: dict[str, Any] = _scrub(post_state, key)
+        return scrubbed
 
     def stop(self) -> None:
         if not self.keep_container:
