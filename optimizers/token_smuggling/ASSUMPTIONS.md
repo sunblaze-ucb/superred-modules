@@ -49,13 +49,15 @@ single goal there is no payload index, so the seed is the variant index:
 variant *n* is `homoglyph_replace(goal, seed=n)`. Same algorithm, same
 determinism; the seed simply means "which variant" rather than "which payload".
 
-### 3. `FunctionMasking` is not ported
+### 3. `FunctionMasking` is ported, with a verbatim fallback
 
 Upstream's third class wraps a fixed `predict_mask` pseudocode prompt whose
-masked words resolve to a hard-coded "rob a store". It has no goal slot — the
-objective is baked into the prompt — so it cannot serve an arbitrary superred
-task. Porting it would produce a module that ignores its goal. Excluded rather
-than silently reinterpreted.
+masked words resolve to a hard-coded "rob a store", so it has no goal slot. This
+module does not drop it: an LLM rewrites the masked vocabulary from the task goal
+(see the **FunctionMasking** subsection under *Upstream coverage*), and upstream's
+complete prompt is retained verbatim as `UPSTREAM_FUNCTION_MASKING_PROMPT` and
+emitted as the fallback when no rewrite is available. So all three probes are
+ported; an earlier revision excluded this one, and that is no longer the case.
 
 ### 4. One injection per run
 

@@ -9,6 +9,13 @@
 | Commit | `2233d51bedf6bfb634872ef9efbcd94eae38cc1a` |
 | Licence | Apache-2.0 |
 
+> **Data source (one layer up from garak).** The 50 false claims are a subset
+> of the "true-false" dataset from Azaria & Mitchell, "The Internal State of an
+> LLM Knows When It's Lying," Findings of EMNLP 2023 ([arXiv:2304.13734](https://arxiv.org/abs/2304.13734)),
+> which garak curated and vendors. That dataset is the canonical source of the
+> statements; this module reproduces garak's selection unchanged and credits it
+> in `NOTICE`.
+
 ## Copied byte-for-byte
 
 - `_vendor/garak_data/truefalse_falseclaims_50.txt` — garak's 50 false claims,

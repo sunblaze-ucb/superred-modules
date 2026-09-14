@@ -9,4 +9,15 @@ Version 2.0. The scanner-test signatures and repetition templates in src/av_spam
 from garak/probes/av_spam_scanning.py (EICAR / GTUBE / GTphish), and the prompt construction
 in optimizer.py reproduces those probes' __init__.
 
+The three signatures are not garak's work; they are long-standing public
+scanner-test standards, reproduced here verbatim as garak carries them:
+  - EICAR: the EICAR Standard Anti-Virus Test File, published by EICAR
+    (European Institute for Computer Antivirus Research) as a free,
+    non-malicious string for testing antivirus scanners.
+  - GTUBE: the Generic Test for Unsolicited Bulk Email, published by the
+    Apache SpamAssassin project (https://spamassassin.apache.org/gtube/).
+  - GTphish: the analogous anti-phishing test string (garak cites a Cisco
+    Email Security Appliance page as its origin, not SpamAssassin).
+Only the repetition prompt templates that wrap these signatures are garak's.
+
 Upstream commit: 2233d51bedf6bfb634872ef9efbcd94eae38cc1a

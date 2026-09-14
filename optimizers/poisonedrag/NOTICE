@@ -20,8 +20,32 @@ following files are transcribed verbatim into
 - `hotpotqa.json` (from `results/adv_targeted_results/hotpotqa.json`)
 - `msmarco.json`  (from `results/adv_targeted_results/msmarco.json`)
 
-License: MIT, Copyright (c) 2024 Runpeng Geng. Full text in
-`LICENSES/PoisonedRAG-MIT.txt`.
+License: the PoisonedRAG repository is MIT, Copyright (c) 2024 Runpeng Geng
+(full text in `LICENSES/PoisonedRAG-MIT.txt`). MIT covers PoisonedRAG's own
+contribution in these files — the adversarial passages and the assembly of the
+records. It does **not** relicense the benchmark questions and gold answers
+carried over inside them: those retain the terms of their source QA datasets,
+set out under "Underlying benchmark data" below (notably HotpotQA under
+CC BY-SA 4.0 and MS MARCO under its non-commercial terms), which are narrower
+than MIT.
+
+### Underlying benchmark data (one layer up from PoisonedRAG)
+
+Each record in these files pairs a PoisonedRAG-authored adversarial passage with
+a benchmark question and gold answer carried over verbatim from the source QA
+datasets. `hotpotqa.json` and `msmarco.json` keep their native ids (e.g. HotpotQA
+`5adbf0a2...`, MS MARCO `1163399`); `nq.json` is keyed by BEIR-assigned query ids
+(e.g. `test1`, `test11`), not native NQ ids. Those questions/answers are not
+PoisonedRAG's work; they originate in, and should be cited to:
+
+- Natural Questions -- Kwiatkowski et al., TACL 2019 (`nq.json`); the NQ data
+  (distinct from its Apache-2.0 toolkit) is released under CC BY-SA 3.0.
+- HotpotQA -- Yang et al., EMNLP 2018, CC BY-SA 4.0 (`hotpotqa.json`).
+- MS MARCO -- Nguyen et al., 2016 (`msmarco.json`); note MS MARCO's own
+  non-commercial terms govern that data.
+
+PoisonedRAG assembled these subsets via the BEIR benchmark (Thakur et al.,
+NeurIPS 2021). Only the adversarial passages are PoisonedRAG's own contribution.
 
 ## Method / citation
 

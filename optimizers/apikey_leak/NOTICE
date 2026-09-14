@@ -9,4 +9,13 @@ Version 2.0. The service-detection resources in src/apikey_leak_optimizer/_vendo
 base prompts in data.json are taken from garak/probes/apikey.py (GetKey / CompleteKey) and
 garak/resources/apikey/, and the prompt construction in optimizer.py reproduces those probes.
 
+The service-detection resources are in turn derived, by garak, from the dora
+project (https://github.com/sdushantha/dora), Copyright (c) 2021 Siddharth
+Dushantha, licensed under the MIT License. dora is the canonical source of the
+catalogue of 58 detectable services and their detection regexes; garak adapted
+those regexes (adding capture groups) and re-keyed the services, and this module
+vendors garak's copy, which retains dora's copyright notice. Only the 58 service
+names are read, to target the prompts. The dora licence is reproduced in
+LICENSES/dora-MIT.txt.
+
 Upstream commit: 2233d51bedf6bfb634872ef9efbcd94eae38cc1a

@@ -5,9 +5,19 @@ This product includes software developed at NVIDIA Corporation.
 
 Portions of this module are derived from NVIDIA garak
 (https://github.com/NVIDIA/garak), licensed under the Apache License,
-Version 2.0. The 13 persona preambles under
+Version 2.0. The 14 DAN persona preambles under
 src/dan_personas_optimizer/data/upstream/ are byte-identical copies of
 garak/data/dan/*.json, and the {generator.name} substitution in
 src/dan_personas_optimizer/personas.py follows garak/probes/dan.py.
+
+The in-the-wild jailbreak corpus in
+src/dan_personas_optimizer/data/upstream/inthewild_jailbreak_llms.json (loaded
+as the corpus="in_the_wild" variant) is vendored via garak but originates one
+layer up: it is the dataset from Shen, Chen, Backes, Shen & Zhang, "'Do Anything
+Now': Characterizing and Evaluating In-The-Wild Jailbreak Prompts on Large
+Language Models" (arXiv:2308.03825), distributed as verazuo/jailbreak_llms
+(https://github.com/verazuo/jailbreak_llms) and TrustAIRLab/in-the-wild-jailbreak-prompts,
+Copyright (c) 2023 Vera, licensed under the MIT License. That MIT licence is
+reproduced in LICENSES/jailbreak_llms-MIT.txt.
 
 Upstream commit: 2233d51bedf6bfb634872ef9efbcd94eae38cc1a

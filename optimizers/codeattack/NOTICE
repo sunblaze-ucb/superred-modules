@@ -2,11 +2,13 @@ superred-optimizer-codeattack
 Copyright 2026 the superred module authors
 
 Portions of this module are derived from CodeAttack
-(https://github.com/renqibing/CodeAttack), MIT licensed. The three Python code
-templates under src/codeattack_optimizer/data/upstream/ are byte-identical
-copies of CodeAttack's prompt_templates/code_python_{list,stack,string}.txt,
-and the tokenisation in src/codeattack_optimizer/codeattack.py follows
-src/codeattack/data_preparation.py (CodeAttack.wrap).
+(https://github.com/renqibing/CodeAttack, now redirecting to
+https://github.com/AI45Lab/CodeAttack), MIT licensed. The eight code templates
+under src/codeattack_optimizer/data/upstream/ are byte-identical copies of
+CodeAttack's src/codeattack/prompt_templates/*.txt -- code_python_{list,stack,string},
+their _plus variants, code_C_string and code_go_string -- and the tokenisation in
+src/codeattack_optimizer/codeattack.py follows src/codeattack/data_preparation.py
+(CodeAttack.wrap).
 
 Reference: Ren et al., "Exploring Safety Generalization Challenges of Large
 Language Models via Code Completion" (arXiv:2403.07865).

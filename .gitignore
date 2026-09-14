@@ -28,3 +28,6 @@ AGENTS.md
 # it in place makes the NEXT run resume from it and return kept tasks with no
 # runs, which silently breaks end-to-end assertions.
 superred-results/
+
+# Claude Code local worktrees/state
+.claude/
