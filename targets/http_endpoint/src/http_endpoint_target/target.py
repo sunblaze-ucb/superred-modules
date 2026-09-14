@@ -1,16 +1,27 @@
 """HttpEndpointTarget: an arbitrary HTTP LLM/chat endpoint as a superred Target.
 
 Points superred at *your own deployed* LLM application (or any HTTP API): the
-attacker controls the prompt, the target renders it into a configurable JSON
-request body, POSTs it to your endpoint, and extracts the model's reply via a
+attacker controls the values placed into a configurable JSON request body, the
+target POSTs it to your endpoint, and extracts the model's reply via a
 configurable JSON path. This is the "bring your own endpoint" target archetype —
 distinct from provider-SDK targets (e.g. ``minimal_llm_chat``) — so any chatbot
 claim / optimizer can drive a real HTTP service under test.
 
-The prompt is placed JSON-safely: the configured ``body_template`` is a parsed
-JSON structure, and every value equal to the sentinel ``{{prompt}}`` is replaced
-by the prompt *as a value* (not string-substituted), so a prompt containing
-quotes or braces can never corrupt the request body.
+Values are placed JSON-safely: the configured ``body_template`` is a parsed JSON
+structure, and every value equal to a placeholder such as ``{{prompt}}`` is
+replaced by that slot's value *as a value* (not string-substituted), so a value
+containing quotes or braces can never corrupt the request body.
+
+Security domains are declared by the caller, because only the caller knows what
+each part of the request carries. Every ``{{name}}`` placeholder is a
+:class:`Slot` naming the security domain its value arrives through (the user's
+message, a retrieved document, a system prompt, ...), and each slot becomes one
+controllable at that domain; ``slots`` is therefore required whenever a
+``body_template`` is given. The extracted reply and the endpoint's identity are
+observables at ``response_domain`` and ``endpoint_domain``. The defaults model a
+plain chat endpoint: one ``{{prompt}}`` slot on an independent ``user_input``
+root, with the reply and the endpoint identity as leaves of a ``system`` root
+(see ``README.md``).
 
 Auth headers (an API key / bearer token) are held privately and never emitted as
 an observable, returned from a query, or written into any rationale.
@@ -24,6 +35,8 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, Final
 
 import httpx
@@ -39,13 +52,70 @@ from superred.core.types.observable import Observable, ObservableValue
 from superred.core.types.security_domain import SecurityDomain, SecurityDomainTag
 from superred.core.types.state import ConfigSpec, QuerySpec
 
+# Default forest, per the superred security-domain guide: the user's channel is
+# independent of the deployed system, so it is its own root (principle 5), and
+# the reply and the endpoint's identity are separate leaves of the system root,
+# so "reads the replies" and "knows the host" can each be granted (normally via
+# the Controller's ``read_only``) without the other and without any write
+# capability (principles 3 and 4).
 SYSTEM_TAG: Final = SecurityDomainTag("system")
-USER_INPUT_TAG: Final = SecurityDomainTag("user_input", parent=SYSTEM_TAG)
-_DOMAIN: Final = SecurityDomain([SYSTEM_TAG, USER_INPUT_TAG])
+RESPONSE_TAG: Final = SecurityDomainTag("response", parent=SYSTEM_TAG)
+ENDPOINT_TAG: Final = SecurityDomainTag("endpoint", parent=SYSTEM_TAG)
+USER_INPUT_TAG: Final = SecurityDomainTag("user_input")
 
-# Sentinel value marking where the prompt goes in the JSON body template. Any value
-# in the template exactly equal to this is replaced by the prompt (as a JSON value).
+_DEFAULT_TAGS: Final = (SYSTEM_TAG, RESPONSE_TAG, ENDPOINT_TAG, USER_INPUT_TAG)
+
+# Placeholder of the default body template and its default slot.
 PROMPT_PLACEHOLDER: Final = "{{prompt}}"
+_DEFAULT_BENIGN_PROMPT: Final = "Hello, can you help me?"
+_DEFAULT_PROMPT_DESCRIPTION: Final = "The prompt sent to the HTTP endpoint."
+
+# A placeholder is a complete JSON string value "{{name}}", name an identifier.
+_PLACEHOLDER: Final = re.compile(r"\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}")
+# Anything that merely looks like one, so a near miss can be rejected instead of
+# being sent to the endpoint verbatim.
+_PLACEHOLDER_ISH: Final = re.compile(r"\{\{.*?\}\}")
+_SLOT_NAME: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# Observable names this target emits itself. A read-only slot is re-presented to
+# the optimizer as an observable named after the slot, so a slot may not shadow
+# one of these (or another slot's ``sent_`` observable).
+_RESERVED_SLOT_NAMES: Final = frozenset({"endpoint", "endpoint_response"})
+_SENT_PREFIX: Final = "sent_"
+
+
+def _sentinel(name: str) -> str:
+    return "{{" + name + "}}"
+
+
+@dataclass(frozen=True)
+class Slot:
+    """One ``{{name}}`` placeholder in the request body.
+
+    Attributes:
+        domain: the security domain the value arrives through. The target
+            exposes the slot as a controllable at exactly this tag object, so
+            build each tag once and pass the same objects to the Controller's
+            ``scope`` / ``read_only`` (tags match by identity).
+        default: the value sent when the optimizer does not inject.
+        description: what this part of the request carries, as shown to the
+            optimizer. Defaults to a line naming the placeholder.
+    """
+
+    domain: SecurityDomainTag
+    default: str
+    description: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.domain, SecurityDomainTag):
+            raise TypeError(
+                f"Slot.domain must be a SecurityDomainTag, not {type(self.domain).__name__}"
+            )
+        if not isinstance(self.default, str):
+            raise TypeError(f"Slot.default must be a str, not {type(self.default).__name__}")
+        if not isinstance(self.description, str):
+            raise TypeError(
+                f"Slot.description must be a str, not {type(self.description).__name__}"
+            )
 
 
 class ResponseTooLargeError(Exception):
@@ -53,30 +123,93 @@ class ResponseTooLargeError(Exception):
     cap (an untrusted endpoint must not be able to exhaust memory)."""
 
 
-def _render(template: Any, prompt: str) -> Any:
-    """Deep-copy ``template``, replacing every ``PROMPT_PLACEHOLDER`` value with
-    ``prompt`` as a value (JSON-safe — no string interpolation)."""
+def _check_tag_identity(tag: SecurityDomainTag, what: str) -> None:
+    """Reject a look-alike of one of this module's exported tags.
+
+    superred matches tags by IDENTITY (``SecurityDomainTag.includes`` compares
+    with ``is``) while ``==`` compares name and parent. So a freshly built
+    ``SecurityDomainTag("user_input")`` prints, compares and set-tests as equal
+    to :data:`USER_INPUT_TAG`, yet a Controller scope built from the exported tag
+    would cover nothing this target exposes: the run would inject nowhere and
+    report no error at all. Fail at construction instead."""
+    cur: SecurityDomainTag | None = tag
+    while cur is not None:
+        for default in _DEFAULT_TAGS:
+            if cur == default and cur is not default:
+                raise ValueError(
+                    f"{what} is a new SecurityDomainTag equal to this module's "
+                    f"{default.name!r} tag; import and reuse the exported object, "
+                    "because a Controller scope matches tags by identity and would "
+                    "silently cover nothing here"
+                )
+        cur = cur.parent
+
+
+def _render(template: Any, values: Mapping[str, str]) -> Any:
+    """Deep-copy ``template``, replacing every complete-value ``{{name}}``
+    placeholder with ``values[name]`` as a value (JSON-safe — no string
+    interpolation)."""
     if isinstance(template, dict):
-        return {k: _render(v, prompt) for k, v in template.items()}
-    if isinstance(template, list):
-        return [_render(v, prompt) for v in template]
-    if template == PROMPT_PLACEHOLDER:
-        return prompt
+        return {k: _render(v, values) for k, v in template.items()}
+    if isinstance(template, (list, tuple)):
+        return [_render(v, values) for v in template]
+    if isinstance(template, str) and (m := _PLACEHOLDER.fullmatch(template)):
+        return values[m.group(1)]
     return template
 
 
-def _contains_placeholder(template: Any) -> bool:
-    """True iff ``PROMPT_PLACEHOLDER`` appears as a *complete value* somewhere in
-    the template — the only form :func:`_render` substitutes. A sentinel embedded
-    in a larger string (``"ask: {{prompt}}"``) or mistyped (``"{{ prompt }}"``) is
-    deliberately NOT a match: string interpolation is unsupported (it would let a
-    prompt with quotes/braces corrupt the JSON body), so such a template would
-    silently send an un-injected body — better to reject it at construction."""
+def _scan_template(template: Any) -> set[str]:
+    """The names of the placeholders that appear as complete values in the template.
+
+    Raises ``ValueError`` for anything that only looks like a placeholder:
+    embedded in a longer string (``"ask: {{prompt}}"``), spaced
+    (``"{{ prompt }}"``), a non-identifier name, or sitting in a dict KEY. Only a
+    complete string value is substituted — string interpolation would let a value
+    with quotes or braces corrupt the JSON body — so every other form would be
+    sent to the endpoint verbatim, which is a silent misconfiguration rather than
+    an attack."""
+    found: set[str] = set()
     if isinstance(template, dict):
-        return any(_contains_placeholder(v) for v in template.values())
-    if isinstance(template, list):
-        return any(_contains_placeholder(v) for v in template)
-    return bool(template == PROMPT_PLACEHOLDER)
+        for key, value in template.items():
+            if isinstance(key, str) and _PLACEHOLDER_ISH.search(key):
+                raise ValueError(
+                    f"body_template key {key!r} looks like a placeholder, but only a "
+                    "complete string VALUE is ever substituted, never a key"
+                )
+            found |= _scan_template(value)
+    elif isinstance(template, (list, tuple)):
+        for value in template:
+            found |= _scan_template(value)
+    elif isinstance(template, str):
+        if m := _PLACEHOLDER.fullmatch(template):
+            found.add(m.group(1))
+        elif _PLACEHOLDER_ISH.search(template):
+            raise ValueError(
+                f"body_template value {template!r} contains something that looks "
+                "like a placeholder but is not exactly one, so it would be sent "
+                "verbatim. A placeholder is a whole string value whose name is an "
+                "identifier, such as " + repr(_sentinel("prompt")) + ": no text "
+                "around it, and no spaces inside the braces."
+            )
+    return found
+
+
+def _closure(tags: list[SecurityDomainTag]) -> list[SecurityDomainTag]:
+    """``tags`` plus every ancestor, each tag OBJECT once (roots first).
+
+    Deduplicated by identity, not name: two distinct tag objects that share a
+    name both land in the list, so :class:`SecurityDomain` rejects the duplicate
+    instead of a scope built from one object silently missing the other."""
+    ordered: dict[int, SecurityDomainTag] = {}
+    for tag in tags:
+        chain: list[SecurityDomainTag] = []
+        cur: SecurityDomainTag | None = tag
+        while cur is not None:
+            chain.append(cur)
+            cur = cur.parent
+        for t in reversed(chain):
+            ordered.setdefault(id(t), t)
+    return list(ordered.values())
 
 
 def _extract(data: Any, path: str) -> str:
@@ -114,10 +247,22 @@ class HttpEndpointTarget(Target):
             (compression is refused for bomb-safety — see ``max_response_bytes``), so
             any ``Accept-Encoding`` given here is ignored.
         body_template: the JSON request body as a Python structure; every value
-            equal to ``{{prompt}}`` is replaced by the prompt. Defaults to
-            ``{"prompt": "{{prompt}}"}``.
+            equal to a declared slot's ``{{name}}`` is replaced by that slot's value.
+            Defaults to ``{"prompt": "{{prompt}}"}``.
+        slots: ``{name: Slot(domain, default)}`` for every placeholder in
+            ``body_template``, in the order their controllables are offered. Each
+            becomes a controllable named ``name`` at ``domain``. **Required
+            whenever ``body_template`` is given**, so nothing is silently labelled
+            as user input; with the default template it defaults to one ``prompt``
+            slot at :data:`USER_INPUT_TAG`. Construction raises ``ValueError`` if a
+            declared slot's placeholder is missing from the template, or the
+            template holds a placeholder no slot declares.
         response_path: dot path to the reply text in the JSON response (e.g.
             ``choices.0.message.content``); empty returns the whole body as text.
+        response_domain: security domain of the ``endpoint_response`` observable
+            (the extracted reply). Default :data:`RESPONSE_TAG`.
+        endpoint_domain: security domain of the static ``endpoint`` observable
+            (method + host). Default :data:`ENDPOINT_TAG`.
         timeout: httpx per-operation timeout (connect/read/write/pool, seconds).
             This bounds the wait *between* chunks, NOT total response time — see
             ``max_response_time`` for the total bound.
@@ -152,7 +297,10 @@ class HttpEndpointTarget(Target):
         method: str = "POST",
         headers: dict[str, str] | None = None,
         body_template: Any = None,
+        slots: Mapping[str, Slot] | None = None,
         response_path: str = "",
+        response_domain: SecurityDomainTag = RESPONSE_TAG,
+        endpoint_domain: SecurityDomainTag = ENDPOINT_TAG,
         timeout: float = 30.0,
         transport: httpx.AsyncBaseTransport | None = None,
         max_attempts: int = 3,
@@ -164,21 +312,93 @@ class HttpEndpointTarget(Target):
         self._url = url
         self._method = method.upper()
         self._headers = dict(headers or {})  # PRIVATE: never emitted/queried/logged
-        self._body_template: Any = body_template if body_template is not None else {
-            "prompt": PROMPT_PLACEHOLDER
-        }
-        # Fail fast on a body_template that never injects the prompt: _render only
-        # substitutes a value EXACTLY equal to the sentinel, so a template with the
-        # sentinel missing / embedded in a string / mistyped would silently send an
+        default_template = body_template is None
+        self._body_template: Any = (
+            {"prompt": PROMPT_PLACEHOLDER} if default_template else body_template
+        )
+        if slots is None:
+            if not default_template:
+                raise ValueError(
+                    "slots is required with a custom body_template: declare every "
+                    "{{name}} placeholder as Slot(domain, default) so every value "
+                    "the endpoint receives has a security domain behind it. Only the "
+                    "default template's {{prompt}} is assumed to be user input."
+                )
+            slots = {
+                "prompt": Slot(
+                    USER_INPUT_TAG, _DEFAULT_BENIGN_PROMPT, _DEFAULT_PROMPT_DESCRIPTION
+                )
+            }
+        self._slots: dict[str, Slot] = dict(slots)
+        if not self._slots:
+            raise ValueError("slots must declare at least one placeholder to inject into")
+        for name, slot in self._slots.items():
+            if not isinstance(name, str) or not _SLOT_NAME.fullmatch(name):
+                raise ValueError(
+                    f"slot name {name!r} must be an identifier (letters, digits, '_')"
+                )
+            if name in _RESERVED_SLOT_NAMES or name.startswith(_SENT_PREFIX):
+                raise ValueError(
+                    f"slot name {name!r} is reserved: this target emits observables "
+                    f"named {sorted(_RESERVED_SLOT_NAMES)} and {_SENT_PREFIX}<slot>, and a "
+                    "read-only slot is re-presented to the optimizer as an observable "
+                    "named after the slot, so the names would collide"
+                )
+            if not isinstance(slot, Slot):
+                raise TypeError(f"slots[{name!r}] must be a Slot, not {type(slot).__name__}")
+        for arg, tag in (
+            ("response_domain", response_domain),
+            ("endpoint_domain", endpoint_domain),
+        ):
+            if not isinstance(tag, SecurityDomainTag):
+                raise TypeError(f"{arg} must be a SecurityDomainTag, not {type(tag).__name__}")
+            _check_tag_identity(tag, arg)
+        for name, slot in self._slots.items():
+            _check_tag_identity(slot.domain, f"slots[{name!r}].domain")
+        # Fail fast on a template/slot mismatch. _render only substitutes a value
+        # EXACTLY equal to a declared placeholder, so a slot whose placeholder is
+        # missing / embedded in a string / mistyped would silently send an
         # un-injected body on every call — a systematic false-negative with no
-        # observable signal. Reject at construction rather than run a hollow attack.
-        if not _contains_placeholder(self._body_template):
+        # observable signal — and a placeholder no slot declares would be sent
+        # literally, with no security domain behind it. Reject both at construction
+        # rather than run a hollow attack.
+        found = _scan_template(self._body_template)
+        missing = [name for name in self._slots if name not in found]
+        if missing:
             raise ValueError(
-                f"body_template must contain the sentinel {PROMPT_PLACEHOLDER!r} as "
-                "a complete value (not embedded in a larger string) so the prompt is "
-                "actually injected; it does not appear, so the same un-injected body "
-                "would be sent on every call and the endpoint never attacked."
+                "body_template must contain every declared slot's placeholder as a "
+                "complete value (not embedded in a larger string) so its value is "
+                f"actually injected; missing: {', '.join(map(_sentinel, missing))}. "
+                "The same un-injected body would be sent on every call and the "
+                "endpoint never attacked."
             )
+        undeclared = sorted(found - set(self._slots))
+        if undeclared:
+            raise ValueError(
+                f"body_template has placeholder(s) {', '.join(map(_sentinel, undeclared))} "
+                "with no slot; declare each in `slots` with the security domain its "
+                "value arrives through (otherwise it is sent literally)."
+            )
+        self._response_domain = response_domain
+        self._endpoint_domain = endpoint_domain
+        # The forest is exactly the declared surfaces plus their ancestors, so a
+        # custom declaration never drags in the default tags.
+        self._domain = SecurityDomain(
+            _closure(
+                [slot.domain for slot in self._slots.values()]
+                + [response_domain, endpoint_domain]
+            )
+        )
+        self._controllables: dict[str, Controllable] = {
+            name: Controllable(
+                name=name,
+                security_domain=slot.domain,
+                description=slot.description
+                or f"The value sent at {_sentinel(name)} in the request body.",
+            )
+            for name, slot in self._slots.items()
+        }
+        self._benign: dict[str, str] = {name: slot.default for name, slot in self._slots.items()}
         self._response_path = response_path
         self._timeout = timeout
         self._transport = transport
@@ -191,7 +411,6 @@ class HttpEndpointTarget(Target):
         # (connection pooling; the injected transport is NOT closed per attempt).
         self._client = httpx.AsyncClient(transport=transport, timeout=timeout)
 
-        self._benign_prompt = "Hello, can you help me?"
         self._reset_state()
 
     def _reset_state(self) -> None:
@@ -199,7 +418,7 @@ class HttpEndpointTarget(Target):
         self._raw_response: str = ""
         self._http_status: int | None = None
         self._error: str = ""
-        self._sent_prompt: str = ""
+        self._sent: dict[str, str] = {}
 
     # -- Config ---------------------------------------------------------------
 
@@ -207,15 +426,17 @@ class HttpEndpointTarget(Target):
     def config_specs(self) -> list[ConfigSpec]:
         return [
             ConfigSpec(
-                name="benign_prompt",
-                security_domain=SYSTEM_TAG,
-                description="The non-attack prompt used when the prompt is not injected.",
-            ),
+                name=f"benign_{name}",
+                security_domain=slot.domain,
+                description=f"The value sent at {_sentinel(name)} when it is not injected.",
+            )
+            for name, slot in self._slots.items()
         ]
 
     def set_config(self, name: str, value: str) -> None:
-        if name == "benign_prompt":
-            self._benign_prompt = value
+        slot = name.removeprefix("benign_")
+        if slot != name and slot in self._benign:
+            self._benign[slot] = value
 
     # -- Query ----------------------------------------------------------------
 
@@ -231,7 +452,13 @@ class HttpEndpointTarget(Target):
             QuerySpec(name="error", description="Error detail if the call failed, else ''."),
             QuerySpec(
                 name="sent_prompt",
-                description="The effective prompt sent (after injection).",
+                description="The effective value sent at {{prompt}} (after injection), "
+                "or '' when there is no prompt slot.",
+            ),
+            QuerySpec(
+                name="sent_inputs",
+                description="JSON object of the effective value sent at every slot "
+                "(after injection).",
             ),
         ]
 
@@ -245,32 +472,28 @@ class HttpEndpointTarget(Target):
         if name == "error":
             return self._error
         if name == "sent_prompt":
-            return self._sent_prompt
+            return self._sent.get("prompt", "")
+        if name == "sent_inputs":
+            return json.dumps(self._sent)
         return ""
 
     # -- Security domain ------------------------------------------------------
 
     @property
     def security_domain(self) -> SecurityDomain:
-        return _DOMAIN
+        return self._domain
 
     # -- Controllables / observables ------------------------------------------
 
     def get_controllables(self) -> list[Controllable]:
-        return [
-            Controllable(
-                name="prompt",
-                security_domain=USER_INPUT_TAG,
-                description="The prompt sent to the HTTP endpoint.",
-            ),
-        ]
+        return list(self._controllables.values())
 
     def get_observables(self) -> list[ObservableValue]:
         return [
             ObservableValue(
                 observable=Observable(
                     name="endpoint",
-                    security_domain=SYSTEM_TAG,
+                    security_domain=self._endpoint_domain,
                     description="The target endpoint: method + host(:port) only "
                     "(never userinfo, path, query, or headers/auth).",
                 ),
@@ -333,39 +556,45 @@ class HttpEndpointTarget(Target):
     async def run(self, emit: EventHandler, send_event: EventResponseHandler) -> None:
         self._reset_state()
 
-        ctrl = self.get_controllables()[0]
-        resp = await send_event(
-            ControllablePreCallEvent(controllable=ctrl, request="Enter prompt:")
-        )
-        prompt = resp.value if isinstance(resp, ControllableInjection) else self._benign_prompt
-        self._sent_prompt = prompt
-
-        emit(
-            ObservableEvent(
-                observable=Observable(
-                    name="endpoint_input",
-                    security_domain=USER_INPUT_TAG,
-                    description="The prompt sent to the endpoint.",
-                ),
-                content=prompt,
+        for name, ctrl in self._controllables.items():
+            resp = await send_event(
+                ControllablePreCallEvent(controllable=ctrl, request=f"Enter {name}:")
             )
-        )
+            self._sent[name] = (
+                resp.value if isinstance(resp, ControllableInjection) else self._benign[name]
+            )
 
-        await self._call(prompt)
+        # Each value is observable at its own slot's domain, so whoever holds that
+        # surface (read & write, or read_only) sees what was actually sent there.
+        for name, value in self._sent.items():
+            slot = self._slots[name]
+            emit(
+                ObservableEvent(
+                    observable=Observable(
+                        name=f"{_SENT_PREFIX}{name}",
+                        security_domain=slot.domain,
+                        description=slot.description
+                        or f"The value sent at {_sentinel(name)}.",
+                    ),
+                    content=value,
+                )
+            )
+
+        await self._call(self._sent)
 
         emit(
             ObservableEvent(
                 observable=Observable(
                     name="endpoint_response",
-                    security_domain=SYSTEM_TAG,
+                    security_domain=self._response_domain,
                     description="The endpoint's extracted reply.",
                 ),
                 content=self._last_response[:500],
             )
         )
 
-    async def _call(self, prompt: str) -> None:
-        body = _render(self._body_template, prompt)
+    async def _call(self, values: Mapping[str, str]) -> None:
+        body = _render(self._body_template, values)
         for attempt in range(1, self._max_attempts + 1):
             try:
                 status, retry_after, raw = await self._request_capped(body)
@@ -487,4 +716,12 @@ class HttpEndpointTarget(Target):
             await self._client.aclose()
 
 
-__all__ = ["HttpEndpointTarget", "PROMPT_PLACEHOLDER", "SYSTEM_TAG", "USER_INPUT_TAG"]
+__all__ = [
+    "ENDPOINT_TAG",
+    "PROMPT_PLACEHOLDER",
+    "RESPONSE_TAG",
+    "SYSTEM_TAG",
+    "USER_INPUT_TAG",
+    "HttpEndpointTarget",
+    "Slot",
+]
