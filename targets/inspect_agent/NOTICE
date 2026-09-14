@@ -3,7 +3,7 @@
 superred-target-inspect-agent
 
 This package (all code under `src/inspect_agent_target/`) is original work,
-Copyright (c) 2026 Simon Sure, released under the MIT License (see LICENSE).
+Copyright (c) 2026 the superred module authors, released under the MIT License (see LICENSE).
 
 No third-party source code or datasets are vendored or bundled inside this
 package. The items below are credited for transparency; none imposes a

@@ -104,7 +104,7 @@ skipped unless a Docker daemon, the built image, and LiteLLM credentials
 
 ## Credits / upstream
 
-This module's own code is MIT-licensed (Copyright (c) 2026 Simon Sure; see
+This module's own code is MIT-licensed (Copyright (c) 2026 Rishabh Sinha; see
 `LICENSE`).
 
 It is a faithful reimplementation of the **OpenClaw agent adapter** from the

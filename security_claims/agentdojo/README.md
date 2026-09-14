@@ -54,7 +54,7 @@ v0.1.0 alpha.  Public surface is unstable.
 ## Credits / upstream
 
 This package's source is original superred work (MIT, Copyright (c) 2026
-Simon Sure). It bundles no third-party code or data.
+Rishabh Sinha). It bundles no third-party code or data.
 
 **Layer 1** adapts the [AgentDojo](https://github.com/ethz-spylab/agentdojo)
 benchmark (Debenedetti et al., 2024; MIT, Copyright (c) 2024 Edoardo

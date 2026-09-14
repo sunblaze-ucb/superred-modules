@@ -12,7 +12,6 @@ license = "MIT"
 license-files = ["LICENSE", "NOTICE", "LICENSES/*"]
 authors = [
     { name = "Rishabh Sinha", email = "rsinha17@terpmail.umd.edu" },
-    { name = "Simon Sure", email = "info@simonsure.com" },
 ]
 keywords = [
     "superred",

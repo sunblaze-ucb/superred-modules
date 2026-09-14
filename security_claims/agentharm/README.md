@@ -118,7 +118,7 @@ The dataset is downloaded from the gated HuggingFace repo
 
 ## Credits / upstream
 
-This module's code is MIT-licensed, Copyright (c) 2026 Simon Sure. It is an
+This module's code is MIT-licensed, Copyright (c) 2026 Rishabh Sinha. It is an
 original superred port; it bundles no third-party code or data.
 
 It builds on and reuses (at runtime, by import - nothing is copied):

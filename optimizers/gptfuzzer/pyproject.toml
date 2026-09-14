@@ -12,7 +12,7 @@ license = "MIT"
 license-files = ["LICENSE", "NOTICE", "LICENSES/*"]
 authors = [
     { name = "Sarthak Munshi", email = "sarthakmunshi@gmail.com" },
-    { name = "Simon Sure", email = "info@simonsure.com" },
+    { name = "Rishabh Sinha", email = "rsinha17@terpmail.umd.edu" },
 ]
 dependencies = [
     "superred>=0.1.0",

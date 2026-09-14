@@ -170,7 +170,7 @@ See `ASSUMPTIONS.md` for the rollout-faithfulness notes.
 
 ## Credits / upstream
 
-This package is original work by Simon Sure, released under the MIT License
+This package is original work by Rishabh Sinha, released under the MIT License
 (see `LICENSE`). It contains no vendored third-party code and no bundled
 datasets.
 

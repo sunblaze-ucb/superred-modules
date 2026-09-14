@@ -3,7 +3,7 @@
 superred-claim-agentdojo
 
 This package's own source code is original work, released under the MIT
-License (see LICENSE), Copyright (c) 2026 Simon Sure.
+License (see LICENSE), Copyright (c) 2026 the superred module authors.
 
 It bundles no third-party code and no third-party datasets. The following
 upstream project is a RUNTIME DEPENDENCY (installed separately from PyPI,

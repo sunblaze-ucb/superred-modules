@@ -200,5 +200,5 @@ standardized red-teaming benchmark (Mazeika et al., ICML 2024,
   asserting fresh MIT coverage of those excerpts.
 
 Original superred integration code is MIT-licensed, Copyright (c) 2026
-Simon Sure. Full attribution in `LICENSES/NOTICE.md`; upstream license text in
+Rishabh Sinha. Full attribution in `LICENSES/NOTICE.md`; upstream license text in
 `LICENSES/harmbench-MIT.txt`.

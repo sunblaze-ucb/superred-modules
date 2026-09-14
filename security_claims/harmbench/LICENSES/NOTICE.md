@@ -3,7 +3,7 @@
 superred-claim-harmbench
 
 This product includes the superred HarmBench SecurityClaim module.
-Original code is Copyright (c) 2026 Simon Sure, released under the MIT
+Original code is Copyright (c) 2026 the superred module authors, released under the MIT
 License (see LICENSE).
 
 It bundles data and code derived from the HarmBench project. The upstream

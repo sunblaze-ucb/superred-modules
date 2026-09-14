@@ -45,4 +45,4 @@ commit `1f561dcc`.
 Everything else in this module (the superred Target, the event-based injection
 model, the litellm-proxy transport, the durable cosine memory store, and the
 trust-boundary forest) is original work, MIT-licensed, Copyright (c) 2026
-Simon Sure. See `LICENSE` and `NOTICE`. Cite ASB when reporting results.
+Rishabh Sinha. See `LICENSE` and `NOTICE`. Cite ASB when reporting results.
