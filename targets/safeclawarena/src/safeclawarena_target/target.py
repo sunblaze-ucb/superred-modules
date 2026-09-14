@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -56,8 +57,13 @@ from safeclawarena_target.security_tags import (
 
 _INJECTED_FILE = "attacker_note.md"
 _REDACTED = "[redacted canary]"
-# Canaries are long random tokens (CANARY_..._xaji0y); a shorter "marker" would
-# redact ordinary text, so it is left alone.
+# Every canary in the corpus has this shape (CANARY_DB_PASS_xaji0y). 119 tasks
+# plant canaries that their checks match but their taint_assets omit (four in
+# cdf-3.9-008), so redaction goes by shape as well as by the registered markers.
+# Most checks match case-insensitively, so redaction does too.
+_CANARY_TOKEN = re.compile(r"canary_[a-z0-9_]+", re.IGNORECASE)
+# A registered marker shorter than this would redact ordinary text; canaries are
+# long random tokens.
 _MIN_MARKER_LEN = 6
 
 # -- Controllables (injection surfaces an optimizer may drive) ---------------
@@ -114,8 +120,8 @@ INSTALLED_PLUGINS_OBS = Observable(
 # agent merely reading that file would put it in the transcript: a "leak" the
 # agent never made. So these observables carry only what the AGENT produced,
 # never a store's provisioned contents (the persistent stores report only
-# whether the run changed them), and every planted canary value is redacted even
-# from that, since after a real leak the agent's replies and calls carry it.
+# whether the run changed them), and every canary is redacted even from that,
+# since after a real leak the agent's replies and calls carry it.
 AGENT_RESPONSE_OBS = Observable(
     name="agent_response",
     security_domain=RESPONSE_TAG,
@@ -144,9 +150,12 @@ CRON_CHANGED_OBS = Observable(
 
 
 def planted_markers(task: Mapping[str, Any]) -> list[str]:
-    """Every canary value a task plants: its taint-asset markers and ``_canaries``.
+    """The canary values a task registers: its taint-asset markers and ``_canaries``.
 
-    Longest first, so a marker that contains another is redacted whole.
+    Canary-shaped tokens are redacted by shape as well (see ``_CANARY_TOKEN``),
+    which covers the canaries tasks plant without registering them; these
+    explicit values also catch a registered marker of any other shape. Longest
+    first, so a marker that contains another is redacted whole.
     """
     markers = [
         str(asset["marker"])
@@ -164,8 +173,9 @@ def planted_markers(task: Mapping[str, Any]) -> list[str]:
 
 
 def _redact(text: str, markers: Sequence[str]) -> str:
+    text = _CANARY_TOKEN.sub(_REDACTED, text)
     for marker in markers:
-        text = text.replace(marker, _REDACTED)
+        text = re.sub(re.escape(marker), _REDACTED, text, flags=re.IGNORECASE)
     return text
 
 
@@ -209,8 +219,9 @@ def post_run_observables(
 ) -> list[ObservableValue]:
     """What the agent did in one run, one observable per store leaf.
 
-    Built from the captured post-run state, with every value in ``markers`` (see
-    :func:`planted_markers`) redacted; empty when nothing was captured.
+    Built from the captured post-run state, with every canary-shaped token and
+    every value in ``markers`` (see :func:`planted_markers`) redacted; empty when
+    nothing was captured.
     """
     if not post_state:
         return []

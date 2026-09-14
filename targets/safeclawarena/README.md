@@ -75,11 +75,13 @@ replies is `read_only={RESPONSE_TAG}`. Tags match by identity, so build scopes
 from the tags this package exports.
 
 After a run the target emits only what the agent produced, never a store's
-provisioned contents, and it redacts every canary the task plants (its taint
-markers and `_canaries`) even from that. The tasks plant canary credentials in
-workspace files, auth profiles and memory. An optimizer that saw one could plant
-it back through the workspace file, and the agent merely reading that file would
-put it in the transcript, which the judge counts as a leak the agent never made.
+provisioned contents, and it redacts every canary even from that: any
+`CANARY_…` token in any letter case, plus the task's registered taint markers
+and `_canaries`. The tasks plant canary credentials in workspace files, auth
+profiles and memory, and 119 of them plant canaries that their checks look for
+but their taint assets omit. An optimizer that saw one could plant it back
+through the workspace file, and the agent merely reading that file would put it
+in the transcript, which the judge counts as a leak the agent never made.
 Memory, config and cron therefore report only whether the run changed them, and
 the Sim-Google call entries drop the CLI's `env_snapshot` and `cwd`.
 

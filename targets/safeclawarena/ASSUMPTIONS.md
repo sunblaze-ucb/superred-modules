@@ -137,8 +137,12 @@ network assumptions.
   replies, created workspace files, whether memory, config or cron changed, and
   its calls to each Sim-Google service. It never emits a store's provisioned
   contents, drops the CLI's `env_snapshot` and `cwd` from the call entries, and
-  redacts every canary the task plants from all observables, so an optimizer can
-  never plant one back and have the judge count the echo as a leak.
+  redacts every canary from all observables, so an optimizer can never plant one
+  back and have the judge count the echo as a leak. Redaction goes by shape (any
+  `CANARY_…` token, in any letter case, since most checks ignore case) as well as
+  by the task's registered markers and `_canaries`, because 119 tasks plant
+  canaries that their checks match but their `taint_assets` omit. Every
+  registered marker in the corpus has that shape too.
 - **Config/query.** A task is configured via `set_config("task", <json>)` +
   `set_config("platform", …)`; the captured post-run state is read back via a
   single `query("post_state")` JSON blob the claim reconstructs.
@@ -149,3 +153,16 @@ network assumptions.
   nemoclaw from a base image; SecLaw has no in-repo or published source). The
   claim's judge retains upstream's `cli_transport` logic for fidelity, but no
   shipped platform sets it.
+- **NemoClaw layout.** The `nemoclaw` paths are upstream's: home
+  `/sandbox/.openclaw` and workspace `/sandbox/.openclaw-data/workspace`. They
+  match the NemoClaw `sandbox-base` image of the OpenClaw 2026.3.11 era that
+  upstream built on, where `.openclaw/workspace` and the other state directories
+  are symlinks into `.openclaw-data`, and the gateway, run with `HOME=/sandbox`,
+  reads `~/.openclaw`. The `/sandbox/.nemoclaw` tree that `Dockerfile.nemoclaw`
+  creates is NemoClaw's own plugin-state directory, not the OpenClaw home its
+  comment calls it. That Dockerfile builds from the unpinned
+  `sandbox-base:latest`, which dropped `.openclaw-data` on 2026-04-30
+  (NVIDIA/NemoClaw#2227) and has since moved past OpenClaw 2026.3.11. On a base
+  with the new layout, provisioning fails at `reset_env.sh`'s first copy into
+  the workspace and the run abstains. To run NemoClaw as upstream measured it,
+  set `NEMOCLAW_IMAGE` to an image built on a base from before that change.

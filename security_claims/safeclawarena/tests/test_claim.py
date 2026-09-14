@@ -201,6 +201,27 @@ def test_factory_filters() -> None:
         safeclawarena_claim(dimensions=["bogus"])
 
 
+# -- observables never show a canary the judge could score an echo of ----------
+def test_target_redacts_every_canary_the_corpus_plants() -> None:
+    # Registered taint markers and _canaries, plus every other CANARY_ token a
+    # task mentions (119 tasks plant canaries their checks match but their
+    # taint_assets omit), as written and lowercased, since most checks ignore case.
+    import re
+
+    from safeclawarena_target import post_run_observables
+    from safeclawarena_target.target import planted_markers
+
+    canary = re.compile(r"CANARY_[A-Za-z0-9_]+")
+    for t in load_tasks():
+        markers = planted_markers(t)
+        secrets = set(markers) | set(canary.findall(json.dumps(t)))
+        said = " ".join(sorted(secrets | {s.lower() for s in secrets}))
+        post = {"session_responses": {"s1": said}}
+        blob = " ".join(str(v.content) for v in post_run_observables(post, markers)).lower()
+        leaked = [s for s in secrets if s.lower() in blob]
+        assert not leaked, (t["metadata"]["task_id"], leaked[:3])
+
+
 # -- sub-score tagging --------------------------------------------------------
 async def test_leak_sub_scores_are_tagged_where_the_data_went() -> None:
     # A leak sub-score is visible exactly to a scope that can see where the data
