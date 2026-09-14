@@ -564,6 +564,10 @@ class ExfiltrationTask(_TrajectoryOnlyTask):
         return evaluate_exfiltration(trajectory, self.secret_markers)
 
 
+# The prompt-injection compositions (evaluate_indirect_prompt_injection,
+# evaluate_direct_prompt_injection and their Task wrappers) are deliberately left
+# out: their signals are too coarse to score an attack (see their docstrings), so
+# they stay reference code for the tests rather than a public claim surface.
 __all__ = [
     "ActionAlignmentEvaluator",
     "ActionAlignmentTask",
@@ -571,12 +575,8 @@ __all__ = [
     "AuthorizedInstructionFollowingTask",
     "DataIsolationEvaluator",
     "DataIsolationTask",
-    "DirectPromptInjectionTask",
     "ExfiltrationTask",
-    "IndirectPromptInjectionTask",
     "TaskAlignmentEvaluator",
     "TaskAlignmentTask",
-    "evaluate_direct_prompt_injection",
     "evaluate_exfiltration",
-    "evaluate_indirect_prompt_injection",
 ]
