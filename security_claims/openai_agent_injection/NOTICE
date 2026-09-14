@@ -1,0 +1,26 @@
+# NOTICE
+
+superred-claim-openai-agent-injection
+
+This module red-teams an OpenAI Agents SDK agent as a superred SecurityClaim. All
+code and the bundled attack payloads are original to this module and licensed MIT
+(see LICENSE). No third-party dataset or source is vendored.
+
+## Attack payloads
+
+The illustrative direct prompt-injection payloads in
+`src/openai_agent_injection_claim/attacks.py` (5) are original content authored for
+this module — canonical injection patterns, not copied from any dataset. They exist
+so the claim is runnable and testable out of the box and to seed an optimizer; they
+are not a benchmark. Supply your own via `agent_injection_claim(attacks=...)`.
+
+## Framework under test (not vendored)
+
+- OpenAI Agents SDK — https://github.com/openai/openai-agents-python (MIT). This
+  module and the paired `superred-target-openai-agents` depend on the SDK; no SDK
+  code is vendored.
+
+## Citation
+
+When reporting results, describe the agent (instructions, tools, guardrails) and
+model used — injection susceptibility depends on all of them and is point-in-time.

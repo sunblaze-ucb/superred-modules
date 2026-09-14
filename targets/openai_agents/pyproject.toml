@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "superred-target-openai-agents"
+version = "0.1.0"
+description = "OpenAI Agents SDK agent as a superred target: red-team a real Agents-SDK agent (agent loop, tool execution, guardrails) for prompt injection / agent misuse. Offline-testable via a scripted model."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Rishabh Sinha", email = "rsinha17@terpmail.umd.edu" }]
+keywords = ["superred", "red-teaming", "ai-safety", "security", "llm", "target", "openai-agents", "agent", "prompt-injection", "guardrails"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security",
+]
+dependencies = ["superred>=0.1.0", "openai-agents>=0.22,<0.23"]
+
+[project.urls]
+Homepage = "https://superred.simonsure.com"
+Repository = "https://github.com/RoldSI/superred-modules"
+Issues = "https://github.com/RoldSI/superred-modules/issues"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pytest-cov>=6.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openai_agents_target"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "--strict-markers"
+testpaths = ["tests"]
+markers = ["integration: end-to-end test against a real model"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+files = ["src"]
+[[tool.mypy.overrides]]
+module = ["agents.*", "openai.*"]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["UP046", "UP047"]
