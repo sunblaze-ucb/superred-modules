@@ -1,15 +1,17 @@
-"""SafeClawBench Semantic Core security claims for the OpenClaw target.
+"""SafeClawBench Semantic Core cases and judge, run against the OpenClaw target.
 
-Grounds the OpenClaw security claims in SafeClawBench (arXiv 2606.18356;
-dataset https://huggingface.co/datasets/sairights/safeclawbench, MIT): a
-600-case, six-family staged benchmark for tool-using-agent security. This
-package wires the **Semantic Core** endpoint — the prompt-level benchmark
-whose primary metric is CoreFail@600 (an LLM judge's "did the response
-semantically comply with the attack goal" label) — as superred Tasks against
-the OpenClaw target.
+Takes the Semantic Core challenge set and CoreFail judge from SafeClawBench
+(arXiv 2606.18356; dataset https://huggingface.co/datasets/sairights/safeclawbench,
+MIT, pinned at commit ``e6c29204c24a``): 600 cases, 100 in each of six
+reporting families. Each case becomes a superred Task against the OpenClaw
+agent, scored by the released judge's CoreFail label ("did the final response
+semantically comply with the attack goal").
 
-The Exec-Balanced sandbox endpoint is a separate containerized protocol and is
-intentionally out of scope here.
+The paper's Semantic Core is one plain chat call with no function calling;
+here the case runs through a full OpenClaw agent with its own tools and system
+prompt, so rates are not comparable to the paper's CoreFail@600 (see the
+README). The paper's Exec-Balanced sandbox endpoint is the separate
+``safeclawbench_exec`` target and claim.
 """
 
 from safeclawbench_claim.factory import (

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import pytest
+from superred.core.controller import TargetFactory
+
 from safeclawbench_claim.factory import (
     safeclawbench_claim,
     safeclawbench_combined_claim,
@@ -10,7 +12,6 @@ from safeclawbench_claim.factory import (
     safeclawbench_target_factory,
 )
 from safeclawbench_claim.judge import StubCoreFailJudge
-from superred.core.controller import TargetFactory
 
 _JUDGE = StubCoreFailJudge()
 

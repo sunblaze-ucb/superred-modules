@@ -22,7 +22,10 @@ SOFTWARE.
 
 ---
 
-This LICENSE covers this package's own code only. The vendored benchmark
-data under `src/safeclawbench_claim/data/` (`benchmark_v5_600.json`) is
-distributed under its own upstream license and citation — see
-`src/safeclawbench_claim/data/DATASET_LICENSE` and `CITATION.cff`.
+This LICENSE covers this package's own code only. Material taken from upstream
+SafeClawBench keeps its own MIT license and citation — see
+`src/safeclawbench_claim/data/DATASET_LICENSE` and `CITATION.cff`. That is the
+vendored benchmark data under `src/safeclawbench_claim/data/`
+(`benchmark_v5_600.json`) and the two prompts ported verbatim: `JUDGE_PROMPT`
+in `src/safeclawbench_claim/judge.py` and `AGENT_SYSTEM_PROMPT` in
+`src/safeclawbench_claim/loader.py`.

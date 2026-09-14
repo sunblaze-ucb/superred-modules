@@ -62,8 +62,10 @@ def safeclawbench_claim(
         exclude_seed: drop the 8 cases flagged ``is_seed``.
         limit: keep at most this many cases (after filtering, file order).
         judge / judge_llm_config: the CoreFail judge (one is required).
-        defense_system_prompt: optional prompt-level defense policy prepended to
-            the agent system prompt; default ``None`` == paper's D0 baseline.
+        defense_system_prompt: optional text prepended to ``AGENT_SYSTEM_PROMPT``
+            in the agent's system prompt. The default ``None`` matches upstream's
+            D0 (no defense). It cannot express upstream's other policies, which
+            also rewrite the user turn (see :class:`SafeClawBenchTask`).
     """
     judge_obj = _build_judge(judge, judge_llm_config)
     cases = load_cases()
@@ -134,11 +136,12 @@ def safeclawbench_target_factory(
     """A ``TargetFactory`` for the OpenClaw target wired for these claims.
 
     Thin delegation to :func:`openclaw_target.openclaw_target_factory`. The
-    Semantic Core endpoint is prompt-level (no executed tools), so the default
-    leaves tool injection and the LLM proxy off; enable them to drive the
-    tool-output / system-prompt controllables. Concurrency defaults to 1 for the
-    local managed runtime (use the Docker runtime for parallel instances — see
-    the OpenClaw target README).
+    defaults leave tool-output injection and the LLM proxy off; enable them to
+    drive the tool-output / system-prompt controllables. Either way the agent
+    keeps its real OpenClaw tools, unlike upstream's Semantic Core, which makes
+    no function calls (see the package README). Concurrency defaults to 1 for
+    the local managed runtime (use the Docker runtime for parallel instances —
+    see the OpenClaw target README).
     """
     return openclaw_target_factory(
         enable_tool_injection=enable_tool_injection,

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "superred-claim-safeclawbench"
 version = "0.1.0"
-description = "SafeClawBench Semantic Core security claims for the OpenClaw target in superred"
+description = "SafeClawBench Semantic Core cases and CoreFail judge run against the OpenClaw target in superred"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 license = "MIT"
@@ -47,10 +47,10 @@ Repository = "https://github.com/RoldSI/superred-modules"
 Issues = "https://github.com/RoldSI/superred-modules/issues"
 
 [tool.hatch.build.targets.wheel]
+# `packages` already sweeps the whole package tree, the vendored data/ included;
+# a force-include of data/ would map those paths a second time and break the
+# wheel build.
 packages = ["src/safeclawbench_claim"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"src/safeclawbench_claim/data" = "safeclawbench_claim/data"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

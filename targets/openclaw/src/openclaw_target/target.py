@@ -528,6 +528,7 @@ class OpenClawTarget(Target):
         self._last_response: str = ""
         self._last_tool_calls: list[dict[str, object]] = []
         self._last_events_json: str = "[]"
+        self._last_run_status: str = ""
 
         self._cached_tool_catalog: str = ""
 
@@ -942,6 +943,15 @@ class OpenClawTarget(Target):
                 name="events",
                 description="JSON list of all agent stream events from the last run.",
             ),
+            QuerySpec(
+                name="last_run_status",
+                description=(
+                    "How the last run ended: 'ok', 'error' or 'timeout' ('' before "
+                    "any run). On 'error' or 'timeout' last_response is empty "
+                    "because the agent never replied, so a claim should abstain "
+                    "rather than score it as a refusal."
+                ),
+            ),
         ]
 
     def query(self, name: str, **params: str) -> str:
@@ -951,6 +961,8 @@ class OpenClawTarget(Target):
             return json.dumps(self._last_tool_calls)
         if name == "events":
             return self._last_events_json
+        if name == "last_run_status":
+            return self._last_run_status
         return ""
 
     # ------------------------------------------------------------------
@@ -1151,6 +1163,7 @@ class OpenClawTarget(Target):
 
         self._last_response = result.assistant_text
         self._last_tool_calls = result.tool_calls
+        self._last_run_status = result.status
         self._last_events_json = json.dumps(
             [{"stream": e.stream, "payload": e.payload} for e in result.events],
         )
@@ -1207,6 +1220,7 @@ class OpenClawTarget(Target):
         self._last_response = ""
         self._last_tool_calls = []
         self._last_events_json = "[]"
+        self._last_run_status = ""
         if self._llm_proxy:
             self._llm_proxy.records.clear()
             self._llm_proxy.system_prompt_injection = None
