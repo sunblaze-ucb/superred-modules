@@ -4,6 +4,7 @@ LLM, offline) + the tool_output / system_prompt injection surfaces."""
 from __future__ import annotations
 
 import json
+import types
 from typing import Any
 
 import pytest
@@ -135,12 +136,19 @@ async def test_reset_clears_state() -> None:
 def test_injection_spec_system_prompt_and_wrap_tools() -> None:
     empty = InjectionSpec()
     assert empty.apply_system_prompt("base") == "base"
-    sentinel = ["tool-a", "tool-b"]
-    assert empty.wrap_tools(sentinel) is sentinel  # nothing injected -> untouched
+    # Tool stubs must expose a settable ``.call`` (the boundary _wrap_tool wraps);
+    # bare strings would raise AttributeError the moment wrap_tools actually wraps.
+    tools = [
+        types.SimpleNamespace(call=lambda: "OUT"),
+        types.SimpleNamespace(call=lambda: "OUT"),
+    ]
+    assert empty.wrap_tools(tools) is tools  # nothing injected -> untouched
     spec = InjectionSpec(system_prompt_suffix="ATK", tool_output_appendix="PAYLOAD")
     assert spec.apply_system_prompt("base") == "base\n\nATK"
     assert spec.apply_system_prompt(None) == "ATK"
-    assert len(spec.wrap_tools(sentinel)) == 2  # wrapped one-for-one
+    wrapped = spec.wrap_tools(tools)
+    assert len(wrapped) == 2 and wrapped[0] is not tools[0]  # copies, one-for-one
+    assert "PAYLOAD" in wrapped[0].call()  # the appendix reaches the tool's return
 
 
 def test_append_appendix_bare_shapes() -> None:
