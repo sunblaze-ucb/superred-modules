@@ -1,11 +1,13 @@
 """Container-harness driver for the SafeClawArena target.
 
-A faithful, focused port of upstream ``scripts/judge.py``'s *execution and
-capture* half (its judging half is ported into ``safeclawarena_claim.judge``):
-platform config, image build, container lifecycle, environment provisioning via
-the vendored ``reset_env.sh``, session execution over the OpenClaw gateway
-(HTTP), and post-run state capture into the dict the claim's
-pure judge consumes.
+A focused port of upstream ``scripts/judge.py``'s *execution and capture* half
+(its judging half is ported into ``safeclawarena_claim.judge``): platform
+config, image build, container lifecycle, environment provisioning via the
+vendored ``reset_env.sh``, session execution over the OpenClaw gateway (HTTP),
+and post-run state capture into the dict the claim's pure judge consumes. The
+deliberate differences from upstream, such as abstaining on a gateway timeout
+instead of scoring upstream's ``[TIMEOUT]`` reply, are listed in
+``ASSUMPTIONS.md``.
 
 End-to-end execution needs Docker and the platform image (built from the
 vendored Dockerfiles); like the ``dtap_openclaw`` target, that path is not
@@ -218,6 +220,10 @@ class SafeClawArenaRuntime:
         # reset_env.sh installs an auth profile with a "YOUR-API-KEY-HERE"
         # placeholder; inject the caller's real key so the agent's model calls run.
         self._inject_api_key()
+        # Upstream restarts the gateway after writing provider credentials, since
+        # the running gateway does not pick them up (judge.py _apply_model_config),
+        # then gives it 90 s to become healthy and aborts the task otherwise.
+        self._restart_gateway(health_timeout=90)
         self._pre_state = self._capture_baseline()
 
     def _inject_api_key(self) -> None:
@@ -278,6 +284,10 @@ class SafeClawArenaRuntime:
         cfg_path = self._config_path()
         baseline = {
             "config_hash": self._dout(f"md5sum {cfg_path} | cut -d' ' -f1"),
+            # Only for the target's memory_changed / cron_changed observables; the
+            # judge never reads these.
+            "memory_hash": self._memory_hash(),
+            "cron_hash": self._cron_hash(),
             "workspace_files_baseline": self._dout(
                 f"find {ws} -type f \\( -name '*.md' -o -name '*.json' -o -name '*.txt' "
                 f"-o -name '*.yml' -o -name '*.py' -o -name '*.sh' -o -name '*.log' \\) "
@@ -299,8 +309,67 @@ class SafeClawArenaRuntime:
     def _memory_path(self) -> str:
         return f"{self.cfg['workspace']}/MEMORY.md"
 
+    def _memory_hash(self) -> str:
+        """md5 of everything the memory checks read (MEMORY.md + memory/*.md).
+
+        A digest of the per-file ``md5sum`` listing, which includes file names,
+        so moving text between files changes it too.
+        """
+        ws = self.cfg["workspace"]
+        return self._dout(
+            f"md5sum {ws}/MEMORY.md {ws}/memory/*.md 2>/dev/null | md5sum | cut -d' ' -f1"
+        )
+
+    def _cron_hash(self) -> str:
+        """md5 of the scheduled-jobs file."""
+        return self._dout(
+            f"cat {self.cfg['openclaw_home']}/cron/jobs.json 2>/dev/null | md5sum | cut -d' ' -f1"
+        )
+
     def _sessions_dir(self) -> str:
         return f"{self.cfg['openclaw_home']}/agents/main/sessions"
+
+    def _capture_session_transcripts(self) -> str:
+        """The tool calls and tool results in the five newest session files.
+
+        Upstream ``_capture_session_transcripts``: the same extraction script
+        (arguments cut to 500 characters, result text to 1000) and the same empty
+        string when there is no session file or the script fails. The judge's
+        ``log_file`` taint channel reads this; the raw JSONL is kept separately as
+        ``session_transcript_raw``, which only the SecLaw fallback check reads.
+        """
+        sessions_dir = self._sessions_dir()
+        if not self._dout(f"ls -t {sessions_dir}/*.jsonl 2>/dev/null"):
+            return ""
+        script = (
+            "import json, glob, os\n"
+            f"sessions_dir = {sessions_dir!r}\n"
+            'files = sorted(glob.glob(os.path.join(sessions_dir, "*.jsonl")), '
+            "key=os.path.getmtime, reverse=True)\n"
+            "for fpath in files[:5]:\n"
+            "    with open(fpath) as f:\n"
+            "        for line in f:\n"
+            "            obj = json.loads(line.strip())\n"
+            '            if obj.get("type") != "message": continue\n'
+            '            msg = obj.get("message", {})\n'
+            '            role = msg.get("role", "")\n'
+            '            content = msg.get("content", "")\n'
+            "            if not isinstance(content, list): continue\n"
+            "            for item in content:\n"
+            "                if not isinstance(item, dict): continue\n"
+            '                itype = item.get("type", "")\n'
+            '                if itype == "toolCall":\n'
+            '                    name = item.get("name", "?")\n'
+            '                    args = item.get("arguments", '
+            'item.get("tool", {}).get("input", {}))\n'
+            "                    inp = json.dumps(args)[:500]\n"
+            '                    print(f"TOOL_CALL: {name} -> {inp}")\n'
+            '                elif itype == "text" and role == "toolResult":\n'
+            '                    text = item.get("text", "")[:1000]\n'
+            '                    print(f"TOOL_RESULT: {text}")\n'
+        )
+        r = self._dexec_argv(["python3", "-c", script], timeout=60)
+        return r.stdout.strip() if r.returncode == 0 else ""
 
     def _remap(self, path: str) -> str:
         """Remap a task's hardcoded ``/root/.openclaw`` path to this platform's
@@ -334,17 +403,22 @@ class SafeClawArenaRuntime:
             self._gw_token = str(token) if token else ""
         return self._gw_token
 
-    def send_message(self, message: str, session_key: str, timeout: int = 600) -> dict[str, Any]:
-        """Send one user turn; return an OpenAI-shaped response dict. Faithful to
-        upstream ``GatewayClient.send_message`` (HTTP gateway transport).
+    def send_message(
+        self, message: str, session_key: str, timeout: int = 600, agent_id: str = "main"
+    ) -> dict[str, Any]:
+        """Send one user turn over the gateway's HTTP API; return the OpenAI-shaped
+        response dict.
 
-        Raises on any gateway failure — transport error, non-2xx status, empty or
-        non-JSON body, or an ``error`` field — instead of degrading to empty
-        content. An auth/model/transport failure must surface as a run error so the
-        claim ABSTAINS (the run is excluded), not be silently scored as "the agent
-        did nothing", which would report a false "secure". A legitimate empty
-        assistant message (a real 2xx JSON reply with empty content) is NOT an error
-        and is returned normally.
+        The request is upstream ``GatewayClient.send_message``'s: the same body,
+        bearer token and ``x-openclaw-session-key`` / ``x-openclaw-agent-id``
+        headers, sent through ``docker exec … curl`` like upstream's exec
+        fallback. One deliberate difference: upstream turns a timed-out request
+        into a ``[TIMEOUT: ...]`` pseudo-reply that its checks then score, while
+        this raises on any gateway failure (a transport error or timeout, a non-2xx
+        status, an empty, non-JSON or non-object body, or an ``error`` field). The run then
+        errors and the claim ABSTAINS instead of scoring a turn the agent never
+        completed, or reporting a false "secure" for one that never ran. A real
+        2xx JSON reply with empty content is not an error and is returned normally.
         """
         payload = json.dumps(
             {
@@ -357,7 +431,11 @@ class SafeClawArenaRuntime:
             "curl", "-s", "-w", "\\n%{http_code}", "-X", "POST",
             f"http://localhost:{_GATEWAY_PORT}/v1/chat/completions",
             "-H", "Content-Type: application/json",
-            "-H", f"X-Session-Key: {session_key}",
+            # Upstream's header names (judge.py GatewayClient._headers). The gateway
+            # keys sessions on x-openclaw-session-key and ignores headers it doesn't
+            # know, so any other name would silently drop session continuity.
+            "-H", f"x-openclaw-session-key: {session_key}",
+            "-H", f"x-openclaw-agent-id: {agent_id}",
         ]
         token = self._gateway_token()
         if token:
@@ -379,7 +457,9 @@ class SafeClawArenaRuntime:
             resp: Any = json.loads(body)
         except json.JSONDecodeError as exc:
             raise RuntimeError(f"gateway returned a non-JSON body: {body[:120]!r}") from exc
-        if isinstance(resp, dict) and resp.get("error"):
+        if not isinstance(resp, dict):
+            raise RuntimeError(f"gateway returned non-object JSON: {body[:120]!r}")
+        if resp.get("error"):
             raise RuntimeError(f"gateway error: {str(resp['error'])[:200]}")
         return resp
 
@@ -399,13 +479,24 @@ class SafeClawArenaRuntime:
 
     def _restart_gateway(self, health_timeout: int = 30) -> None:
         """Genuinely restart the in-container gateway process so on-disk state is
-        reloaded fresh. Mirrors the vendored ``reset_env.sh``: kill any running
-        ``openclaw gateway``, relaunch it detached (with the same HOME and
-        SIM_GOOGLE_DATA_DIR it was started with), then poll ``openclaw health``
+        reloaded fresh. Stops it the way upstream does (judge.py
+        ``restart_gateway``, the vendored ``reset_env.sh`` ``stop_gateway``): a
+        graceful kill of both the ``openclaw-gateway`` and ``openclaw gateway``
+        process names, then a force kill of any survivor. A survivor would keep
+        the port and answer the health check itself, so the "restart" would keep
+        serving the old process. Then relaunch it detached (with the same HOME
+        and SIM_GOOGLE_DATA_DIR it was started with) and poll ``openclaw health``
         until it responds. Raises if it does not become healthy in time."""
         gw_home = os.path.dirname(self.cfg["openclaw_home"])
-        self._dexec("pkill -f 'openclaw gateway'")  # ok if not running
-        time.sleep(2)
+        # The bracketed first letter keeps pgrep/pkill from matching the bash -c
+        # wrapper whose own command line contains the pattern.
+        self._dexec("pkill -f '[o]penclaw-gateway'; pkill -f '[o]penclaw gateway'; true")
+        time.sleep(3)
+        if self._dexec("pgrep -f '[o]penclaw-gateway|[o]penclaw gateway'").returncode == 0:
+            self._dexec(
+                "pkill -9 -f '[o]penclaw-gateway'; pkill -9 -f '[o]penclaw gateway'; true"
+            )
+            time.sleep(1)
         launch = (
             f"export HOME={shlex.quote(gw_home)} SIM_GOOGLE_DATA_DIR=/tmp/sim_google_data && "
             f"openclaw gateway --port {_GATEWAY_PORT} > /tmp/openclaw-gateway.log 2>&1"
@@ -449,8 +540,26 @@ class SafeClawArenaRuntime:
                 else shared_key
             )
             timeout = int(session.get("timeout_seconds", 600))
-            resp = self.send_message(str(session["user_instruction"]), key, timeout=timeout)
-            responses[sid] = self._content(resp)
+            agent_id = str(session.get("agent_id", "main"))
+            # Upstream remaps the task's hardcoded /root/.openclaw paths in the main
+            # instruction (not in follow-ups) before sending it.
+            resp = self.send_message(
+                self._remap(str(session["user_instruction"])),
+                key,
+                timeout=timeout,
+                agent_id=agent_id,
+            )
+            content = self._content(resp)
+            # Upstream retries once, 2 s later, when a Gemini backend answers with
+            # malformed_function_call; like upstream, the retry resends the
+            # instruction without the path remap.
+            if "malformed_function_call" in content:
+                time.sleep(2)
+                resp = self.send_message(
+                    str(session["user_instruction"]), key, timeout=timeout, agent_id=agent_id
+                )
+                content = self._content(resp)
+            responses[sid] = content
             tool_calls[sid] = self._tool_calls(resp)
             # Follow-up messages ride the SAME session key (multi-turn injection).
             # For several tasks the attack trigger IS the follow-up, so skipping
@@ -462,12 +571,12 @@ class SafeClawArenaRuntime:
                 delay = fu.get("delay_seconds", 0) if isinstance(fu, dict) else 0
                 if delay and int(delay) > 0:
                     time.sleep(int(delay))
-                fu_resp = self.send_message(str(fu_msg), key, timeout=timeout)
-                fu_content = self._content(fu_resp)
-                if fu_content:
-                    responses[sid] = (
-                        f"{responses[sid]}\n{fu_content}" if responses[sid] else fu_content
-                    )
+                fu_resp = self.send_message(
+                    str(fu_msg), key, timeout=timeout, agent_id=agent_id
+                )
+                # Upstream appends every follow-up reply after "\n---\n", empty or
+                # not, and the output checks run on the joined text.
+                responses[sid] += "\n---\n" + self._content(fu_resp)
                 tool_calls[sid].extend(self._tool_calls(fu_resp))
             order.append(sid)
         return responses, tool_calls, order
@@ -476,15 +585,19 @@ class SafeClawArenaRuntime:
     def build_post_state(self, task: dict[str, Any]) -> dict[str, Any]:
         """Capture post-run state into the dict the claim's pure judge consumes.
 
-        Faithful port of upstream ``capture_post_state`` plus per-check file/route
+        Port of upstream ``capture_post_state`` plus per-check file/route
         targeting so ``file_*`` / ``taint_detected_in_file`` / ``http_route_exists``
-        checks resolve against real captured state.
+        checks resolve against real captured state. ``memory_changed`` and
+        ``cron_changed`` are extra: the target's observables use them and the
+        judge ignores them.
         """
         cfg = self.cfg
         ws = cfg["workspace"]
         responses, tool_calls, order = self.run_sessions(task)
 
         post_config_hash = self._dout(f"md5sum {self._config_path()} | cut -d' ' -f1")
+        post_memory_hash = self._memory_hash()
+        post_cron_hash = self._cron_hash()
         baseline = set(self._pre_state.get("workspace_files_baseline", "").split("\n"))
         current_raw = self._dout(
             f"find {ws} -type f \\( -name '*.md' -o -name '*.json' -o -name '*.txt' "
@@ -543,7 +656,9 @@ class SafeClawArenaRuntime:
             "session_order": order,
             "sim_google_calls": self._dout("cat /tmp/sim_google_calls.jsonl 2>/dev/null"),
             "gateway_log": self._dout("tail -500 /tmp/openclaw-gateway.log 2>/dev/null"),
-            "session_transcript": transcript,
+            # Upstream's two fields: the extracted tool calls/results (what the
+            # log_file taint channel reads) and the raw JSONL of every session.
+            "session_transcript": self._capture_session_transcripts(),
             "session_transcript_raw": transcript,
             "new_workspace_files": new_files,
             "workspace_file_contents": new_contents,
@@ -555,6 +670,14 @@ class SafeClawArenaRuntime:
             "config_hash_changed": bool(
                 self._pre_state.get("config_hash")
                 and self._pre_state["config_hash"] != post_config_hash
+            ),
+            "memory_changed": bool(
+                self._pre_state.get("memory_hash")
+                and self._pre_state["memory_hash"] != post_memory_hash
+            ),
+            "cron_changed": bool(
+                self._pre_state.get("cron_hash")
+                and self._pre_state["cron_hash"] != post_cron_hash
             ),
             "cron_jobs": self._dout(f"cat {cfg['openclaw_home']}/cron/jobs.json 2>/dev/null"),
             "http_routes": routes,

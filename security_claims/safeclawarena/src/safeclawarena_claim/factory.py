@@ -10,10 +10,11 @@ per-dimension builders wrap it. ``safeclawarena_target_factory(...)`` returns a
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, cast
 
 from safeclawarena_target import SafeClawArenaTarget, safeclawarena_target_factory
 from superred.core.interfaces.security_claim import SecurityClaim
+from superred.core.interfaces.task import Task
 
 from safeclawarena_claim.categories import DIMENSIONS, load_tasks
 from safeclawarena_claim.task import SafeClawArenaTask
@@ -63,7 +64,7 @@ def safeclawarena_claim(
         if missing:
             raise ValueError(f"unknown task_ids: {sorted(missing)}")
 
-    return SecurityClaim.from_tasks(tasks)
+    return SecurityClaim.from_tasks(cast("list[Task[SafeClawArenaTarget]]", tasks))
 
 
 def safeclawarena_ipi_claim(**kwargs: Any) -> SecurityClaim[SafeClawArenaTarget]:
