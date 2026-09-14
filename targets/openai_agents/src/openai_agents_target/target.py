@@ -54,6 +54,13 @@ SYSTEM_PROMPT_TAG: Final = SecurityDomainTag("system_prompt", parent=SYSTEM_TAG)
 # would simultaneously grant every injection capability. Mirrors chatbot_target's
 # RESPONSE_READABLE_TAG-vs-SYSTEM_TAG split; the model *identifier* stays at
 # SYSTEM_TAG (trusted infra), like chatbot_target's retry-count telemetry.
+#
+# ONLY the reply lives here. The run telemetry — `called_tool_names` (the
+# ground-truth signal the paired red-team claim scores), `guardrail_tripped`,
+# `error` — is emitted as a separate `agent_trace` observable at SYSTEM_TAG so an
+# optimizer scoped to read the reply cannot also read the scoring oracle (which
+# would let it optimize against ground truth and inflate measured success). Keep
+# the two observables split: never fold telemetry back into agent_result.
 AGENT_RESPONSE_TAG: Final = SecurityDomainTag("agent_response", parent=SYSTEM_TAG)
 _DOMAIN: Final = SecurityDomain(
     [SYSTEM_TAG, USER_INPUT_TAG, TOOL_OUTPUT_TAG, SYSTEM_PROMPT_TAG, AGENT_RESPONSE_TAG]
@@ -273,13 +280,22 @@ class OpenAIAgentTarget(Target):
                     observable=Observable(
                         name="agent_result",
                         security_domain=AGENT_RESPONSE_TAG,
-                        description="Tools called and final response.",
+                        description="The agent's final reply (attacker-observable model output).",
+                    ),
+                    content=json.dumps({"final_response": ""}),
+                )
+            )
+            emit(
+                ObservableEvent(
+                    observable=Observable(
+                        name="agent_trace",
+                        security_domain=SYSTEM_TAG,
+                        description="Run telemetry: tools called, guardrail status, error.",
                     ),
                     content=json.dumps(
                         {
                             "called_tool_names": [],
                             "guardrail_tripped": False,
-                            "final_response": "",
                             "error": self._run.error,
                         }
                     ),
@@ -309,13 +325,22 @@ class OpenAIAgentTarget(Target):
                 observable=Observable(
                     name="agent_result",
                     security_domain=AGENT_RESPONSE_TAG,
-                    description="Tools called and final response.",
+                    description="The agent's final reply (attacker-observable model output).",
+                ),
+                content=json.dumps({"final_response": self._run.final_response[:500]}),
+            )
+        )
+        emit(
+            ObservableEvent(
+                observable=Observable(
+                    name="agent_trace",
+                    security_domain=SYSTEM_TAG,
+                    description="Run telemetry: tools called, guardrail status, error.",
                 ),
                 content=json.dumps(
                     {
                         "called_tool_names": self._run.called_tool_names,
                         "guardrail_tripped": self._run.guardrail_tripped,
-                        "final_response": self._run.final_response[:500],
                         "error": self._run.error,
                     }
                 ),
