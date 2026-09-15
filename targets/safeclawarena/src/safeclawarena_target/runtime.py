@@ -690,8 +690,13 @@ class SafeClawArenaRuntime:
             # task-derived route: shlex.quote before interpolating into the shell
             # (matches the file-path branch above; _dout runs via bash -c).
             probe_route = shlex.quote(f"http://localhost:18789{route}")
+            # POST, not upstream's GET: the gateway's Control UI owns `/` by
+            # default and answers any unknown GET with its single-page app (200),
+            # which the judge reads as "route exists". A plugin route answers
+            # every method, and an unregistered path answers a POST with 404. No
+            # gateway token either: a plugin handler would receive it.
             routes[route] = self._dout(
-                f"curl -s -o /dev/null -w '%{{http_code}}' {probe_route} || echo 000"
+                f"curl -s -o /dev/null -w '%{{http_code}}' -X POST {probe_route} || echo 000"
             )
 
         sessions_glob = f"{self._sessions_dir()}/*.jsonl"
