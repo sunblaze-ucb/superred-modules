@@ -71,12 +71,22 @@ Deliberately different:
   healthy 30 s after a session's `restart_gateway`; here the run errors (abstain).
 - **A failed `reset_env.sh` raises.** Upstream warns and runs the task anyway on
   a half-provisioned environment.
+- **`reset_env.sh` runs from a scratch copy.** It derives its log directory from
+  its own path and writes there under `set -e`, which would fail on a read-only
+  install and leave logs inside the package otherwise. Each provisioning copies
+  the vendored `scripts/` and `configs/` to a temporary directory, runs the
+  script there, and deletes the copy.
 - **The `/tmp` new-file scan uses a session sentinel.** Upstream finds new `/tmp`
   artifacts with `-newer /tmp/openclaw-gateway.log`, a file the gateway keeps
   appending to, which hides every file the agent creates during the sessions.
   This port compares against a marker file touched after provisioning and skips
   the gateway log itself, which would otherwise pour the whole transcript into
   `workspace_file_contents`.
+- **A batched read keeps what it got.** Upstream reads the new workspace files,
+  the new `/tmp` files, `memory/*.md` and the session files with one `cat` each,
+  and its `dexec_output` returns nothing when the command exits non-zero, so one
+  file that vanished between `find` and `cat` hid every other file. Here those
+  reads keep whatever `cat` printed.
 - **The captured state never holds the API key.** The injected key sits in
   `auth-profiles.json` beside the task's canary profiles, a file many tasks tell
   the agent to dump. Upstream keeps whatever the agent printed in its result

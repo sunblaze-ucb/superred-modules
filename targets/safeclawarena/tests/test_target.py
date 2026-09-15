@@ -8,6 +8,7 @@ tested with the container calls stubbed out."""
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from math import prod
@@ -529,6 +530,35 @@ def test_build_post_state_scrubs_the_injected_api_key(monkeypatch) -> None:  # n
         assert rt.build_post_state(task)["session_responses"]["s1"] == said
 
 
+def test_build_post_state_keeps_what_cat_read_when_one_file_fails(  # noqa: ANN001
+    monkeypatch, tmp_path
+) -> None:
+    # `cat` exits non-zero when one file fails to open and _dout drops a failed
+    # command's output, so a file that vanished after `find` must not hide the
+    # others; the shell runs for real here
+    kept = tmp_path / "exfil.txt"
+    kept.write_text("CANARY_DB_PASS_q1")
+    gone = tmp_path / "vanished.txt"
+    rt = SafeClawArenaRuntime(platform="openclaw")
+    ws = rt.cfg["workspace"]
+
+    def fake_dexec(cmd: str, timeout: int = 30) -> subprocess.CompletedProcess[str]:
+        if cmd.startswith(f"find {ws}"):
+            return subprocess.CompletedProcess(cmd, 0, f"{kept}\n{gone}\n", "")
+        if cmd.startswith("cat ") and str(tmp_path) in cmd:
+            return subprocess.run(["bash", "-c", cmd], capture_output=True, text=True)
+        return subprocess.CompletedProcess(cmd, 1, "", "")
+
+    monkeypatch.setattr(rt, "_dexec", fake_dexec)
+    monkeypatch.setattr(rt, "run_sessions", lambda task: ({}, {}, []))
+    monkeypatch.setattr(rt, "_capture_session_transcripts", lambda: "")
+    monkeypatch.setattr(rt, "_memory_hash", lambda: "h")
+    monkeypatch.setattr(rt, "_cron_hash", lambda: "h")
+    post = rt.build_post_state({"evaluation": {}})
+    assert post["new_workspace_files"] == sorted([str(kept), str(gone)])
+    assert "CANARY_DB_PASS_q1" in post["workspace_file_contents"]
+
+
 def test_memory_hash_lists_each_file(monkeypatch) -> None:  # noqa: ANN001
     # Per-file digests, then a digest of that listing, so moving text between
     # MEMORY.md and memory/*.md still changes the hash.
@@ -605,6 +635,31 @@ def test_provision_restarts_the_gateway_after_writing_the_key(monkeypatch) -> No
     monkeypatch.setattr(rt, "_capture_baseline", fake_baseline)
     rt.provision({"metadata": {"task_id": "t"}})
     assert order == ["key", "restart:90", "baseline"]
+
+
+def test_provision_runs_reset_env_from_a_scratch_copy(monkeypatch) -> None:  # noqa: ANN001
+    # reset_env.sh writes its logs beside itself under set -e, so running it in
+    # the installed package fails on a read-only install
+    import safeclawarena_target.runtime as runtime_mod
+
+    rt = SafeClawArenaRuntime(platform="openclaw")
+    scripts: list[str] = []
+
+    def fake_run(argv, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        if argv[0] == "bash":
+            stage = os.path.dirname(os.path.dirname(argv[1]))
+            assert os.path.isfile(os.path.join(stage, "configs", "platforms", "openclaw.json"))
+            scripts.append(argv[1])
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("safeclawarena_target.runtime.subprocess.run", fake_run)
+    monkeypatch.setattr(rt, "_inject_api_key", lambda: None)
+    monkeypatch.setattr(rt, "_restart_gateway", lambda health_timeout=30: None)
+    monkeypatch.setattr(rt, "_capture_baseline", lambda: {})
+    rt.provision({"metadata": {"task_id": "t"}})
+    (script,) = scripts
+    assert not script.startswith(runtime_mod._VENDOR)
+    assert not os.path.exists(script)  # the copy is gone once provisioning ends
 
 
 def test_factory_creates_fresh_targets() -> None:

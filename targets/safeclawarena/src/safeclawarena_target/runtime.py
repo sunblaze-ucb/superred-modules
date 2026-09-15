@@ -21,6 +21,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import tempfile
 import time
@@ -229,16 +230,23 @@ class SafeClawArenaRuntime:
             env["SAFECLAW_CONTAINER"] = cfg["container"]
             env["SAFECLAW_OPENCLAW_HOME"] = cfg["openclaw_home"]
             env["SAFECLAW_WORKSPACE"] = cfg["workspace"]
-            r = subprocess.run(
-                [
-                    "bash", os.path.join(_VENDOR, "scripts", "reset_env.sh"),
-                    "--setup-task", host_task,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=180,
-                env=env,
-            )
+            # reset_env.sh writes its logs beside itself (it derives the log
+            # directory from its own path, under set -e), which fails on a
+            # read-only install and leaves logs in the package otherwise, so it
+            # runs from a scratch copy of the scripts and configs it reads.
+            with tempfile.TemporaryDirectory(prefix="safeclaw_harness_") as stage:
+                for part in ("scripts", "configs"):
+                    shutil.copytree(os.path.join(_VENDOR, part), os.path.join(stage, part))
+                r = subprocess.run(
+                    [
+                        "bash", os.path.join(stage, "scripts", "reset_env.sh"),
+                        "--setup-task", host_task,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                    env=env,
+                )
             if r.returncode != 0:
                 raise RuntimeError(
                     f"reset_env.sh failed (exit {r.returncode}): "
@@ -642,10 +650,14 @@ class SafeClawArenaRuntime:
         new_contents = ""
         # Filenames are created by the agent under test; POSIX-quote each with
         # shlex.quote so a crafted name (e.g. containing a quote) can't break out
-        # of the cat command run via bash -c.
+        # of the cat command run via bash -c. `cat` exits non-zero when any one
+        # file fails to open and _dout drops a failed command's output, so a file
+        # that vanished after `find` would hide every other file; `|| true` keeps
+        # what was read (upstream's dexec_output loses it). Same for each batched
+        # read below.
         if new_files:
             args = " ".join(shlex.quote(f) for f in new_files[:50])
-            new_contents = self._dout(f"cat {args} 2>/dev/null")
+            new_contents = self._dout(f"cat {args} 2>/dev/null || true")
         # Upstream also appends newly-created /tmp *.json/*.log/*.txt files
         # (plugin/script artifacts) to the searched new-file contents.
         tmp_files = self._dout(
@@ -662,7 +674,7 @@ class SafeClawArenaRuntime:
         tmp_list = [f for f in tmp_files.split("\n") if f.strip()]
         if tmp_list:
             new_contents += "\n" + self._dout(
-                "cat " + " ".join(shlex.quote(f) for f in tmp_list) + " 2>/dev/null"
+                "cat " + " ".join(shlex.quote(f) for f in tmp_list) + " 2>/dev/null || true"
             )
 
         # File-check targets are hardcoded to the OpenClaw layout in the tasks;
@@ -683,7 +695,7 @@ class SafeClawArenaRuntime:
             )
 
         sessions_glob = f"{self._sessions_dir()}/*.jsonl"
-        transcript = self._dout(f"cat {sessions_glob} 2>/dev/null")
+        transcript = self._dout(f"cat {sessions_glob} 2>/dev/null || true")
         post_state: dict[str, Any] = {
             "session_responses": responses,
             "session_tool_calls": tool_calls,
@@ -699,7 +711,7 @@ class SafeClawArenaRuntime:
             "files": files,
             "memory_content": self._dout(f"cat {self._memory_path()} 2>/dev/null"),
             "memory_root_content": self._dout(f"cat {ws}/MEMORY.md 2>/dev/null"),
-            "memory_dir_content": self._dout(f"cat {ws}/memory/*.md 2>/dev/null"),
+            "memory_dir_content": self._dout(f"cat {ws}/memory/*.md 2>/dev/null || true"),
             "config_content": self._dout(f"cat {self._config_path()} 2>/dev/null"),
             "config_hash_changed": bool(
                 self._pre_state.get("config_hash")
