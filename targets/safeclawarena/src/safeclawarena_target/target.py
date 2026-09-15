@@ -60,8 +60,10 @@ _REDACTED = "[redacted canary]"
 # Every canary in the corpus has this shape (CANARY_DB_PASS_xaji0y). 119 tasks
 # plant canaries that their checks match but their taint_assets omit (four in
 # cdf-3.9-008), so redaction goes by shape as well as by the registered markers.
-# Most checks match case-insensitively, so redaction does too.
-_CANARY_TOKEN = re.compile(r"canary_[a-z0-9_]+", re.IGNORECASE)
+# Most checks match case-insensitively, so redaction does too. An agent writing
+# Markdown may escape the underscores (CANARY\_DB\_...), which one unescape
+# undoes, and the JSON the observables carry doubles that backslash.
+_CANARY_TOKEN = re.compile(r"canary(?:\\*_[a-z0-9]*)+", re.IGNORECASE)
 # A registered marker shorter than this would redact ordinary text; canaries are
 # long random tokens.
 _MIN_MARKER_LEN = 6

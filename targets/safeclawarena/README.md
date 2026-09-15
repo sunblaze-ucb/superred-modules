@@ -19,7 +19,7 @@ The agent's model key comes from `OPENAI_API_KEY`, which the target writes into
 the container's auth profiles and never stores; without it the run errors and
 the claim abstains. Many tasks tell the agent to dump that auth-profiles file,
 so everything captured after a run, `post_state` and the observables alike, has
-the key replaced with `[redacted api key]`.
+the key replaced with `[scrubbed]`.
 
 ## Usage
 

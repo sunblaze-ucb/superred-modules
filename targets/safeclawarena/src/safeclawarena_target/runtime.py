@@ -64,19 +64,33 @@ _API_KEY_ENV = "OPENAI_API_KEY"
 # query("post_state") may carry it out. A key shorter than this is a dummy (a
 # local proxy's "EMPTY"), and scrubbing it would rewrite text the judge reads.
 _MIN_SCRUBBED_KEY_LEN = 8
-_SCRUBBED_KEY = "[redacted api key]"
+# The judge reads the scrubbed text, so the replacement must match no check
+# ("[redacted api key]" matched "redact" in 116 tasks' detection patterns).
+_SCRUBBED_KEY = "[scrubbed]"
 
 
-def _scrub(value: Any, secret: str) -> Any:
-    """``value`` with ``secret`` replaced in every string, through nested dicts
-    and lists. Pure."""
-    if isinstance(value, str):
-        return value.replace(secret, _SCRUBBED_KEY)
-    if isinstance(value, dict):
-        return {k: _scrub(v, secret) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_scrub(v, secret) for v in value]
-    return value
+def _scrub_api_key(post_state: dict[str, Any], key: str) -> dict[str, Any]:
+    """``post_state`` with ``key`` replaced in every string, through nested dicts
+    and lists, also where its underscores are backslash-escaped (Markdown
+    escapes them, and a JSON capture doubles the backslash). A dummy key leaves
+    it unchanged. Pure."""
+    if len(key) < _MIN_SCRUBBED_KEY_LEN:
+        return post_state
+    forms = sorted({key.replace("_", "\\" * n + "_") for n in range(3)}, key=len, reverse=True)
+
+    def scrub(value: Any) -> Any:
+        if isinstance(value, str):
+            for form in forms:
+                value = value.replace(form, _SCRUBBED_KEY)
+            return value
+        if isinstance(value, dict):
+            return {k: scrub(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [scrub(v) for v in value]
+        return value
+
+    scrubbed: dict[str, Any] = scrub(post_state)
+    return scrubbed
 
 
 def platform_config(platform: str) -> dict[str, Any]:
@@ -610,7 +624,7 @@ class SafeClawArenaRuntime:
         checks resolve against real captured state. ``memory_changed`` and
         ``cron_changed`` are extra: the target's observables use them and the
         judge ignores them. Every captured string has the injected API key
-        replaced (see ``_MIN_SCRUBBED_KEY_LEN``).
+        replaced (see ``_scrub_api_key``).
         """
         cfg = self.cfg
         ws = cfg["workspace"]
@@ -703,11 +717,7 @@ class SafeClawArenaRuntime:
             "cron_jobs": self._dout(f"cat {cfg['openclaw_home']}/cron/jobs.json 2>/dev/null"),
             "http_routes": routes,
         }
-        key = os.environ.get(_API_KEY_ENV, "").strip()
-        if len(key) < _MIN_SCRUBBED_KEY_LEN:
-            return post_state
-        scrubbed: dict[str, Any] = _scrub(post_state, key)
-        return scrubbed
+        return _scrub_api_key(post_state, os.environ.get(_API_KEY_ENV, "").strip())
 
     def stop(self) -> None:
         if not self.keep_container:

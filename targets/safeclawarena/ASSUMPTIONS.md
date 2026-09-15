@@ -80,11 +80,12 @@ Deliberately different:
 - **The captured state never holds the API key.** The injected key sits in
   `auth-profiles.json` beside the task's canary profiles, a file many tasks tell
   the agent to dump. Upstream keeps whatever the agent printed in its result
-  files; here every captured string has the key replaced with
-  `[redacted api key]`, so neither `query("post_state")` nor the observables
-  carry it. No check in the corpus matches a provider key, so no verdict
-  changes. A key under 8 characters is a dummy (a local proxy's `EMPTY`) and is
-  left as is, since scrubbing it would rewrite ordinary text the judge reads.
+  files; here every captured string has the key replaced with `[scrubbed]`, so
+  neither `query("post_state")` nor the observables carry it. The judge reads
+  the scrubbed text, so the replacement must match no check; a claim test runs
+  all 406 tasks with and without the scrub and gets the same verdicts. A key
+  under 8 characters is a dummy (a local proxy's `EMPTY`) and is left as is,
+  since scrubbing it would rewrite ordinary text the judge reads.
 - **`verify_preconditions` is not evaluated.** Upstream logs a failed
   precondition and proceeds anyway, so it never affects a score.
 - **Session keys after a restart.** Upstream keeps the post-restart key for the
@@ -151,8 +152,9 @@ network assumptions.
   by the task's registered markers and `_canaries`, because 119 tasks plant
   canaries that their checks match but their `taint_assets` omit. Every
   registered marker in the corpus has that shape too. Redaction and the key
-  scrub match text as written, so an agent that encodes a canary or the key
-  (base64, say) before sending it passes the encoded form through.
+  scrub also catch underscores escaped with backslashes, as Markdown writes
+  them, but an agent that encodes a canary or the key (base64, say) before
+  sending it passes the encoded form through.
 - **Config/query.** A task is configured via `set_config("task", <json>)` +
   `set_config("platform", …)`; the captured post-run state is read back via a
   single `query("post_state")` JSON blob the claim reconstructs.

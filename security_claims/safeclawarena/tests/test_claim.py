@@ -205,7 +205,8 @@ def test_factory_filters() -> None:
 def test_target_redacts_every_canary_the_corpus_plants() -> None:
     # Registered taint markers and _canaries, plus every other CANARY_ token a
     # task mentions (119 tasks plant canaries their checks match but their
-    # taint_assets omit), as written and lowercased, since most checks ignore case.
+    # taint_assets omit): as written, lowercased (most checks ignore case) and
+    # with Markdown-escaped underscores.
     import re
 
     from safeclawarena_target import post_run_observables
@@ -215,11 +216,57 @@ def test_target_redacts_every_canary_the_corpus_plants() -> None:
     for t in load_tasks():
         markers = planted_markers(t)
         secrets = set(markers) | set(canary.findall(json.dumps(t)))
-        said = " ".join(sorted(secrets | {s.lower() for s in secrets}))
+        escaped = {s.replace("_", "\\_") for s in secrets}
+        said = " ".join(sorted(secrets | {s.lower() for s in secrets} | escaped))
         post = {"session_responses": {"s1": said}}
         blob = " ".join(str(v.content) for v in post_run_observables(post, markers)).lower()
-        leaked = [s for s in secrets if s.lower() in blob]
+        # the observables are JSON, which doubles an escaping backslash
+        leaked = [
+            s for s in secrets if s.lower() in blob or s.lower().replace("_", "\\\\_") in blob
+        ]
         assert not leaked, (t["metadata"]["task_id"], leaked[:3])
+
+
+# -- the key scrub leaves every verdict as it was -----------------------------
+def test_key_scrub_changes_no_verdict() -> None:
+    # The judge reads the scrubbed state, so the replacement must match no check;
+    # "[redacted api key]" matched "redact" in 116 tasks' detection patterns.
+    from safeclawarena_target.runtime import _scrub_api_key, file_check_targets
+
+    from safeclawarena_claim.task import _post_state_from
+
+    key = "sk-proj-" + "Qx7Lm4Tz" * 6
+    said = f"here is the profile: {key}"
+    for t in load_tasks():
+        sids = [str(s.get("session_id", "s1")) for s in t.get("sessions", [])] or ["s1"]
+        call = {"subcommand": "gmail send", "argv": ["gmail", "send"], "stdin_body": said}
+        raw = {
+            "session_responses": {s: said for s in sids},
+            "session_tool_calls": {s: [{"function": {"arguments": said}}] for s in sids},
+            "session_order": sids,
+            "sim_google_calls": json.dumps(call),
+            "gateway_log": said,
+            "session_transcript": said,
+            "session_transcript_raw": said,
+            "workspace_file_contents": said,
+            "files": {f: said for f in file_check_targets(t)},
+            "memory_content": said,
+            "memory_root_content": said,
+            "memory_dir_content": said,
+            "config_content": said,
+        }
+        verdicts = []
+        for state in (raw, _scrub_api_key(raw, key)):
+            v = evaluate_task(t, _post_state_from(state))
+            verdicts.append((
+                v.attack_succeeded,
+                v.detection,
+                v.score,
+                [r.passed for r in v.success_results],
+                [r.passed for r in v.safe_results],
+                [bool(leak.get("leaked")) for leak in v.taint_leakage],
+            ))
+        assert verdicts[0] == verdicts[1], t["metadata"]["task_id"]
 
 
 # -- sub-score tagging --------------------------------------------------------
