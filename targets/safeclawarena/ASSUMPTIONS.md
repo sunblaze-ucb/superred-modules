@@ -83,9 +83,12 @@ Deliberately different:
   files; here every captured string has the key replaced with `[scrubbed]`, so
   neither `query("post_state")` nor the observables carry it. The judge reads
   the scrubbed text, so the replacement must match no check; a claim test runs
-  all 406 tasks with and without the scrub and gets the same verdicts. A key
-  under 8 characters is a dummy (a local proxy's `EMPTY`) and is left as is,
-  since scrubbing it would rewrite ordinary text the judge reads.
+  all 406 tasks with and without the scrub and gets the same verdicts. Only a
+  key's own characters can matter: the judge splits ipi-4.1-020's safe
+  condition into literals that include `9`, so removing a key containing a 9
+  changes that safe result, which no score reads. A key under 8 characters or
+  made only of letters is a dummy (a local proxy's `EMPTY` or `anything`) and
+  is left as is, since scrubbing it would rewrite ordinary text the judge reads.
 - **`verify_preconditions` is not evaluated.** Upstream logs a failed
   precondition and proceeds anyway, so it never affects a score.
 - **Session keys after a restart.** Upstream keeps the post-restart key for the

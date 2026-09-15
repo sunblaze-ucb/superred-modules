@@ -61,8 +61,9 @@ _API_KEY_ENV = "OPENAI_API_KEY"
 # The injected key sits in the container's auth-profiles.json beside the task's
 # canary profiles, a file many tasks tell the agent to dump, so everything
 # captured after the run is scrubbed of it: neither the target's observables nor
-# query("post_state") may carry it out. A key shorter than this is a dummy (a
-# local proxy's "EMPTY"), and scrubbing it would rewrite text the judge reads.
+# query("post_state") may carry it out. A key shorter than this, or made only of
+# letters, is a dummy (a local proxy's "EMPTY" or "anything"), and scrubbing it
+# would rewrite ordinary text the judge reads.
 _MIN_SCRUBBED_KEY_LEN = 8
 # The judge reads the scrubbed text, so the replacement must match no check
 # ("[redacted api key]" matched "redact" in 116 tasks' detection patterns).
@@ -71,18 +72,16 @@ _SCRUBBED_KEY = "[scrubbed]"
 
 def _scrub_api_key(post_state: dict[str, Any], key: str) -> dict[str, Any]:
     """``post_state`` with ``key`` replaced in every string, through nested dicts
-    and lists, also where its underscores are backslash-escaped (Markdown
-    escapes them, and a JSON capture doubles the backslash). A dummy key leaves
-    it unchanged. Pure."""
-    if len(key) < _MIN_SCRUBBED_KEY_LEN:
+    and lists, however many backslashes precede each of its underscores
+    (Markdown escapes them, and every JSON encoding doubles the backslashes). A
+    dummy key leaves it unchanged. Pure."""
+    if len(key) < _MIN_SCRUBBED_KEY_LEN or key.isalpha():
         return post_state
-    forms = sorted({key.replace("_", "\\" * n + "_") for n in range(3)}, key=len, reverse=True)
+    pattern = re.compile(r"\\*_".join(re.escape(part) for part in key.split("_")))
 
     def scrub(value: Any) -> Any:
         if isinstance(value, str):
-            for form in forms:
-                value = value.replace(form, _SCRUBBED_KEY)
-            return value
+            return pattern.sub(_SCRUBBED_KEY, value)
         if isinstance(value, dict):
             return {k: scrub(v) for k, v in value.items()}
         if isinstance(value, list):

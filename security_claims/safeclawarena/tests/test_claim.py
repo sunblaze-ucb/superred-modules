@@ -235,6 +235,9 @@ def test_key_scrub_changes_no_verdict() -> None:
 
     from safeclawarena_claim.task import _post_state_from
 
+    # No 9 in the key: the judge splits ipi-4.1-020's safe check into literals
+    # that include "9", and removing a key's own digits would change it (safe
+    # results reach no score). This test isolates the replacement text.
     key = "sk-proj-" + "Qx7Lm4Tz" * 6
     said = f"here is the profile: {key}"
     for t in load_tasks():

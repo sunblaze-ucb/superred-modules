@@ -492,16 +492,22 @@ def test_build_post_state_scrubs_the_injected_api_key(monkeypatch) -> None:  # n
     # many tasks tell the agent to dump that file: nothing captured may carry it.
     key = "sk-proj-" + "q7_x" * 12
     escaped = key.replace("_", "\\_")  # as Markdown writes it
+    partly = key.replace("_", "\\_", 1)
     monkeypatch.setenv("OPENAI_API_KEY", key)
     rt = SafeClawArenaRuntime(platform="openclaw")
     tool_call = {"function": {"name": "exec", "arguments": f"curl -d {key} x"}}
     monkeypatch.setattr(
         rt,
         "run_sessions",
-        lambda task: ({"s1": f"key: {key} / {escaped}"}, {"s1": [tool_call]}, ["s1"]),
+        lambda task: ({"s1": f"key: {key} / {escaped} / {partly}"}, {"s1": [tool_call]}, ["s1"]),
     )
-    in_json = json.dumps(escaped)[1:-1]  # a JSON capture doubles the backslash
-    monkeypatch.setattr(rt, "_capture_session_transcripts", lambda: f"TOOL_RESULT: {in_json}")
+    # every JSON encoding doubles the backslashes: once for a capture, twice for
+    # JSON inside JSON
+    in_json = json.dumps(escaped)[1:-1]
+    twice = json.dumps(json.dumps(escaped))[1:-1]
+    monkeypatch.setattr(
+        rt, "_capture_session_transcripts", lambda: f"TOOL_RESULT: {in_json} {twice}"
+    )
     monkeypatch.setattr(rt, "_memory_hash", lambda: "h")
     monkeypatch.setattr(rt, "_cron_hash", lambda: "h")
     monkeypatch.setattr(
@@ -512,13 +518,15 @@ def test_build_post_state_scrubs_the_injected_api_key(monkeypatch) -> None:  # n
     task = {"evaluation": {"success_condition": {"checks": [check]}}}
     post = rt.build_post_state(task)
     assert key not in json.dumps(post)
-    assert post["session_responses"]["s1"] == "key: [scrubbed] / [scrubbed]"
-    assert post["session_transcript"] == "TOOL_RESULT: [scrubbed]"
-    # a dummy key (a local proxy's "EMPTY") is too short to scrub without
-    # rewriting ordinary text the judge reads
-    monkeypatch.setenv("OPENAI_API_KEY", "EMPTY")
-    monkeypatch.setattr(rt, "run_sessions", lambda task: ({"s1": "EMPTY cart"}, {}, ["s1"]))
-    assert rt.build_post_state(task)["session_responses"]["s1"] == "EMPTY cart"
+    assert post["session_responses"]["s1"] == "key: [scrubbed] / [scrubbed] / [scrubbed]"
+    assert "q7" not in post["session_transcript"]
+    # a dummy key (a local proxy's "EMPTY" or "anything") is left as is, since
+    # scrubbing it would rewrite ordinary text the judge reads
+    for dummy in ("EMPTY", "anything"):
+        monkeypatch.setenv("OPENAI_API_KEY", dummy)
+        said = f"{dummy} will do"
+        monkeypatch.setattr(rt, "run_sessions", lambda task, s=said: ({"s1": s}, {}, ["s1"]))
+        assert rt.build_post_state(task)["session_responses"]["s1"] == said
 
 
 def test_memory_hash_lists_each_file(monkeypatch) -> None:  # noqa: ANN001
