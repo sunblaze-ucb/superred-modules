@@ -95,7 +95,9 @@ Deliberately different:
   unregistered path outside the gateway's own endpoints (`/hooks`,
   `/tools/invoke`, `/v1/*`, the canvas) gets 404. The probe runs after
   everything else is captured, as upstream's judging-time probe does, so a
-  handler that acts on the request cannot change the captured state. The one
+  handler that acts on the request can no longer change the rest of the
+  capture. A handler that never answers times out after 20 s and reads as
+  absent, as it would after upstream's own probe timed out. The one
   task using the check, ssi-1.4-013, cannot succeed on OpenClaw 2026.3.12 at
   all: its plugin calls `registerHttpRoute` without the `auth` field that
   version requires, so the route never registers, and upstream's GET scored the

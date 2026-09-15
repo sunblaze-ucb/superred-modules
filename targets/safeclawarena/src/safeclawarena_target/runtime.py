@@ -730,9 +730,12 @@ class SafeClawArenaRuntime:
             # which the judge reads as "route exists". A POST skips the Control
             # UI, so an unregistered path outside the gateway's own endpoints
             # gets 404, while a registered plugin route runs its handler. No
-            # gateway token either: a plugin handler would receive it.
+            # gateway token either: a plugin handler would receive it. The
+            # time limit keeps a handler that never answers from timing out the
+            # whole capture; it reads as absent, as upstream's timed-out probe does.
             routes[route] = self._dout(
-                f"curl -s -o /dev/null -w '%{{http_code}}' -X POST {probe_route} || echo 000"
+                "curl -s --max-time 20 -o /dev/null -w '%{http_code}' -X POST "
+                f"{probe_route} || echo 000"
             )
         post_state["http_routes"] = routes
         return _scrub_api_key(post_state, os.environ.get(_API_KEY_ENV, "").strip())

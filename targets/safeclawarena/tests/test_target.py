@@ -544,9 +544,9 @@ def test_build_post_state_keeps_what_cat_read_when_one_file_fails(  # noqa: ANN0
     (tmp_path / "artifact.json").write_text("TMP_FILE_TEXT")
     (memory / "a.md").write_text("MEMORY_TEXT")
     (sessions / "s1.jsonl").write_text("SESSION_TEXT")
-    # the globs match these, and cat fails on them
-    (memory / "b.md").symlink_to(tmp_path / "missing")
-    (sessions / "s2.jsonl").symlink_to(tmp_path / "missing")
+    # the globs match these directories, and cat fails on them
+    (memory / "b.md").mkdir()
+    (sessions / "s2.jsonl").mkdir()
     layout = {**PLATFORMS["openclaw"], "openclaw_home": str(home), "workspace": str(ws)}
     monkeypatch.setitem(PLATFORMS, "local", layout)
     rt = SafeClawArenaRuntime(platform="local")
@@ -576,27 +576,33 @@ def test_build_post_state_keeps_what_cat_read_when_one_file_fails(  # noqa: ANN0
 def test_route_probe_posts_after_the_capture(monkeypatch) -> None:  # noqa: ANN001
     # The gateway's Control UI owns `/` and answers any unknown GET with its
     # single-page app (200), which the judge would read as a registered route.
-    # A POST reaches a plugin's handler, so it goes last, after the capture.
+    # A POST reaches a plugin's handler, so it is the last call into the
+    # container, after the file checks, the transcript and the rest.
     rt = SafeClawArenaRuntime(platform="openclaw")
-    commands: list[str] = []
+    calls: list[str] = []
 
-    def fake_dout(cmd: str) -> str:
-        commands.append(cmd)
-        return "404" if cmd.startswith("curl") else ""
+    def fake_dexec(cmd: str, timeout: int = 30) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        out = "404" if cmd.startswith("curl") else "s1.jsonl" if cmd.startswith("ls ") else ""
+        return subprocess.CompletedProcess(cmd, 0, out, "")
 
-    monkeypatch.setattr(rt, "_dout", fake_dout)
-    monkeypatch.setattr(
-        rt, "_dexec", lambda cmd, timeout=30: subprocess.CompletedProcess(cmd, 1, "", "")
-    )
+    def fake_dexec_argv(argv: list[str], timeout: int = 30) -> subprocess.CompletedProcess[str]:
+        calls.append(" ".join(argv[:2]))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(rt, "_dexec", fake_dexec)
+    monkeypatch.setattr(rt, "_dexec_argv", fake_dexec_argv)
     monkeypatch.setattr(rt, "run_sessions", lambda task: ({}, {}, []))
-    monkeypatch.setattr(rt, "_capture_session_transcripts", lambda: "")
-    monkeypatch.setattr(rt, "_memory_hash", lambda: "h")
-    monkeypatch.setattr(rt, "_cron_hash", lambda: "h")
-    check = {"type": "http_route_exists", "target": "/__webhooks__/manage"}
-    post = rt.build_post_state({"evaluation": {"success_condition": {"checks": [check]}}})
-    probes = [c for c in commands if c.startswith("curl")]
-    assert probes == [commands[-1]]
-    assert "-X POST" in probes[0] and "Authorization" not in probes[0]
+    checks = [
+        {"type": "http_route_exists", "target": "/__webhooks__/manage"},
+        {"type": "file_contains", "target": "/root/.openclaw/workspace/a.txt", "pattern": "x"},
+    ]
+    post = rt.build_post_state({"evaluation": {"success_condition": {"checks": checks}}})
+    assert any(c.startswith("test -e") for c in calls) and "python3 -c" in calls
+    probes = [c for c in calls if c.startswith("curl")]
+    assert probes == [calls[-1]]
+    assert "-X POST" in probes[0] and "--max-time" in probes[0]
+    assert "Authorization" not in probes[0]
     assert post["http_routes"] == {"/__webhooks__/manage": "404"}
 
 
