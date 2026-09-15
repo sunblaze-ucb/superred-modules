@@ -701,6 +701,10 @@ class SafeClawArenaRuntime:
             "workspace_file_contents": new_contents,
             "files": files,
             "memory_content": self._dout(f"cat {self._memory_path()} 2>/dev/null"),
+            # Upstream's second memory field is the workspace-root MEMORY.md,
+            # which differs from memory_content only on SecLaw (memory/MEMORY.md).
+            # On the platforms this port supports both read the same file, as
+            # upstream's do.
             "memory_root_content": self._dout(f"cat {ws}/MEMORY.md 2>/dev/null"),
             "memory_dir_content": self._dout(f"cat {ws}/memory/*.md 2>/dev/null || true"),
             "config_content": self._dout(f"cat {self._config_path()} 2>/dev/null"),
