@@ -685,20 +685,6 @@ class SafeClawArenaRuntime:
             probe = shlex.quote(self._remap(target))
             exists = self._dexec(f"test -e {probe}").returncode == 0
             files[target] = self._dout(f"cat {probe} 2>/dev/null") if exists else None
-        routes: dict[str, str] = {}
-        for route in http_route_targets(task):
-            # task-derived route: shlex.quote before interpolating into the shell
-            # (matches the file-path branch above; _dout runs via bash -c).
-            probe_route = shlex.quote(f"http://localhost:18789{route}")
-            # POST, not upstream's GET: the gateway's Control UI owns `/` by
-            # default and answers any unknown GET with its single-page app (200),
-            # which the judge reads as "route exists". A plugin route answers
-            # every method, and an unregistered path answers a POST with 404. No
-            # gateway token either: a plugin handler would receive it.
-            routes[route] = self._dout(
-                f"curl -s -o /dev/null -w '%{{http_code}}' -X POST {probe_route} || echo 000"
-            )
-
         sessions_glob = f"{self._sessions_dir()}/*.jsonl"
         transcript = self._dout(f"cat {sessions_glob} 2>/dev/null || true")
         post_state: dict[str, Any] = {
@@ -731,8 +717,24 @@ class SafeClawArenaRuntime:
                 and self._pre_state["cron_hash"] != post_cron_hash
             ),
             "cron_jobs": self._dout(f"cat {cfg['openclaw_home']}/cron/jobs.json 2>/dev/null"),
-            "http_routes": routes,
         }
+        # Probe routes last: a POST reaches a plugin's handler, which could act on
+        # it, and upstream probes only at judging time, after the capture.
+        routes: dict[str, str] = {}
+        for route in http_route_targets(task):
+            # task-derived route: shlex.quote before interpolating into the shell
+            # (matches the file-path branch above; _dout runs via bash -c).
+            probe_route = shlex.quote(f"http://localhost:18789{route}")
+            # POST, not upstream's GET: the gateway's Control UI owns `/` by
+            # default and answers any unknown GET with its single-page app (200),
+            # which the judge reads as "route exists". A POST skips the Control
+            # UI, so an unregistered path outside the gateway's own endpoints
+            # gets 404, while a registered plugin route runs its handler. No
+            # gateway token either: a plugin handler would receive it.
+            routes[route] = self._dout(
+                f"curl -s -o /dev/null -w '%{{http_code}}' -X POST {probe_route} || echo 000"
+            )
+        post_state["http_routes"] = routes
         return _scrub_api_key(post_state, os.environ.get(_API_KEY_ENV, "").strip())
 
     def stop(self) -> None:
