@@ -1,0 +1,51 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "superred-target-safeclawarena"
+version = "0.1.0"
+description = "SafeClawArena target: runs one SafeClawArena adversarial task against a containerized self-hosted agent platform replica (OpenClaw/NemoClaw) with a simulated Google Workspace, capturing the post-run state the safeclawarena claim judges. Vendors SafeClawArena's container harness."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE", "LICENSES/*"]
+requires-python = ">=3.11,<3.14"
+authors = [{ name = "Rishabh Sinha", email = "rsinha17@terpmail.umd.edu" }]
+keywords = ["red-teaming", "ai-safety", "security", "llm", "agent-security", "openclaw", "nemoclaw", "safeclawarena", "target", "docker"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security",
+]
+dependencies = ["superred>=0.1.0"]
+
+[project.urls]
+Homepage = "https://superred.simonsure.com"
+Repository = "https://github.com/RoldSI/superred-modules"
+Issues = "https://github.com/RoldSI/superred-modules/issues"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pytest-cov>=6.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/safeclawarena_target"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "--strict-markers"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.mypy]
+strict = true
+python_version = "3.13"

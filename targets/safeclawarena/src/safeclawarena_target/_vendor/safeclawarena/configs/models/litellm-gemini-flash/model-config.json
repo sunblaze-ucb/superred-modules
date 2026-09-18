@@ -1,0 +1,5 @@
+{
+  "model": "gemini-3-flash-preview",
+  "api_key": "YOUR-API-KEY-HERE",
+  "api_base_url": "https://your-litellm-proxy.example.com"
+}

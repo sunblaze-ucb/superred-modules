@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "profiles": {
+    "openai:default": {
+      "type": "api_key",
+      "provider": "openai",
+      "key": "YOUR-API-KEY-HERE",
+      "apiBaseUrl": "https://your-litellm-proxy.example.com"
+    }
+  }
+}
