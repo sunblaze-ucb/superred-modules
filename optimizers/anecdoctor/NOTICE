@@ -1,0 +1,44 @@
+superred-optimizer-anecdoctor
+Copyright (c) 2026 the superred module authors
+
+This product includes original code licensed under the MIT License (see LICENSE).
+
+It ports the Anecdoctor misinformation-elicitation technique as implemented in
+Microsoft PyRIT (the Python Risk Identification Tool, https://github.com/microsoft/PyRIT),
+pinned at commit 2016c4a8566bd66253d431ff38400bade4c77fa3. PyRIT is redistributed
+under the MIT License (Copyright (c) Microsoft Corporation); the upstream license
+text is preserved verbatim in LICENSES/PyRIT-MIT.txt.
+
+The technique is credited to its authors:
+
+  Alejandro Cuevas, Saloni Dash, Bharat Kumar Nayak, Dan Vann, and
+  Madeleine I. G. Daepp. "Anecdoctoring: Automated Red-Teaming Across Language
+  and Place." Proceedings of the 2025 Conference on Empirical Methods in
+  Natural Language Processing (EMNLP 2025), Microsoft Research.
+  arXiv:2509.19143 — https://arxiv.org/abs/2509.19143
+  Published: https://aclanthology.org/2025.emnlp-main.964/
+
+--------------------------------------------------------------------------------
+Bundled material (vendored byte-for-byte; sha256-pinned in _vendor/SHA256SUMS)
+--------------------------------------------------------------------------------
+The Anecdoctor prompt templates, vendored verbatim from PyRIT:
+
+- src/anecdoctor_optimizer/_vendor/pyrit/datasets/executors/anecdoctor/anecdoctor_build_knowledge_graph.yaml
+- src/anecdoctor_optimizer/_vendor/pyrit/datasets/executors/anecdoctor/anecdoctor_use_fewshot.yaml
+- src/anecdoctor_optimizer/_vendor/pyrit/datasets/executors/anecdoctor/anecdoctor_use_knowledge_graph.yaml
+
+License: MIT (Copyright (c) Microsoft Corporation). Prompt authorship metadata in
+the vendored files additionally credits Saloni Dash, Alejandro Cuevas Villalba,
+Bharat Kumar Nayak, Dayenne Souza, Dan Vann, and Madeleine Daepp (Microsoft
+Research).
+
+The Anecdoctor control flow (knowledge-graph build, few-shot framing, and
+single framed-request emission) is reimplemented from scratch against superred's
+async event model in src/anecdoctor_optimizer/ (original to this module, MIT). No
+prompt/template body is reproduced in authored code.
+
+--------------------------------------------------------------------------------
+Citation
+--------------------------------------------------------------------------------
+When reporting numbers produced with this module, cite the Anecdoctoring paper
+(arXiv:2509.19143) and PyRIT (pinned commit 2016c4a).
