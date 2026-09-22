@@ -1,0 +1,45 @@
+superred-claim-aegis
+Copyright (c) 2026 the superred module authors
+
+This product includes original code licensed under the MIT License (see LICENSE).
+It is an original superred SecurityClaim port of the NVIDIA Aegis AI Content
+Safety benchmark. The safety judge is our own scoring choice (see ASSUMPTIONS.md);
+it is NOT NVIDIA's Aegis-Guard classifier.
+
+--------------------------------------------------------------------------------
+1. Benchmark dataset (VENDORED, CC-BY-4.0)
+--------------------------------------------------------------------------------
+Source : NVIDIA Aegis AI Content Safety Dataset 1.0 (a.k.a. Nemotron Content
+         Safety Dataset V1),
+         https://huggingface.co/datasets/nvidia/Aegis-AI-Content-Safety-Dataset-1.0
+License: CC-BY-4.0 (full text in LICENSES/aegis-dataset-CC-BY-4.0.txt)
+Curated by: Shaona Ghosh, NVIDIA.
+Pinned revision: bd96d862068e47630197de64eb91f8d1481ff3e0 (test split)
+Files  : src/aegis_claim/_vendor/Content Moderation Extracted Annotations
+         02.08.24_test_release_0418_v1.parquet   (byte-identical upstream parquet)
+         src/aegis_claim/_vendor/aegis_test.csv   (deterministic CSV rendering)
+
+The dataset is redistributed here under CC-BY-4.0 with attribution. It is
+vendored byte-identically (parquet) plus a deterministic CSV rendering, both
+sha256-pinned in _vendor/SHA256SUMS and checked against the pinned revision by
+scripts/sync_upstream.py --check. NO CHANGES were made to the parquet; the CSV is
+a lossless column-for-column rendering of it. The claim uses only the unsafe
+user-message prompts and records each row's Aegis risk category.
+
+--------------------------------------------------------------------------------
+2. Taxonomy and methodology
+--------------------------------------------------------------------------------
+Paper  : Shaona Ghosh, Prasoon Varshney, Erick Galinkin, Christopher Parisien,
+         "AEGIS: Online Adaptive AI Content Safety Moderation with Ensemble of
+         LLM Experts", arXiv:2404.05993 (NVIDIA).
+
+The 13 Aegis harm-category names reproduced in src/aegis_claim/categories.py are
+taken from the dataset's own labels; the taxonomy is described in the paper and
+dataset card.
+
+--------------------------------------------------------------------------------
+Citation
+--------------------------------------------------------------------------------
+When reporting numbers produced with this module, cite the paper
+(arXiv:2404.05993) and the dataset (nvidia/Aegis-AI-Content-Safety-Dataset-1.0,
+CC-BY-4.0), with attribution to NVIDIA.
