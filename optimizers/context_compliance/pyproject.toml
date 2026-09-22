@@ -1,0 +1,69 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "superred-optimizer-context-compliance"
+version = "0.1.0"
+description = "Context Compliance Attack (CCA) optimizer for superred, ported from microsoft/PyRIT"
+requires-python = ">=3.11,<3.14"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE", "LICENSES/*"]
+authors = [
+    { name = "Rishabh Sinha", email = "rsinha17@terpmail.umd.edu" },
+]
+keywords = [
+    "red-teaming",
+    "ai-safety",
+    "jailbreak",
+    "context-compliance",
+    "cca",
+    "single-turn",
+    "pyrit",
+    "llm-security",
+    "superred",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security",
+]
+dependencies = ["superred>=0.1.0", "pyyaml>=6.0"]
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-asyncio"]
+
+[project.urls]
+Homepage = "https://superred.simonsure.com"
+Documentation = "https://superred.simonsure.com"
+Repository = "https://github.com/RoldSI/superred-modules"
+Issues = "https://github.com/RoldSI/superred-modules/issues"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# _vendor/ holds PyRIT templates pinned byte-identically; never lint it.
+extend-exclude = ["src/context_compliance_optimizer/_vendor"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+pythonpath = ["src"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/context_compliance_optimizer"]
+# The vendored templates are data files inside the package; keep them in the
+# wheel (the sync checker and runtime loader both read from _vendor/).
+artifacts = ["src/context_compliance_optimizer/_vendor/**/*.yaml", "src/context_compliance_optimizer/_vendor/SHA256SUMS"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "scripts", "tests", "README.md", "ASSUMPTIONS.md", "LICENSE", "NOTICE", "LICENSES"]
