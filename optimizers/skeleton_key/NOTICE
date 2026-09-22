@@ -1,0 +1,37 @@
+superred-optimizer-skeleton-key
+Copyright (c) 2026 the superred module authors
+
+This product includes original code licensed under the MIT License (see LICENSE).
+
+It bundles and builds upon third-party material from Microsoft PyRIT (the
+Python Risk Identification Toolkit), pinned at commit
+2016c4a8566bd66253d431ff38400bade4c77fa3. PyRIT is redistributed under the MIT
+License (Copyright (c) Microsoft Corporation); the upstream license text is
+preserved verbatim in LICENSES/PyRIT-MIT.txt.
+
+Microsoft PyRIT (https://github.com/microsoft/PyRIT) is Microsoft's own
+red-teaming toolkit and the canonical implementation of the Skeleton Key
+technique; it is the authoritative source used for this port.
+
+--------------------------------------------------------------------------------
+Bundled material (vendored byte-for-byte; sha256-pinned in _vendor/SHA256SUMS)
+--------------------------------------------------------------------------------
+- src/skeleton_key_optimizer/_vendor/pyrit/datasets/executors/skeleton_key/skeleton_key.prompt
+    The Skeleton Key preamble seed (SeedDataset YAML), read verbatim.
+- src/skeleton_key_optimizer/_vendor/pyrit/datasets/executors/skeleton_key/skeleton_key_acceptance.prompt
+    The simulated-acceptance seed (SeedDataset YAML), read verbatim.
+
+The attack control flow (event mapping, surface selection, transcript framing)
+is reimplemented from scratch in src/skeleton_key_optimizer/ (original to this
+module, MIT); no prompt/dataset body is reproduced in authored code.
+
+--------------------------------------------------------------------------------
+Technique / citation
+--------------------------------------------------------------------------------
+Skeleton Key has no academic paper. It was disclosed by Microsoft:
+
+    Mark Russinovich, "Mitigating Skeleton Key, a new type of generative AI
+    jailbreak technique," Microsoft, 2024.
+
+When reporting numbers produced with this module, cite the Microsoft Skeleton
+Key disclosure and Microsoft PyRIT at the pinned commit above.
