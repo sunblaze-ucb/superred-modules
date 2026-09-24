@@ -1,0 +1,34 @@
+superred-optimizer-mtjb-coa
+Copyright (c) 2026 the superred module authors
+
+This product includes original code licensed under the MIT License (see LICENSE).
+
+It bundles and builds upon third-party material from MT-JailBench
+("MT-JailBench: A benchmark framework for studying multi-turn jailbreak
+attacks", SafetyArena, arXiv:2605.11002), pinned at commit
+cb8184e0a9ad7a65c86a00e2a38c57a5f58043f0. MT-JailBench is redistributed under
+the MIT License ("The MT-JailBench Authors", 2026); the upstream license text
+is preserved verbatim in LICENSES/mt-jailbench-MIT.txt.
+
+MT-JailBench's CoA implementation is itself adapted from YancyKahn/CoA
+(Chain of Attack; https://github.com/YancyKahn/CoA). The technique is credited
+to its original authors.
+
+--------------------------------------------------------------------------------
+Bundled material (vendored byte-for-byte; sha256-pinned in _vendor/SHA256SUMS)
+--------------------------------------------------------------------------------
+- src/mtjb_coa_optimizer/_vendor/mtjb/engine/attacks/coa/prompts.yaml
+    CoA attacker chain / prompt-update / binary-judge prompt templates.
+- src/mtjb_coa_optimizer/_vendor/mtjb/engine/attacks/coa/similarity_scorer.py
+    Holds the LLM-approximation similarity-scoring prompt (SIM_APPROX_PROMPT),
+    read verbatim; the surrounding scorer logic is reimplemented in this module.
+
+The CoA control flow and prompt-generation logic are reimplemented from scratch
+in src/mtjb_coa_optimizer/ (original to this module, MIT); the method is
+credited to its authors. No prompt/dataset body is reproduced in authored code.
+
+--------------------------------------------------------------------------------
+Citation
+--------------------------------------------------------------------------------
+When reporting numbers produced with this module, cite MT-JailBench
+(arXiv:2605.11002) and the original Chain-of-Attack work.

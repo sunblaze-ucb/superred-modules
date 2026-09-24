@@ -1,0 +1,47 @@
+superred-optimizer-mtjb-mix
+Copyright (c) 2026 the superred module authors
+
+This product includes original code licensed under the MIT License (see LICENSE).
+
+It bundles and drives third-party material from MT-JailBench
+("MT-JailBench: A benchmark framework for studying multi-turn jailbreak
+attacks", SafetyArena, arXiv:2605.11002), pinned at commit
+cb8184e0a9ad7a65c86a00e2a38c57a5f58043f0. MT-JailBench is redistributed under
+the MIT License ("The MT-JailBench Authors", 2026); the upstream license text
+is preserved verbatim in LICENSES/mt-jailbench-MIT.txt.
+
+The Mix attack composes five multi-turn techniques: Crescendo, ActorAttack,
+Chain-of-Attack (adapted from YancyKahn/CoA), Foot-in-the-Door, and X-Teaming.
+Each technique is credited to its original authors.
+
+--------------------------------------------------------------------------------
+Bundled material (vendored byte-for-byte; sha256-pinned in _vendor/SHA256SUMS)
+--------------------------------------------------------------------------------
+Unlike the CoA and X-Teaming ports (which reimplement their technique natively),
+Mix reuses upstream's engine verbatim: this package vendors the MT-JailBench
+`engine/` subtree needed to run Mix -- core, interfaces, attack_type, utils, and
+the coa / fitd / xteaming / mix attack packages (all .py plus every prompt
+payload: prompts.yaml, judges.yaml, the fitd_prompts/*.json and
+xteaming_prompts/*.yaml, etc.). See _vendor/SHA256SUMS for the full manifest.
+
+The vendored engine's model access (`client.unified_llm_client`) is replaced by
+a stdlib shim (src/mtjb_mix_optimizer/_client_shim.py) that routes every model
+call to superred's constrained LLMClient; no model SDK is imported. The engine
+loop is reconstructed against superred's event model in
+src/mtjb_mix_optimizer/_engine_bridge.py (original to this module, MIT). No
+prompt/dataset body is reproduced in authored code.
+
+--------------------------------------------------------------------------------
+Third-party runtime dependencies
+--------------------------------------------------------------------------------
+- jinja2 (BSD-3-Clause) and tenacity (Apache-2.0) are required (Crescendo
+  templating and retry).
+- textgrad (MIT) and tiktoken (MIT) are optional (extra `refine`); the vendored
+  generator/updater import them at load, so the Mix engine only runs with them
+  installed. They are pulled from PyPI, not bundled.
+
+--------------------------------------------------------------------------------
+Citation
+--------------------------------------------------------------------------------
+When reporting numbers produced with this module, cite MT-JailBench
+(arXiv:2605.11002) and the original works for each composed technique.

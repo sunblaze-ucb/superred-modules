@@ -1,0 +1,50 @@
+superred-claim-mt-jailbench
+Copyright (c) 2026 the superred module authors
+
+This product includes original code licensed under the MIT License (see LICENSE).
+
+It bundles and builds upon third-party material from MT-JailBench
+("MT-JailBench: A benchmark framework for studying multi-turn jailbreak
+attacks", SafetyArena, arXiv:2605.11002), pinned at commit
+cb8184e0a9ad7a65c86a00e2a38c57a5f58043f0, and from HarmBench (the behavior
+dataset MT-JailBench redistributes). Upstream license texts are preserved
+verbatim in LICENSES/mt-jailbench-MIT.txt and LICENSES/harmbench-MIT.txt.
+
+--------------------------------------------------------------------------------
+1. Judge rubrics (the 3-judge evaluation)
+--------------------------------------------------------------------------------
+Source : MT-JailBench engine/utils/independent_judge.py (JailbreakJudge)
+License: MIT License ("The MT-JailBench Authors", 2026)
+File   : src/mt_jailbench_claim/_vendor/mtjb/engine/utils/independent_judge.py
+
+Vendored byte-for-byte (sha256-pinned in _vendor/SHA256SUMS). The four rubric
+prompt templates and MAX_JUDGE_RETRY are read verbatim from this file via ast
+(no rubric text is reproduced in authored code). The judge parsers and the
+unanimous majority-vote aggregation are reimplemented in async form over
+litellm in src/mt_jailbench_claim/judge.py.
+
+Default evaluation (shipped config 1_2_3_resource_judge + run_benchmark retro
+path): judge_types = [XTeaming, ChainOfAttack, FootInTheDoor], threshold = 3
+(unanimous, 3-of-3). Default judge model = openai/gpt-4o (the paper default),
+overridable per factory call.
+
+--------------------------------------------------------------------------------
+2. Task set (HarmBench standard behaviors)
+--------------------------------------------------------------------------------
+Source : HarmBench (https://github.com/centerforaisafety/HarmBench),
+         redistributed in MT-JailBench as data/harmbench_behaviors.csv
+License: MIT License (HarmBench; see LICENSES/harmbench-MIT.txt)
+File   : src/mt_jailbench_claim/data/harmbench_behaviors.csv
+
+Vendored byte-for-byte (sha256-pinned). The claim filters
+FunctionalCategory == "standard" (MT-JailBench data/harmbench.py::load_datasets),
+yielding 159 behaviors of 320 total rows. HARMBENCH IS A DISTINCT UPSTREAM from
+MT-JailBench and is attributed separately here. superred's existing `harmbench`
+claim evaluates the same standard behaviors with the HarmBench Llama-2
+classifier; this claim differs only in the judge.
+
+--------------------------------------------------------------------------------
+Citation
+--------------------------------------------------------------------------------
+When reporting numbers produced with this module, cite MT-JailBench
+(arXiv:2605.11002) and HarmBench (Mazeika et al., 2024).

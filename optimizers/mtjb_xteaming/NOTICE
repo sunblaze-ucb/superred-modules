@@ -1,0 +1,43 @@
+superred-optimizer-mtjb-xteaming
+Copyright (c) 2026 the superred module authors
+
+This product includes original code licensed under the MIT License (see LICENSE).
+
+It bundles and builds upon third-party material from MT-JailBench
+("MT-JailBench: A benchmark framework for studying multi-turn jailbreak
+attacks", SafetyArena, arXiv:2605.11002), pinned at commit
+cb8184e0a9ad7a65c86a00e2a38c57a5f58043f0. MT-JailBench is redistributed under
+the MIT License ("The MT-JailBench Authors", 2026); the upstream license text
+is preserved verbatim in LICENSES/mt-jailbench-MIT.txt.
+
+The technique (X-Teaming, strategy-driven multi-turn attack with TextGrad
+refinement) is credited to its original authors; MT-JailBench's implementation
+is the direct upstream ported here.
+
+--------------------------------------------------------------------------------
+Bundled material (vendored byte-for-byte; sha256-pinned in _vendor/SHA256SUMS)
+--------------------------------------------------------------------------------
+- _vendor/mtjb/engine/attacks/xteaming/prompts/attacker_agent_prompts.yaml
+- _vendor/mtjb/engine/attacks/xteaming/prompts/evaluation_prompt.yaml
+- _vendor/mtjb/engine/attacks/xteaming/prompts/plan_generation_prompts.yaml
+    Strategy-generation, per-turn attacker, and judge prompt templates.
+- _vendor/mtjb/engine/attacks/xteaming/updater_utils.py
+    Holds XTEAMING_SCORING_POLICY (read verbatim for the TextGrad loss).
+- _vendor/mtjb/engine/attacks/xteaming/xteaming_prompt_generator.py
+    Holds TEXTGRAD_LOSS_TEMPLATE (read verbatim for the TextGrad loss).
+
+The strategy/turn/judge/flow logic is reimplemented from scratch in
+src/mtjb_xteaming_optimizer/ (original to this module, MIT). No prompt/dataset
+body is reproduced in authored code.
+
+--------------------------------------------------------------------------------
+Third-party runtime dependencies (optional, referenced by name only)
+--------------------------------------------------------------------------------
+- textgrad (MIT) and tiktoken (MIT) power the optional refine path; they are not
+  bundled and are pulled from PyPI only when the `refine` extra is installed.
+
+--------------------------------------------------------------------------------
+Citation
+--------------------------------------------------------------------------------
+When reporting numbers produced with this module, cite MT-JailBench
+(arXiv:2605.11002) and the original X-Teaming work.
