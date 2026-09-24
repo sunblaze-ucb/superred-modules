@@ -1,0 +1,92 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "superred-claim-aegis"
+version = "0.1.0"
+description = "NVIDIA Aegis AI Content Safety benchmark as a superred SecurityClaim, with a bound safety judge"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE", "LICENSES/*"]
+requires-python = ">=3.11,<3.14"
+authors = [
+    { name = "Rishabh Sinha", email = "rsinha17@terpmail.umd.edu" },
+]
+keywords = [
+    "red-teaming",
+    "ai-safety",
+    "security",
+    "llm",
+    "aegis",
+    "nemotron",
+    "content-safety",
+    "benchmark",
+    "superred",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security",
+]
+dependencies = [
+    "superred>=0.1.0",
+    "superred-target-chatbot>=0.1.0",
+    "litellm>=1.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-asyncio"]
+# pyarrow + huggingface_hub are only needed by scripts/sync_upstream.py to
+# refresh/verify the vendored data; the installed claim never imports them.
+sync = ["pyarrow>=15", "huggingface_hub>=0.20"]
+
+[project.urls]
+Homepage = "https://superred.simonsure.com"
+Documentation = "https://superred.simonsure.com"
+Repository = "https://github.com/RoldSI/superred-modules"
+Issues = "https://github.com/RoldSI/superred-modules/issues"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# _vendor/ holds the byte-identical upstream data; never lint it.
+extend-exclude = ["src/aegis_claim/_vendor"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+# UP046/UP047 (PEP 695 generics) are ignored so the verbatim-shared
+# judge_failure.py stays byte-identical across the chatbot benchmark claims.
+ignore = ["UP046", "UP047"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aegis_claim"]
+# The vendored parquet + CSV live inside the package but must be force-included
+# so the wheel ships the data (the "wheel trap"): without this, hatchling's
+# VCS-aware file selection can omit large data blobs.
+artifacts = [
+    "src/aegis_claim/_vendor/*.parquet",
+    "src/aegis_claim/_vendor/*.csv",
+    "src/aegis_claim/_vendor/SHA256SUMS",
+    "src/aegis_claim/py.typed",
+]
+
+[tool.mypy]
+strict = true
+python_version = "3.13"
+
+[[tool.mypy.overrides]]
+# chatbot_target does not ship a py.typed marker yet.
+module = "chatbot_target.*"
+ignore_missing_imports = true
