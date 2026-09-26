@@ -2,16 +2,14 @@
 
 Gated on the ``live`` marker AND credentials (``LITELLM_API_KEY`` +
 ``LITELLM_API_BASE``), so they are skipped by default and in offline CI. Run
-with: ``pytest -m live`` (with the env vars set, e.g. sourced from the
-project's superred-experiments/.env). Kept deliberately small: one embedding
-round-trip and one short agent run.
+with: ``pytest -m live`` (with the env vars set). Kept deliberately small: one
+embedding round-trip and one short agent run.
 """
 
 from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 
 import pytest
 
@@ -23,18 +21,6 @@ _MODEL = "gpt-4o-mini"
 def _creds() -> tuple[str, str]:
     key = os.environ.get("LITELLM_API_KEY")
     base = os.environ.get("LITELLM_API_BASE")
-    if not key or not base:
-        # best-effort: load the project's experiments .env if present
-        for parent in [Path(__file__).resolve()] + list(Path(__file__).resolve().parents):
-            env = parent / "superred-experiments" / ".env"
-            if env.is_file():
-                for line in env.read_text().splitlines():
-                    if "=" in line and not line.strip().startswith("#"):
-                        k, _, v = line.partition("=")
-                        os.environ.setdefault(k.strip(), v.strip())
-                break
-        key = os.environ.get("LITELLM_API_KEY")
-        base = os.environ.get("LITELLM_API_BASE")
     if not key or not base:
         pytest.skip("no LITELLM_API_KEY / LITELLM_API_BASE for live tests")
     return base, key

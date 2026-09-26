@@ -184,19 +184,13 @@ LITELLM_API_KEY=... LITELLM_API_BASE=... \
     python -m pytest targets/dtap_openclaw/tests -m "docker and live"
 ```
 
-## Run the end-to-end experiment
+## Run end to end
 
-A tiny, budget-capped smoke test that wires scaffold + claim + the Claude Code
-target + the goal-passthrough baseline lives in the sibling experiments repo at
-`superred-experiments/test_dtap/`. It preflight-checks `docker ps` and exits with
-a clear message if Docker is absent. See that folder's `README.md`; in short:
-
-```bash
-cd ../superred-experiments/test_dtap
-cp .env.example .env            # fill LITELLM_API_KEY / LITELLM_API_BASE
-export DTAP_DATASET_ROOT=/path/to/DecodingTrust-Agent/dataset
-python run.py
-```
+An end-to-end run wires the DTAP claim (`security_claim_dtap`), a DTAP agent
+target (e.g. the Claude Code target), and an optimizer (e.g. the `goal_passthrough` baseline)
+into a framework `Controller`. It needs a running Docker daemon, the dataset
+at `DTAP_DATASET_ROOT`, and `LITELLM_API_KEY` / `LITELLM_API_BASE` in the
+environment. Keep the per-task budget small for a first smoke run.
 
 ## Faithfulness
 

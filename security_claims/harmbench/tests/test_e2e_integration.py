@@ -42,9 +42,8 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-# Local single-shot optimizer for the integration test. Identical to
-# superred-experiments/test_harmbench_chatbot/direct_request_optimizer.py
-# but vendored here so this test is self-contained.
+# Local single-shot optimizer for the integration test, defined here so this
+# test is self-contained.
 def _build_direct_request_optimizer():
     from superred.core.interfaces.optimizer import Optimizer
     from superred.core.types.events import (

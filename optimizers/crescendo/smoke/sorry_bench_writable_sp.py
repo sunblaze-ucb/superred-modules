@@ -15,8 +15,8 @@ Bounded for cost: one question_id, max_turns=2, max_variants=1,
 max_attempts_per_variant=1, all three roles on gpt-4o-mini. Replay
 ((e)) is exercised separately by the unit tests; this smoke focuses
 on the (c) path which only fires against a real target. Runs
-against the LiteLLM proxy via the .env file in
-superred-experiments/test_sorry_bench_chatbot.
+against the LiteLLM proxy named by LITELLM_API_KEY / LITELLM_API_BASE
+(from the environment or a .env file).
 
 Usage:
     cd optimizers/crescendo/smoke
@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-from pathlib import Path
 
 from chatbot_target import (
     ChatbotTarget,
@@ -51,20 +50,7 @@ QUESTION_IDS = [1]
 
 
 async def main() -> None:
-    here = Path(__file__).resolve()
-    candidates = [
-        # Sibling experiments folder, when this script runs from a worktree
-        # of superred-modules at <root>/superred-modules.wt-*/.../smoke/.
-        here.parents[4] / "superred-experiments" / "test_sorry_bench_chatbot" / ".env",
-        # Sibling experiments folder, when running from <root>/superred-modules/.
-        here.parents[3] / "superred-experiments" / "test_sorry_bench_chatbot" / ".env",
-    ]
-    for env_path in candidates:
-        if env_path.exists():
-            load_dotenv(env_path)
-            break
-    else:
-        load_dotenv()
+    load_dotenv()
     api_key = os.environ["LITELLM_API_KEY"]
     api_base = os.environ["LITELLM_API_BASE"]
 

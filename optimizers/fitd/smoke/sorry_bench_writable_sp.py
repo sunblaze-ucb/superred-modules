@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-from pathlib import Path
 
 from chatbot_target import ChatbotTarget, RESPONSE_READABLE_TAG, SYSTEM_PROMPT_TAG, USER_TAG
 from dotenv import load_dotenv
@@ -35,17 +34,7 @@ QUESTION_IDS = [1]
 
 
 async def main() -> None:
-    here = Path(__file__).resolve()
-    candidates = [
-        here.parents[4] / "superred-experiments" / "test_sorry_bench_chatbot" / ".env",
-        here.parents[3] / "superred-experiments" / "test_sorry_bench_chatbot" / ".env",
-    ]
-    for env_path in candidates:
-        if env_path.exists():
-            load_dotenv(env_path)
-            break
-    else:
-        load_dotenv()
+    load_dotenv()
 
     api_key = os.environ["LITELLM_API_KEY"]
     api_base = os.environ["LITELLM_API_BASE"]

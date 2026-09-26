@@ -5,14 +5,13 @@ targets run their OWN inference and the OOB judges call an LLM, both routed (by
 model id + api_base + api_key) to the user's LiteLLM proxy. Docker is not needed
 for this test, so it is the live LLM check runnable without a Docker daemon.
 
-Gated: needs LITELLM_API_KEY / LITELLM_API_BASE (from the environment or the
-sibling superred-experiments/.env). Run with: pytest -m live -o addopts="".
+Gated: needs LITELLM_API_KEY / LITELLM_API_BASE from the environment. Run with:
+pytest -m live -o addopts="".
 """
 
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 import pytest
 
@@ -25,18 +24,6 @@ DEFAULT_JUDGE_MODEL = "openai/gpt-4o-2024-05-13"
 
 
 def _creds() -> tuple[str | None, str | None]:
-    key = os.environ.get("LITELLM_API_KEY")
-    base = os.environ.get("LITELLM_API_BASE")
-    if not (key and base):
-        for parent in Path(__file__).resolve().parents:
-            env = parent / "superred-experiments" / ".env"
-            if env.is_file():
-                for line in env.read_text().splitlines():
-                    line = line.strip()
-                    if "=" in line and not line.startswith("#"):
-                        k, _, v = line.partition("=")
-                        os.environ.setdefault(k.strip(), v.strip())
-                break
     return os.environ.get("LITELLM_API_KEY"), os.environ.get("LITELLM_API_BASE")
 
 

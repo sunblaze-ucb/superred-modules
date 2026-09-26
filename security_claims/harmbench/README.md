@@ -49,12 +49,12 @@ claim = harmbench_standard_val(
     judge_api_key=api_key,
 )
 
-# Bring your own optimizer; for a single-shot DirectRequest baseline, see
-# superred-experiments/test_harmbench_chatbot/direct_request_optimizer.py
-from direct_request_optimizer import DirectRequestOptimizer
+# Bring your own optimizer; the goal-passthrough baseline sends each behavior
+# once, verbatim (pip install -e optimizers/goal_passthrough)
+from goal_passthrough_optimizer import GoalPassthroughOptimizer
 
 controller = Controller(
-    optimizer_factory=DirectRequestOptimizer,
+    optimizer_factory=GoalPassthroughOptimizer,
     target_factory=target_factory,
     security_claim=claim,
     scope=frozenset({USER_TAG, RESPONSE_READABLE_TAG}),
