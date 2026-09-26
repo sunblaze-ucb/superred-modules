@@ -42,11 +42,11 @@ too low, and on DTAP it produced misattributed successes. When the selected vict
 has no entry in Chord's official data (true for nearly every DTAP domain tool, since the
 official set is keyed by LangChain tool names), `_queries_for` has no official query and
 falls back to the goal text verbatim, which the user-prompt vector then writes into the
-prompt. That is a direct-instruction attack, not Chord. Observed case: a medical DTAP
-task where the registered helper `patient_record_locator` was never called anywhere in
-the run, the injected user prompt was the attacker goal ("order at least 20 unnecessary
-tests"), the DTAP judge returned success on its own criterion, and the run was recorded
-as a Chord success.
+prompt. That is a direct-instruction attack, not Chord. For example, on a medical DTAP
+task the registered helper `patient_record_locator` could go uncalled for the whole run
+while the injected user prompt was the attacker goal ("order at least 20 unnecessary
+tests"); the DTAP judge then returned success on its own criterion, and the run was
+recorded as a Chord success.
 
 The override is now gated on `candidate.helper.name in metrics.tool_calls`: the helper
 must be on this run's canonicalized call sequence. Otherwise Chord's own
@@ -74,9 +74,9 @@ lives in the fake helper tool's description. `_queries_for` looks up that benign
 in Chord's official query data, keyed by LangChain tool name. Chord's official set has
 32 such keys. Against DTAP's tool catalogue, those keys intersect on essentially none
 of the domains that matter (one domain, `os-filesystem`, matches on `read_file`,
-`write_file`, `move_file`, `list_directory`, 5 of 55 tasks in the indirect55 profile).
-For the other 50 of 55, `_queries_for` had no official query and fell back to writing
-the attacker's own goal text into the user prompt verbatim. That turns Chord into a
+`write_file`, `move_file`, `list_directory`). For tasks in every other domain,
+`_queries_for` had no official query and fell back to writing the attacker's own goal
+text into the user prompt verbatim. That turns Chord into a
 direct-instruction attack: the "user" now explicitly asks for the malicious outcome,
 which no published Chord threat model does, and which the DTAP judge can then credit
 for reasons that have nothing to do with the helper tool ever being invoked.
@@ -104,7 +104,7 @@ argument against, matching pre-existing test coverage
 
 Fidelity cost: none against the Chord paper; if anything the port moves closer to it,
 since the user prompt Chord's threat model requires to stay benign now actually stays
-benign on the 50/55 previously-mismodeled tasks. Behavioural cost: on those 50 tasks the
+benign on the previously-mismodeled tasks. Behavioural cost: on those tasks the
 optimizer now depends entirely on the target's own benign instruction menu having
 brought the victim tool into play and on the fake helper's *description* alone to divert
 the agent (Chord's actual mechanism) rather than the easier, non-Chord shortcut of
@@ -166,10 +166,9 @@ counter and the public `attempt_index` property keeps its meaning.
 Budgeting on the scored counter instead left `_is_done()` unreachable for such a
 task while `_candidate_index` advanced anyway and wrapped modulo the schedule,
 so the same payloads were re-offered until the controller's run budget stopped
-it. Measured on the DTAP indirect sweep, 165 of 440 tasks (37.5%) ended at
-`max_runs` and 106 more timed out, with 0 successes anywhere; 22 burned all 20
-runs on 9 or fewer attacker LLM calls, far too few to have built a schedule long
-enough to justify 20 attempts. Re-offering a candidate the target has already
+it. Such tasks ended at `max_runs` or timed out, and some burned their whole run
+budget on too few attacker LLM calls to have built a schedule long enough to
+justify that many attempts. Re-offering a candidate the target has already
 seen is i.i.d. repetition of a fixed payload, which is neither Chord's
 evaluation grid nor its regeneration loop.
 
@@ -196,10 +195,10 @@ Recommended bound: 2 (author once, regenerate once), down from upstream's 3. Ups
 was amortised over five queries per description and a dedicated optimisation phase separate
 from the frozen-grid evaluation. This port has neither: on DTAP there is no official query
 for these victims, so each description gets a single run (`_queries_for` yields one entry),
-and a single 20-run-per-task budget is shared across both directions and every selected
+and a single per-task run budget is shared across both directions and every selected
 victim. The schedule is `2 directions x V victims x N descriptions x 1 query`, direction-outer
-(all predecessor candidates first, then all successor), and only the first 20 candidates ever
-execute.
+(all predecessor candidates first, then all successor), and only as many candidates as the
+run budget allows ever execute.
 
 The case for 2 over 3 is fidelity under that shared budget, not a tidy arithmetic fit. 2
 preserves upstream's essential property that a failed description is fed back at least once
@@ -207,8 +206,9 @@ preserves upstream's essential property that a failed description is fed back at
 adds a third description per (victim, direction) that the runtime rarely reaches, so a nominal
 "3" would be a fidelity claim the schedule cannot honour. Raising N does not buy adaptation
 depth here, because on DTAP the binding constraint is victim count, not regeneration depth:
-victim selection is broad (a medical indirect task selected about sixteen victims live), so
-the `V x N` predecessor candidates alone meet or exceed the 20-run budget for any `N >= 1`.
+victim selection is broad (a single medical indirect task can select well over a dozen
+victims), so the `V x N` predecessor candidates alone can meet or exceed a typical run budget
+for any `N >= 1`.
 Because the schedule is direction-outer, that also means the winnable successor direction may
 not be reached within budget at all, regardless of N. That is a property of the schedule order
 and the victim count, recorded here and not engineered around; it does not move the N
@@ -222,9 +222,8 @@ initializ...", which forces a specific first tool call before anything the attac
 influence. Chord's predecessor hijack rule (`_hijack_success`) requires the helper to be
 the very first call on the trajectory (`tool_calls[0] == helper`). The forced initialization
 call always occupies that slot, so a predecessor hijack is structurally impossible on these
-tasks no matter how persuasive the helper description is. All five medical tasks in the
-selected profile carry this opening, so every predecessor candidate against them is a
-guaranteed miss.
+tasks no matter how persuasive the helper description is. Every predecessor candidate
+against them is therefore a guaranteed miss.
 
 This is faithful but fails here, not a defect: `_hijack_success` implements Chord's
 published HSR rule byte for byte, and the rule is correct. The failure is a property of the
@@ -243,16 +242,16 @@ role category by reading its description. Two behaviours deviate from a naive
 reading and are load-bearing:
 
 - Categories are roles to match, not a partition to fill. When a scope grants no
-  surface of a given role -- e.g. the experiment drops the user-prompt surface
-  from a threat model -- the prompt tells the model a category may match zero
-  surfaces and forbids relabelling content surfaces to populate it. Without this,
-  gpt-4o-2024-05-13 put every DTAP `env_tool:<server>` surface into `user-prompt`
-  under category-completion pressure. Measured on the DTAP indirect claim at scope
-  s3 (11 text domains, one task each), the false label made the primary consumer
-  of this signal (the AgentVigil chain) vacuous -- its reachable surface set
-  collapsed to one and it finished after a single non-delivering run -- in 5 of 11
-  domains; the improved prompt gives 0 of 11 at s3, s4 and s6, while a control arm
-  that keeps the user-prompt surface stays at 0 throughout. The prompt also
+  surface of a given role -- e.g. a threat model that drops the user-prompt
+  surface, such as scopes s3, s4 and s6 -- the prompt tells the model a category
+  may match zero surfaces and forbids relabelling content surfaces to populate it.
+  Without this, gpt-4o-2024-05-13 put every DTAP `env_tool:<server>` surface into
+  `user-prompt` under category-completion pressure. On DTAP indirect tasks at such
+  a scope, the false label could make the primary consumer of this signal (the
+  AgentVigil chain) vacuous -- its reachable surface set collapsed to one and it
+  finished after a single non-delivering run; the improved prompt removes this at
+  s3, s4 and s6, and a scope that keeps the user-prompt surface is unaffected
+  either way. The prompt also
   classifies by role, not goal-relevance, so a live indirect-injection surface is
   not dropped to `irrelevant` merely because it looks off-topic for the task. One
   wording constraint is load-bearing: the prompt describes each role in prose and

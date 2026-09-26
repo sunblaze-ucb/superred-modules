@@ -150,7 +150,7 @@ async def test_registers_official_predecessor_tool_and_official_query() -> None:
 @pytest.mark.asyncio
 async def test_declines_user_prompt_when_victim_has_no_official_query() -> None:
     # "asknews_search" has an official Chord predecessor helper (malicious_tools.json)
-    # but no entry in Chord's official query.json, so this is the 50/55-task case:
+    # but no entry in Chord's official query.json, so this is the common DTAP case:
     # Chord's published attack puts nothing adversarial in the user prompt (the
     # attack lives in the helper's description), and with no official query the
     # optimizer must decline rather than overwrite the target's own benign task
@@ -2133,9 +2133,8 @@ async def test_an_unproductive_run_consumes_its_candidate_and_is_not_scored() ->
 async def test_unproductive_runs_never_re_walk_the_schedule() -> None:
     """A schedule is walked once, not cycled to the harness ceiling.
 
-    Measured on the DTAP sweep, 165 of 440 tasks (37.5%) ended at max_runs and
-    22 burned all 20 runs on 9 or fewer attacker LLM calls, far too few to have
-    built a schedule long enough to justify 20 attempts.
+    Cycling it let a task burn its whole run budget on too few attacker LLM
+    calls to have built a schedule long enough to justify that many attempts.
     """
     opt = ChordXTHPOptimizer(
         victim_tool_name="brave_search",

@@ -962,9 +962,8 @@ class GEPAAgenticOptimizer(Optimizer):
         Returns whether the search may continue. ``False`` stops the task:
         without a fresh candidate the next run re-sends the identical payload
         at full victim cost, which is recorded as a legitimate multi-run
-        search that failed. Measured on the DTAP sweep, 2,974 of 18,013
-        reflections (16.5%) produced nothing and every one of them bought
-        another victim episode that tested nothing new.
+        search that failed. Every reflection that produces nothing would buy
+        another victim episode that tests nothing new.
         """
         assert self._reflector is not None
         parent = self._best_in_pool()

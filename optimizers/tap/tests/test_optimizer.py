@@ -835,8 +835,8 @@ def _connection_error() -> APIConnectionError:
 
 
 def _unsupported_params_error() -> UnsupportedParamsError:
-    # Verbatim from the archived first run: 8,417 on-topic checks died on this
-    # and were silently recorded as "on topic".
+    # Verbatim provider message. On-topic checks that died on this used to be
+    # silently recorded as "on topic".
     return UnsupportedParamsError(
         status_code=400,
         message="gpt-5 models don't support temperature=0.0",
@@ -934,9 +934,9 @@ async def test_a_single_on_topic_failure_keeps_the_node() -> None:
 
 @pytest.mark.asyncio
 async def test_blank_attacker_prompt_never_reaches_the_target() -> None:
-    # The archived first run lost 7 tap tasks (and 161 autodan_turbo tasks) to
-    # an injected empty user message: the Bedrock Converse transform drops an
-    # empty-content message, and Bedrock rejects the empty conversation.
+    # An injected empty user message fails the task: the Bedrock Converse
+    # transform drops an empty-content message, and Bedrock rejects the empty
+    # conversation.
     opt = await _init_optimizer(max_attack_attempts=2)
     _setup_llm_effects(opt, [
         json.dumps({"improvement": "none", "prompt": ""}),

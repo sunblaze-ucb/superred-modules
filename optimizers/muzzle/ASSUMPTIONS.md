@@ -177,20 +177,20 @@ role category by reading its description. Two behaviours deviate from a naive
 reading and are load-bearing:
 
 - Categories are roles to match, not a partition to fill. When a scope grants no
-  surface of a given role -- e.g. the experiment drops the user-prompt surface
-  from a threat model -- the prompt tells the model a category may match zero
-  surfaces and forbids relabelling content surfaces to populate it. Without this,
-  gpt-4o-2024-05-13 put every DTAP `env_tool:<server>` surface into `user-prompt`
-  under category-completion pressure. Measured on the DTAP indirect claim at scope
-  s3 (11 text domains, one task each), the false label made the primary consumer
-  of this signal (the AgentVigil chain) vacuous -- its reachable surface set
-  collapsed to one and it finished after a single non-delivering run -- in 5 of 11
-  domains; the improved prompt gives 0 of 11 at s3, s4 and s6, while a control arm
-  that keeps the user-prompt surface stays at 0 throughout. The prompt also
-  classifies by role, not goal-relevance, so a live indirect-injection surface is
-  not dropped to `irrelevant` merely because it looks off-topic for the task. One
-  wording constraint is load-bearing: the prompt describes each role in prose and
-  must never spell one out as a label-shaped phrase. An earlier revision said a
+  surface of a given role -- e.g. a threat model drops the user-prompt surface --
+  the prompt tells the model a category may match zero surfaces and forbids
+  relabelling content surfaces to populate it. Without this, gpt-4o-2024-05-13 put
+  every DTAP `env_tool:<server>` surface into `user-prompt` under
+  category-completion pressure. On DTAP indirect-injection tasks in scopes without
+  a user-prompt surface (e.g. s3, s4 and s6), the false label often made the
+  primary consumer of this signal (the AgentVigil chain) vacuous -- its reachable
+  surface set collapsed to one and it finished after a single non-delivering run;
+  the improved prompt prevents this, and scopes that keep the user-prompt surface
+  are unaffected. The prompt also classifies by role, not goal-relevance, so a
+  live indirect-injection surface is not dropped to `irrelevant` merely because it
+  looks off-topic for the task. One wording constraint is load-bearing: the prompt
+  describes each role in prose and must never spell one out as a label-shaped
+  phrase. An earlier revision said a
   qualifying value "is a content/environment surface"; the model answered with
   that literal string, every entry failed the `cat in allowed` filter, and
   `classify_controllables` returned `{}`. That total discard is invisible to a

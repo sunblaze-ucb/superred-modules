@@ -197,11 +197,11 @@ async def test_evaluate_raises_when_judge_call_fails(
     mock_judge_raises: Callable[[type[BaseException] | BaseException], None],
     judge_config: JudgeConfig,
 ) -> None:
-    """The archive's dominant failure: the judge model rejects the call.
+    """The most common judge failure: the judge model rejects the call.
 
-    All 423,140 scored StrongREJECT runs in the first sweep returned a
-    manufactured 0.0 for this reason, and the experiment reported
-    ASR=0.0000 over 22,471 tasks from zero real measurements.
+    Returning a manufactured 0.0 here would make every such run look like
+    a refused attack, and the reported attack-success rate would be
+    computed from zero real measurements.
     """
     mock_judge_raises(
         UnsupportedParamsError(

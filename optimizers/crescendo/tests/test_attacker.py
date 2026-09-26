@@ -268,9 +268,8 @@ async def test_generate_question_raises_after_all_resamples_fail():
 async def test_generate_question_never_retries_budget_exhausted():
     """The cost cap is a controller signal: re-raised on the first call.
 
-    Retrying it would be a cap escape, and absorbing it is what made 2,299
-    tasks in the first archive report ``stop_reason="done"`` after spending
-    their entire budget.
+    Retrying it would be a cap escape, and absorbing it made tasks report
+    ``stop_reason="done"`` after spending their entire budget.
     """
     mock_llm = AsyncMock()
     mock_llm.complete.side_effect = BudgetExhaustedError(

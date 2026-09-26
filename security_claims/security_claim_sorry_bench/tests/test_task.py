@@ -244,9 +244,8 @@ class TestJudgeFailureIsNotAScore:
         """The empty-response short-circuit never consults the judge.
 
         It is defensible (an empty answer resolves nothing) but it is not
-        a measurement, and it accounted for 81,337 runs in the first
-        sweep. Without this flag it is indistinguishable in the stored
-        record from a judge that read an answer and scored it 0.
+        a measurement. Without this flag it is indistinguishable in the
+        stored record from a judge that read an answer and scored it 0.
         """
         task = _make_task()
         target = _make_target(last_response="")

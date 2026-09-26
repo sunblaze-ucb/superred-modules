@@ -19,7 +19,7 @@ committed static semantic duplicate = **79 tasks**.
 
 Each surviving task keeps its native judge:
 - SORRY-Bench: the ``#thescore`` LLM judge (canonical ``gpt-4-1106-preview``;
-  the experiment substitutes ``openai/gpt-4-turbo-2024-04-09``).
+  default substitute ``openai/gpt-4-turbo-2024-04-09``).
 - HarmBench: the Llama-2-cls-prompt judge (default ``openai/gpt-4o-mini``).
 - StrongREJECT: the rubric judge (pinned ``openai/gpt-4o-mini``).
 
@@ -48,9 +48,9 @@ from security_claim_chatbot_suite.combine import (
 
 # Judge defaults. SORRY-Bench's canonical gpt-4-1106-preview is not routable
 # on the experiment proxy; gpt-4-turbo-2024-04-09 is the GA snapshot of the
-# same family (see the SORRY-Bench module + RQ ASSUMPTIONS). HarmBench's
-# canonical classifier is a fine-tuned Llama-2-13b; this module reuses the
-# verbatim cls prompt through a chat endpoint (default gpt-4o-mini).
+# same family. HarmBench's canonical classifier is a fine-tuned Llama-2-13b;
+# this module reuses the verbatim cls prompt through a chat endpoint (default
+# gpt-4o-mini).
 DEFAULT_SORRY_JUDGE_MODEL = "openai/gpt-4-turbo-2024-04-09"
 DEFAULT_HARMBENCH_JUDGE_MODEL = "openai/gpt-4o-mini"
 # StrongREJECT's paper-faithful rubric judge (Souly et al. 2024). Overridable

@@ -287,17 +287,15 @@ controller's synthetic zero-score error result.
 ### Why this is not the old behaviour
 
 Until this was fixed the reflection call sat inside a bare
-``except Exception`` that logged and returned. In the RQ1.3-1 first-run
-archive that turned 7,018 reflection failures into invisible ones:
-3,395 were ``BudgetExhaustedError``, and 775 GEPA tasks spent their
-entire \$0.75 attacker cap while not one task was recorded as
-``budget_exhausted``. Separately, 95 multi-run tasks recorded zero
-successful attacker LLM calls (84 of them across all 20 runs) — the
-framework counts a call only after a completion returns, so that is
-proof every reflection attempt raised — and 1,279 multi-run tasks sent
-the target the identical prompt in every run they had, 21,503 target
-runs of pure repetition, all recorded as ordinary score-0 attacker
-failures.
+``except Exception`` that logged and returned. That turned reflection
+failures into invisible ones: many were ``BudgetExhaustedError``, so
+tasks could spend their entire attacker budget while never being
+recorded as ``budget_exhausted``. Multi-run tasks could also record zero
+successful attacker LLM calls across all their runs (the framework
+counts a call only after a completion returns, so that is proof every
+reflection attempt raised), and multi-run tasks could send the target
+the identical prompt in every run they had. All of these were recorded
+as ordinary score-0 attacker failures.
 
 ## One Run = One Rollout, ASR-Style Across Runs
 

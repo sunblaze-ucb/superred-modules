@@ -651,25 +651,23 @@ class TestReflectionFailure:
 # ---------------------------------------------------------------------------
 # Reflection failure must be loud, never a silent re-roll
 #
-# Regression cover for the RQ1.3-1 first-run archive, where GEPA's bare
-# ``except`` around the reflection call turned three different failures
-# into the same recorded outcome — a completed multi-run search that
-# scored 0:
+# Regression cover for the old behaviour, where GEPA's bare ``except``
+# around the reflection call turned three different failures into the
+# same recorded outcome: a completed multi-run search that scored 0.
 #
-# * 3,395 of GEPA's 7,018 swallowed exceptions were BudgetExhaustedError.
-#   775 GEPA tasks spent their entire $0.75 attacker cap yet not one was
-#   recorded as ``stop_reason="budget_exhausted"`` (763 "done", 12
-#   "error").
-# * 95 multi-run tasks recorded ZERO successful attacker LLM calls (84 of
-#   them across all 20 runs). The framework counts a call only after a
-#   completion returns, so calls==0 over 20 runs means every one of the
-#   19 reflection attempts raised and was swallowed, and the identical
-#   seed prompt was re-sent to the target 20 times.
+# * Many swallowed exceptions were BudgetExhaustedError. A task could
+#   spend its entire attacker budget yet be recorded as
+#   ``stop_reason="done"`` rather than ``"budget_exhausted"``.
+# * A multi-run task could record ZERO successful attacker LLM calls. The
+#   framework counts a call only after a completion returns, so calls==0
+#   over 20 runs means every one of the 19 reflection attempts raised and
+#   was swallowed, and the identical seed prompt was re-sent to the
+#   target 20 times.
 # ---------------------------------------------------------------------------
 
 
 def _api_connection_error() -> Exception:
-    """The archive's most common transient reflection failure, verbatim."""
+    """A common transient reflection failure, verbatim provider message."""
     import litellm
 
     return litellm.exceptions.APIConnectionError(
@@ -807,7 +805,7 @@ class TestReflectionFailureIsLoud:
     async def test_failed_reflection_never_re_rolls_the_identical_prompt(
         self,
     ) -> None:
-        """The archive signature (calls==0 across 20 runs) becomes impossible.
+        """The old failure signature (calls==0 across 20 runs) becomes impossible.
 
         The fake client mirrors the framework's accounting: ``calls`` is
         incremented only after a completion returns, so a client that
@@ -851,12 +849,12 @@ class TestReflectionFailureIsLoud:
 
     @pytest.mark.asyncio
     async def test_repeated_unparseable_reflection_stops_the_search(self) -> None:
-        """1,279 archive tasks re-sent one prompt for every run they had.
+        """A task must not re-send one prompt for every run it has.
 
         The reflection LM answered every time (up to 19 successful calls
         in a 20-run task) but never produced a parseable mutation, so the
-        target saw the identical prompt in all 20 runs — 21,503 target
-        runs of pure repetition, recorded as an ordinary failed search.
+        target saw the identical prompt in all 20 runs: pure repetition,
+        recorded as an ordinary failed search.
         """
         opt = await _init_shipped_defaults()
         ends: list[bool] = []
@@ -1413,7 +1411,7 @@ class _FakeTask:
 class TestControllerRecordsWhyTheTaskEnded:
     """The recorded ``stop_reason`` must name the real cause.
 
-    These are the end-to-end form of the archive defect: in the first run
+    These are the end-to-end form of the old defect: before the fix
     every one of these three endings was written down as
     ``stop_reason="done"``, i.e. as a search that ran its course and the
     target survived.

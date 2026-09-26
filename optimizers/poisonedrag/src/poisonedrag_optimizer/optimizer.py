@@ -889,12 +889,11 @@ class PoisonedRAGOptimizer(Optimizer):
         speculative runtime-context path (nothing advertised, no context event
         appeared, so nothing to retry). It is generalised here: an advertised
         surface that does not fire gets ``max_undelivered_runs`` chances and is
-        then declared undeliverable. The default of 1 is measured, not guessed:
-        across the DTAP indirect sweep every task that ever delivered poison
-        delivered it on run 1 (46/46 at s3, 23/23 at s6), so a retry has never
-        once rescued a delivery, while the unbounded retry consumed 647 of the
-        923 runs read (70.1%), 538 of them at s6. Set a larger value, or ``None``, to restore the old
-        unbounded retry.
+        then declared undeliverable. The default of 1 reflects how delivery
+        behaves on DTAP: in practice a task that delivers poison at all
+        delivers it on run 1, so a retry does not rescue a delivery, while the
+        unbounded retry consumed most of the runs. Set a larger value, or
+        ``None``, to restore the old unbounded retry.
         """
         if not self._can_inject:
             # Already undeliverable for a different reason (a poison

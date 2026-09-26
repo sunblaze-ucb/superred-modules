@@ -673,7 +673,7 @@ async def test_refused_final_align_ends_attempt_without_indexerror() -> None:
     # ``_level_index == len(_prompt_sequence)``) must NOT spawn a slippery/align
     # recovery. Before the fix it did, and the recovery's bridge turn indexed
     # ``_prompt_sequence[_level_index]`` one past the end on the next run,
-    # crashing 10 tasks and discarding them as stop_reason="error".
+    # crashing the task and discarding it as stop_reason="error".
     llm = AsyncMock()
     llm.complete.return_value = mock_response("Yes")  # would drive detect_align -> slippery
     opt = await init_optimizer(llm=llm, prompt_sequence=["b1", "b2"], max_attempts=5)

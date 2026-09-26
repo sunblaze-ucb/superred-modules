@@ -71,9 +71,9 @@ class TestExtractJailbreakPrompt:
     def test_falls_back_to_request_on_an_empty_tag_body(self, text: str) -> None:
         # A well-formed but empty tag pair is as much a parse failure as a
         # missing end tag. Returning "" here made the optimizer inject an
-        # empty user message, which cost 161 tasks in the archived first run:
-        # litellm's Bedrock Converse transform drops empty-content messages,
-        # so the provider saw a conversation with no user turn.
+        # empty user message, which fails the task: litellm's Bedrock
+        # Converse transform drops empty-content messages, so the provider
+        # sees a conversation with no user turn.
         assert _extract_jailbreak_prompt(text, "the goal") == "the goal"
 
     @pytest.mark.parametrize(

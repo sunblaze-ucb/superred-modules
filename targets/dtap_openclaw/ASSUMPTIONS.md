@@ -195,7 +195,7 @@ run is a clean OpenClaw episode. Attacks are an optimizer's concern.
   scores 0.0, which is indistinguishable from a defended attack. Measured 2026-08: with
   the previous hardcoded 8192 against `openai/gpt-4o-2024-05-13` (cap 4096) every
   episode on this host was dead. `DEFAULT_MAX_TOKENS = 4096` is the completion floor
-  across the GPT-4o / Claude / Gemini families in use, so it is the safe default;
+  across the GPT-4o / Claude / Gemini families in common use, so it is the safe default;
   `max_tokens=` / `context_window=` on the constructor raise it for a model known to
   allow more. The failure is asymmetric (too low truncates one answer, too high kills
   the episode silently), hence the conservative floor.
@@ -212,7 +212,7 @@ run is a clean OpenClaw episode. Attacks are an optimizer's concern.
   to `FALLBACK_MAX_TOKENS = 4096` only when litellm does not know the model. Verified:
   gpt-4o-2024-05-13 -> 4096, gpt-4o-2024-08-06 -> 16384, claude-opus-4-6 -> 128000, unknown ->
   OMITTED (OpenClaw's stock 8192 applies), and an explicit `max_tokens=` still overrides.
-  Checked against the planned victims: opus/haiku/sonnet 4.x 64000, gpt-5 128000, grok 256000,
+  Checked against common victim families: opus/haiku/sonnet 4.x 64000, gpt-5 128000, grok 256000,
   deepseek exactly 8192, qwen3-vl unknown. Since the clamp is one-directional, EVERY one of
   those is a no-op and behaves identically to stock OpenClaw; the mechanism only engages for a
   model that genuinely cannot take the 8192 request. The mechanism that makes this necessary:

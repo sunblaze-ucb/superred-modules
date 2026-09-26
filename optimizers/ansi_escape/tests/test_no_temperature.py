@@ -5,7 +5,7 @@ don't support temperature=0. Only temperature=1 is supported"); Bedrock Claude
 rejects temperature combined with top_p. Every component that pinned one here
 was a judge, evaluator or scorer that swallows its own exceptions, so the pin
 did not fail loudly: it silently disabled the component and reported the attack
-as a clean failure. In the RQ1.3-1 2026-06/07 run that cost 56,198 tasks.
+as a clean failure.
 
 The check is structural (AST), not a text search, so a rename, a reformat or a
 value moved into a dict cannot slip past it.

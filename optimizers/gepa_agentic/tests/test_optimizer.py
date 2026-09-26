@@ -1326,8 +1326,7 @@ class TestReflectionGuards:
 
     When it produces nothing the next run re-sends the identical payload at full
     victim cost, and the result is recorded as a legitimate multi-run search that
-    failed. Measured on the DTAP sweep that was 2,974 of 18,013 reflections
-    (16.5%), every one buying an episode that tested nothing new.
+    failed. Every such reflection buys an episode that tests nothing new.
     """
 
     @pytest.mark.asyncio

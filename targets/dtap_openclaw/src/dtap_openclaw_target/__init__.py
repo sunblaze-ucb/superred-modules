@@ -1,8 +1,8 @@
 """OpenClaw DTAP agent target for superred.
 
 Public surface: :class:`DtapOpenClawTarget` (the concrete target). The
-trajectory converter and the Docker driver are exposed too for the experiment
-runner / tests; the security-domain tag constants come from
+trajectory converter and the Docker driver are exposed too for custom
+runners and tests; the security-domain tag constants come from
 ``dtap_scaffold`` (shared across both DTAP agent targets).
 """
 

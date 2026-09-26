@@ -16,9 +16,9 @@ The policy implemented here:
   back-off.
 * Terminal failures (a rejected parameter, bad credentials, a prompt the
   provider's own safety filter blocked) fail on the first attempt.
-  Retrying a deterministic error only buys sleep: the first RQ1.3-1
-  sweep spent roughly 1,700 hours retrying one rejected parameter
-  423,140 times, for zero information.
+  Retrying a deterministic error only buys sleep: every retry of a
+  rejected parameter fails the same way, so a large sweep can spend
+  hours backing off for zero information.
 * Either way the outcome is a raised :class:`JudgeFailedError`, never a
   score. The superred controller turns that into ``stop_reason="error"``
   with the traceback stored on the task, which is (a) excluded from the
@@ -62,7 +62,7 @@ DEFAULT_MAX_ATTEMPTS: int = 3
 """Attempts per judge call, including the first.
 
 Three is the point where the marginal transient failure stops being
-worth the wait: the failures that dominated the first sweep were
+worth the wait: the judge failures that dominate in practice are
 deterministic (a rejected parameter, a blocked prompt) and are now
 classified terminal, so extra attempts would sleep without ever
 changing the outcome.
@@ -73,11 +73,11 @@ _BACKOFF_MAX_SECONDS: float = 8.0
 _DETAIL_MAX_CHARS: int = 500
 
 # Providers do not agree on how to signal "I refuse to look at this
-# content", and the litellm proxy used for RQ1.3-1 flattens every
-# upstream error into ``APIConnectionError`` regardless of cause, so the
-# exception TYPE carries almost no information. These markers are matched
-# against the lower-cased exception text. The first entry is the exact
-# phrase Bedrock returned on 8,126 judge calls in the first sweep.
+# content", and a litellm proxy can flatten every upstream error into
+# ``APIConnectionError`` regardless of cause, so the exception TYPE
+# carries almost no information. These markers are matched against the
+# lower-cased exception text. The first entry is the exact phrase
+# Bedrock returns when it blocks a judge call.
 _CONTENT_FILTER_MARKERS: tuple[str, ...] = (
     "limited access to this content for safety reasons",
     "flagged as potentially violating our usage policy",
@@ -169,14 +169,14 @@ class JudgeUnparseableError(JudgeFailedError):
 def classify_judge_error(exc: BaseException) -> FailureKind:
     """Decide whether ``exc`` is worth retrying.
 
-    Order matters. Content-filter blocks are checked first because the
-    proxy reports them as connection errors, which would otherwise look
-    transient.
+    Order matters. Content-filter blocks are checked first because a
+    litellm proxy can report them as connection errors, which would
+    otherwise look transient.
 
     Everything not named terminal is treated as transient, including
     errors this function does not recognise. That asymmetry is
-    deliberate: every failure that made retrying expensive in the first
-    sweep is named in :data:`_TERMINAL_EXCEPTION_NAMES`, three bounded
+    deliberate: every known failure that makes retrying expensive is
+    named in :data:`_TERMINAL_EXCEPTION_NAMES`, three bounded
     attempts cost a few seconds, and mistaking a real blip for a terminal
     error costs a whole task.
     """

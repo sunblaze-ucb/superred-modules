@@ -731,8 +731,8 @@ async def test_attacker_budget_exhaustion_escapes_on_event():
     """BudgetExhaustedError reaches the controller, which maps it to
     stop_reason="budget_exhausted".
 
-    Swallowing it is why the first archive shows 2,299 Crescendo tasks that
-    had spent their entire $0.75 cap yet reported zero budget_exhausted tasks.
+    Swallowing it made tasks that had spent their entire budget report
+    ``stop_reason="done"`` instead of "budget_exhausted".
     """
     opt = await _init_optimizer()
     ctrl = _make_controllable()
@@ -812,7 +812,7 @@ async def test_transient_evaluator_failure_is_retried_then_degraded(monkeypatch)
          patch.object(opt._evaluator, "is_refusal", new_callable=AsyncMock) as mock_ref, \
          patch.object(opt._evaluator, "score_response", new_callable=AsyncMock) as mock_score:
         mock_gen.return_value = AttackerOutput(question="Q2?", summary="", rationale="r")
-        # Archive shape: litellm.APIConnectionError from the attacker proxy.
+        # Real-world shape: litellm.APIConnectionError from the attacker proxy.
         mock_ref.side_effect = [
             ConnectionError("litellm.APIConnectionError: connection error"),
             False,

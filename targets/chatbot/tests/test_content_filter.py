@@ -47,7 +47,7 @@ from chatbot_target import (
 
 from conftest import make_litellm_response
 
-# The exact body AWS Bedrock returned in the RQ1.3-1 first run, which is what
+# The exact body AWS Bedrock returns for a guardrail block, which is what
 # motivated this behaviour. Note the type: a plain BadRequestError, NOT
 # ContentPolicyViolationError, so a type-only check would miss every one.
 BEDROCK_BLOCK = (
@@ -56,8 +56,8 @@ BEDROCK_BLOCK = (
 )
 
 
-# OpenAI's refusal, verbatim from the archive. It is 382 of the 413 victim-side
-# blocks -- the DOMINANT form -- and it arrives as APIConnectionError, a
+# OpenAI's refusal, verbatim provider text. It is the dominant form of
+# victim-side block, and it arrives as APIConnectionError, a
 # transport-shaped exception, with no "content filter" wording anywhere.
 OPENAI_BLOCK = (
     '{"error":{"code":"validation_error","message":"Invalid prompt: we\u2019ve limited '
@@ -107,8 +107,8 @@ class TestDetector:
     def test_openai_safety_refusal_is_a_block_despite_its_type(self) -> None:
         # The whole point: this is APIConnectionError, the same class as a real
         # network failure, and it says nothing about content filtering. Only the
-        # message identifies it. Gating on the exception type would miss 382 of
-        # the 413 victim-side blocks in the archive.
+        # message identifies it. Gating on the exception type would miss most
+        # victim-side blocks.
         assert content_filter_reason(_openai_block()) is not None
 
     def test_curly_apostrophe_does_not_defeat_the_match(self) -> None:

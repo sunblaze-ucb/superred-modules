@@ -30,8 +30,8 @@ class UnsupportedParamsError(Exception):
 class APIConnectionError(Exception):
     """Stands in for ``litellm.APIConnectionError``.
 
-    The proxy used for RQ1.3-1 wrapped content-filter blocks, 5xx,
-    timeouts and rate limits all in this one class.
+    A LiteLLM proxy can wrap content-filter blocks, 5xx, timeouts and
+    rate limits all in this one class.
     """
 
 
@@ -292,11 +292,11 @@ class TestLLMAsJudgeWithThescoreTemplate:
     async def test_raises_when_the_judge_model_rejects_the_call(
         self, no_sleep: list[float]
     ) -> None:
-        """The archive's dominant failure mode, verbatim.
+        """A judge model rejecting a sampling parameter, verbatim.
 
-        54,645 SORRY-Bench judge calls in the first sweep failed this
-        way and every one of them was recorded as "the target refused".
-        A terminal error must also cost exactly one call and no sleep.
+        Before judge failures raised, every call that failed this way was
+        recorded as "the target refused". A terminal error must also cost
+        exactly one call and no sleep.
         """
         fake = AsyncMock(spec=LLMClient)
         fake.complete.side_effect = UnsupportedParamsError(
@@ -315,7 +315,7 @@ class TestLLMAsJudgeWithThescoreTemplate:
     async def test_raises_when_the_provider_blocks_the_judge_prompt(
         self, no_sleep: list[float]
     ) -> None:
-        """8,126 first-sweep failures: the judge's own prompt was blocked.
+        """The provider blocked the judge's own prompt.
 
         The judge prompt quotes the target's answer, so a block is
         likeliest precisely when the attack succeeded. Scoring it 0

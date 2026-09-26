@@ -40,10 +40,10 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 # Provider-side failures a second attempt can plausibly fix. ``litellm.Timeout``
-# subclasses ``APIConnectionError``, so it is covered; both shapes observed in
-# the archived first run (Bedrock internal_server_error, 600s timeout) land in
-# this tuple. Everything else (a rejected parameter, a bad key, an unparseable
-# answer) is permanent for the life of the task and must not be retried.
+# subclasses ``APIConnectionError``, so it is covered; common transient shapes
+# (Bedrock internal_server_error, 600s timeout) land in this tuple. Everything
+# else (a rejected parameter, a bad key, an unparseable answer) is permanent for
+# the life of the task and must not be retried.
 TRANSIENT_ERRORS: tuple[type[Exception], ...] = (
     APIConnectionError,
     InternalServerError,

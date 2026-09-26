@@ -86,7 +86,7 @@ orders sources **SORRY-Bench → HarmBench → StrongREJECT**.
   `evaluate` and never cross-references judges.
 - **SORRY-Bench judge**: canonical `gpt-4-1106-preview` is not routable on the
   experiment proxy; default substitute `openai/gpt-4-turbo-2024-04-09` (GA
-  snapshot of the same family). Matches the RQ1.1/RQ1.2 substitution.
+  snapshot of the same family).
 - **HarmBench judge**: default `openai/gpt-4o-mini` (the module reuses the
   verbatim Llama-2-cls prompt through a chat endpoint).
 - **StrongREJECT judge**: pinned to `openai/gpt-4o-mini` inside its own module
