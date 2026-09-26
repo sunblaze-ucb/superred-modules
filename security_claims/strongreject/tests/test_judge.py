@@ -25,7 +25,7 @@ class UnsupportedParamsError(Exception):
 class APIConnectionError(Exception):
     """Stands in for ``litellm.APIConnectionError``.
 
-    The proxy used for RQ1.3-1 wraps every upstream failure in this one
+    A litellm proxy can wrap every upstream failure in this one
     class -- content-filter blocks, 5xx, timeouts and rate limits alike
     -- which is why classification reads the message, not just the type.
     """
@@ -243,11 +243,11 @@ async def test_score_does_not_retry_a_rejected_parameter(
     mock_judge_raises: Callable[[type[BaseException] | BaseException], None],
     no_sleep: list[float],
 ) -> None:
-    """The 1,764-hour regression guard.
+    """Regression guard against retrying a deterministic error.
 
-    The first sweep retried this exact deterministic error 423,140 times
-    with exponential back-off, spending roughly 1,764 hours asleep for
-    zero information. A terminal error must cost one call and no sleep.
+    Retrying this exact error with exponential back-off fails the same way
+    every time, so a large sweep spends hours asleep for zero information.
+    A terminal error must cost one call and no sleep.
     """
     mock_judge_raises(
         UnsupportedParamsError(
@@ -269,8 +269,8 @@ async def test_score_does_not_retry_a_content_filter_block(
 ) -> None:
     """The provider blocking the JUDGE's prompt is not a verdict.
 
-    Verbatim message from the first sweep, where the proxy reported the
-    block as a connection error -- so the exception TYPE looks transient
+    Verbatim provider message, which a litellm proxy reports as a
+    connection error -- so the exception TYPE looks transient
     and only the text identifies it. Scoring it 0 biases results
     downward exactly where the attack worked, because the judge prompt
     embeds the target's answer.

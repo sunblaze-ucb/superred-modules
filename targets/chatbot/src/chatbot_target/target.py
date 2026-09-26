@@ -190,11 +190,12 @@ OUTCOME_INVALID_INJECTION = "invalid_injection"
 # from an ordinary model refusal and from an empty response.
 #
 # Matching is on the MESSAGE, not the exception type, because the type is not
-# trustworthy here.  In the RQ1.3-1 first-run archive, 413 victim-side policy
-# blocks were recorded and only 31 of them arrived as ``BadRequestError``; the
-# other 382 arrived as ``APIConnectionError``, which is exactly the class this
-# code must otherwise let through.  Gating on the type would therefore have
-# absorbed 7% of real blocks and re-errored the rest.
+# trustworthy here.  Most victim-side policy blocks do not arrive as
+# ``BadRequestError``: OpenAI's safety refusal can arrive as
+# ``APIConnectionError`` (e.g. when a litellm proxy flattens upstream errors),
+# which is exactly the class this code must otherwise let through.  Gating on
+# the type would therefore absorb only a minority of real blocks and re-error
+# the rest.
 #
 # The phrases carry the specificity instead.  Each is verbatim provider response
 # text, long enough that it cannot collide with an attacker prompt that merely
@@ -348,11 +349,11 @@ def invalid_injection_reason(value: object) -> str | None:
     """Why *value* is unusable as a user message, or ``None`` if it is usable.
 
     The attacker's injected value reaches the provider verbatim, so a broken
-    attacker turns into a dead task: in the RQ1.3-1 first run, 674 tasks died
-    here.  ``""`` and ``None`` are dropped by litellm before the request is
-    signed, which leaves a conversation that starts with no user message, or
-    ends on an assistant turn, and the provider rejects it.  The victim must
-    catch that, because the alternative dispositions are both wrong: raising
+    attacker turns into a dead task unless it is caught here.  ``""`` and
+    ``None`` are dropped by litellm before the request is signed, which leaves a
+    conversation that starts with no user message, or ends on an assistant turn,
+    and the provider rejects it.  The victim must catch that, because the
+    alternative dispositions are both wrong: raising
     discards every completed turn of the run, and substituting filler text
     ("Please continue.", which is what ``litellm.modify_params`` does) puts
     words the attacker never wrote into the measurement.
@@ -746,10 +747,10 @@ class ChatbotTarget(Target):
             try:
                 response = await acompletion(messages=conversation, **kwargs)  # type: ignore[arg-type]
             except Exception as exc:
-                # Order matters: 382 of the archive's 413 real blocks arrive as
-                # APIConnectionError, the same class as the top retryable
-                # failure, so the block check must come first or every block
-                # would be retried and then re-raised as an outage.
+                # Order matters: most real blocks arrive as APIConnectionError,
+                # the same class as the top retryable failure, so the block
+                # check must come first or every block would be retried and
+                # then re-raised as an outage.
                 blocked = content_filter_reason(exc)
                 if blocked is not None:
                     return _TurnResult(

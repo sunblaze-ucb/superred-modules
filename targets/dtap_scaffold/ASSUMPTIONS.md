@@ -51,7 +51,7 @@ process must be reproduced here:
   `env_registry._HEALTH_TIMEOUT_OVERRIDES` caps it at 30s. Because the wait always
   fails, that cap IS the de-facto readiness delay before `setup.sh` POSTs to
   `/api/v1/{reset,auth,admin,send}`, and the service serves 3.0-4.2s after a cold
-  `compose up` on an idle machine (the experiment runs 16 in parallel, hence the
+  `compose up` on an idle machine (many instances may start in parallel, hence the
   headroom). It also covers a FIXED upstream check: interval 10s with no
   `start_period` means the first probe fires at ~10s and passes at once, versus
   travel's 16.7s which is almost entirely its 15s `start_period`. Over-waiting costs
@@ -157,7 +157,7 @@ HTTP fails on macOS. Two access patterns therefore behave differently:
 - **host-localhost HTTP to the container** (the gmail/slack MCP servers reaching
   their backends, and the gmail/slack `setup.sh`/reset curls) -- fails on macOS,
   works on a Linux Docker host where `network_mode: host` IS the real host
-  localhost. The experiments run on Linux, so this is a test-machine caveat.
+  localhost. A Linux Docker host is unaffected, so this is a macOS-only caveat.
 
 ## D. Live-verification status (real Docker, this machine)
 
@@ -180,9 +180,9 @@ The 2 non-green domains are the macOS caveat above, NOT a port flaw:
   `Up (healthy)` (its internal healthcheck passes), but the Mac host cannot reach
   its host-net port. Same root cause makes the `legal`/`workflow` RESET-endpoint
   curls -- and the `crm` `setup.sh` slack curl -- fail. All five are gmail/slack-backed
-  and exercise host-localhost HTTP to a `network_mode: host` service. On a Linux Docker host these resolve. (The original
-  PR always gated the container e2e behind the `docker`/`live` markers and the
-  experiments run on Linux, so this is a test-machine caveat, characterized and
+  and exercise host-localhost HTTP to a `network_mode: host` service. (The original
+  PR always gated the container e2e behind the `docker`/`live` markers, and a Linux
+  Docker host is unaffected, so this is a macOS-only caveat, characterized and
   confirmed, not a regression.)
 
 Reset (not gating `up`): 6/11 reset within the 90s observation window. The

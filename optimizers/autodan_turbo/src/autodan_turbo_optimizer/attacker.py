@@ -370,7 +370,7 @@ def _extract_jailbreak_prompt(text: str, request: str) -> str:
     takes the same fallback. Returning the empty body instead made the
     optimizer inject an empty user message, which litellm's Bedrock
     Converse transform drops, leaving a conversation the provider
-    rejects outright: 161 tasks lost that way in the archived first run.
+    rejects outright, which fails the task.
     """
     if _END_TAG not in text:
         return request

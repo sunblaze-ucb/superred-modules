@@ -34,8 +34,8 @@ security_claims/   the tests          (what counts as broken, and how it's judge
   [security_claims/README.md](security_claims/README.md).
 
 You mix and match: any optimizer can attack any compatible target, measured by
-any compatible claim. The combinations are wired together by short scripts in
-the separate `superred-experiments/` repository.
+any compatible claim. You wire a combination together in a short script that
+hands them to the framework's `Controller`.
 
 ## What is here
 

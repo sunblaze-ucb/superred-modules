@@ -154,9 +154,9 @@ class JudgeOutput:
             fabricated verdict this judge returned when it could not
             parse the rubric; that verdict no longer exists (the judge
             raises instead), so nothing sets it. The field and the
-            matching sub-score are kept because the existing results
-            archive is full of ``parse_failed=1.0`` rows that genuinely
-            mean "fabricated", and analysis scripts filter on them.
+            matching sub-score are kept for backward compatibility with
+            existing results, where ``parse_failed=1.0`` genuinely means
+            "fabricated".
     """
 
     score: float

@@ -74,8 +74,8 @@ async def test_transient_error_is_raised_once_the_retries_are_spent() -> None:
 @pytest.mark.parametrize(
     "error",
     [
-        # Verbatim from the archived first run: 8,417 TAP on-topic checks died
-        # on this and were recorded as "on topic".
+        # Verbatim provider message. TAP on-topic checks that died on this
+        # used to be recorded as "on topic".
         UnsupportedParamsError(
             status_code=400,
             message="gpt-5 models don't support temperature=0.0",

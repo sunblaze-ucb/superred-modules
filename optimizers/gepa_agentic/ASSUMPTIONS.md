@@ -93,11 +93,10 @@ optimizer uses default response names plus broad agent-trace heuristics.
 Reflection is the only thing that makes one run differ from the last. When it
 produces nothing, the next run re-sends the *identical* payload to the victim:
 full victim cost, zero search progress, and a record that looks like a
-legitimate multi-run search that failed. Measured on the DTAP indirect sweep,
-that was **2,974 of 18,013 reflections (16.5%)**, and the rate is a property of
-the attacker model rather than the task (no-fence misses per cell ran from 2 on
-deepseek-v3-2 to 1,719 on opus-4-8), so it silently biased the attacker-model
-axis the experiment exists to compare.
+legitimate multi-run search that failed. This is not rare, and the rate is a
+property of the attacker model rather than the task (some attacker models almost
+never omit the fence, others omit it often), so it silently biases any comparison
+across attacker models.
 
 The three ways reflection can produce nothing are now kept apart, matching the
 sibling `gepa` package, and none of them is silent:
@@ -189,16 +188,16 @@ role category by reading its description. Two behaviours deviate from a naive
 reading and are load-bearing:
 
 - Categories are roles to match, not a partition to fill. When a scope grants no
-  surface of a given role -- e.g. the experiment drops the user-prompt surface
-  from a threat model -- the prompt tells the model a category may match zero
-  surfaces and forbids relabelling content surfaces to populate it. Without this,
-  gpt-4o-2024-05-13 put every DTAP `env_tool:<server>` surface into `user-prompt`
-  under category-completion pressure. Measured on the DTAP indirect claim at scope
-  s3 (11 text domains, one task each), the false label made the primary consumer
-  of this signal (the AgentVigil chain) vacuous -- its reachable surface set
-  collapsed to one and it finished after a single non-delivering run -- in 5 of 11
-  domains; the improved prompt gives 0 of 11 at s3, s4 and s6, while a control arm
-  that keeps the user-prompt surface stays at 0 throughout. The prompt also
+  surface of a given role -- e.g. a threat model that drops the user-prompt
+  surface, such as scopes s3, s4 and s6 -- the prompt tells the model a category
+  may match zero surfaces and forbids relabelling content surfaces to populate it.
+  Without this, gpt-4o-2024-05-13 put every DTAP `env_tool:<server>` surface into
+  `user-prompt` under category-completion pressure. On DTAP indirect tasks at such
+  a scope, the false label could make the primary consumer of this signal (the
+  AgentVigil chain) vacuous -- its reachable surface set collapsed to one and it
+  finished after a single non-delivering run; the improved prompt removes this at
+  s3, s4 and s6, and a scope that keeps the user-prompt surface is unaffected
+  either way. The prompt also
   classifies by role, not goal-relevance, so a live indirect-injection surface is
   not dropped to `irrelevant` merely because it looks off-topic for the task. One
   wording constraint is load-bearing: the prompt describes each role in prose and
@@ -227,9 +226,9 @@ question, so it labels a PreCall-only surface such as DTAP's `filesystem`
 (attacker files the agent later reads) as content: true as a role, wrong as
 timing, because that surface is consumed before the run and never returns a value
 for the agent to read back. Arming it would send the search to inject content into
-a surface that never fires the event it waits for; measured on 20 real DTAP
-surfaces, the prior code (which hard-coded `event_kind="post"` during discovery)
-armed most PreCall-only surfaces wrongly. The `Controllable` type carries no
+a surface that never fires the event it waits for; on real DTAP surfaces, the
+prior code (which hard-coded `event_kind="post"` during discovery) armed most
+PreCall-only surfaces wrongly. The `Controllable` type carries no
 timing field, so timing is read from the target's own declaration in the
 description: a surface the target marks `PreCall` is excluded from PostCall content
 (`_can_fire_postcall`). A description that declares neither token keeps the prior
@@ -253,13 +252,13 @@ non-empty whenever a single content surface exists at all, so the assumption was
 never re-examined: a surface planned and missed twenty times running still made
 the prompt channels ineligible on run twenty.
 
-That is a silent zero, not a slow attack. Measured over 40 persisted DTAP runs,
-`user_prompt` was offered 40 times and written 0 times, and 22 of the 40 runs
-injected nothing anywhere. At scope s5 (`{SYSTEM, HOST}`) the failure is total: all
-seven surfaces the scope grants besides the system prompt are PreCall-only, so on
-the pre-`_can_fire_postcall` classifier every one of them was armed as a content
+That is a silent zero, not a slow attack. On DTAP, `user_prompt` could be offered
+in every run and written in none, and many runs injected nothing anywhere. At
+scope s5 (`{SYSTEM, HOST}`) the failure is total: all seven surfaces the scope
+grants besides the system prompt are PreCall-only, so on the
+pre-`_can_fire_postcall` classifier every one of them was armed as a content
 surface, the plan was never empty, and the optimizer declined the one surface it
-could actually write for all 20 runs across all 11 domains.
+could actually write in every run of every domain.
 
 The optimizer cannot detect this at decision time: the DTAP scaffold emits both
 prompt PreCalls before any PostCall, so when `user_prompt` is decided it is

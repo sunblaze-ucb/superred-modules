@@ -309,8 +309,8 @@ class TestBlankPromptIsAParseFailure:
 
     Injected verbatim it becomes an empty user message; litellm's Bedrock
     Converse transform drops empty-content messages, so the provider receives
-    a conversation with no user turn and rejects the request outright. That
-    cost 7 tap tasks in the archived first run.
+    a conversation with no user turn and rejects the request outright, which
+    fails the task.
     """
 
     @pytest.mark.parametrize("blank", ["", "   ", "\n\t "])

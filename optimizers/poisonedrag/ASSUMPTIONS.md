@@ -32,13 +32,11 @@
   run, so `max_attempts` keeps counting planted poison batches and an empty run is never credited
   as an attempt. Without this bound the retry was unbounded, because `_is_done()` reads only
   `_attempt_index`: a task whose classified surface the target never called answered `done=False`
-  until the controller's run or time cap. Measured over the DTAP indirect sweep (cc-opus-4.8 /
-  gpt-5-4, six scopes with trajectories on disk), that consumed 647 of the 923 runs read (70.1%),
-  538 of them at s6, and rescued no delivery at
-  all: every task that ever delivered poison delivered it on its FIRST run (46/46 at s3, 23/23 at
-  s6). Set a larger value, or `None`, to restore the old unbounded retry. If only speculative
-  runtime context poisoning was possible and no context event appears, the optimizer gives up
-  after one empty run, as before.
+  until the controller's run or time cap. On DTAP that consumed most of the runs and rescued no
+  delivery: in practice a task that delivers poison at all does so on its FIRST run, so a retry
+  buys nothing. Set a larger value, or `None`, to restore the old unbounded retry. If only
+  speculative runtime context poisoning was possible and no context event appears, the optimizer
+  gives up after one empty run, as before.
 
 ## Limits
 
@@ -52,16 +50,16 @@ role category by reading its description. Two behaviours deviate from a naive
 reading and are load-bearing:
 
 - Categories are roles to match, not a partition to fill. When a scope grants no
-  surface of a given role -- e.g. the experiment drops the user-prompt surface
-  from a threat model -- the prompt tells the model a category may match zero
-  surfaces and forbids relabelling content surfaces to populate it. Without this,
-  gpt-4o-2024-05-13 put every DTAP `env_tool:<server>` surface into `user-prompt`
-  under category-completion pressure. Measured on the DTAP indirect claim at scope
-  s3 (11 text domains, one task each), the false label made the primary consumer
-  of this signal (the AgentVigil chain) vacuous -- its reachable surface set
-  collapsed to one and it finished after a single non-delivering run -- in 5 of 11
-  domains; the improved prompt gives 0 of 11 at s3, s4 and s6, while a control arm
-  that keeps the user-prompt surface stays at 0 throughout. The prompt also
+  surface of a given role -- e.g. a threat model that drops the user-prompt
+  surface, such as scopes s3, s4 and s6 -- the prompt tells the model a category
+  may match zero surfaces and forbids relabelling content surfaces to populate it.
+  Without this, gpt-4o-2024-05-13 put every DTAP `env_tool:<server>` surface into
+  `user-prompt` under category-completion pressure. On DTAP indirect tasks at such
+  a scope, the false label could make the primary consumer of this signal (the
+  AgentVigil chain) vacuous -- its reachable surface set collapsed to one and it
+  finished after a single non-delivering run; the improved prompt removes this at
+  s3, s4 and s6, and a scope that keeps the user-prompt surface is unaffected
+  either way. The prompt also
   classifies by role, not goal-relevance, so a live indirect-injection surface is
   not dropped to `irrelevant` merely because it looks off-topic for the task. One
   wording constraint is load-bearing: the prompt describes each role in prose and

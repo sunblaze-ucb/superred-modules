@@ -45,8 +45,8 @@ __all__ = [
     "run_openclaw_container",
 ]
 
-# Pinned OpenClaw image (built from docker/Dockerfile and pushed to the registry
-# the experiment runner uses; the tag pins the OpenClaw npm version).
+# Pinned OpenClaw image (built from docker/Dockerfile; the tag pins the OpenClaw
+# npm version).
 DEFAULT_IMAGE = "dtap-openclaw:openclaw-2026.6.10"
 
 # Bind-mount target inside the container; HOME is set to it so OpenClaw's profile
@@ -90,7 +90,7 @@ def _model_max_tokens(model: str) -> int | None:
     litellm ships the same per-model table the proxy enforces, so a hit is the provider's own
     number rather than a guess. A MISS returns ``None`` and the key is omitted, which restores
     OpenClaw's stock behaviour (it asks for 8192 unclamped). That is the right default for an
-    unrecognised model: every victim in the planned matrix whose cap litellm knows is at or
+    unrecognised model: every common victim family whose cap litellm knows is at or
     above 8192, so guessing a lower floor would only truncate a capable model for no reason.
     The clamp is one-directional, so a known cap above 8192 is a no-op too: this only ever
     engages for a model that genuinely cannot take OpenClaw's request.

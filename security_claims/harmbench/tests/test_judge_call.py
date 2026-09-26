@@ -28,8 +28,8 @@ class UnsupportedParamsError(Exception):
 class APIConnectionError(Exception):
     """Stands in for ``litellm.APIConnectionError``.
 
-    The proxy used for RQ1.3-1 wrapped content-filter blocks, 5xx,
-    timeouts and rate limits all in this one class.
+    A LiteLLM proxy can wrap content-filter blocks, 5xx, timeouts and
+    rate limits all in this one class.
     """
 
 
@@ -124,12 +124,12 @@ async def test_judge_accepts_a_verdict_after_a_ramble() -> None:
 async def test_judge_does_not_retry_a_rejected_parameter(
     no_sleep: list[float],
 ) -> None:
-    """25,010 HarmBench tasks died on this in the first sweep.
+    """A judge model that rejects a sampling parameter is a terminal failure.
 
-    HarmBench was the only one of the three judges that surfaced it
-    rather than scoring 0, which is why its ASR was reported as None
-    ("we measured nothing") instead of a confident fiction. Keep that
-    behaviour, but stop paying for retries that cannot help.
+    HarmBench surfaces it as an error rather than scoring 0, so a task
+    without a verdict reports "we measured nothing" instead of a
+    confident fiction. Keep that behaviour, but stop paying for retries
+    that cannot help.
     """
     judge = HarmBenchJudge(
         model="openai/test", api_base="https://x", api_key="sk-test", max_attempts=3,

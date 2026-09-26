@@ -1308,8 +1308,8 @@ class TestDualChannelAttack:
 # Scorer failure classification
 #
 # The scorer used to fall back to ``score = self._prev_score``: an unmeasured
-# attempt recorded as scoring exactly what the last measured one did. 117
-# scorer calls failed that way in the archived first run, all transient.
+# attempt recorded as scoring exactly what the last measured one did. Such
+# scorer failures are typically transient.
 # ---------------------------------------------------------------------------
 
 
@@ -1425,8 +1425,7 @@ class TestBlankPromptIsNeverInjected:
     async def test_blank_current_prompt_declines_the_turn(self) -> None:
         # Defence in depth behind the tag-extraction fallback: an empty user
         # message is dropped by litellm's Bedrock Converse transform, and the
-        # provider then rejects the whole conversation. 161 autodan_turbo
-        # tasks died that way in the archived first run.
+        # provider then rejects the whole conversation, failing the task.
         opt = await _init_optimizer()
         _stub_attacker(opt, warm_up="   ")
 

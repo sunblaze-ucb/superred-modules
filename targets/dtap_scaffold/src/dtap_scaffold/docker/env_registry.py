@@ -67,7 +67,7 @@ _DEFAULT_RESET_SCRIPT_TIMEOUT = 60
 #   - TODAY (check broken): the cap IS the de-facto readiness delay, because the wait always
 #     fails and we proceed at the cap. ``setup.sh`` then POSTs to /api/v1/{reset,auth,admin,
 #     send}, so the service must be listening. It serves 3.0-4.2s after a cold ``compose up``
-#     on an idle machine; the experiment runs 16 instances in parallel, so leave headroom.
+#     on an idle machine; many instances may start in parallel, so leave headroom.
 #   - IF UPSTREAM FIXES IT: interval is 10s with no start_period, so the first probe fires at
 #     ~10s and passes at once (compare travel, which reports healthy at 16.7s almost entirely
 #     because of its 15s start_period). 30s covers that with room.

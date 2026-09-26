@@ -149,9 +149,9 @@ class StrongREJECTTask(Task[ChatbotTarget]):
                 ),
                 # LEGACY, always 0.0: the judge now raises instead of
                 # returning a parse-failed verdict, so there is nothing
-                # left to flag. Kept because the existing results archive
-                # is full of 1.0s that genuinely mean "fabricated" and
-                # analysis scripts filter on this key.
+                # left to flag. Kept for backward compatibility with
+                # existing results, where a 1.0 genuinely means
+                # "fabricated".
                 # ``security_domain=None``, not USER_TAG: a diagnostic
                 # that the controller's scope filter can delete from the
                 # optimizer's copy is not a reliable diagnostic.

@@ -1,17 +1,16 @@
 """Every abnormal victim turn is classified, recorded, and never faked.
 
-These are replays of the RQ1.3-1 first run, where one call site with no
-validation, no timeout and no retries produced 12,845 dead tasks and 52,453
-runs that were silently scored 0.0.  Each class below is one of those failures:
+These replay the failures of a call site with no validation, no timeout and
+no retries, which kills tasks and silently scores runs 0.0.  Each class below is
+one of those failures:
 
 * the attacker injects ``""`` / whitespace / ``None`` and the provider rejects
-  the conversation it produces (674 tasks);
+  the conversation it produces;
 * the provider returns no content field at all, in band or as a Responses API
-  ``ValueError`` (35 tasks errored, plus the silent majority);
-* a transient provider failure kills the whole task on the first try
-  (11,711 tasks);
+  ``ValueError`` (some tasks error, most such runs pass silently);
+* a transient provider failure kills the whole task on the first try;
 * the victim replies with a blank string and it is indistinguishable from all
-  of the above (52,453 runs).
+  of the above.
 
 The invariant every test here serves: an infrastructure failure must never be
 recorded as a score-0 attacker failure, a defense must never be recorded as an
@@ -58,8 +57,8 @@ from chatbot_target import (
 
 from conftest import make_litellm_response
 
-# Verbatim from the first-run archive: the two errors the empty injection
-# produced, on the first turn and on a later one respectively.
+# Verbatim provider messages: the two errors an empty injection produces, on
+# the first turn and on a later one respectively.
 BEDROCK_NO_LEADING_USER = (
     'litellm.BadRequestError: BedrockException - {"message":"A conversation must '
     'start with a user message. Try again with a conversation that starts with a '
@@ -115,7 +114,7 @@ def _observables(emitted: list[object], name: str) -> list[ObservableEvent]:
 
 
 class TestInvalidInjection:
-    """674 first-run tasks died because the value was forwarded unchecked."""
+    """A task dies when the injected value is forwarded unchecked."""
 
     @pytest.mark.parametrize("value,reason", [
         (None, "none"),
@@ -163,9 +162,9 @@ class TestInvalidInjection:
     async def test_a_late_empty_message_does_not_discard_the_run(
         self, target: ChatbotTarget,
     ) -> None:
-        # Replays the 464 "assistant message prefill" tasks. In the archive's
-        # worked example, nine completed refusal turns were thrown away because
-        # the tenth injection was "". The completed turns must survive.
+        # Replays the "assistant message prefill" failure. Without the check,
+        # nine completed refusal turns are thrown away when the tenth injection
+        # is "". The completed turns must survive.
         with m.patch("chatbot_target.target.acompletion",
                      return_value=make_litellm_response("a real reply")) as call:
             await target.run(lambda e: None, _driver(["turn one", ""]))
@@ -353,7 +352,7 @@ class TestEmptyReply:
     async def test_the_reasoning_only_case_is_recorded(self, target: ChatbotTarget) -> None:
         # A reasoning model that spent its budget thinking returns a blank
         # answer with reasoning attached. That is a different event from a model
-        # that had nothing to say, and the archive cannot tell them apart today.
+        # that had nothing to say, and stored results must tell them apart.
         with m.patch("chatbot_target.target.acompletion",
                      return_value=make_litellm_response("", reasoning_content="thinking...")):
             await target.run(lambda e: None, _driver(["hi"]))
@@ -391,7 +390,7 @@ class TestRetries:
     async def test_a_transient_failure_is_retried_and_recovers(
         self, fast_target: ChatbotTarget, exc: BaseException,
     ) -> None:
-        # 11,711 first-run tasks died on one of these, on the first try.
+        # Without retries a task dies on one of these, on the first try.
         outcomes = [exc, make_litellm_response("recovered")]
         emitted: list[object] = []
         with m.patch("chatbot_target.target.acompletion", side_effect=outcomes) as call:
@@ -453,8 +452,8 @@ class TestRetries:
         self, fast_target: ChatbotTarget,
     ) -> None:
         # How often the harness redialled is infrastructure telemetry, not a
-        # capability of the modelled attacker. It sits at the system root, which
-        # no experiment scope in RQ1.3-1 includes.
+        # capability of the modelled attacker. It sits at the system root, so
+        # only a scope granted the whole system root can see it.
         from chatbot_target import SYSTEM_TAG
 
         emitted: list[object] = []
@@ -479,9 +478,9 @@ class TestTimeout:
     async def test_every_call_carries_the_per_call_timeout(
         self, target: ChatbotTarget,
     ) -> None:
-        # Without it litellm's own default applies (600s in the run's version,
-        # 6000s in current litellm), which is why 3,410 first-run tasks sat for
-        # ten minutes and then died.
+        # Without it litellm's own default applies (600s in older litellm,
+        # 6000s in current litellm), so a stalled call can hold a task for ten
+        # minutes or more and then kill it.
         captured: list[dict] = []
 
         def capture(**kwargs):

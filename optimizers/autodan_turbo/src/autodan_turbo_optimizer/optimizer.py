@@ -486,9 +486,9 @@ class AutoDANTurboOptimizer(Optimizer):
         as the last measured one. That can never exceed ``_prev_score``, so
         the strategy library stops growing while the run still looks
         healthy, and ``_prev_prompt`` advances to a prompt no scorer ever
-        saw. 117 scorer calls failed that way in the archived first run, all
-        of them transient (86 Bedrock internal_server_error, 31 timeouts),
-        which is why the retry comes first and the substitution goes.
+        saw. Scorer failures are typically transient (Bedrock
+        internal_server_error, timeouts), which is why the retry comes
+        first and the substitution goes.
         """
         assert self._goal is not None
         assert self._scorer is not None

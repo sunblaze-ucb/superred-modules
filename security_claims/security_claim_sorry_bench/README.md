@@ -226,9 +226,9 @@ the task with `stop_reason="error"` and the traceback: excluded from the
 attack-success rate, and re-measured on the next run.
 
 Until 2026-07 it returned `0.0` with the error text in the rationale
-instead. In the first RQ1.3-1 sweep that produced 66,543 manufactured
-"the target refused" verdicts, and 14,422 of 65,377 tasks had no real
-verdict at all. Two markers make the stored data checkable now: every
+instead. That manufactured "the target refused" verdicts, and could leave
+a task with no real verdict at all. Two markers make the stored data
+checkable now: every
 `EvaluationResult` carries an unscoped `sub_scores["judge_ran"]`, 1.0 when
 the judge produced the verdict and 0.0 when the harness short-circuited an
 empty target answer without asking it.

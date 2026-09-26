@@ -72,20 +72,20 @@ reading and are load-bearing here, because this module is where a misclassified
 category is fatal rather than merely lossy:
 
 - Categories are roles to match, not a partition to fill. When a scope grants no
-  user-prompt surface -- the experiment drops it from threat models s3, s4 and s6
-  -- the prompt tells the model a category may match zero surfaces and forbids
+  user-prompt surface -- a threat model may drop it, e.g. scopes s3, s4 and s6 --
+  the prompt tells the model a category may match zero surfaces and forbids
   relabelling content surfaces to populate it. Without this, gpt-4o-2024-05-13 put
   every DTAP `env_tool:<server>` surface into `user-prompt` under
   category-completion pressure. A false `user-prompt` label sets
   `_can_write_user_prompt`, which shrinks `_available_surface_ranks()` to length 1,
-  so `_is_done()` fires after run 1 and the cell ends in seconds with a zero
-  indistinguishable from a defence. Measured on the DTAP indirect claim at scope
-  s3 (11 text domains, one task each), this collapse hit 5 of 11 domains, and 2 of
-  11 at s4 and 3 of 11 at s6; the improved prompt gives 0 of 11 at all three, while
-  the control arm that keeps the user-prompt surface stays at 0 throughout. The
-  prompt also classifies by role, not goal-relevance, so a live indirect-injection
-  surface is not dropped to `irrelevant` merely because it looks off-topic for the
-  task: at s3, s4 and s6 every granted surface received a category, in both arms.
+  so `_is_done()` fires after run 1 and the task ends in seconds with a zero
+  indistinguishable from a defence. With the earlier prompt this collapse was
+  common on DTAP indirect-injection tasks in scopes without a user-prompt surface;
+  the improved prompt prevents it, and scopes that keep the user-prompt surface
+  are unaffected. The prompt also classifies by role, not goal-relevance, so a
+  live indirect-injection surface is not dropped to `irrelevant` merely because it
+  looks off-topic for the task: the prompt is written so every granted surface
+  receives a category.
   One wording constraint is load-bearing: the prompt describes each role in prose
   and must never spell one out as a label-shaped phrase. An earlier revision said a
   qualifying value "is a content/environment surface"; the model answered with that

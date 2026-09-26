@@ -3,7 +3,7 @@
 Lives here rather than being copied into all three claim packages
 (``test_judge_failure_in_sync.py`` proves the policy code is identical
 everywhere, so testing it once tests it everywhere). The error strings
-below are verbatim from the RQ1.3-1 results archive.
+below are verbatim provider messages.
 """
 
 from __future__ import annotations
@@ -40,8 +40,8 @@ class ContentPolicyViolationError(Exception):
     pass
 
 
-# Verbatim from /idx/audit/records.jsonl: 139,069 judge failures in the
-# first sweep carried the first string, 6,276 the second.
+# Verbatim provider messages: a rejected parameter and a content-filter
+# block of the judge's own prompt.
 REJECTED_PARAMETER = (
     "litellm.UnsupportedParamsError: gpt-5 models don't support "
     "temperature=0.0. Only temperature=1 is supported."
@@ -86,9 +86,9 @@ def test_content_policy_exception_type_is_a_block_even_without_a_message() -> No
 def test_unrecognised_error_is_transient() -> None:
     """Unknown means "worth one more try", not "give up".
 
-    Every failure that made retrying expensive in the first sweep is
-    named terminal; the cost of retrying an unknown one is seconds,
-    while the cost of abandoning a real blip is a whole task.
+    Every known failure that makes retrying expensive is named terminal;
+    the cost of retrying an unknown one is seconds, while the cost of
+    abandoning a real blip is a whole task.
     """
     assert classify_judge_error(ValueError("something new")) == "transient"
 
