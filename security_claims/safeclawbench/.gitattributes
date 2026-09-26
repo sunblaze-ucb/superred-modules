@@ -1,0 +1,3 @@
+# Vendored upstream bytes: never convert line endings, so these files stay
+# byte-identical to the pinned commit on every OS (the tests pin their SHA-256).
+src/safeclawbench_claim/data/** -text

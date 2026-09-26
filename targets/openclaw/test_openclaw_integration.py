@@ -344,9 +344,9 @@ async def test_openclaw_target_interface_compliance():
 
     # query_specs
     qspecs = target.query_specs
-    assert len(qspecs) == 3
+    assert len(qspecs) == 4
     qspec_names = {q.name for q in qspecs}
-    assert qspec_names == {"last_response", "tool_calls", "events"}
+    assert qspec_names == {"last_response", "tool_calls", "events", "last_run_status"}
 
     # security_domain
     domain = target.security_domain
@@ -883,6 +883,40 @@ async def test_agent_wait_sends_timeoutms_matching_run_budget():
         await target.run(lambda _e: None, send_event)
         assert gateway.last_agent_wait_params is not None
         assert gateway.last_agent_wait_params.get("timeoutMs") == 123_000
+        await target.teardown()
+    finally:
+        await gateway.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wait_status", ["ok", "timeout"])
+async def test_last_run_status_reports_how_the_run_ended(wait_status: str):
+    """A timed-out or failed run leaves ``last_response`` empty, so a claim needs
+    ``last_run_status`` to tell it apart from a reply the agent chose to leave
+    empty (and abstain instead of scoring a refusal). A reset clears it.
+    """
+    gateway = MockGateway()
+    gateway.agent_wait_status = wait_status
+    port = await gateway.start()
+
+    try:
+        target = OpenClawTarget(
+            auth_token="test-token",
+            gateway_url=f"ws://127.0.0.1:{port}",
+        )
+        assert target.query("last_run_status") == ""
+
+        async def send_event(event: Any) -> ControllableInjection:
+            controllable = event.controllable
+            value = "Hello" if controllable.name == "user_message" else ""
+            return ControllableInjection(
+                event=event, controllable=controllable, value=value
+            )
+
+        await target.run(lambda _e: None, send_event)
+        assert target.query("last_run_status") == wait_status
+        await target.reset_ephemeral_state()
+        assert target.query("last_run_status") == ""
         await target.teardown()
     finally:
         await gateway.stop()
